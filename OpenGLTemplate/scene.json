@@ -1,0 +1,382 @@
+{
+    "models": [
+        {
+            "aoTexture": "",
+            "color": [
+                1.0,
+                1.0,
+                1.0
+            ],
+            "diffuseTexture": "",
+            "emissive": 0.0,
+            "hasCustomTexture": false,
+            "name": "motorbike.obj",
+            "normalTexture": "",
+            "path": "D:/OBJ/motorbike.obj",
+            "position": [
+                0.0,
+                0.0,
+                0.0
+            ],
+            "rotation": [
+                0.0,
+                0.0,
+                0.0
+            ],
+            "scale": [
+                1.0,
+                1.0,
+                1.0
+            ],
+            "shininess": 32.0,
+            "specularTexture": ""
+        },
+        {
+            "aoTexture": "",
+            "color": [
+                1.0,
+                1.0,
+                1.0
+            ],
+            "diffuseTexture": "",
+            "emissive": 1.0,
+            "hasCustomTexture": false,
+            "name": "Cube",
+            "normalTexture": "",
+            "path": "cube",
+            "position": [
+                -4.343627452850342,
+                -0.016624337062239647,
+                0.19741277396678925
+            ],
+            "rotation": [
+                0.0,
+                0.0,
+                0.0
+            ],
+            "scale": [
+                1.0,
+                1.0,
+                1.0
+            ],
+            "shininess": 10.0,
+            "specularTexture": ""
+        },
+        {
+            "aoTexture": "",
+            "color": [
+                1.0,
+                1.0,
+                1.0
+            ],
+            "diffuseTexture": "",
+            "emissive": 0.0,
+            "hasCustomTexture": false,
+            "name": "Cube",
+            "normalTexture": "",
+            "path": "cube",
+            "position": [
+                0.44551172852516174,
+                -1.0981872081756592,
+                0.14633138477802277
+            ],
+            "rotation": [
+                0.0,
+                0.0,
+                0.0
+            ],
+            "scale": [
+                11.0,
+                0.8999999761581421,
+                26.5
+            ],
+            "shininess": 10.0,
+            "specularTexture": ""
+        },
+        {
+            "aoTexture": "",
+            "color": [
+                1.0,
+                1.0,
+                1.0
+            ],
+            "diffuseTexture": "",
+            "emissive": 0.0,
+            "hasCustomTexture": true,
+            "name": "backpack.obj",
+            "normalTexture": "",
+            "path": "D:\\OBJ\\objects\\backpack\\backpack.obj",
+            "position": [
+                -4.2528839111328125,
+                1.8541935682296753,
+                0.15885670483112335
+            ],
+            "rotation": [
+                0.0,
+                0.0,
+                0.0
+            ],
+            "scale": [
+                0.5,
+                0.5,
+                0.5
+            ],
+            "shininess": 32.0,
+            "specularTexture": ""
+        },
+        {
+            "aoTexture": "",
+            "color": [
+                1.0,
+                1.0,
+                1.0
+            ],
+            "diffuseTexture": "",
+            "emissive": 1.0,
+            "hasCustomTexture": false,
+            "name": "Cube",
+            "normalTexture": "",
+            "path": "cube",
+            "position": [
+                10.708999633789063,
+                2.055000066757202,
+                -0.00836352352052927
+            ],
+            "rotation": [
+                0.0,
+                0.0,
+                0.0
+            ],
+            "scale": [
+                0.5,
+                7.300000190734863,
+                12.600000381469727
+            ],
+            "shininess": 10.0,
+            "specularTexture": ""
+        },
+        {
+            "aoTexture": "",
+            "color": [
+                1.0,
+                1.0,
+                1.0
+            ],
+            "diffuseTexture": "",
+            "emissive": 0.0,
+            "hasCustomTexture": true,
+            "name": "cyborg.obj",
+            "normalTexture": "",
+            "path": "D:\\OBJ\\objects\\cyborg\\cyborg.obj",
+            "position": [
+                1.5825001001358032,
+                -0.2106301635503769,
+                4.733519077301025
+            ],
+            "rotation": [
+                0.0,
+                -105.0,
+                0.0
+            ],
+            "scale": [
+                1.0,
+                1.0,
+                1.0
+            ],
+            "shininess": 32.0,
+            "specularTexture": "D:\\OBJ\\objects\\cyborg\\cyborg_specular.png"
+        },
+        {
+            "aoTexture": "",
+            "color": [
+                1.0,
+                1.0,
+                1.0
+            ],
+            "diffuseTexture": "",
+            "emissive": 0.0,
+            "hasCustomTexture": true,
+            "name": "planet.obj",
+            "normalTexture": "",
+            "path": "D:\\OBJ\\objects\\planet\\planet.obj",
+            "position": [
+                6.785999774932861,
+                7.138999938964844,
+                -8.597999572753906
+            ],
+            "rotation": [
+                0.0,
+                0.0,
+                0.0
+            ],
+            "scale": [
+                1.0,
+                1.0,
+                1.0
+            ],
+            "shininess": 32.0,
+            "specularTexture": ""
+        },
+        {
+            "aoTexture": "",
+            "color": [
+                1.0,
+                1.0,
+                1.0
+            ],
+            "diffuseTexture": "",
+            "emissive": 0.0,
+            "hasCustomTexture": true,
+            "name": "planet.obj",
+            "normalTexture": "",
+            "path": "D:\\OBJ\\objects\\planet\\planet.obj",
+            "position": [
+                5.50054931640625,
+                3.8121025562286377,
+                -4.764585018157959
+            ],
+            "rotation": [
+                0.0,
+                0.0,
+                0.0
+            ],
+            "scale": [
+                0.20000000298023224,
+                0.20000000298023224,
+                0.20000000298023224
+            ],
+            "shininess": 32.0,
+            "specularTexture": ""
+        },
+        {
+            "aoTexture": "",
+            "color": [
+                1.0,
+                1.0,
+                1.0
+            ],
+            "diffuseTexture": "D:\\OBJ\\Si-Fi_Freigther\\textures\\Freighter_C.jpg",
+            "emissive": 0.0,
+            "hasCustomTexture": true,
+            "name": "Freigther_BI_Export.obj",
+            "normalTexture": "",
+            "path": "D:\\OBJ\\Si-Fi_Freigther\\Obj\\Freigther_BI_Export.obj",
+            "position": [
+                -1.7909101247787476,
+                -0.07018903642892838,
+                -14.811366081237793
+            ],
+            "rotation": [
+                0.0,
+                0.0,
+                0.0
+            ],
+            "scale": [
+                0.800000011920929,
+                0.800000011920929,
+                0.800000011920929
+            ],
+            "shininess": 32.0,
+            "specularTexture": "D:\\OBJ\\Si-Fi_Freigther\\textures\\Spec_Bake.png"
+        },
+        {
+            "aoTexture": "",
+            "color": [
+                0.29577529430389404,
+                0.8292682766914368,
+                0.10618679225444794
+            ],
+            "diffuseTexture": "",
+            "emissive": 1.0,
+            "hasCustomTexture": false,
+            "name": "Cube",
+            "normalTexture": "",
+            "path": "cube",
+            "position": [
+                0.8672078847885132,
+                4.146984577178955,
+                8.218591690063477
+            ],
+            "rotation": [
+                0.0,
+                0.0,
+                0.0
+            ],
+            "scale": [
+                1.0,
+                1.0,
+                1.0
+            ],
+            "shininess": 10.0,
+            "specularTexture": ""
+        },
+        {
+            "aoTexture": "",
+            "color": [
+                0.3998667299747467,
+                0.3397066593170166,
+                0.6920731663703918
+            ],
+            "diffuseTexture": "",
+            "emissive": 1.0,
+            "hasCustomTexture": false,
+            "name": "Cube",
+            "normalTexture": "",
+            "path": "cube",
+            "position": [
+                -7.948315620422363,
+                2.353109359741211,
+                -16.401487350463867
+            ],
+            "rotation": [
+                0.0,
+                0.0,
+                0.0
+            ],
+            "scale": [
+                1.0,
+                1.0,
+                1.0
+            ],
+            "shininess": 10.0,
+            "specularTexture": ""
+        },
+        {
+            "aoTexture": "",
+            "color": [
+                0.6615853309631348,
+                0.14320896565914154,
+                0.14320896565914154
+            ],
+            "diffuseTexture": "",
+            "emissive": 1.0,
+            "hasCustomTexture": false,
+            "name": "Cube",
+            "normalTexture": "",
+            "path": "cube",
+            "position": [
+                6.372814655303955,
+                2.940941095352173,
+                -15.629295349121094
+            ],
+            "rotation": [
+                0.0,
+                0.0,
+                0.0
+            ],
+            "scale": [
+                1.0,
+                1.0,
+                1.0
+            ],
+            "shininess": 10.0,
+            "specularTexture": ""
+        }
+    ],
+    "settings": {
+        "convergence": 1.0,
+        "farPlane": 100.0,
+        "nearPlane": 0.10000000149011612,
+        "separation": 0.0
+    }
+}

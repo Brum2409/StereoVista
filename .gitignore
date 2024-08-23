@@ -1,0 +1,63 @@
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+.vs/OpenGLTemplate/FileContentIndex/30fe56fa-9fef-4db8-ab93-558762c32454.vsidx
+.vs/OpenGLTemplate/FileContentIndex/9db4adfd-935f-4dc2-a816-9ed3aa630e32.vsidx
+.vs/OpenGLTemplate/FileContentIndex/9dccecd2-1023-4b43-9b04-9be979da7b51.vsidx
+.vs/OpenGLTemplate/FileContentIndex/bd31bc31-940d-42dd-931c-a2bef4866cbc.vsidx
+.vs/OpenGLTemplate/FileContentIndex/c3239b42-c80f-4d2f-830a-4c923a5d851f.vsidx
+.vs/OpenGLTemplate/v17/fileList.bin
+.vs/Stereo Demo/FileContentIndex/1836e791-477d-4463-8014-cb6afac9c1bc.vsidx
+.vs/Stereo Demo/FileContentIndex/2ec23ef8-ad47-4c39-b964-5e2dc8aedd09.vsidx
+.vs/Stereo Demo/FileContentIndex/55b11e03-ea16-486e-8b53-1d564f26a6ad.vsidx
+.vs/Stereo Demo/FileContentIndex/76652b75-7f78-4851-85ea-2d05eeb89ff2.vsidx
+.vs/Stereo Demo/v17/.suo
+.vs/Stereo Demo/v17/Browse.VC.db
+.vs/Stereo Demo/v17/Browse.VC.db-shm
+.vs/Stereo Demo/v17/Browse.VC.db-wal
+.vs/Stereo Demo/v17/Browse.VC.opendb
+.vs/Stereo Demo/v17/DocumentLayout.backup.json
+.vs/Stereo Demo/v17/DocumentLayout.json
+.vs/Stereo Demo/v17/fileList.bin
+.vs/Stereo Demo/v17/ipch/AutoPCH/1caf531514ed858d/OBJ_LOADER.ipch
+.vs/Stereo Demo/v17/ipch/AutoPCH/2153efd8c739d5c6/CORE.ipch
+.vs/Stereo Demo/v17/ipch/AutoPCH/2681603dd144e26/OPENLINKS.ipch
+.vs/Stereo Demo/v17/ipch/AutoPCH/75cd94cda25d6164/WINDOW.ipch
+.vs/Stereo Demo/v17/ipch/AutoPCH/99528195451006cb/IMGUI_DRAW.ipch
+.vs/Stereo Demo/v17/ipch/AutoPCH/b5397a84a5c9f5ea/INPUT.ipch
+.vs/Stereo Demo/v17/ipch/AutoPCH/ccec7f2bee1b5fad/MAIN.ipch
+.vs/Stereo Demo/v17/ipch/AutoPCH/cec5261aa813271a/SCENE_MANAGER.ipch
+.vs/Stereo Demo/v17/ipch/AutoPCH/d055c00705e25911/MAIN.ipch
+.vs/Stereo Demo/v17/ipch/AutoPCH/d2abeaecfd19f29f/CURSORSPHERE.ipch
+.vs/Stereo Demo/v17/ipch/AutoPCH/d42ddc9fb2bbfb01/SHADER.ipch
+.vs/Stereo Demo/v17/ipch/AutoPCH/e4d041bc7b35e031/BUFFERS.ipch
+.vs/Stereo Demo/v17/Solution.VC.db

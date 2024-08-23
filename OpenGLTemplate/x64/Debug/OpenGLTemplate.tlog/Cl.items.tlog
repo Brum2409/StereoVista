@@ -1,0 +1,15 @@
+C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\headers\glad.c;C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\x64\Debug\glad.obj
+C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\src\engine\buffers.cpp;C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\x64\Debug\buffers.obj
+C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\src\engine\input.cpp;C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\x64\Debug\input.obj
+C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\src\engine\shader.cpp;C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\x64\Debug\shader.obj
+C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\src\engine\window.cpp;C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\x64\Debug\window.obj
+C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\src\imgui\backends\imgui_impl_glfw.cpp;C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\x64\Debug\imgui_impl_glfw.obj
+C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\src\imgui\backends\imgui_impl_opengl3.cpp;C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\x64\Debug\imgui_impl_opengl3.obj
+C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\src\imgui\imgui.cpp;C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\x64\Debug\imgui.obj
+C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\src\imgui\imgui_draw.cpp;C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\x64\Debug\imgui_draw.obj
+C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\src\imgui\imgui_tables.cpp;C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\x64\Debug\imgui_tables.obj
+C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\src\imgui\imgui_widgets.cpp;C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\x64\Debug\imgui_widgets.obj
+C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\src\main.cpp;C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\x64\Debug\main.obj
+C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\src\obj_loader.cpp;C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\x64\Debug\obj_loader.obj
+C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\src\portable-file-dialogs.h;C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\x64\Debug\portable-file-dialogs.obj
+C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\src\scene_manager.cpp;C:\Users\SDIG\Desktop\Stereo Demo\OpenGLTemplate\x64\Debug\scene_manager.obj

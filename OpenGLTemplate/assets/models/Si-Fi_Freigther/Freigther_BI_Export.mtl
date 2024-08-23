@@ -1,0 +1,54 @@
+# Blender MTL File: 'Freigther_BI_Export.blend'
+# Material Count: 4
+
+newmtl Freighter_1
+Ns 96.078431
+Ka 1.000000 1.000000 1.000000
+Kd 0.800000 0.800000 0.800000
+Ks 1.000000 1.000000 1.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd D:\Daten_\02_Blender_Daten\Vehicles\Transporter&Trailer_Timo\Freighter_end\Modell\Freighter_col_neu.png
+map_Bump C:\\Users\\the3dpc\\Desktop\\up New\\Si-Fi_Freigther\\textures\\Freighter_N.jpg
+map_Ks C:\\Users\\the3dpc\\Desktop\\up New\\Si-Fi_Freigther\\textures\\Freighter_S.jpg
+refl C:\\Users\\the3dpc\\Desktop\\up New\\Si-Fi_Freigther\\textures\\REF 1.jpg
+
+newmtl Freighter_1_NONE
+Ns 96.078431
+Ka 1.000000 1.000000 1.000000
+Kd 0.800000 0.800000 0.800000
+Ks 1.000000 1.000000 1.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.000000
+d 1.000000
+illum 2
+map_Bump C:\\Users\\the3dpc\\Desktop\\up New\\Si-Fi_Freigther\\textures\\Freighter_N.jpg
+map_Kd C:\\Users\\the3dpc\\Desktop\\up New\\Si-Fi_Freigther\\textures\\Freighter_C.jpg
+map_Ks C:\\Users\\the3dpc\\Desktop\\up New\\Si-Fi_Freigther\\textures\\Freighter_S.jpg
+refl C:\\Users\\the3dpc\\Desktop\\up New\\Si-Fi_Freigther\\textures\\REF 1.jpg
+
+newmtl glass
+Ns 96.078431
+Ka 1.000000 1.000000 1.000000
+Kd 0.800000 0.800000 0.800000
+Ks 0.500000 0.500000 0.500000
+Ke 0.280000 0.280000 0.280000
+Ni 1.000000
+d 0.200000
+illum 2
+map_Kd D:\Daten_\02_Blender_Daten\Vehicles\Transporter&Trailer_Timo\Freighter_end\Modell\Freighter_col_neu.png
+refl C:\\Users\\the3dpc\\Desktop\\up New\\Si-Fi_Freigther\\textures\\REF 1.jpg
+
+newmtl glass_NONE
+Ns 96.078431
+Ka 1.000000 1.000000 1.000000
+Kd 0.800000 0.800000 0.800000
+Ks 0.500000 0.500000 0.500000
+Ke 0.280000 0.280000 0.280000
+Ni 1.000000
+d 0.200000
+illum 2
+map_Kd C:\\Users\\the3dpc\\Desktop\\up New\\Si-Fi_Freigther\\textures\\Freighter_C.jpg
+refl C:\\Users\\the3dpc\\Desktop\\up New\\Si-Fi_Freigther\\textures\\REF 1.jpg

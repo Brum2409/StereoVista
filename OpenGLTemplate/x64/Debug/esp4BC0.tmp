@@ -1,0 +1,592 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<DEFECTS>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>1811</LINE>
+      <COLUMN>41</COLUMN>
+    </SFA>
+    <DEFECTCODE>26498</DEFECTCODE>
+    <DESCRIPTION>The function 'std::numeric_limits&lt;float&gt;::epsilon' is constexpr, mark variable 'epsilon' constexpr if compile-time evaluation is desired (con.5).</DESCRIPTION>
+    <FUNCTION>tinyobj::exportGroupsToShape</FUNCTION>
+    <DECORATED>?exportGroupsToShape@tinyobj@@YA_NPEAUshape_t@1@AEBUPrimGroup@1@AEBV?$vector@Utag_t@tinyobj@@V?$allocator@Utag_t@tinyobj@@@std@@@std@@HAEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@5@_NAEBV?$vector@MV?$allocator@M@std@@@5@PEAV65@@Z</DECORATED>
+    <FUNCLINE>1511</FUNCLINE>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>347</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::skin_weight_t::vertex_id' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::skin_weight_t::{ctor}</FUNCTION>
+    <DECORATED>??0skin_weight_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>347</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::skin_weight_t::vertex_id</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>183</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::texture_option_t::texture_resolution' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::texture_option_t::{ctor}</FUNCTION>
+    <DECORATED>??0texture_option_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>183</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::texture_option_t::texture_resolution</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>183</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::texture_option_t::imfchan' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::texture_option_t::{ctor}</FUNCTION>
+    <DECORATED>??0texture_option_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>183</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::texture_option_t::imfchan</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>183</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::texture_option_t::clamp' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::texture_option_t::{ctor}</FUNCTION>
+    <DECORATED>??0texture_option_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>183</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::texture_option_t::clamp</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>183</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::texture_option_t::sharpness' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::texture_option_t::{ctor}</FUNCTION>
+    <DECORATED>??0texture_option_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>183</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::texture_option_t::sharpness</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>183</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::texture_option_t::contrast' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::texture_option_t::{ctor}</FUNCTION>
+    <DECORATED>??0texture_option_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>183</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::texture_option_t::contrast</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>183</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::texture_option_t::bump_multiplier' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::texture_option_t::{ctor}</FUNCTION>
+    <DECORATED>??0texture_option_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>183</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::texture_option_t::bump_multiplier</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>183</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::texture_option_t::origin_offset' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::texture_option_t::{ctor}</FUNCTION>
+    <DECORATED>??0texture_option_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>183</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::texture_option_t::origin_offset</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>183</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::texture_option_t::blendv' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::texture_option_t::{ctor}</FUNCTION>
+    <DECORATED>??0texture_option_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>183</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::texture_option_t::blendv</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>183</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::texture_option_t::turbulence' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::texture_option_t::{ctor}</FUNCTION>
+    <DECORATED>??0texture_option_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>183</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::texture_option_t::turbulence</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>183</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::texture_option_t::scale' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::texture_option_t::{ctor}</FUNCTION>
+    <DECORATED>??0texture_option_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>183</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::texture_option_t::scale</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>183</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::texture_option_t::type' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::texture_option_t::{ctor}</FUNCTION>
+    <DECORATED>??0texture_option_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>183</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::texture_option_t::type</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>183</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::texture_option_t::brightness' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::texture_option_t::{ctor}</FUNCTION>
+    <DECORATED>??0texture_option_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>183</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::texture_option_t::brightness</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>183</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::texture_option_t::blendu' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::texture_option_t::{ctor}</FUNCTION>
+    <DECORATED>??0texture_option_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>183</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::texture_option_t::blendu</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>327</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::material_t::sheen' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::material_t::{ctor}</FUNCTION>
+    <DECORATED>??0material_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>327</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::material_t::sheen</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>327</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::material_t::transmittance' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::material_t::{ctor}</FUNCTION>
+    <DECORATED>??0material_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>327</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::material_t::transmittance</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>327</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::material_t::anisotropy' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::material_t::{ctor}</FUNCTION>
+    <DECORATED>??0material_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>327</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::material_t::anisotropy</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>327</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::material_t::clearcoat_roughness' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::material_t::{ctor}</FUNCTION>
+    <DECORATED>??0material_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>327</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::material_t::clearcoat_roughness</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>327</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::material_t::roughness' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::material_t::{ctor}</FUNCTION>
+    <DECORATED>??0material_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>327</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::material_t::roughness</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>327</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::material_t::pad2' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::material_t::{ctor}</FUNCTION>
+    <DECORATED>??0material_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>327</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::material_t::pad2</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>327</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::material_t::dissolve' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::material_t::{ctor}</FUNCTION>
+    <DECORATED>??0material_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>327</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::material_t::dissolve</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>327</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::material_t::ior' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::material_t::{ctor}</FUNCTION>
+    <DECORATED>??0material_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>327</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::material_t::ior</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>327</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::material_t::illum' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::material_t::{ctor}</FUNCTION>
+    <DECORATED>??0material_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>327</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::material_t::illum</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>327</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::material_t::specular' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::material_t::{ctor}</FUNCTION>
+    <DECORATED>??0material_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>327</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::material_t::specular</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>327</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::material_t::diffuse' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::material_t::{ctor}</FUNCTION>
+    <DECORATED>??0material_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>327</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::material_t::diffuse</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>327</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::material_t::dummy' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::material_t::{ctor}</FUNCTION>
+    <DECORATED>??0material_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>327</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::material_t::dummy</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>327</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::material_t::shininess' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::material_t::{ctor}</FUNCTION>
+    <DECORATED>??0material_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>327</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::material_t::shininess</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>327</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::material_t::metallic' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::material_t::{ctor}</FUNCTION>
+    <DECORATED>??0material_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>327</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::material_t::metallic</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>327</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::material_t::ambient' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::material_t::{ctor}</FUNCTION>
+    <DECORATED>??0material_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>327</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::material_t::ambient</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>327</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::material_t::clearcoat_thickness' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::material_t::{ctor}</FUNCTION>
+    <DECORATED>??0material_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>327</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::material_t::clearcoat_thickness</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>327</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::material_t::pad0' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::material_t::{ctor}</FUNCTION>
+    <DECORATED>??0material_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>327</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::material_t::pad0</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>327</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::material_t::anisotropy_rotation' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::material_t::{ctor}</FUNCTION>
+    <DECORATED>??0material_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>327</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::material_t::anisotropy_rotation</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>tiny_obj_loader.h</FILENAME>
+      <LINE>327</LINE>
+      <COLUMN>4</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'tinyobj::material_t::emission' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>tinyobj::material_t::{ctor}</FUNCTION>
+    <DECORATED>??0material_t@tinyobj@@QEAA@XZ</DECORATED>
+    <FUNCLINE>327</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>tinyobj::material_t::emission</targetSymbol>
+    </ADDITIONALINFO>
+    <PATH></PATH>
+  </DEFECT>
+  <DEFECT>
+    <SFA>
+      <FILEPATH>C:\Users\SDIG\Desktop\OpenGLStereo Sample - Copy\OpenGLTemplate\src\</FILEPATH>
+      <FILENAME>obj_loader.h</FILENAME>
+      <LINE>33</LINE>
+      <COLUMN>8</COLUMN>
+    </SFA>
+    <DEFECTCODE>26495</DEFECTCODE>
+    <DESCRIPTION>Variable 'Engine::ObjModel::rotation' is uninitialized. Always initialize a member variable (type.6).</DESCRIPTION>
+    <FUNCTION>Engine::ObjModel::{ctor}</FUNCTION>
+    <DECORATED>??0ObjModel@Engine@@QEAA@XZ</DECORATED>
+    <FUNCLINE>33</FUNCLINE>
+    <ADDITIONALINFO>
+      <targetSymbol>Engine::ObjModel::rotation</targetSymbol>
+    </ADDITIO
