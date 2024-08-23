@@ -85,6 +85,7 @@ portable-file-dialogs: Cross-platform file dialog library
 
 Normal map loading is currently not functioning correctly. Therefore the UI option is disabled.
 The Windows cursor sometimes remains visible over and object when transitioning directly to a model from the UI.
+When the Orbit Point Follows Cursor the windows mouse doesn't get captured. Currently just the position gets reseted. This results in Orbit range limitations and flickering. 
 
 ##Planned Improvements
 
