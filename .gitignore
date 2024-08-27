@@ -5,7 +5,7 @@
 *.slo
 *.lo
 *.o
-*.obj
+
 
 # Precompiled Headers
 *.gch
@@ -60,3 +60,25 @@
 .vs/Stereo Demo/v17/ipch/AutoPCH/d42ddc9fb2bbfb01/SHADER.ipch
 .vs/Stereo Demo/v17/ipch/AutoPCH/e4d041bc7b35e031/BUFFERS.ipch
 .vs/Stereo Demo/v17/Solution.VC.db
+OpenGLTemplate/x64/Debug/window.obj
+OpenGLTemplate/x64/Debug/shader.obj
+OpenGLTemplate/x64/Debug/scene_manager.obj
+OpenGLTemplate/x64/Debug/scene_loader.obj
+OpenGLTemplate/x64/Debug/renderGui.obj
+OpenGLTemplate/x64/Debug/portable-file-dialogs.obj
+OpenGLTemplate/x64/Debug/obj_loader.obj
+OpenGLTemplate/x64/Debug/main.obj
+OpenGLTemplate/x64/Debug/input.obj
+OpenGLTemplate/x64/Debug/imgui_widgets.obj
+OpenGLTemplate/x64/Debug/imgui_tables.obj
+OpenGLTemplate/x64/Debug/imgui_render.obj
+OpenGLTemplate/x64/Debug/imgui_impl_opengl3_loader.obj
+OpenGLTemplate/x64/Debug/imgui_impl_opengl3.obj
+OpenGLTemplate/x64/Debug/imgui_impl_glfw.obj
+OpenGLTemplate/x64/Debug/imgui_draw.obj
+OpenGLTemplate/x64/Debug/imgui_demo.obj
+OpenGLTemplate/x64/Debug/imgui.obj
+OpenGLTemplate/x64/Debug/glad.obj
+OpenGLTemplate/x64/Debug/cursorSphere.obj
+OpenGLTemplate/x64/Debug/buffers.obj
+OpenGLTemplate/assets/models/Si-Fi_Freigther/Freigther_BI_Export.obj
