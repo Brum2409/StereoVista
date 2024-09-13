@@ -82,3 +82,5 @@ OpenGLTemplate/x64/Debug/glad.obj
 OpenGLTemplate/x64/Debug/cursorSphere.obj
 OpenGLTemplate/x64/Debug/buffers.obj
 OpenGLTemplate/assets/models/Si-Fi_Freigther/Freigther_BI_Export.obj
+.vs/Stereo Demo/v17/ipch/AutoPCH/165be55ff668d63d/MAIN.ipch
+.vs/Stereo Demo/FileContentIndex/b0f0090b-4e65-416f-8764-348abd340272.vsidx

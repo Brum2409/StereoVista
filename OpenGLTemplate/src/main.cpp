@@ -428,8 +428,8 @@ int main() {
         glm::mat4 view = camera.GetViewMatrix();
         float aspectRatio = (float)windowWidth / (float)windowHeight;
         glm::mat4 projection = camera.GetProjectionMatrix(aspectRatio, currentScene.settings.nearPlane, currentScene.settings.farPlane);
-        glm::mat4 leftProjection = camera.offsetProjection(projection, currentScene.settings.separation / 2, -camera.Position.z * currentScene.settings.convergence);
-        glm::mat4 rightProjection = camera.offsetProjection(projection, -currentScene.settings.separation / 2, -camera.Position.z * currentScene.settings.convergence);
+        glm::mat4 leftProjection = camera.offsetProjection(projection, currentScene.settings.separation / 2, abs(camera.Position.z) * currentScene.settings.convergence);
+        glm::mat4 rightProjection = camera.offsetProjection(projection, -currentScene.settings.separation / 2, abs(camera.Position.z) * currentScene.settings.convergence);
 
         // ---- Update Cursor Position ----
         updateCursorPosition(window, projection, view, shader);
