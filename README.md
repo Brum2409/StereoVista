@@ -66,7 +66,7 @@ This project is an OpenGL-based test program demonstrating stereo rendering and 
 - Object editing is performed through the GUI or by direct manipulation in the 3D space when in selection mode.
 
 
-##Used Libraries
+## Used Libraries
 
 Libraries and Dependencies
 This project relies on the following libraries:
@@ -81,16 +81,16 @@ tinyobjloader: Wavefront .obj file loader
 json.hpp: JSON for Modern C++
 portable-file-dialogs: Cross-platform file dialog library
 
-##Known Issues
+## Known Issues
 
 - Normal map loading is currently not functioning correctly. Therefore the UI option is disabled.
 
 - The Windows cursor sometimes remains visible over and object when transitioning directly to a model from the UI.
 
-- When the Orbit Point Follows Cursor the windows mouse doesn't get captured. Currently just the position gets reseted. This results in Orbit range limitations and flickering. 
+- When the Orbit Point Follows Cursor the windows mouse position gets resetted manually which results flickering. 
 
 
-##Planned Improvements
+## Planned Improvements
 
 Fix normal map loading and implementation.
 Add support for reflection maps to enhance material realism.
