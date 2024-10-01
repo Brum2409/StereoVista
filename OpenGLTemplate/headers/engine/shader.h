@@ -19,4 +19,5 @@ namespace Engine {
 		void setVec3(const std::string& name, glm::vec3 vec);
 		void setVec4(const std::string& name, glm::vec4 vec);
 	};
+	Shader* loadShader(const std::string& vertexPath, const std::string& fragmentPath);
 }

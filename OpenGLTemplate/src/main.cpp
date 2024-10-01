@@ -93,6 +93,7 @@ static char loadFilename[256] = "scene.json"; // Buffer for loading scene filena
 // ---- Input and Interaction ----
 bool selectionMode = false;
 bool isMovingModel = false;
+bool isMouseCaptured = false;
 bool leftMousePressed = false;   // Left mouse button state
 bool rightMousePressed = false;  // Right mouse button state
 bool middleMousePressed = false; // Middle mouse button state
@@ -301,7 +302,12 @@ void setupSphereCursor() {
 
     glBindVertexArray(0);
 
-    sphereShader = new Shader("assets/shaders/sphereVertexShader.glsl", "assets/shaders/sphereFragmentShader.glsl");
+    try {
+        sphereShader = Engine::loadShader("sphereVertexShader.glsl", "sphereFragmentShader.glsl");
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Fatal error: " << e.what() << std::endl;
+    }
 
     // Initialize uniforms for both shaders
     sphereShader->use();
@@ -359,10 +365,11 @@ int main() {
     glfwSetKeyCallback(window, key_callback);
     glfwSetMouseButtonCallback(window, mouse_button_callback);
 
+
     // ---- Initialize Shader ----
     Shader* shader = nullptr;
     try {
-        shader = new Shader("assets/shaders/vertexShader.glsl", "assets/shaders/fragmentShader.glsl");
+        shader = Engine::loadShader("vertexShader.glsl", "fragmentShader.glsl");
     }
     catch (std::exception& e) {
         std::cout << e.what() << std::endl;
@@ -469,7 +476,7 @@ int main() {
 
 // ---- Initialization and Cleanup -----
 #pragma region Initialization and Cleanup
-void cleanup(Shader * shader) {
+void cleanup(Shader* shader) {
     delete shader;
     glDeleteVertexArrays(1, &sphereVAO);
     glDeleteBuffers(1, &sphereVBO);
@@ -1299,6 +1306,9 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
             if (currentTime - lastClickTime < doubleClickTime) {
                 if (g_cursorValid) {
                     camera.StartCenteringAnimation(g_cursorPos);
+
+                    // Reset cursor position to center of window
+                    glfwSetCursorPos(window, windowWidth / 2, windowHeight / 2);
                 }
             }
             lastClickTime = currentTime;
@@ -1307,10 +1317,13 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                 leftMousePressed = true;
 
                 if (g_cursorValid) {
-                    // Handle orbit and cursor following
                     if (orbitFollowsCursor && showSphereCursor) {
                         camera.StartCenteringAnimation(g_cursorPos);
                         capturedCursorPos = g_cursorPos;
+
+                        // Capture the mouse
+                        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                        isMouseCaptured = true;
                     }
                     else {
                         // Set orbit point and start orbiting
@@ -1356,6 +1369,11 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
         else if (action == GLFW_RELEASE) {
             leftMousePressed = false;
             if (orbitFollowsCursor && showSphereCursor && camera.IsOrbiting) {
+                // Release the mouse
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                isMouseCaptured = false;
+
+                // Reset cursor position to center of window
                 glfwSetCursorPos(window, windowWidth / 2, windowHeight / 2);
             }
             camera.StopOrbiting();
@@ -1395,37 +1413,54 @@ void mouse_callback(GLFWwindow* window, double xposIn, double yposIn) {
     float xpos = static_cast<float>(xposIn);
     float ypos = static_cast<float>(yposIn);
 
-    float xoffset = (xpos - lastX);
-    float yoffset = (lastY - ypos);
+    if (isMouseCaptured) {
+        // Calculate offset from center of window
+        float xoffset = xpos - (windowWidth / 2);
+        float yoffset = (windowHeight / 2) - ypos;  // Reversed since y-coordinates go from bottom to top
 
-    lastX = xpos;
-    lastY = ypos;
+        // Reset cursor to center of window
+        glfwSetCursorPos(window, windowWidth / 2, windowHeight / 2);
 
-    if (isMovingModel && currentModelIndex != -1) {
-        // Move selected model
-        float distanceToModel = glm::distance(camera.Position, currentScene.models[currentModelIndex].position);
-        float aspectRatio = static_cast<float>(windowWidth) / static_cast<float>(windowHeight);
-        float normalizedXOffset = xoffset / static_cast<float>(windowWidth);
-        float normalizedYOffset = yoffset / static_cast<float>(windowHeight);
-        float baseSensitivity = 0.66f;
-        float sensitivityFactor = (baseSensitivity * distanceToModel);
-        normalizedXOffset *= aspectRatio;
-
-        glm::vec3 right = glm::normalize(glm::cross(camera.Front, camera.Up));
-        glm::vec3 up = glm::normalize(glm::cross(right, camera.Front));
-
-        currentScene.models[currentModelIndex].position += right * normalizedXOffset * sensitivityFactor;
-        currentScene.models[currentModelIndex].position += up * normalizedYOffset * sensitivityFactor;
+        // Use these offsets for camera movement
+        if (camera.IsOrbiting && !camera.IsAnimating) {
+            camera.ProcessMouseMovement(xoffset, yoffset);
+            glm::vec3 directionToCamera = glm::normalize(camera.Position - camera.OrbitPoint);
+            camera.Position = camera.OrbitPoint + directionToCamera * camera.OrbitDistance;
+        }
     }
-    else if (camera.IsOrbiting && !camera.IsAnimating) {
-        // Handle camera orbiting
-        camera.ProcessMouseMovement(xoffset, yoffset);
-        glm::vec3 directionToCamera = glm::normalize(camera.Position - camera.OrbitPoint);
-        camera.Position = camera.OrbitPoint + directionToCamera * camera.OrbitDistance;
-    }
-    else if ((leftMousePressed || rightMousePressed || middleMousePressed) && !camera.IsAnimating) {
-        // Handle regular camera movement
-        camera.ProcessMouseMovement(xoffset, yoffset);
+    else {
+        float xoffset = (xpos - lastX);
+        float yoffset = (lastY - ypos);
+
+        lastX = xpos;
+        lastY = ypos;
+
+        if (isMovingModel && currentModelIndex != -1) {
+            // Move selected model
+            float distanceToModel = glm::distance(camera.Position, currentScene.models[currentModelIndex].position);
+            float aspectRatio = static_cast<float>(windowWidth) / static_cast<float>(windowHeight);
+            float normalizedXOffset = xoffset / static_cast<float>(windowWidth);
+            float normalizedYOffset = yoffset / static_cast<float>(windowHeight);
+            float baseSensitivity = 0.66f;
+            float sensitivityFactor = (baseSensitivity * distanceToModel);
+            normalizedXOffset *= aspectRatio;
+
+            glm::vec3 right = glm::normalize(glm::cross(camera.Front, camera.Up));
+            glm::vec3 up = glm::normalize(glm::cross(right, camera.Front));
+
+            currentScene.models[currentModelIndex].position += right * normalizedXOffset * sensitivityFactor;
+            currentScene.models[currentModelIndex].position += up * normalizedYOffset * sensitivityFactor;
+        }
+        else if (camera.IsOrbiting && !camera.IsAnimating) {
+            // Handle camera orbiting
+            camera.ProcessMouseMovement(xoffset, yoffset);
+            glm::vec3 directionToCamera = glm::normalize(camera.Position - camera.OrbitPoint);
+            camera.Position = camera.OrbitPoint + directionToCamera * camera.OrbitDistance;
+        }
+        else if ((leftMousePressed || rightMousePressed || middleMousePressed) && !camera.IsAnimating) {
+            // Handle regular camera movement
+            camera.ProcessMouseMovement(xoffset, yoffset);
+        }
     }
 }
 

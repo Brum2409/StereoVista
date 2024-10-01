@@ -85,6 +85,32 @@ namespace Engine {
 		glDeleteShader(fragmentShaderId);
 	}
 
+	Shader* loadShader(const std::string& vertexPath, const std::string& fragmentPath) {
+		std::vector<std::string> searchPaths = {
+			"./shaders/",  // Local executable path
+			"./",          // Current path
+			"assets/shaders/"  // Original path
+		};
+
+		for (const auto& basePath : searchPaths) {
+			std::string fullVertexPath = basePath + vertexPath;
+			std::string fullFragmentPath = basePath + fragmentPath;
+
+			// Check if both files exist
+			if (std::ifstream(fullVertexPath).good() && std::ifstream(fullFragmentPath).good()) {
+				try {
+					return new Shader(fullVertexPath, fullFragmentPath);
+				}
+				catch (const std::exception& e) {
+					std::cerr << "Error loading shader from " << fullVertexPath << " and " << fullFragmentPath << ": " << e.what() << std::endl;
+				}
+			}
+		}
+
+		// If we get here, we couldn't find the shader files
+		throw std::runtime_error("Unable to find shader files: " + vertexPath + " and " + fragmentPath);
+	}
+
 	// Use / Activate the shader
 	void Shader::use() {
 		glUseProgram(shaderID);
