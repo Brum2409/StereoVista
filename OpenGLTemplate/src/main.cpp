@@ -10,6 +10,8 @@
 #include "obj_loader.h"
 #include "Camera.h"
 #include "scene_manager.h"
+#include "cursor_presets.h"
+#include "point_cloud_loader.h"
 
 // ---- GUI and Dialog ----
 #include "imgui/imgui_incl.h"
@@ -41,10 +43,15 @@ void renderOrbitCenter(const glm::mat4& projection, const glm::mat4& view);
 void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags windowFlags, Shader* shader);
 void renderModels(Shader* shader);
 
+void renderPointClouds(Shader* shader);
+
 // ---- Update Functions ----
 void updateCursorPosition(GLFWwindow* window, const glm::mat4& projection, const glm::mat4& view, Shader* shader);
 void updateFragmentShaderUniforms(Shader* shader);
 void updatePointLights();
+
+PointCloud loadPointCloudFile(const std::string& filePath, size_t downsampleFactor = 1);
+
 
 // ---- Utility Functions ----
 float calculateLargestModelDimension();
@@ -89,6 +96,9 @@ bool showInfoWindow = false;
 // ---- Scene Persistence ----
 static char saveFilename[256] = "scene.json"; // Buffer for saving scene filename
 static char loadFilename[256] = "scene.json"; // Buffer for loading scene filename
+static std::string currentPresetName = "Default";
+static bool isEditingPresetName = false;
+static char editPresetNameBuffer[256] = "";
 
 // ---- Input and Interaction ----
 bool selectionMode = false;
@@ -177,40 +187,42 @@ struct CursorPreset {
     float sphereTransparency;
     bool showInnerSphere;
 };
-
-CursorPreset preset1 = {
-    true,  // showSphereCursor
-    true,  // showFragmentCursor
-    0.0f,  // fragmentBaseInnerRadius
-    CURSOR_FIXED,  // sphereScalingMode
-    0.1f,  // sphereFixedRadius
-    1.0f,  // sphereTransparency
-    false  // showInnerSphere
-};
-
-CursorPreset preset2 = {
-    true,  // showSphereCursor
-    false,  // showFragmentCursor
-    0.0f,  // fragmentBaseInnerRadius
-    CURSOR_CONSTRAINED_DYNAMIC,  // sphereScalingMode
-    0.7f,  // sphereFixedRadius
-    0.7f,  // sphereTransparency
-    true  // showInnerSphere
-};
 #pragma endregion
 
 
 // ---- Sphere Cursor Functions
 #pragma region Sphere Cursor Functions
-// ---- Cursor Preset Application ----
-void applyCursorPreset(const CursorPreset& preset) {
+Engine::CursorPreset createPresetFromCurrentSettings(const std::string& name) {
+    Engine::CursorPreset preset;
+    preset.name = name;
+    preset.showSphereCursor = showSphereCursor;
+    preset.showFragmentCursor = showFragmentCursor;
+    preset.fragmentBaseInnerRadius = fragmentCursorSettings.baseInnerRadius;
+    preset.sphereScalingMode = static_cast<int>(currentCursorScalingMode);
+    preset.sphereFixedRadius = fixedSphereRadius;
+    preset.sphereTransparency = cursorTransparency;
+    preset.showInnerSphere = showInnerSphere;
+    preset.cursorColor = cursorColor;
+    preset.innerSphereColor = innerSphereColor;
+    preset.innerSphereFactor = innerSphereFactor;
+    preset.cursorEdgeSoftness = cursorEdgeSoftness;
+    preset.cursorCenterTransparency = cursorCenterTransparency;
+    return preset;
+}
+
+void applyPresetToGlobalSettings(const Engine::CursorPreset& preset) {
     showSphereCursor = preset.showSphereCursor;
     showFragmentCursor = preset.showFragmentCursor;
     fragmentCursorSettings.baseInnerRadius = preset.fragmentBaseInnerRadius;
-    currentCursorScalingMode = preset.sphereScalingMode;
+    currentCursorScalingMode = static_cast<CursorScalingMode>(preset.sphereScalingMode);
     fixedSphereRadius = preset.sphereFixedRadius;
     cursorTransparency = preset.sphereTransparency;
     showInnerSphere = preset.showInnerSphere;
+    cursorColor = preset.cursorColor;
+    innerSphereColor = preset.innerSphereColor;
+    innerSphereFactor = preset.innerSphereFactor;
+    cursorEdgeSoftness = preset.cursorEdgeSoftness;
+    cursorCenterTransparency = preset.cursorCenterTransparency;
 }
 
 // ---- Sphere Cursor Calculations ----
@@ -392,6 +404,14 @@ int main() {
         }
         };
 
+    // ---- Init Preset ----
+    if (Engine::CursorPresetManager::getPresetNames().empty()) {
+        // Create and save a default preset
+        Engine::CursorPreset defaultPreset = createPresetFromCurrentSettings("Default");
+        Engine::CursorPresetManager::savePreset("Default", defaultPreset);
+    }
+    currentPresetName = Engine::CursorPresetManager::getPresetNames().front();
+
     // ---- Calculate Largest Model Dimension ----
     float largestDimension = calculateLargestModelDimension();
 
@@ -537,6 +557,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
 
     // Render scene elements
     renderModels(shader);
+    renderPointClouds(shader);
     renderOrbitCenter(projection, view);
     renderSphereCursor(projection, view);
 
@@ -658,6 +679,43 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
 
         ImGui::SliderFloat("Near Plane", &currentScene.settings.nearPlane, 0.01f, 10.0f);
         ImGui::SliderFloat("Far Plane", &currentScene.settings.farPlane, 10.0f, 1000.0f);
+
+        ImGui::Separator();
+
+        if (ImGui::CollapsingHeader("Point Cloud Management")) {
+            
+            ImGui::Separator();
+            if (ImGui::Button("Load Point Cloud")) {
+                auto selection = pfd::open_file("Select a point cloud file", ".",
+                    { "Point Cloud Files", "*.txt *.xyz *.ply", "All Files", "*" }).result();
+                if (!selection.empty()) {
+                    PointCloud newPointCloud = loadPointCloudFile(selection[0], 1);
+                    currentScene.pointClouds.push_back(newPointCloud);
+                }
+            }
+
+            for (size_t i = 0; i < currentScene.pointClouds.size(); i++) {
+                auto& pointCloud = currentScene.pointClouds[i];
+                if (ImGui::TreeNode(pointCloud.name.c_str())) {
+                    ImGui::DragFloat3("Position", glm::value_ptr(pointCloud.position), 0.1f);
+                    ImGui::DragFloat3("Rotation", glm::value_ptr(pointCloud.rotation), 1.0f, -360.0f, 360.0f);
+                    ImGui::DragFloat3("Scale", glm::value_ptr(pointCloud.scale), 0.01f, 0.01f, 100.0f);
+
+                    if (ImGui::Button("Delete")) {
+                        // Clean up OpenGL resources
+                        glDeleteVertexArrays(1, &pointCloud.vao);
+                        glDeleteBuffers(1, &pointCloud.vbo);
+
+                        // Remove from the vector
+                        currentScene.pointClouds.erase(currentScene.pointClouds.begin() + i);
+                        ImGui::TreePop();
+                        break;
+                    }
+
+                    ImGui::TreePop();
+                }
+            }
+        }
 
         ImGui::Separator();
 
@@ -790,16 +848,104 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
 
         // Cursor Settings
         if (ImGui::CollapsingHeader("Cursor Settings")) {
-            if (ImGui::TreeNode("Cursor Presets")) {
-                if (ImGui::Button("Apply Preset 1")) {
-                    applyCursorPreset(preset1);
+            ImGui::Separator();
+
+            // Preset management
+            if (ImGui::BeginCombo("Cursor Preset", currentPresetName.c_str())) {
+                std::vector<std::string> presetNames = Engine::CursorPresetManager::getPresetNames();
+
+                // Add "New Preset" option
+                if (ImGui::Selectable("New Preset")) {
+                    currentPresetName = "New Preset";
+                    isEditingPresetName = true;
+                    strcpy_s(editPresetNameBuffer, currentPresetName.c_str());
+                }
+
+                for (const auto& name : presetNames) {
+                    bool isSelected = (currentPresetName == name);
+                    if (ImGui::Selectable(name.c_str(), isSelected)) {
+                        currentPresetName = name;
+                        try {
+                            Engine::CursorPreset loadedPreset = Engine::CursorPresetManager::applyCursorPreset(name);
+                            applyPresetToGlobalSettings(loadedPreset);
+                        }
+                        catch (const std::exception& e) {
+                            std::cerr << "Error loading preset: " << e.what() << std::endl;
+                        }
+                    }
+                    if (isSelected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+
+            // Preset name editing
+            if (isEditingPresetName) {
+                ImGui::InputText("##EditPresetName", editPresetNameBuffer, IM_ARRAYSIZE(editPresetNameBuffer));
+                ImGui::SameLine();
+                if (ImGui::Button("Save")) {
+                    std::string newName = editPresetNameBuffer;
+                    if (!newName.empty()) {
+                        if (newName != currentPresetName) {
+                            // Rename existing preset
+                            if (currentPresetName != "New Preset") {
+                                Engine::CursorPreset oldPreset = Engine::CursorPresetManager::loadPreset(currentPresetName);
+                                oldPreset.name = newName;
+                                Engine::CursorPresetManager::savePreset(newName, oldPreset);
+                                Engine::CursorPresetManager::deletePreset(currentPresetName);
+                            }
+                            // Save new preset
+                            else {
+                                Engine::CursorPreset newPreset = createPresetFromCurrentSettings(newName);
+                                Engine::CursorPresetManager::savePreset(newName, newPreset);
+                            }
+                            currentPresetName = newName;
+                        }
+                        isEditingPresetName = false;
+                    }
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Apply Preset 2")) {
-                    applyCursorPreset(preset2);
+                if (ImGui::Button("Cancel")) {
+                    isEditingPresetName = false;
+                    if (currentPresetName == "New Preset") {
+                        currentPresetName = Engine::CursorPresetManager::getPresetNames().front();
+                    }
                 }
-                ImGui::TreePop();
             }
+            else {
+                if (ImGui::Button("Rename Preset")) {
+                    isEditingPresetName = true;
+                    strcpy_s(editPresetNameBuffer, currentPresetName.c_str());
+                }
+            }
+
+            ImGui::SameLine();
+            if (ImGui::Button("Update Preset")) {
+                Engine::CursorPreset updatedPreset = createPresetFromCurrentSettings(currentPresetName);
+                Engine::CursorPresetManager::savePreset(currentPresetName, updatedPreset);
+            }
+
+            ImGui::SameLine();
+            if (ImGui::Button("Delete Preset")) {
+                if (currentPresetName != "Default") {
+                    Engine::CursorPresetManager::deletePreset(currentPresetName);
+                    std::vector<std::string> remainingPresets = Engine::CursorPresetManager::getPresetNames();
+                    if (!remainingPresets.empty()) {
+                        currentPresetName = remainingPresets.front();
+                        Engine::CursorPreset loadedPreset = Engine::CursorPresetManager::applyCursorPreset(currentPresetName);
+                        applyPresetToGlobalSettings(loadedPreset);
+                    }
+                    else {
+                        currentPresetName = "Default";
+                        // Reset to default settings
+                        // You may want to create a function to set default cursor settings
+                        //setDefaultCursorSettings();
+                    }
+                }
+            }
+
+
             if (ImGui::TreeNode("3D Sphere Cursor")) {
                 ImGui::Checkbox("Show 3D Sphere Cursor", &showSphereCursor);
 
@@ -1032,6 +1178,8 @@ void renderModels(Shader* shader)
         shader->setFloat("hasTexture", model.hasCustomTexture ? 1.0f : 0.0f);
         shader->setVec3("objectColor", model.color);
 
+        shader->setBool("isPointCloud", false);
+
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, model.normalMap);
         shader->setInt("texture_normal1", 1);
@@ -1061,6 +1209,27 @@ void renderModels(Shader* shader)
         glDrawElements(GL_TRIANGLES, model.indices.size(), GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
     }
+}
+
+void renderPointClouds(Shader* shader) {
+    for (const auto& pointCloud : currentScene.pointClouds) {
+        glm::mat4 modelMatrix = glm::mat4(1.0f);
+        modelMatrix = glm::translate(modelMatrix, pointCloud.position);
+        modelMatrix = glm::rotate(modelMatrix, glm::radians(pointCloud.rotation.x), glm::vec3(1, 0, 0));
+        modelMatrix = glm::rotate(modelMatrix, glm::radians(pointCloud.rotation.y), glm::vec3(0, 1, 0));
+        modelMatrix = glm::rotate(modelMatrix, glm::radians(pointCloud.rotation.z), glm::vec3(0, 0, 1));
+        modelMatrix = glm::scale(modelMatrix, pointCloud.scale);
+
+        shader->setMat4("model", modelMatrix);
+        shader->setBool("isPointCloud", true);
+
+        glBindVertexArray(pointCloud.vao);
+        glPointSize(5.0f); // Increase point size for better visibility
+        glDrawArrays(GL_POINTS, 0, pointCloud.points.size());
+        glBindVertexArray(0);
+    }
+
+    shader->setBool("isPointCloud", false);
 }
 
 #pragma endregion
@@ -1118,6 +1287,10 @@ void updatePointLights() {
 }
 #pragma endregion
 
+
+PointCloud loadPointCloudFile(const std::string& filePath, size_t downsampleFactor) {
+    return Engine::PointCloudLoader::loadPointCloudFile(filePath, downsampleFactor);
+}
 
 
 // ---- Cursor and Ray Casting ----

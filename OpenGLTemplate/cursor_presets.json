@@ -1,0 +1,52 @@
+{
+    "combined": {
+        "cursorCenterTransparency": 0.20000000298023224,
+        "cursorColor": [
+            0.0,
+            1.0,
+            0.19512200355529785,
+            0.699999988079071
+        ],
+        "cursorEdgeSoftness": 0.800000011920929,
+        "fragmentBaseInnerRadius": 0.004000000189989805,
+        "innerSphereColor": [
+            0.0,
+            1.0,
+            0.0,
+            1.0
+        ],
+        "innerSphereFactor": 0.10000000149011612,
+        "name": "combined",
+        "showFragmentCursor": true,
+        "showInnerSphere": false,
+        "showSphereCursor": true,
+        "sphereFixedRadius": 0.699999988079071,
+        "sphereScalingMode": 2,
+        "sphereTransparency": 1.0
+    },
+    "only 3D": {
+        "cursorCenterTransparency": 0.20000000298023224,
+        "cursorColor": [
+            0.0,
+            1.0,
+            0.19512200355529785,
+            0.699999988079071
+        ],
+        "cursorEdgeSoftness": 0.800000011920929,
+        "fragmentBaseInnerRadius": 0.004000000189989805,
+        "innerSphereColor": [
+            0.0,
+            0.17682933807373047,
+            1.0,
+            1.0
+        ],
+        "innerSphereFactor": 0.10000000149011612,
+        "name": "only 3D",
+        "showFragmentCursor": false,
+        "showInnerSphere": true,
+        "showSphereCursor": true,
+        "sphereFixedRadius": 0.699999988079071,
+        "sphereScalingMode": 1,
+        "sphereTransparency": 1.0
+    }
+}

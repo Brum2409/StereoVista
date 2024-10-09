@@ -15,6 +15,7 @@ namespace Engine {
 
     struct Scene {
         std::vector<ObjModel> models;
+        std::vector<PointCloud> pointClouds;
         SceneSettings settings;
     };
 

@@ -103,3 +103,7 @@ OpenGLTemplate/x64/Debug/vc143.pdb
 x64/Debug/Stereo Demo.pdb
 OpenGLTemplate/imgui.ini
 OpenGLTemplate/imgui.ini
+*.vsidx
+*.ipch
+OpenGLTemplate/x64/Debug/Stereo Demo.tlog/unsuccessfulbuild
+/OpenGLTemplate/x64/Debug

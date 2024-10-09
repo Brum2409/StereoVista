@@ -121,9 +121,10 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions);_CRT_SECURE_NO_WARNINGS</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>headers;src;imgui;backend</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>headers;src;headers/libs/imgui;backend;headers/libs;headers/libs/las</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -148,47 +149,52 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="headers\glad.c" />
+    <ClCompile Include="headers\libs\glad.c" />
+    <ClCompile Include="src\cursor_presets.cpp" />
     <ClCompile Include="src\engine\buffers.cpp" />
     <ClCompile Include="src\engine\input.cpp" />
     <ClCompile Include="src\engine\shader.cpp" />
     <ClCompile Include="src\engine\window.cpp" />
-    <ClCompile Include="src\imgui\backends\imgui_impl_glfw.cpp" />
-    <ClCompile Include="src\imgui\backends\imgui_impl_opengl3.cpp" />
-    <ClCompile Include="src\imgui\imgui.cpp" />
-    <ClCompile Include="src\imgui\imgui_draw.cpp" />
-    <ClCompile Include="src\imgui\imgui_tables.cpp" />
-    <ClCompile Include="src\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="headers\libs\imgui\backends\imgui_impl_glfw.cpp" />
+    <ClCompile Include="headers\libs\imgui\backends\imgui_impl_opengl3.cpp" />
+    <ClCompile Include="headers\libs\imgui\imgui.cpp" />
+    <ClCompile Include="headers\libs\imgui\imgui_draw.cpp" />
+    <ClCompile Include="headers\libs\imgui\imgui_tables.cpp" />
+    <ClCompile Include="headers\libs\imgui\imgui_widgets.cpp" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\obj_loader.cpp" />
-    <ClCompile Include="src\portable-file-dialogs.h" />
+    <ClCompile Include="headers\libs\portable-file-dialogs.h" />
+    <ClCompile Include="src\point_cloud_loader.cpp" />
     <ClCompile Include="src\scene_manager.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="headers\core.h" />
+    <ClInclude Include="headers\cursor_presets.h" />
     <ClInclude Include="headers\engine\buffers.h" />
     <ClInclude Include="headers\engine\data.h" />
     <ClInclude Include="headers\engine\input.h" />
     <ClInclude Include="headers\engine\shader.h" />
     <ClInclude Include="headers\engine\window.h" />
-    <ClInclude Include="src\Camera.h" />
-    <ClInclude Include="src\imgui\backends\imgui_impl_glfw.h" />
-    <ClInclude Include="src\imgui\backends\imgui_impl_opengl3.h" />
-    <ClInclude Include="src\imgui\backends\imgui_impl_opengl3_loader.h" />
-    <ClInclude Include="src\imgui\imconfig.h" />
-    <ClInclude Include="src\imgui\imgui.h" />
-    <ClInclude Include="src\imgui\imgui_incl.h" />
-    <ClInclude Include="src\imgui\imgui_internal.h" />
-    <ClInclude Include="src\imgui\imgui_sytle.h" />
-    <ClInclude Include="src\imgui\imstb_rectpack.h" />
-    <ClInclude Include="src\imgui\imstb_textedit.h" />
-    <ClInclude Include="src\imgui\imstb_truetype.h" />
-    <ClInclude Include="src\json.h" />
-    <ClInclude Include="src\obj_loader.h" />
-    <ClInclude Include="src\openLinks.h" />
-    <ClInclude Include="src\scene_manager.h" />
-    <ClInclude Include="src\stb_image.h" />
-    <ClInclude Include="src\tiny_obj_loader.h" />
+    <ClInclude Include="headers\Camera.h" />
+    <ClInclude Include="headers\laz_converter.h" />
+    <ClInclude Include="headers\libs\imgui\backends\imgui_impl_glfw.h" />
+    <ClInclude Include="headers\libs\imgui\backends\imgui_impl_opengl3.h" />
+    <ClInclude Include="headers\libs\imgui\backends\imgui_impl_opengl3_loader.h" />
+    <ClInclude Include="headers\libs\imgui\imconfig.h" />
+    <ClInclude Include="headers\libs\imgui\imgui.h" />
+    <ClInclude Include="headers\libs\imgui\imgui_incl.h" />
+    <ClInclude Include="headers\libs\imgui\imgui_internal.h" />
+    <ClInclude Include="headers\libs\imgui\imgui_sytle.h" />
+    <ClInclude Include="headers\libs\imgui\imstb_rectpack.h" />
+    <ClInclude Include="headers\libs\imgui\imstb_textedit.h" />
+    <ClInclude Include="headers\libs\imgui\imstb_truetype.h" />
+    <ClInclude Include="headers\libs\json.h" />
+    <ClInclude Include="headers\obj_loader.h" />
+    <ClInclude Include="headers\libs\openLinks.h" />
+    <ClInclude Include="headers\point_cloud_loader.h" />
+    <ClInclude Include="headers\scene_manager.h" />
+    <ClInclude Include="headers\libs\stb_image.h" />
+    <ClInclude Include="headers\libs\tiny_obj_loader.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="assets\shaders\fragmentShader.glsl" />

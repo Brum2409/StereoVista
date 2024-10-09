@@ -3,6 +3,7 @@
 #include <iostream>
 #include <json.h>
 #include "obj_loader.h"
+#include "point_cloud_loader.h"
 
 using json = nlohmann::json;
 
@@ -36,6 +37,24 @@ namespace Engine {
         j["settings"]["convergence"] = scene.settings.convergence;
         j["settings"]["nearPlane"] = scene.settings.nearPlane;
         j["settings"]["farPlane"] = scene.settings.farPlane;
+
+        for (const auto& pointCloud : scene.pointClouds) {
+            json pointCloudJson;
+            pointCloudJson["name"] = pointCloud.name;
+            pointCloudJson["position"] = { pointCloud.position.x, pointCloud.position.y, pointCloud.position.z };
+            pointCloudJson["rotation"] = { pointCloud.rotation.x, pointCloud.rotation.y, pointCloud.rotation.z };
+            pointCloudJson["scale"] = { pointCloud.scale.x, pointCloud.scale.y, pointCloud.scale.z };
+
+            // Save point data
+            for (const auto& point : pointCloud.points) {
+                pointCloudJson["points"].push_back({
+                    {"position", {point.position.x, point.position.y, point.position.z}},
+                    {"color", {point.color.r, point.color.g, point.color.b}}
+                    });
+            }
+
+            j["pointClouds"].push_back(pointCloudJson);
+        }
 
         std::ofstream file(filename);
         file << std::setw(4) << j << std::endl;
@@ -120,7 +139,43 @@ namespace Engine {
         scene.settings.nearPlane = j["settings"]["nearPlane"];
         scene.settings.farPlane = j["settings"]["farPlane"];
 
+        if (j.contains("pointClouds")) {
+            for (const auto& pointCloudJson : j["pointClouds"]) {
+                PointCloud pointCloud = PointCloudLoader::loadPointCloudFile(pointCloudJson["filePath"]);
+                pointCloud.name = pointCloudJson["name"];
+                pointCloud.position = glm::vec3(pointCloudJson["position"][0], pointCloudJson["position"][1], pointCloudJson["position"][2]);
+                pointCloud.rotation = glm::vec3(pointCloudJson["rotation"][0], pointCloudJson["rotation"][1], pointCloudJson["rotation"][2]);
+                pointCloud.scale = glm::vec3(pointCloudJson["scale"][0], pointCloudJson["scale"][1], pointCloudJson["scale"][2]);
+
+                for (const auto& pointJson : pointCloudJson["points"]) {
+                    PointCloudPoint point;
+                    point.position = glm::vec3(pointJson["position"][0], pointJson["position"][1], pointJson["position"][2]);
+                    point.color = glm::vec3(pointJson["color"][0], pointJson["color"][1], pointJson["color"][2]);
+                    pointCloud.points.push_back(point);
+                }
+
+                // Recreate VAO and VBO
+                glGenVertexArrays(1, &pointCloud.vao);
+                glGenBuffers(1, &pointCloud.vbo);
+
+                glBindVertexArray(pointCloud.vao);
+                glBindBuffer(GL_ARRAY_BUFFER, pointCloud.vbo);
+                glBufferData(GL_ARRAY_BUFFER, pointCloud.points.size() * sizeof(PointCloudPoint), pointCloud.points.data(), GL_STATIC_DRAW);
+
+                glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(PointCloudPoint), (void*)0);
+                glEnableVertexAttribArray(0);
+                glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(PointCloudPoint), (void*)offsetof(PointCloudPoint, color));
+                glEnableVertexAttribArray(1);
+
+                glBindVertexArray(0);
+
+                scene.pointClouds.push_back(pointCloud);
+            }
+        }
+
         return scene;
     }
+
+ 
 
 }  // namespace Engine

@@ -6,6 +6,8 @@ in vec3 FragPos;
 in vec3 Normal;
 in vec2 TexCoords;
 in mat3 TBN;
+in vec3 VertexColor;
+in float Intensity;
 
 // Point light structure
 struct PointLight {
@@ -15,6 +17,7 @@ struct PointLight {
 };
 
 // Uniforms
+uniform bool isPointCloud;
 uniform vec3 viewPos;
 uniform sampler2D texture_diffuse1;
 uniform sampler2D texture_normal1;
@@ -73,46 +76,51 @@ vec3 calculatePointLight(PointLight light, vec3 normal, vec3 fragPos, vec3 viewD
 
 void main()
 {
-    // Determine base color (either from texture or object color)
-    vec3 baseColor = hasTexture > 0.5 ? texture(texture_diffuse1, TexCoords).rgb : objectColor;
-
-    // Normal mapping
-    vec3 norm;
-    if (hasNormalMap) {
-        vec3 tangentNormal = texture(texture_normal1, TexCoords).xyz * 2.0 - 1.0;
-        norm = normalize(TBN * tangentNormal);
+    if (isPointCloud) {
+        // For point clouds, use the vertex color modulated by intensity
+    FragColor = vec4(VertexColor * Intensity, 1.0);
     } else {
-        norm = normalize(Normal);
+        // Determine base color (either from texture or object color)
+        vec3 baseColor = hasTexture > 0.5 ? texture(texture_diffuse1, TexCoords).rgb : objectColor;
+
+        // Normal mapping
+        vec3 norm;
+        if (hasNormalMap) {
+            vec3 tangentNormal = texture(texture_normal1, TexCoords).xyz * 2.0 - 1.0;
+            norm = normalize(TBN * tangentNormal);
+        } else {
+            norm = normalize(Normal);
+        }
+
+        // Specular mapping
+        float specularStrength = hasSpecularMap ? texture(texture_specular1, TexCoords).r : 0.5;
+
+        // Ambient Occlusion
+        float aoFactor = hasAOMap ? texture(texture_ao1, TexCoords).r : 1.0;
+
+        vec3 viewDir = normalize(viewPos - FragPos);
+        
+        vec3 result = vec3(0.0);
+        
+        // Calculate contribution from all point lights
+        for(int i = 0; i < numLights; i++)
+        {
+            result += calculatePointLight(lights[i], norm, FragPos, viewDir, specularStrength);
+        }
+        
+        // Apply ambient occlusion and base color
+        result *= aoFactor * baseColor;
+
+        // Add emissive effect
+        result += emissive * baseColor;
+        
+        // Apply selection highlight if in selection mode and selected
+        if (selectionMode && isSelected) {
+            result = mix(result, vec3(1.0, 0.0, 0.0), 0.3); // Red highlight
+        }
+        
+        FragColor = vec4(result, 1.0);
     }
-
-    // Specular mapping
-    float specularStrength = hasSpecularMap ? texture(texture_specular1, TexCoords).r : 0.5;
-
-    // Ambient Occlusion
-    float aoFactor = hasAOMap ? texture(texture_ao1, TexCoords).r : 1.0;
-
-    vec3 viewDir = normalize(viewPos - FragPos);
-    
-    vec3 result = vec3(0.0);
-    
-    // Calculate contribution from all point lights
-    for(int i = 0; i < numLights; i++)
-    {
-        result += calculatePointLight(lights[i], norm, FragPos, viewDir, specularStrength);
-    }
-    
-    // Apply ambient occlusion and base color
-    result *= aoFactor * baseColor;
-
-    // Add emissive effect
-    result += emissive * baseColor;
-    
-    // Apply selection highlight if in selection mode and selected
-    if (selectionMode && isSelected) {
-        result = mix(result, vec3(1.0, 0.0, 0.0), 0.3); // Red highlight
-    }
-    
-    FragColor = vec4(result, 1.0);
 
     // Fragment shader cursor rendering
     if (showFragmentCursor)

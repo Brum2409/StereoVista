@@ -18,7 +18,7 @@
     <ClCompile Include="src\main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="headers\glad.c">
+    <ClCompile Include="headers\libs\glad.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\engine\window.cpp">
@@ -36,28 +36,34 @@
     <ClCompile Include="src\obj_loader.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\imgui\imgui.cpp">
+    <ClCompile Include="headers\libs\imgui\imgui.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\imgui\imgui_draw.cpp">
+    <ClCompile Include="headers\libs\imgui\imgui_draw.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\imgui\imgui_tables.cpp">
+    <ClCompile Include="headers\libs\imgui\imgui_tables.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\imgui\imgui_widgets.cpp">
+    <ClCompile Include="headers\libs\imgui\imgui_widgets.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\imgui\backends\imgui_impl_glfw.cpp">
+    <ClCompile Include="headers\libs\imgui\backends\imgui_impl_glfw.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\imgui\backends\imgui_impl_opengl3.cpp">
+    <ClCompile Include="headers\libs\imgui\backends\imgui_impl_opengl3.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\portable-file-dialogs.h">
+    <ClCompile Include="headers\libs\portable-file-dialogs.h">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\scene_manager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\cursor_presets.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\point_cloud_loader.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -80,58 +86,67 @@
     <ClInclude Include="headers\engine\data.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="src\tiny_obj_loader.h">
+    <ClInclude Include="headers\libs\tiny_obj_loader.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="src\Camera.h">
+    <ClInclude Include="headers\Camera.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="src\stb_image.h">
+    <ClInclude Include="headers\libs\stb_image.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="src\imgui\imconfig.h">
+    <ClInclude Include="headers\libs\imgui\imconfig.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="src\imgui\imgui.h">
+    <ClInclude Include="headers\libs\imgui\imgui.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="src\imgui\imgui_internal.h">
+    <ClInclude Include="headers\libs\imgui\imgui_internal.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="src\imgui\imstb_rectpack.h">
+    <ClInclude Include="headers\libs\imgui\imstb_rectpack.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="src\imgui\imstb_textedit.h">
+    <ClInclude Include="headers\libs\imgui\imstb_textedit.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="src\imgui\imstb_truetype.h">
+    <ClInclude Include="headers\libs\imgui\imstb_truetype.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="src\imgui\backends\imgui_impl_glfw.h">
+    <ClInclude Include="headers\libs\imgui\backends\imgui_impl_glfw.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="src\imgui\backends\imgui_impl_opengl3.h">
+    <ClInclude Include="headers\libs\imgui\backends\imgui_impl_opengl3.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="src\imgui\backends\imgui_impl_opengl3_loader.h">
+    <ClInclude Include="headers\libs\imgui\backends\imgui_impl_opengl3_loader.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="src\imgui\imgui_sytle.h">
+    <ClInclude Include="headers\libs\imgui\imgui_sytle.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="src\obj_loader.h">
+    <ClInclude Include="headers\obj_loader.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="src\json.h">
+    <ClInclude Include="headers\libs\json.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="src\imgui\imgui_incl.h">
+    <ClInclude Include="headers\libs\imgui\imgui_incl.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="src\scene_manager.h">
+    <ClInclude Include="headers\scene_manager.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="src\openLinks.h">
+    <ClInclude Include="headers\libs\openLinks.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\cursor_presets.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\laz_converter.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\point_cloud_loader.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
