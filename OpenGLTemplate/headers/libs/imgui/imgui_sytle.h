@@ -14,13 +14,13 @@ inline void SetupImGuiStyle(bool bStyleDark_, float alpha_)
     // light style from Pacôme Danhiez (user itamago) https://github.com/ocornut/imgui/pull/511#issuecomment-175719267
     style.Alpha = 1.0f;
     
-    style.FrameRounding = 4.0f;  // Rounded corners for a modern look
-    style.WindowRounding = 4.0f;
-    style.GrabRounding = 4.0f;
-    style.ScrollbarRounding = 4.0f;
-    style.ChildRounding = 4.0f;
-    style.ItemSpacing = ImVec2(5.0f, 5.0f);
-    style.ScaleAllSizes(3.0f);
+    style.FrameRounding = 2.0f;  // Rounded corners for a modern look
+    style.WindowRounding = 2.0f;
+    style.GrabRounding = 2.0f;
+    style.ScrollbarRounding = 2.0f;
+    style.ChildRounding = 2.0f;
+    style.ItemSpacing = ImVec2(6.0f, 5.0f);
+    style.ScaleAllSizes(2.5f);
     
     style.Colors[ImGuiCol_Text] = ImVec4(0.00f, 0.00f, 0.00f, 1.00f);
     style.Colors[ImGuiCol_TextDisabled] = ImVec4(0.60f, 0.60f, 0.60f, 1.00f);

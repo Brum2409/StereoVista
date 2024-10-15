@@ -33,6 +33,7 @@ namespace Engine {
         float shininess;
         float emissive;
         bool hasCustomTexture;
+        bool visible = true;
 
         std::string diffuseTexturePath;
         std::string normalTexturePath;

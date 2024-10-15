@@ -33,6 +33,7 @@ uniform bool isSelected;
 uniform vec3 objectColor;
 uniform float shininess;
 uniform float emissive;
+uniform bool isChunkOutline;
 
 // Cursor uniforms
 uniform float baseOuterRadius;
@@ -76,6 +77,11 @@ vec3 calculatePointLight(PointLight light, vec3 normal, vec3 fragPos, vec3 viewD
 
 void main()
 {
+if (isChunkOutline) {
+    FragColor = vec4(1.0, 1.0, 0.0, 1.0); // Yellow outline
+    return;
+}
+
     if (isPointCloud) {
         // For point clouds, use the vertex color modulated by intensity
     FragColor = vec4(VertexColor * Intensity, 1.0);

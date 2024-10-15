@@ -1,6 +1,8 @@
 // ---- Core Definitions ----
 #define NOMINMAX
 #include "core.h"
+#include <thread>
+#include <atomic>
 
 // ---- Asset Loading ----
 #define TINYOBJLOADER_IMPLEMENTATION
@@ -41,6 +43,10 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
 void renderSphereCursor(const glm::mat4& projection, const glm::mat4& view);
 void renderOrbitCenter(const glm::mat4& projection, const glm::mat4& view);
 void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags windowFlags, Shader* shader);
+void renderCursorSettingsWindow();
+void renderModelManipulationPanel(Engine::ObjModel& model, Shader* shader);
+void renderPointCloudManipulationPanel(Engine::PointCloud& pointCloud);
+void deleteSelectedPointCloud();
 void renderModels(Shader* shader);
 
 void renderPointClouds(Shader* shader);
@@ -79,6 +85,7 @@ static char modelPathBuffer[256] = ""; // Buffer for ImGui model path input
 Camera camera(glm::vec3(0.0f, 0.0f, 3.0f));
 float lastX = 1920.0f / 2.0;
 float lastY = 1080.0f / 2.0;
+float aspectRatio = 1.0f;
 
 // ---- Stereo Rendering Settings ----
 float maxSeparation = 0.05f;   // Maximum stereo separation
@@ -92,6 +99,19 @@ float maxConvergence = 3.0f;   // Maximum convergence
 bool showGui = true;
 bool showFPS = true;
 bool showInfoWindow = false;
+bool showSettingsWindow = false;
+bool show3DCursor = true;
+bool showCursorSettingsWindow = false;
+enum class SelectedType {
+    None,
+    Model,
+    PointCloud
+};
+
+std::atomic<bool> isRecalculatingChunks(false);
+
+SelectedType currentSelectedType = SelectedType::None;
+int currentSelectedIndex = -1;
 
 // ---- Scene Persistence ----
 static char saveFilename[256] = "scene.json"; // Buffer for saving scene filename
@@ -107,6 +127,7 @@ bool isMouseCaptured = false;
 bool leftMousePressed = false;   // Left mouse button state
 bool rightMousePressed = false;  // Right mouse button state
 bool middleMousePressed = false; // Middle mouse button state
+bool ctrlPressed = false;
 double lastClickTime = 0.0;
 const double doubleClickTime = 0.3; // 300 ms double-click threshold
 
@@ -187,6 +208,25 @@ struct CursorPreset {
     float sphereTransparency;
     bool showInnerSphere;
 };
+
+void setDefaultCursorSettings() {
+    showSphereCursor = true;
+    showFragmentCursor = true;
+    currentCursorScalingMode = CURSOR_CONSTRAINED_DYNAMIC;
+    fixedSphereRadius = 0.05f;
+    cursorColor = glm::vec4(1.0f, 0.0f, 0.0f, 0.7f);
+    cursorTransparency = 0.7f;
+    cursorEdgeSoftness = 0.8f;
+    cursorCenterTransparency = 0.2f;
+    showInnerSphere = false;
+    innerSphereColor = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
+    innerSphereFactor = 0.1f;
+    orbitFollowsCursor = true;
+    showOrbitCenter = false;
+    orbitCenterColor = glm::vec4(0.0f, 1.0f, 0.0f, 0.7f);
+    orbitCenterSphereRadius = 0.2f;
+    fragmentCursorSettings = FragmentShaderCursorSettings();
+}
 #pragma endregion
 
 
@@ -453,7 +493,7 @@ int main() {
 
         // ---- Set Projection Matrices ----
         glm::mat4 view = camera.GetViewMatrix();
-        float aspectRatio = (float)windowWidth / (float)windowHeight;
+        aspectRatio = (float)windowWidth / (float)windowHeight;
         glm::mat4 projection = camera.GetProjectionMatrix(aspectRatio, currentScene.settings.nearPlane, currentScene.settings.farPlane);
         glm::mat4 leftProjection = camera.offsetProjection(projection, currentScene.settings.separation / 2, abs(camera.Position.z) * currentScene.settings.convergence);
         glm::mat4 rightProjection = camera.offsetProjection(projection, -currentScene.settings.separation / 2, abs(camera.Position.z) * currentScene.settings.convergence);
@@ -502,6 +542,14 @@ void cleanup(Shader* shader) {
     glDeleteBuffers(1, &sphereVBO);
     glDeleteBuffers(1, &sphereEBO);
     delete sphereShader;
+
+    for (auto& pointCloud : currentScene.pointClouds) {
+        for (auto& chunk : pointCloud.chunks) {
+            glDeleteBuffers(chunk.lodVBOs.size(), chunk.lodVBOs.data());
+        }
+        glDeleteVertexArrays(1, &pointCloud.vao);
+    }
+
     glfwTerminate();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
@@ -664,477 +712,170 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
     ImGui::NewFrame();
 
     if (showGui) {
-        ImGui::BeginViewportSideBar("##ToolBar", viewport, ImGuiDir_Left, 630.0f, windowFlags | ImGuiWindowFlags_NoNavInputs);
-
-        // Slider controls
-        ImGui::Text("Camera Settings");
-        ImGui::Separator();
-        ImGui::SliderFloat("Separation", &currentScene.settings.separation, minSeparation, maxSeparation);
-
-        ImGui::SliderFloat("Convergence / ZFocus", &currentScene.settings.convergence, minConvergence, maxConvergence);
-
-        // FPS and Camera Settings
-        ImGui::SliderFloat("Camera Speed Multiplier", &camera.speedFactor, 0.1f, 5.0f);
-        ImGui::Checkbox("Show FPS", &showFPS);
-
-        ImGui::SliderFloat("Near Plane", &currentScene.settings.nearPlane, 0.01f, 10.0f);
-        ImGui::SliderFloat("Far Plane", &currentScene.settings.farPlane, 10.0f, 1000.0f);
-
-        ImGui::Separator();
-
-        if (ImGui::CollapsingHeader("Point Cloud Management")) {
-            
-            ImGui::Separator();
-            if (ImGui::Button("Load Point Cloud")) {
-                auto selection = pfd::open_file("Select a point cloud file", ".",
-                    { "Point Cloud Files", "*.txt *.xyz *.ply", "All Files", "*" }).result();
-                if (!selection.empty()) {
-                    PointCloud newPointCloud = loadPointCloudFile(selection[0], 1);
-                    currentScene.pointClouds.push_back(newPointCloud);
-                }
-            }
-
-            for (size_t i = 0; i < currentScene.pointClouds.size(); i++) {
-                auto& pointCloud = currentScene.pointClouds[i];
-                if (ImGui::TreeNode(pointCloud.name.c_str())) {
-                    ImGui::DragFloat3("Position", glm::value_ptr(pointCloud.position), 0.1f);
-                    ImGui::DragFloat3("Rotation", glm::value_ptr(pointCloud.rotation), 1.0f, -360.0f, 360.0f);
-                    ImGui::DragFloat3("Scale", glm::value_ptr(pointCloud.scale), 0.01f, 0.01f, 100.0f);
-
-                    if (ImGui::Button("Delete")) {
-                        // Clean up OpenGL resources
-                        glDeleteVertexArrays(1, &pointCloud.vao);
-                        glDeleteBuffers(1, &pointCloud.vbo);
-
-                        // Remove from the vector
-                        currentScene.pointClouds.erase(currentScene.pointClouds.begin() + i);
-                        ImGui::TreePop();
-                        break;
-                    }
-
-                    ImGui::TreePop();
-                }
-            }
-        }
-
-        ImGui::Separator();
-
-        // Model loading UI
-        ImGui::Text("Model Loading");
-        ImGui::InputText("Model Path", modelPathBuffer, IM_ARRAYSIZE(modelPathBuffer));
-        if (ImGui::Button("Browse##Model")) {
-            auto selection = pfd::open_file("Select a model file", ".",
-                { "OBJ Files", "*.obj", "All Files", "*" }).result();
-            if (!selection.empty()) {
-                strncpy_s(modelPathBuffer, selection[0].c_str(), sizeof(modelPathBuffer) - 1);
-            }
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Load Model")) {
-            Engine::ObjModel newModel = Engine::loadObjFile(modelPathBuffer);
-            currentScene.models.push_back(newModel);
-            currentModelIndex = currentScene.models.size() - 1;
-        }
-
-        ImGui::Separator();
-
-        // Model selection and manipulation
-        if (!currentScene.models.empty()) {
-            ImGui::Text("Model Manipulation");
-            if (ImGui::BeginCombo("Select Model", currentScene.models[currentModelIndex].name.c_str())) {
-                for (int i = 0; i < currentScene.models.size(); i++) {
-                    bool isSelected = (currentModelIndex == i);
-                    if (ImGui::Selectable(currentScene.models[i].name.c_str(), isSelected)) {
-                        currentModelIndex = i;
-                    }
-                    if (isSelected) {
-                        ImGui::SetItemDefaultFocus();
-                    }
-                }
-                ImGui::EndCombo();
-            }
-
-            if (currentModelIndex >= 0) {
-                ImGui::DragFloat3("Position", glm::value_ptr(currentScene.models[currentModelIndex].position), 0.1f);
-                ImGui::DragFloat3("Scale", glm::value_ptr(currentScene.models[currentModelIndex].scale), 0.1f);
-                ImGui::DragFloat3("Rotation", glm::value_ptr(currentScene.models[currentModelIndex].rotation), 1.0f, -360.0f, 360.0f);
-
-                ImGui::Text("Texture Loading");
-
-                auto textureLoadingGUI = [&](const char* label, GLuint& textureID, std::string& texturePath, const char* uniformName) {
-                    char pathBuffer[256];
-                    strncpy_s(pathBuffer, texturePath.c_str(), sizeof(pathBuffer));
-                    pathBuffer[sizeof(pathBuffer) - 1] = '\0';
-
-                    ImGui::Text("%s", label);
-                    if (ImGui::InputText(("Path##" + std::string(label)).c_str(), pathBuffer, IM_ARRAYSIZE(pathBuffer))) {
-                        texturePath = pathBuffer;
-                    }
-                    if (ImGui::Button(("Browse##" + std::string(label)).c_str())) {
-                        auto selection = pfd::open_file("Select a texture file", ".",
-                            { "Image Files", "*.png *.jpg *.jpeg *.bmp", "All Files", "*" }).result();
-                        if (!selection.empty()) {
-                            texturePath = selection[0];
+        // Top bar
+        if (ImGui::BeginMainMenuBar()) {
+            if (ImGui::BeginMenu("File")) {
+                if (ImGui::MenuItem("Open")) {
+                    auto selection = pfd::open_file("Select a file to open", ".",
+                        { "All Supported Files", "*.obj *.txt *.xyz *.ply *.pcb",
+                          "OBJ Files", "*.obj",
+                          "Point Cloud Files", "*.txt *.xyz *.ply *.pcb",
+                          "All Files", "*" }).result();
+                    if (!selection.empty()) {
+                        std::string filePath = selection[0];
+                        std::string extension = std::filesystem::path(filePath).extension().string();
+                        if (extension == ".obj") {
+                            Engine::ObjModel newModel = Engine::loadObjFile(filePath);
+                            currentScene.models.push_back(newModel);
+                            currentModelIndex = currentScene.models.size() - 1;
                         }
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button(("Load##" + std::string(label)).c_str())) {
-                        GLuint newTexture = loadTextureFromFile(texturePath.c_str());
-                        if (newTexture != 0) {
-                            if (textureID != 0) {
-                                glDeleteTextures(1, &textureID);
+                        else if (extension == ".txt" || extension == ".xyz" || extension == ".ply") {
+                            PointCloud newPointCloud = Engine::PointCloudLoader::loadPointCloudFile(filePath);
+                            newPointCloud.filePath = filePath;
+                            currentScene.pointClouds.push_back(newPointCloud);
+                        }
+                        else if (extension == ".pcb") {
+                            PointCloud newPointCloud = Engine::PointCloudLoader::loadFromBinary(filePath);
+                            if (!newPointCloud.points.empty()) {
+                                newPointCloud.filePath = filePath;
+                                newPointCloud.name = std::filesystem::path(filePath).stem().string();
+                                currentScene.pointClouds.push_back(newPointCloud);
+                                std::cout << "Added point cloud: " << newPointCloud.name << " with " << newPointCloud.points.size() << " points" << std::endl;
                             }
-                            textureID = newTexture;
-                            std::cout << label << " loaded successfully." << std::endl;
-                            currentScene.models[currentModelIndex].hasCustomTexture = true;
-                            shader->use();
-                            shader->setInt(uniformName, textureID);
-                        }
-                    }
-                    };
-
-                textureLoadingGUI("Diffuse Texture", currentScene.models[currentModelIndex].texture,
-                    currentScene.models[currentModelIndex].diffuseTexturePath, "texture_diffuse1");
-
-                // ---- There is currently a problem with displaying Normal Maps ----
-                /*textureLoadingGUI("Normal Map", currentScene.models[currentModelIndex].normalMap,
-                    currentScene.models[currentModelIndex].normalTexturePath, "texture_normal1");*/
-
-                textureLoadingGUI("Specular Map", currentScene.models[currentModelIndex].specularMap,
-                    currentScene.models[currentModelIndex].specularTexturePath, "texture_specular1");
-                textureLoadingGUI("AO Map", currentScene.models[currentModelIndex].aoMap,
-                    currentScene.models[currentModelIndex].aoTexturePath, "texture_ao1");
-
-                if (ImGui::Button("Delete Selected Model")) {
-                    deleteSelectedModel();
-                }
-            }
-        }
-
-        ImGui::Separator();
-
-        // Adding and clearing cubes
-        ImGui::Text("Cube Operations");
-        if (ImGui::Button("Add Cube")) {
-            ObjModel newCube = Engine::createCube(glm::vec3(1.0f, 1.0f, 1.0f), 10.0f, 0.0f);
-            currentScene.models.push_back(newCube);
-            currentModelIndex = currentScene.models.size() - 1;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Clear Cubes")) {
-            currentScene.models.erase(
-                std::remove_if(currentScene.models.begin(), currentScene.models.end(),
-                    [](const ObjModel& model) { return model.name == "Cube"; }),
-                currentScene.models.end()
-            );
-            if (currentModelIndex >= currentScene.models.size()) {
-                currentModelIndex = currentScene.models.empty() ? -1 : currentScene.models.size() - 1;
-            }
-        }
-
-        ImGui::Separator();
-
-        // Model properties
-        if (currentModelIndex >= 0 && currentModelIndex < currentScene.models.size()) {
-            auto& model = currentScene.models[currentModelIndex];
-            ImGui::Text("Model Properties");
-            ImGui::ColorEdit3("Model Color", glm::value_ptr(model.color));
-            ImGui::SliderFloat("Model Shininess", &model.shininess, 1.0f, 90.0f);
-            ImGui::SliderFloat("Model Emissive", &model.emissive, 0.0f, 1.0f);
-        }
-
-        ImGui::Separator();
-
-
-        // Cursor Settings
-        if (ImGui::CollapsingHeader("Cursor Settings")) {
-            ImGui::Separator();
-
-            // Preset management
-            if (ImGui::BeginCombo("Cursor Preset", currentPresetName.c_str())) {
-                std::vector<std::string> presetNames = Engine::CursorPresetManager::getPresetNames();
-
-                // Add "New Preset" option
-                if (ImGui::Selectable("New Preset")) {
-                    currentPresetName = "New Preset";
-                    isEditingPresetName = true;
-                    strcpy_s(editPresetNameBuffer, currentPresetName.c_str());
-                }
-
-                for (const auto& name : presetNames) {
-                    bool isSelected = (currentPresetName == name);
-                    if (ImGui::Selectable(name.c_str(), isSelected)) {
-                        currentPresetName = name;
-                        try {
-                            Engine::CursorPreset loadedPreset = Engine::CursorPresetManager::applyCursorPreset(name);
-                            applyPresetToGlobalSettings(loadedPreset);
-                        }
-                        catch (const std::exception& e) {
-                            std::cerr << "Error loading preset: " << e.what() << std::endl;
-                        }
-                    }
-                    if (isSelected) {
-                        ImGui::SetItemDefaultFocus();
-                    }
-                }
-                ImGui::EndCombo();
-            }
-
-            // Preset name editing
-            if (isEditingPresetName) {
-                ImGui::InputText("##EditPresetName", editPresetNameBuffer, IM_ARRAYSIZE(editPresetNameBuffer));
-                ImGui::SameLine();
-                if (ImGui::Button("Save")) {
-                    std::string newName = editPresetNameBuffer;
-                    if (!newName.empty()) {
-                        if (newName != currentPresetName) {
-                            // Rename existing preset
-                            if (currentPresetName != "New Preset") {
-                                Engine::CursorPreset oldPreset = Engine::CursorPresetManager::loadPreset(currentPresetName);
-                                oldPreset.name = newName;
-                                Engine::CursorPresetManager::savePreset(newName, oldPreset);
-                                Engine::CursorPresetManager::deletePreset(currentPresetName);
-                            }
-                            // Save new preset
                             else {
-                                Engine::CursorPreset newPreset = createPresetFromCurrentSettings(newName);
-                                Engine::CursorPresetManager::savePreset(newName, newPreset);
+                                std::cerr << "Failed to load point cloud from: " << filePath << std::endl;
                             }
-                            currentPresetName = newName;
-                        }
-                        isEditingPresetName = false;
-                    }
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Cancel")) {
-                    isEditingPresetName = false;
-                    if (currentPresetName == "New Preset") {
-                        currentPresetName = Engine::CursorPresetManager::getPresetNames().front();
-                    }
-                }
-            }
-            else {
-                if (ImGui::Button("Rename Preset")) {
-                    isEditingPresetName = true;
-                    strcpy_s(editPresetNameBuffer, currentPresetName.c_str());
-                }
-            }
-
-            ImGui::SameLine();
-            if (ImGui::Button("Update Preset")) {
-                Engine::CursorPreset updatedPreset = createPresetFromCurrentSettings(currentPresetName);
-                Engine::CursorPresetManager::savePreset(currentPresetName, updatedPreset);
-            }
-
-            ImGui::SameLine();
-            if (ImGui::Button("Delete Preset")) {
-                if (currentPresetName != "Default") {
-                    Engine::CursorPresetManager::deletePreset(currentPresetName);
-                    std::vector<std::string> remainingPresets = Engine::CursorPresetManager::getPresetNames();
-                    if (!remainingPresets.empty()) {
-                        currentPresetName = remainingPresets.front();
-                        Engine::CursorPreset loadedPreset = Engine::CursorPresetManager::applyCursorPreset(currentPresetName);
-                        applyPresetToGlobalSettings(loadedPreset);
-                    }
-                    else {
-                        currentPresetName = "Default";
-                        // Reset to default settings
-                        // You may want to create a function to set default cursor settings
-                        //setDefaultCursorSettings();
-                    }
-                }
-            }
-
-
-            if (ImGui::TreeNode("3D Sphere Cursor")) {
-                ImGui::Checkbox("Show 3D Sphere Cursor", &showSphereCursor);
-
-                if (showSphereCursor) {
-                    ImGui::Checkbox("Orbit Follows Cursor", &orbitFollowsCursor);
-
-                    if (!orbitFollowsCursor) {
-                        ImGui::Checkbox("Show Orbit Center", &showOrbitCenter);
-                        if (showOrbitCenter) {
-                            float color[4] = { orbitCenterColor.r, orbitCenterColor.g, orbitCenterColor.b, orbitCenterColor.a };
-                            if (ImGui::ColorEdit4("Orbit Center Color", color)) {
-                                orbitCenterColor = glm::vec4(color[0], color[1], color[2], color[3]);
-                            }
-
-                            ImGui::SliderFloat("Orbit Center Size", &orbitCenterSphereRadius, 0.01f, 1.0f);
                         }
                     }
-
-                    const char* scalingModes[] = { "Normal", "Fixed", "Constrained Dynamic", "Logarithmic" };
-                    int currentMode = static_cast<int>(currentCursorScalingMode);
-                    if (ImGui::Combo("Cursor Scaling Mode", &currentMode, scalingModes, IM_ARRAYSIZE(scalingModes))) {
-                        currentCursorScalingMode = static_cast<CursorScalingMode>(currentMode);
-                    }
-
-                    ImGui::SliderFloat("Fixed Sphere Radius", &fixedSphereRadius, 0.01f, 3.0f);
-
-                    if (currentCursorScalingMode == CURSOR_CONSTRAINED_DYNAMIC) {
-                        ImGui::SliderFloat("Min Difference", &minDiff, 0.001f, 0.1f);
-                        ImGui::SliderFloat("Max Difference", &maxDiff, 0.01f, 1.0f);
-                    }
-
-                    float color[4] = { cursorColor.r, cursorColor.g, cursorColor.b, cursorColor.a };
-                    if (ImGui::ColorEdit4("Cursor Color", color)) {
-                        cursorColor = glm::vec4(color[0], color[1], color[2], color[3]);
-                    }
-
-                    ImGui::SliderFloat("Cursor Transparency", &cursorTransparency, 0.0f, 1.0f);
-                    ImGui::SliderFloat("Edge Softness", &cursorEdgeSoftness, 0.0f, 1.0f);
-                    ImGui::SliderFloat("Center Transparency", &cursorCenterTransparency, 0.0f, 1.0f);
-
-                    ImGui::Checkbox("Show Inner Sphere", &showInnerSphere);
-                    if (showInnerSphere) {
-                        float innerColor[4] = { innerSphereColor.r, innerSphereColor.g, innerSphereColor.b, innerSphereColor.a };
-                        if (ImGui::ColorEdit4("Inner Sphere Color", innerColor)) {
-                            innerSphereColor = glm::vec4(innerColor[0], innerColor[1], innerColor[2], innerColor[3]);
-                        }
-                        ImGui::SliderFloat("Inner Sphere Factor", &innerSphereFactor, 0.1f, 0.9f);
+                }
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Scene")) {
+                if (ImGui::MenuItem("Load")) {
+                    auto selection = pfd::open_file("Select a scene file to load", ".",
+                        { "JSON Files", "*.json", "All Files", "*" }).result();
+                    if (!selection.empty()) {
+                        currentScene = Engine::loadScene(selection[0]);
+                        currentModelIndex = currentScene.models.empty() ? -1 : 0;
                     }
                 }
-
-                ImGui::TreePop();
-            }
-
-            if (ImGui::TreeNode("Fragment Shader Cursor")) {
-                ImGui::Checkbox("Show Fragment Shader Cursor", &showFragmentCursor);
-
-                if (showFragmentCursor) {
-                    ImGui::SliderFloat("Outer Radius", &fragmentCursorSettings.baseOuterRadius, 0.0f, 0.2f);
-                    ImGui::SliderFloat("Outer Border Thickness", &fragmentCursorSettings.baseOuterBorderThickness, 0.01f, 0.05f);
-                    ImGui::SliderFloat("Inner Radius", &fragmentCursorSettings.baseInnerRadius, 0.0f, 0.1f);
-                    ImGui::SliderFloat("Inner Border Thickness", &fragmentCursorSettings.baseInnerBorderThickness, 0.01f, 0.05f);
-
-                    float outerColor[4] = { fragmentCursorSettings.outerColor.r, fragmentCursorSettings.outerColor.g, fragmentCursorSettings.outerColor.b, fragmentCursorSettings.outerColor.a };
-                    if (ImGui::ColorEdit4("Outer Color", outerColor)) {
-                        fragmentCursorSettings.outerColor = glm::vec4(outerColor[0], outerColor[1], outerColor[2], outerColor[3]);
-                    }
-
-                    float innerColor[4] = { fragmentCursorSettings.innerColor.r, fragmentCursorSettings.innerColor.g, fragmentCursorSettings.innerColor.b, fragmentCursorSettings.innerColor.a };
-                    if (ImGui::ColorEdit4("Inner Color", innerColor)) {
-                        fragmentCursorSettings.innerColor = glm::vec4(innerColor[0], innerColor[1], innerColor[2], innerColor[3]);
+                if (ImGui::MenuItem("Save")) {
+                    auto destination = pfd::save_file("Select a file to save scene", ".",
+                        { "JSON Files", "*.json", "All Files", "*" }).result();
+                    if (!destination.empty()) {
+                        Engine::saveScene(destination, currentScene);
                     }
                 }
-
-                ImGui::TreePop();
+                ImGui::EndMenu();
             }
+            if (ImGui::MenuItem("Settings")) {
+                showSettingsWindow = true;
+            }
+            ImGui::EndMainMenuBar();
+        }
+
+        ImGui::SetNextWindowPos(ImVec2(0, ImGui::GetFrameHeight()));
+        ImGui::SetNextWindowSize(ImVec2(300, viewport->Size.y - ImGui::GetFrameHeight()));
+        ImGui::Begin("Scene Objects", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
+
+        if (ImGui::BeginChild("ObjectList", ImVec2(0, 68), true)) {
+            ImGui::Columns(2, "ObjectColumns", false);
+            ImGui::SetColumnWidth(0, 200); // Adjust this value to fit your needs
+
+            for (int i = 0; i < currentScene.models.size(); i++) {
+                ImGui::PushID(i);
+                bool isSelected = (currentSelectedIndex == i && currentSelectedType == SelectedType::Model);
+
+                ImGui::AlignTextToFramePadding();
+                if (ImGui::Selectable(currentScene.models[i].name.c_str(), isSelected, ImGuiSelectableFlags_SpanAllColumns)) {
+                    currentSelectedIndex = i;
+                    currentSelectedType = SelectedType::Model;
+                }
+                ImGui::NextColumn();
+
+                ImGui::AlignTextToFramePadding();
+                bool visible = currentScene.models[i].visible;
+                if (ImGui::Checkbox("##visible", &visible)) {
+                    currentScene.models[i].visible = visible;
+                }
+
+                ImGui::NextColumn();
+                ImGui::PopID();
+            }
+
+            for (int i = 0; i < currentScene.pointClouds.size(); i++) {
+                ImGui::PushID(i + currentScene.models.size());
+                bool isSelected = (currentSelectedIndex == i && currentSelectedType == SelectedType::PointCloud);
+
+                ImGui::AlignTextToFramePadding();
+                if (ImGui::Selectable(currentScene.pointClouds[i].name.c_str(), isSelected, ImGuiSelectableFlags_SpanAllColumns)) {
+                    currentSelectedIndex = i;
+                    currentSelectedType = SelectedType::PointCloud;
+                }
+                ImGui::NextColumn();
+
+                ImGui::AlignTextToFramePadding();
+                bool visible = currentScene.pointClouds[i].visible;
+                if (ImGui::Checkbox("##visible", &visible)) {
+                    currentScene.pointClouds[i].visible = visible;
+                }
+
+                ImGui::NextColumn();
+                ImGui::PopID();
+            }
+
+            ImGui::Columns(1);
+        }
+        ImGui::EndChild();
+
+        if (ImGui::Button("Create Cube", ImVec2(-1, 0))) {
+            ObjModel newCube = Engine::createCube(glm::vec3(1.0f, 1.0f, 1.0f), 32.0f, 0.0f);
+            newCube.scale = glm::vec3(0.5f);
+            newCube.position = glm::vec3(0.0f, 0.0f, 0.0f);
+            currentScene.models.push_back(newCube);
+            currentSelectedIndex = currentScene.models.size() - 1;
+            currentSelectedType = SelectedType::Model;
         }
 
         ImGui::Separator();
 
-        // Scene Management
-        if (ImGui::CollapsingHeader("Scene Management")) {
-            ImGui::InputText("Save Filename", saveFilename, IM_ARRAYSIZE(saveFilename));
-
-            if (ImGui::Button("Browse##Save")) {
-                auto destination = pfd::save_file("Select a file to save", ".",
-                    { "JSON Files", "*.json", "All Files", "*" }).result();
-                if (!destination.empty()) {
-                    strncpy_s(saveFilename, destination.c_str(), sizeof(saveFilename) - 1);
-                }
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Save Scene")) {
-                Engine::saveScene(saveFilename, currentScene);
-            }
-
-            ImGui::InputText("Load Filename", loadFilename, IM_ARRAYSIZE(loadFilename));
-            if (ImGui::Button("Browse##Load")) {
-                auto selection = pfd::open_file("Select a file to load", ".",
-                    { "JSON Files", "*.json", "All Files", "*" }).result();
-                if (!selection.empty()) {
-                    strncpy_s(loadFilename, selection[0].c_str(), sizeof(loadFilename) - 1);
-                }
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Load Scene")) {
-                currentScene = Engine::loadScene(loadFilename);
-                currentModelIndex = currentScene.models.empty() ? -1 : 0;
-            }
+        // Manipulation panel
+        if (currentSelectedType == SelectedType::Model && currentSelectedIndex >= 0 && currentSelectedIndex < currentScene.models.size()) {
+            renderModelManipulationPanel(currentScene.models[currentSelectedIndex], shader);
+        }
+        else if (currentSelectedType == SelectedType::PointCloud && currentSelectedIndex >= 0 && currentSelectedIndex < currentScene.pointClouds.size()) {
+            renderPointCloudManipulationPanel(currentScene.pointClouds[currentSelectedIndex]);
         }
 
-        if (ImGui::Button("Info")) {
-            showInfoWindow = !showInfoWindow;
-        }
+        ImGui::End();
 
-        if (showInfoWindow) {
-            ImGui::SetNextWindowSize(ImVec2(400, 400), ImGuiCond_FirstUseEver);
-            ImGui::Begin("Info", &showInfoWindow);
+        // Settings window
+        if (showSettingsWindow) {
+            ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
+            ImGui::Begin("Settings", &showSettingsWindow);
 
-            ImGui::Text("Controls:");
-            ImGui::BulletText("Left Mouse Button: Orbit camera / Select and move objects");
-            ImGui::BulletText("Middle Mouse Button: Pan camera");
-            ImGui::BulletText("Right Mouse Button: Rotate camera");
-            ImGui::BulletText("Scroll Wheel: Zoom in/out");
-            ImGui::BulletText("WASD: Move camera");
-            ImGui::BulletText("Ctrl: Enter selection mode");
-            ImGui::BulletText("Delete: Remove selected object");
-            ImGui::BulletText("G: Toggle GUI visibility");
+            ImGui::Text("Camera Settings");
+            ImGui::SliderFloat("Separation", &currentScene.settings.separation, minSeparation, maxSeparation);
+            ImGui::SliderFloat("Convergence / ZFocus", &currentScene.settings.convergence, minConvergence, maxConvergence);
+            ImGui::SliderFloat("Camera Speed Multiplier", &camera.speedFactor, 0.1f, 5.0f);
+            ImGui::SliderFloat("Near Plane", &currentScene.settings.nearPlane, 0.01f, 10.0f);
+            ImGui::SliderFloat("Far Plane", &currentScene.settings.farPlane, 10.0f, 1000.0f);
+
+            ImGui::Checkbox("Show FPS", &showFPS);
 
             ImGui::Separator();
 
-            ImGui::Text("Libraries:");
-            if (ImGui::TreeNode("OpenGL")) {
-                ImGui::Text("Core graphics API");
-                if (ImGui::Button("Website##OpenGL"))
-                    openURL("https://www.opengl.org/");
-                ImGui::TreePop();
-            }
-            if (ImGui::TreeNode("GLFW")) {
-                ImGui::Text("Window creation and management");
-                if (ImGui::Button("GitHub##GLFW"))
-                    openURL("https://github.com/glfw/glfw");
-                ImGui::TreePop();
-            }
-            if (ImGui::TreeNode("GLAD")) {
-                ImGui::Text("OpenGL function loader");
-                if (ImGui::Button("GitHub##GLAD"))
-                    openURL("https://github.com/Dav1dde/glad");
-                ImGui::TreePop();
-            }
-            if (ImGui::TreeNode("GLM")) {
-                ImGui::Text("Mathematics library for graphics");
-                if (ImGui::Button("GitHub##GLM"))
-                    openURL("https://github.com/g-truc/glm");
-                ImGui::TreePop();
-            }
-            if (ImGui::TreeNode("ImGui")) {
-                ImGui::Text("User interface library");
-                if (ImGui::Button("GitHub##ImGui"))
-                    openURL("https://github.com/ocornut/imgui");
-                ImGui::TreePop();
-            }
-            if (ImGui::TreeNode("stb_image")) {
-                ImGui::Text("Image loading library");
-                if (ImGui::Button("GitHub##stb_image"))
-                    openURL("https://github.com/nothings/stb");
-                ImGui::TreePop();
-            }
-            if (ImGui::TreeNode("tinyobjloader")) {
-                ImGui::Text("Wavefront .obj file loader");
-                if (ImGui::Button("GitHub##tinyobjloader"))
-                    openURL("https://github.com/tinyobjloader/tinyobjloader");
-                ImGui::TreePop();
-            }
-            if (ImGui::TreeNode("json.hpp")) {
-                ImGui::Text("JSON for Modern C++");
-                if (ImGui::Button("GitHub##json.hpp"))
-                    openURL("https://github.com/nlohmann/json");
-                ImGui::TreePop();
-            }
-            if (ImGui::TreeNode("portable-file-dialogs")) {
-                ImGui::Text("Cross-platform file dialog library");
-                if (ImGui::Button("GitHub##portable-file-dialogs"))
-                    openURL("https://github.com/samhocevar/portable-file-dialogs");
-                ImGui::TreePop();
+            ImGui::Checkbox("Show 3D Cursor", &show3DCursor);
+            if (ImGui::Button("Cursor Settings")) {
+                showCursorSettingsWindow = true;
             }
 
             ImGui::End();
         }
-        ImGui::End();
+
+        if (showCursorSettingsWindow) {
+            renderCursorSettingsWindow();
+        }
     }
 
     if (showFPS) {
@@ -1147,6 +888,375 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
+
+void renderCursorSettingsWindow() {
+    ImGui::SetNextWindowSize(ImVec2(500, 600), ImGuiCond_FirstUseEver);
+    ImGui::Begin("3D Cursor Settings", &showCursorSettingsWindow);
+
+    // Preset management
+    if (ImGui::BeginCombo("Cursor Preset", currentPresetName.c_str())) {
+        std::vector<std::string> presetNames = Engine::CursorPresetManager::getPresetNames();
+
+        // Add "New Preset" option
+        if (ImGui::Selectable("New Preset")) {
+            currentPresetName = "New Preset";
+            isEditingPresetName = true;
+            strcpy_s(editPresetNameBuffer, currentPresetName.c_str());
+        }
+
+        for (const auto& name : presetNames) {
+            bool isSelected = (currentPresetName == name);
+            if (ImGui::Selectable(name.c_str(), isSelected)) {
+                currentPresetName = name;
+                try {
+                    Engine::CursorPreset loadedPreset = Engine::CursorPresetManager::applyCursorPreset(name);
+                    applyPresetToGlobalSettings(loadedPreset);
+                }
+                catch (const std::exception& e) {
+                    std::cerr << "Error loading preset: " << e.what() << std::endl;
+                }
+            }
+            if (isSelected) {
+                ImGui::SetItemDefaultFocus();
+            }
+        }
+        ImGui::EndCombo();
+    }
+
+    // Preset name editing
+    if (isEditingPresetName) {
+        ImGui::InputText("##EditPresetName", editPresetNameBuffer, IM_ARRAYSIZE(editPresetNameBuffer));
+
+        if (ImGui::Button("Save")) {
+            std::string newName = editPresetNameBuffer;
+            if (!newName.empty()) {
+                if (newName != currentPresetName) {
+                    // Rename existing preset or save new preset
+                    Engine::CursorPreset newPreset = createPresetFromCurrentSettings(newName);
+                    Engine::CursorPresetManager::savePreset(newName, newPreset);
+                    if (currentPresetName != "New Preset") {
+                        Engine::CursorPresetManager::deletePreset(currentPresetName);
+                    }
+                    currentPresetName = newName;
+                }
+                isEditingPresetName = false;
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            isEditingPresetName = false;
+            if (currentPresetName == "New Preset") {
+                currentPresetName = Engine::CursorPresetManager::getPresetNames().front();
+            }
+        }
+    }
+    else {
+        if (ImGui::Button("Rename Preset")) {
+            isEditingPresetName = true;
+            strcpy_s(editPresetNameBuffer, currentPresetName.c_str());
+        }
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Update Preset")) {
+        Engine::CursorPreset updatedPreset = createPresetFromCurrentSettings(currentPresetName);
+        Engine::CursorPresetManager::savePreset(currentPresetName, updatedPreset);
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Delete Preset")) {
+        if (currentPresetName != "Default") {
+            Engine::CursorPresetManager::deletePreset(currentPresetName);
+            std::vector<std::string> remainingPresets = Engine::CursorPresetManager::getPresetNames();
+            if (!remainingPresets.empty()) {
+                currentPresetName = remainingPresets.front();
+                Engine::CursorPreset loadedPreset = Engine::CursorPresetManager::applyCursorPreset(currentPresetName);
+                applyPresetToGlobalSettings(loadedPreset);
+            }
+            else {
+                currentPresetName = "Default";
+                // Reset to default settings
+                setDefaultCursorSettings();
+            }
+        }
+    }
+
+    ImGui::Separator();
+
+    // 3D Sphere Cursor Settings
+    if (ImGui::CollapsingHeader("3D Sphere Cursor", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Checkbox("Show 3D Sphere Cursor", &showSphereCursor);
+
+        if (showSphereCursor) {
+            ImGui::Checkbox("Orbit Follows Cursor", &orbitFollowsCursor);
+
+            if (!orbitFollowsCursor) {
+                ImGui::Checkbox("Show Orbit Center", &showOrbitCenter);
+                if (showOrbitCenter) {
+                    ImGui::ColorEdit4("Orbit Center Color", glm::value_ptr(orbitCenterColor));
+                    ImGui::SliderFloat("Orbit Center Size", &orbitCenterSphereRadius, 0.01f, 1.0f);
+                }
+            }
+
+            const char* scalingModes[] = { "Normal", "Fixed", "Constrained Dynamic", "Logarithmic" };
+            int currentMode = static_cast<int>(currentCursorScalingMode);
+            if (ImGui::Combo("Cursor Scaling Mode", &currentMode, scalingModes, IM_ARRAYSIZE(scalingModes))) {
+                currentCursorScalingMode = static_cast<CursorScalingMode>(currentMode);
+            }
+
+            ImGui::SliderFloat("Fixed Sphere Radius", &fixedSphereRadius, 0.01f, 3.0f);
+
+            if (currentCursorScalingMode == CURSOR_CONSTRAINED_DYNAMIC) {
+                ImGui::SliderFloat("Min Difference", &minDiff, 0.001f, 0.1f);
+                ImGui::SliderFloat("Max Difference", &maxDiff, 0.01f, 1.0f);
+            }
+
+            ImGui::ColorEdit4("Cursor Color", glm::value_ptr(cursorColor));
+            ImGui::SliderFloat("Cursor Transparency", &cursorTransparency, 0.0f, 1.0f);
+            ImGui::SliderFloat("Edge Softness", &cursorEdgeSoftness, 0.0f, 1.0f);
+            ImGui::SliderFloat("Center Transparency", &cursorCenterTransparency, 0.0f, 1.0f);
+
+            ImGui::Checkbox("Show Inner Sphere", &showInnerSphere);
+            if (showInnerSphere) {
+                ImGui::ColorEdit4("Inner Sphere Color", glm::value_ptr(innerSphereColor));
+                ImGui::SliderFloat("Inner Sphere Factor", &innerSphereFactor, 0.1f, 0.9f);
+            }
+        }
+    }
+
+    // Fragment Shader Cursor Settings
+    if (ImGui::CollapsingHeader("Fragment Shader Cursor", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Checkbox("Show Fragment Shader Cursor", &showFragmentCursor);
+
+        if (showFragmentCursor) {
+            ImGui::SliderFloat("Outer Radius", &fragmentCursorSettings.baseOuterRadius, 0.0f, 0.2f);
+            ImGui::SliderFloat("Outer Border Thickness", &fragmentCursorSettings.baseOuterBorderThickness, 0.01f, 0.05f);
+            ImGui::SliderFloat("Inner Radius", &fragmentCursorSettings.baseInnerRadius, 0.0f, 0.1f);
+            ImGui::SliderFloat("Inner Border Thickness", &fragmentCursorSettings.baseInnerBorderThickness, 0.01f, 0.05f);
+            ImGui::ColorEdit4("Outer Color", glm::value_ptr(fragmentCursorSettings.outerColor));
+            ImGui::ColorEdit4("Inner Color", glm::value_ptr(fragmentCursorSettings.innerColor));
+        }
+    }
+
+    ImGui::End();
+}
+
+void renderModelManipulationPanel(Engine::ObjModel& model, Shader* shader) {
+    ImGui::Text("Model Manipulation: %s", model.name.c_str());
+    ImGui::Separator();
+
+    // Transform
+    if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::DragFloat3("Position", glm::value_ptr(model.position), 0.1f);
+        ImGui::DragFloat3("Scale", glm::value_ptr(model.scale), 0.01f, 0.01f, 100.0f);
+        ImGui::DragFloat3("Rotation", glm::value_ptr(model.rotation), 1.0f, -360.0f, 360.0f);
+    }
+
+    // Material
+    if (ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::ColorEdit3("Color", glm::value_ptr(model.color));
+        ImGui::SliderFloat("Shininess", &model.shininess, 1.0f, 90.0f);
+        ImGui::SliderFloat("Emissive", &model.emissive, 0.0f, 1.0f);
+    }
+
+    // Textures
+    if (ImGui::CollapsingHeader("Textures")) {
+        auto textureLoadingGUI = [&](const char* label, GLuint& textureID, std::string& texturePath, const char* uniformName) {
+            char pathBuffer[256];
+            strncpy_s(pathBuffer, texturePath.c_str(), sizeof(pathBuffer));
+            pathBuffer[sizeof(pathBuffer) - 1] = '\0';
+
+            ImGui::Text("%s", label);
+            if (ImGui::InputText(("Path##" + std::string(label)).c_str(), pathBuffer, IM_ARRAYSIZE(pathBuffer))) {
+                texturePath = pathBuffer;
+            }
+            if (ImGui::Button(("Browse##" + std::string(label)).c_str())) {
+                auto selection = pfd::open_file("Select a texture file", ".",
+                    { "Image Files", "*.png *.jpg *.jpeg *.bmp", "All Files", "*" }).result();
+                if (!selection.empty()) {
+                    texturePath = selection[0];
+                    strcpy_s(pathBuffer, texturePath.c_str());
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button(("Load##" + std::string(label)).c_str())) {
+                GLuint newTexture = loadTextureFromFile(texturePath.c_str());
+                if (newTexture != 0) {
+                    if (textureID != 0) {
+                        glDeleteTextures(1, &textureID);
+                    }
+                    textureID = newTexture;
+                    std::cout << label << " loaded successfully." << std::endl;
+                    model.hasCustomTexture = true;
+                    shader->use();
+                    shader->setInt(uniformName, textureID);
+                }
+            }
+            };
+
+        textureLoadingGUI("Diffuse Texture", model.texture, model.diffuseTexturePath, "texture_diffuse1");
+        textureLoadingGUI("Normal Map", model.normalMap, model.normalTexturePath, "texture_normal1");
+        textureLoadingGUI("Specular Map", model.specularMap, model.specularTexturePath, "texture_specular1");
+        textureLoadingGUI("AO Map", model.aoMap, model.aoTexturePath, "texture_ao1");
+    }
+
+    ImGui::Separator();
+
+// Delete button
+    if (ImGui::Button("Delete Model", ImVec2(-1, 0))) {
+        ImGui::OpenPopup("Delete Model?");
+    }
+
+    // Confirmation popup
+    if (ImGui::BeginPopupModal("Delete Model?", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Are you sure you want to delete this model?\nThis operation cannot be undone!\n\n");
+        ImGui::Separator();
+
+        if (ImGui::Button("Yes", ImVec2(120, 0))) {
+            deleteSelectedModel();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SetItemDefaultFocus();
+        ImGui::SameLine();
+        if (ImGui::Button("No", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+void renderPointCloudManipulationPanel(Engine::PointCloud& pointCloud) {
+    ImGui::Text("Point Cloud Manipulation: %s", pointCloud.name.c_str());
+    if (pointCloud.points.empty()) {
+        ImGui::Text("Point cloud is empty");
+        return;
+    }
+    ImGui::Separator();
+
+    // Transform
+    if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::DragFloat3("Position", glm::value_ptr(pointCloud.position), 0.1f);
+        ImGui::DragFloat3("Rotation", glm::value_ptr(pointCloud.rotation), 1.0f, -360.0f, 360.0f);
+        ImGui::DragFloat3("Scale", glm::value_ptr(pointCloud.scale), 0.01f, 0.01f, 100.0f);
+    }
+
+    // Point Cloud specific settings
+    if (ImGui::CollapsingHeader("Point Cloud Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+        // Add any point cloud specific settings here
+        // For example:
+        //ImGui::SliderFloat("Point Size", &pointCloud.pointSize, 1.0f, 10.0f);
+        // ImGui::ColorEdit3("Point Color", glm::value_ptr(pointCloud.color));
+    }
+
+    if (ImGui::CollapsingHeader("LOD Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::SliderFloat("LOD Distance 1", &pointCloud.lodDistances[0], 1.0f, 15.0f);
+        ImGui::SliderFloat("LOD Distance 2", &pointCloud.lodDistances[1], 10.0f, 20.0f);
+        ImGui::SliderFloat("LOD Distance 3", &pointCloud.lodDistances[2], 15.0f, 30.0f);
+        ImGui::SliderFloat("LOD Distance 4", &pointCloud.lodDistances[3], 20.0f, 40.0f);
+        ImGui::SliderFloat("LOD Distance 5", &pointCloud.lodDistances[4], 25.0f, 50.0f);
+
+        ImGui::SliderFloat("Chunk Size", &pointCloud.newChunkSize, 1.0f, 50.0f);
+
+        if (ImGui::Button("Recalculate Chunks")) {
+            if (pointCloud.newChunkSize != pointCloud.chunkSize) {
+                isRecalculatingChunks = true;
+                pointCloud.chunkSize = pointCloud.newChunkSize;
+                generateChunks(pointCloud, pointCloud.chunkSize);
+                isRecalculatingChunks = false;
+            }
+        }
+
+        if (isRecalculatingChunks) {
+            ImGui::SameLine();
+            ImGui::Text("Recalculating chunks...");
+        }
+
+        ImGui::Checkbox("Visualize Chunks", &pointCloud.visualizeChunks);
+    }
+
+    ImGui::Separator();
+
+    if (ImGui::CollapsingHeader("Export", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::Button("Export Point Cloud")) {
+            ImGui::OpenPopup("Export Point Cloud");
+        }
+
+        if (ImGui::BeginPopupModal("Export Point Cloud", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+            static int exportFormat = 0;
+            ImGui::RadioButton("XYZ", &exportFormat, 0);
+            ImGui::RadioButton("Optimized Binary", &exportFormat, 1);
+
+            if (ImGui::Button("Export")) {
+                std::string defaultExt = (exportFormat == 0) ? ".xyz" : ".pcb";
+                auto destination = pfd::save_file("Select a file to export point cloud", ".",
+                    { "Point Cloud Files", "*" + defaultExt, "All Files", "*" }).result();
+
+                if (!destination.empty()) {
+                    bool success = false;
+                    if (exportFormat == 0) {
+                        success = Engine::PointCloudLoader::exportToXYZ(pointCloud, destination);
+                    }
+                    else {
+                        success = Engine::PointCloudLoader::exportToBinary(pointCloud, destination);
+                    }
+
+                    if (success) {
+                        std::cout << "Point cloud exported successfully to " << destination << std::endl;
+                    }
+                    else {
+                        std::cerr << "Failed to export point cloud to " << destination << std::endl;
+                    }
+                }
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) {
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::EndPopup();
+        }
+    }
+
+    ImGui::Separator();
+
+    // Delete button
+    if (ImGui::Button("Delete Point Cloud", ImVec2(-1, 0))) {
+        ImGui::OpenPopup("Delete Point Cloud?");
+    }
+
+    // Confirmation popup
+    if (ImGui::BeginPopupModal("Delete Point Cloud?", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Are you sure you want to delete this point cloud?\nThis operation cannot be undone!\n\n");
+        ImGui::Separator();
+
+        if (ImGui::Button("Yes", ImVec2(120, 0))) {
+            deleteSelectedPointCloud();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SetItemDefaultFocus();
+        ImGui::SameLine();
+        if (ImGui::Button("No", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+void deleteSelectedPointCloud() {
+    if (currentSelectedType == SelectedType::PointCloud && currentSelectedIndex >= 0 && currentSelectedIndex < currentScene.pointClouds.size()) {
+        // Clean up OpenGL resources
+        glDeleteVertexArrays(1, &currentScene.pointClouds[currentSelectedIndex].vao);
+        glDeleteBuffers(1, &currentScene.pointClouds[currentSelectedIndex].vbo);
+
+        // Remove from the vector
+        currentScene.pointClouds.erase(currentScene.pointClouds.begin() + currentSelectedIndex);
+        currentSelectedIndex = -1;
+        currentSelectedType = SelectedType::None;
+    }
+}
+
 
 void renderModels(Shader* shader)
 {
@@ -1163,6 +1273,8 @@ void renderModels(Shader* shader)
 
     for (int i = 0; i < currentScene.models.size(); i++) {
         const auto& model = currentScene.models[i];
+        if (!model.visible) continue;
+
         glm::mat4 modelMatrix = glm::mat4(1.0f);
         modelMatrix = glm::translate(modelMatrix, model.position);
         modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.x), glm::vec3(1, 0, 0));
@@ -1203,7 +1315,7 @@ void renderModels(Shader* shader)
 
         // Set selection mode variables
         shader->setBool("selectionMode", selectionMode);
-        shader->setBool("isSelected", selectionMode && (i == currentModelIndex));
+        shader->setBool("isSelected", selectionMode && (i == currentSelectedIndex) && (currentSelectedType == SelectedType::Model));
 
         glBindVertexArray(model.vao);
         glDrawElements(GL_TRIANGLES, model.indices.size(), GL_UNSIGNED_INT, 0);
@@ -1212,7 +1324,9 @@ void renderModels(Shader* shader)
 }
 
 void renderPointClouds(Shader* shader) {
-    for (const auto& pointCloud : currentScene.pointClouds) {
+    for (auto& pointCloud : currentScene.pointClouds) {
+        if (!pointCloud.visible) continue;
+
         glm::mat4 modelMatrix = glm::mat4(1.0f);
         modelMatrix = glm::translate(modelMatrix, pointCloud.position);
         modelMatrix = glm::rotate(modelMatrix, glm::radians(pointCloud.rotation.x), glm::vec3(1, 0, 0));
@@ -1224,14 +1338,67 @@ void renderPointClouds(Shader* shader) {
         shader->setBool("isPointCloud", true);
 
         glBindVertexArray(pointCloud.vao);
-        glPointSize(5.0f); // Increase point size for better visibility
-        glDrawArrays(GL_POINTS, 0, pointCloud.points.size());
+
+        glm::mat4 viewMatrix = camera.GetViewMatrix();
+        glm::mat4 projectionMatrix = camera.GetProjectionMatrix(aspectRatio, currentScene.settings.nearPlane, currentScene.settings.farPlane);
+        glm::mat4 viewProjectionMatrix = projectionMatrix * viewMatrix;
+        glm::vec3 cameraPosition = camera.Position;
+
+        for (const auto& chunk : pointCloud.chunks) {
+            glm::vec3 chunkWorldPos = glm::vec3(modelMatrix * glm::vec4(chunk.centerPosition, 1.0f));
+
+
+            float distanceToCamera = glm::distance(chunk.centerPosition, cameraPosition);
+
+            // Frustum culling
+            if (!camera.isInFrustum(chunkWorldPos, chunk.boundingRadius, viewProjectionMatrix)) {
+                continue;
+            }
+
+            // Determine LOD based on distance
+            int lodLevel = 4;  // Start with lowest detail
+
+            for (int i = 0; i < 5; ++i) {
+                if (distanceToCamera < pointCloud.lodDistances[i] * 1.0f) {
+                    lodLevel = i;
+                    break;
+                }
+            }
+
+            // Bind the appropriate LOD VBO
+            glBindBuffer(GL_ARRAY_BUFFER, chunk.lodVBOs[lodLevel]);
+
+            // Set up vertex attributes
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(PointCloudPoint), (void*)0);
+            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(PointCloudPoint), (void*)offsetof(PointCloudPoint, color));
+            glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(PointCloudPoint), (void*)offsetof(PointCloudPoint, intensity));
+
+            glEnableVertexAttribArray(0);
+            glEnableVertexAttribArray(1);
+            glEnableVertexAttribArray(2);
+
+            // Render the points
+            glPointSize(5.0f); // Set point size
+            glDrawArrays(GL_POINTS, 0, chunk.lodPointCounts[lodLevel]);
+        }
+
         glBindVertexArray(0);
+
+        // Visualize chunk boundaries if enabled
+        if (pointCloud.visualizeChunks) {
+            shader->setBool("isChunkOutline", true);
+            shader->setVec3("outlineColor", glm::vec3(1.0f, 1.0f, 0.0f)); // Yellow outline
+
+            glBindVertexArray(pointCloud.chunkOutlineVAO);
+            glDrawArrays(GL_LINES, 0, pointCloud.chunkOutlineVertices.size());
+            glBindVertexArray(0);
+
+            shader->setBool("isChunkOutline", false);
+        }
     }
 
     shader->setBool("isPointCloud", false);
 }
-
 #pragma endregion
 
 
@@ -1436,14 +1603,10 @@ bool rayIntersectsModel(const glm::vec3& rayOrigin, const glm::vec3& rayDirectio
 // ---- Model Management ----
 #pragma region Model Management
 void deleteSelectedModel() {
-    if (currentModelIndex >= 0 && currentModelIndex < currentScene.models.size()) {
-        currentScene.models.erase(currentScene.models.begin() + currentModelIndex);
-        if (currentScene.models.empty()) {
-            currentModelIndex = -1;
-        }
-        else {
-            currentModelIndex = std::min(currentModelIndex, static_cast<int>(currentScene.models.size()) - 1);
-        }
+    if (currentSelectedType == SelectedType::Model && currentSelectedIndex >= 0 && currentSelectedIndex < currentScene.models.size()) {
+        currentScene.models.erase(currentScene.models.begin() + currentSelectedIndex);
+        currentSelectedIndex = -1;
+        currentSelectedType = SelectedType::None;
     }
 }
 #pragma endregion
@@ -1467,39 +1630,83 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
 
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
     if (ImGui::GetIO().WantCaptureMouse) {
-        // Mouse is over ImGui UI, ensure Windows cursor is visible
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
         return;
     }
 
     if (button == GLFW_MOUSE_BUTTON_LEFT) {
         if (action == GLFW_PRESS) {
-            // Handle double-click
-            double currentTime = glfwGetTime();
-            if (currentTime - lastClickTime < doubleClickTime) {
-                if (g_cursorValid) {
-                    camera.StartCenteringAnimation(g_cursorPos);
+            // Check if Ctrl is held down
+            bool ctrlPressed = (mods & GLFW_MOD_CONTROL);
+            if (ctrlPressed) {
+                glm::vec3 rayOrigin, rayDirection, rayNear, rayFar;
+                calculateMouseRay(lastX, lastY, rayOrigin, rayDirection, rayNear, rayFar, (float)windowWidth / (float)windowHeight);
 
-                    // Reset cursor position to center of window
-                    glfwSetCursorPos(window, windowWidth / 2, windowHeight / 2);
+                float closestDistance = std::numeric_limits<float>::max();
+                int closestModelIndex = -1;
+                int closestPointCloudIndex = -1;
+
+                // Check intersection with models
+                for (int i = 0; i < currentScene.models.size(); i++) {
+                    const auto& model = currentScene.models[i];
+                    float distance;
+                    if (rayIntersectsModel(rayOrigin, rayDirection, model, distance)) {
+                        if (distance < closestDistance) {
+                            closestDistance = distance;
+                            closestModelIndex = i;
+                            closestPointCloudIndex = -1;
+                        }
+                    }
+                }
+
+                // Check intersection with point clouds (simplified)
+                for (int i = 0; i < currentScene.pointClouds.size(); i++) {
+                    const auto& pointCloud = currentScene.pointClouds[i];
+                    float distance = glm::length(pointCloud.position - rayOrigin);
+                    if (distance < closestDistance) {
+                        closestDistance = distance;
+                        closestPointCloudIndex = i;
+                        closestModelIndex = -1;
+                    }
+                }
+
+                if (closestModelIndex != -1) {
+                    currentSelectedIndex = closestModelIndex;
+                    currentSelectedType = SelectedType::Model;
+                    if (ctrlPressed) {
+                        selectionMode = true;
+                        isMovingModel = true;
+                    }
+                }
+                else if (closestPointCloudIndex != -1) {
+                    currentSelectedIndex = closestPointCloudIndex;
+                    currentSelectedType = SelectedType::PointCloud;
                 }
             }
-            lastClickTime = currentTime;
 
-            if (!camera.IsAnimating && !camera.IsOrbiting) {
+            // Handle double-click (if not in selection mode)
+            if (!selectionMode) {
+                double currentTime = glfwGetTime();
+                if (currentTime - lastClickTime < doubleClickTime) {
+                    if (g_cursorValid) {
+                        camera.StartCenteringAnimation(g_cursorPos);
+                        glfwSetCursorPos(window, windowWidth / 2, windowHeight / 2);
+                    }
+                }
+                lastClickTime = currentTime;
+            }
+
+            if (!camera.IsAnimating && !camera.IsOrbiting && !selectionMode) {
                 leftMousePressed = true;
 
                 if (g_cursorValid) {
                     if (orbitFollowsCursor && showSphereCursor) {
                         camera.StartCenteringAnimation(g_cursorPos);
                         capturedCursorPos = g_cursorPos;
-
-                        // Capture the mouse
                         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
                         isMouseCaptured = true;
                     }
                     else {
-                        // Set orbit point and start orbiting
                         float cursorDepth = glm::length(g_cursorPos - camera.Position);
                         glm::vec3 viewportCenter = camera.Position + camera.Front * cursorDepth;
                         capturedCursorPos = viewportCenter;
@@ -1509,50 +1716,22 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                     }
                 }
                 else {
-                    // Set default orbit point
                     capturedCursorPos = camera.Position + camera.Front * camera.OrbitDistance;
                     camera.SetOrbitPointDirectly(capturedCursorPos);
                     camera.StartOrbiting();
-                }
-            }
-            if (selectionMode) {
-                glm::vec3 rayOrigin, rayDirection, rayNear, rayFar;
-                calculateMouseRay(lastX, lastY, rayOrigin, rayDirection, rayNear, rayFar, (float)windowWidth / (float)windowHeight);
-
-                float closestDistance = std::numeric_limits<float>::max();
-                int closestModelIndex = -1;
-
-                for (int i = 0; i < currentScene.models.size(); i++) {
-                    const auto& model = currentScene.models[i];
-                    float distance;
-                    if (rayIntersectsModel(rayOrigin, rayDirection, model, distance)) {
-                        if (distance < closestDistance) {
-                            closestDistance = distance;
-                            closestModelIndex = i;
-                        }
-                    }
-                }
-
-                if (closestModelIndex != -1) {
-                    currentModelIndex = closestModelIndex;
-                    isMovingModel = true;
                 }
             }
         }
         else if (action == GLFW_RELEASE) {
             leftMousePressed = false;
             if (orbitFollowsCursor && showSphereCursor && camera.IsOrbiting) {
-                // Release the mouse
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
                 isMouseCaptured = false;
-
-                // Reset cursor position to center of window
                 glfwSetCursorPos(window, windowWidth / 2, windowHeight / 2);
             }
             camera.StopOrbiting();
-            leftMousePressed = false;
             isMovingModel = false;
-
+            selectionMode = false;
         }
     }
     else if (button == GLFW_MOUSE_BUTTON_MIDDLE) {
@@ -1564,12 +1743,10 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
             middleMousePressed = false;
             camera.StopPanning();
         }
-
     }
-    if (button == GLFW_MOUSE_BUTTON_RIGHT) {
+    else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
         if (action == GLFW_PRESS) {
             rightMousePressed = true;
-
         }
         else if (action == GLFW_RELEASE) {
             rightMousePressed = false;
@@ -1608,10 +1785,9 @@ void mouse_callback(GLFWwindow* window, double xposIn, double yposIn) {
         lastX = xpos;
         lastY = ypos;
 
-        if (isMovingModel && currentModelIndex != -1) {
+        if (isMovingModel && currentSelectedType == SelectedType::Model && currentSelectedIndex != -1) {
             // Move selected model
-            float distanceToModel = glm::distance(camera.Position, currentScene.models[currentModelIndex].position);
-            float aspectRatio = static_cast<float>(windowWidth) / static_cast<float>(windowHeight);
+            float distanceToModel = glm::distance(camera.Position, currentScene.models[currentSelectedIndex].position);
             float normalizedXOffset = xoffset / static_cast<float>(windowWidth);
             float normalizedYOffset = yoffset / static_cast<float>(windowHeight);
             float baseSensitivity = 0.66f;
@@ -1621,8 +1797,8 @@ void mouse_callback(GLFWwindow* window, double xposIn, double yposIn) {
             glm::vec3 right = glm::normalize(glm::cross(camera.Front, camera.Up));
             glm::vec3 up = glm::normalize(glm::cross(right, camera.Front));
 
-            currentScene.models[currentModelIndex].position += right * normalizedXOffset * sensitivityFactor;
-            currentScene.models[currentModelIndex].position += up * normalizedYOffset * sensitivityFactor;
+            currentScene.models[currentSelectedIndex].position += right * normalizedXOffset * sensitivityFactor;
+            currentScene.models[currentSelectedIndex].position += up * normalizedYOffset * sensitivityFactor;
         }
         else if (camera.IsOrbiting && !camera.IsAnimating) {
             // Handle camera orbiting
@@ -1650,13 +1826,13 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
     {
         if (action == GLFW_PRESS)
         {
+            ctrlPressed = true;
             selectionMode = true;
-            std::cout << "Entered selection mode" << std::endl;
         }
         else if (action == GLFW_RELEASE)
         {
+            ctrlPressed = false;
             selectionMode = false;
-            std::cout << "Exited selection mode" << std::endl;
         }
     }
 

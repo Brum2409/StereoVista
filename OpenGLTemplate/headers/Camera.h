@@ -91,6 +91,24 @@ public:
         return o;
     }
 
+    bool isInFrustum(const glm::vec3& point, float radius, glm::mat4 viewProj) const {
+
+        for (int i = 0; i < 6; ++i) {
+            glm::vec4 plane(
+                viewProj[0][3] + (i % 2 == 0 ? viewProj[0][i / 2] : -viewProj[0][i / 2]),
+                viewProj[1][3] + (i % 2 == 0 ? viewProj[1][i / 2] : -viewProj[1][i / 2]),
+                viewProj[2][3] + (i % 2 == 0 ? viewProj[2][i / 2] : -viewProj[2][i / 2]),
+                viewProj[3][3] + (i % 2 == 0 ? viewProj[3][i / 2] : -viewProj[3][i / 2])
+            );
+            plane /= glm::length(glm::vec3(plane));
+
+            if (glm::dot(point, glm::vec3(plane)) + plane.w <= -radius) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     void ProcessKeyboard(Camera_Movement direction, float deltaTime) {
         if (IsAnimating) return; // Disable keyboard movement during animation
 

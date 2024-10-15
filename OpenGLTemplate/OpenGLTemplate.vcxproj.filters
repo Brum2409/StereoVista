@@ -143,9 +143,6 @@
     <ClInclude Include="headers\cursor_presets.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="headers\laz_converter.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="headers\point_cloud_loader.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -155,5 +152,7 @@
     <None Include="assets\shaders\fragmentShader.glsl" />
     <None Include="assets\shaders\sphereVertexShader.glsl" />
     <None Include="assets\shaders\sphereFragmentShader.glsl" />
+    <None Include="assets\shaders\shadowMappingVertexShader.glsl" />
+    <None Include="assets\shaders\shadowMappingFragmentShader.glsl" />
   </ItemGroup>
 </Project>
