@@ -123,13 +123,14 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions);_CRT_SECURE_NO_WARNINGS</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>headers;src;headers/libs/imgui;backend;headers/libs;headers/libs/las</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>headers;src;headers/libs/imgui;backend;headers/libs;headers/libs/highfive;headers/libs/highfive/bits;headers/libs/hdf5;headers/libs/highfive/h5easy_bits</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalDependencies>glfw3.lib;opengl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>headers/libs/hdf5;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -150,6 +151,21 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="headers\libs\glad.c" />
+    <ClCompile Include="headers\libs\zlib\adler32.c" />
+    <ClCompile Include="headers\libs\zlib\compress.c" />
+    <ClCompile Include="headers\libs\zlib\crc32.c" />
+    <ClCompile Include="headers\libs\zlib\deflate.c" />
+    <ClCompile Include="headers\libs\zlib\gzclose.c" />
+    <ClCompile Include="headers\libs\zlib\gzlib.c" />
+    <ClCompile Include="headers\libs\zlib\gzread.c" />
+    <ClCompile Include="headers\libs\zlib\gzwrite.c" />
+    <ClCompile Include="headers\libs\zlib\infback.c" />
+    <ClCompile Include="headers\libs\zlib\inffast.c" />
+    <ClCompile Include="headers\libs\zlib\inflate.c" />
+    <ClCompile Include="headers\libs\zlib\inftrees.c" />
+    <ClCompile Include="headers\libs\zlib\trees.c" />
+    <ClCompile Include="headers\libs\zlib\uncompr.c" />
+    <ClCompile Include="headers\libs\zlib\zutil.c" />
     <ClCompile Include="src\cursor_presets.cpp" />
     <ClCompile Include="src\engine\buffers.cpp" />
     <ClCompile Include="src\engine\input.cpp" />
@@ -176,6 +192,185 @@
     <ClInclude Include="headers\engine\shader.h" />
     <ClInclude Include="headers\engine\window.h" />
     <ClInclude Include="headers\Camera.h" />
+    <ClInclude Include="headers\libs\hdf5\H5ACpkg.h" />
+    <ClInclude Include="headers\libs\hdf5\H5ACprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5ACpublic.h" />
+    <ClInclude Include="headers\libs\hdf5\H5api_adpt.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Apkg.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Aprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Apublic.h" />
+    <ClInclude Include="headers\libs\hdf5\H5B2pkg.h" />
+    <ClInclude Include="headers\libs\hdf5\H5B2private.h" />
+    <ClInclude Include="headers\libs\hdf5\H5B2public.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Bpkg.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Bprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Bpublic.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Cpkg.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Cprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Cpublic.h" />
+    <ClInclude Include="headers\libs\hdf5\H5CSprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Dpkg.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Dprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Dpublic.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Edefin.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Einit.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Epkg.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Eprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Epubgen.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Epublic.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Eterm.h" />
+    <ClInclude Include="headers\libs\hdf5\H5FDcore.h" />
+    <ClInclude Include="headers\libs\hdf5\H5FDdirect.h" />
+    <ClInclude Include="headers\libs\hdf5\H5FDfamily.h" />
+    <ClInclude Include="headers\libs\hdf5\H5FDlog.h" />
+    <ClInclude Include="headers\libs\hdf5\H5FDmpi.h" />
+    <ClInclude Include="headers\libs\hdf5\H5FDmpio.h" />
+    <ClInclude Include="headers\libs\hdf5\H5FDmpiposix.h" />
+    <ClInclude Include="headers\libs\hdf5\H5FDmulti.h" />
+    <ClInclude Include="headers\libs\hdf5\H5FDpkg.h" />
+    <ClInclude Include="headers\libs\hdf5\H5FDprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5FDpublic.h" />
+    <ClInclude Include="headers\libs\hdf5\H5FDsec2.h" />
+    <ClInclude Include="headers\libs\hdf5\H5FDstdio.h" />
+    <ClInclude Include="headers\libs\hdf5\H5FDwindows.h" />
+    <ClInclude Include="headers\libs\hdf5\H5FLprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5FOprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Fpkg.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Fprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Fpublic.h" />
+    <ClInclude Include="headers\libs\hdf5\H5FSpkg.h" />
+    <ClInclude Include="headers\libs\hdf5\H5FSprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5FSpublic.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Gpkg.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Gprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Gpublic.h" />
+    <ClInclude Include="headers\libs\hdf5\H5HFpkg.h" />
+    <ClInclude Include="headers\libs\hdf5\H5HFprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5HFpublic.h" />
+    <ClInclude Include="headers\libs\hdf5\H5HGpkg.h" />
+    <ClInclude Include="headers\libs\hdf5\H5HGprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5HGpublic.h" />
+    <ClInclude Include="headers\libs\hdf5\H5HLpkg.h" />
+    <ClInclude Include="headers\libs\hdf5\H5HLprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5HLpublic.h" />
+    <ClInclude Include="headers\libs\hdf5\H5HPprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Ipkg.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Iprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Ipublic.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Lpkg.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Lprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Lpublic.h" />
+    <ClInclude Include="headers\libs\hdf5\H5MFpkg.h" />
+    <ClInclude Include="headers\libs\hdf5\H5MFprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5MMprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5MMpublic.h" />
+    <ClInclude Include="headers\libs\hdf5\H5MPpkg.h" />
+    <ClInclude Include="headers\libs\hdf5\H5MPprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Opkg.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Oprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Opublic.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Oshared.h" />
+    <ClInclude Include="headers\libs\hdf5\H5overflow.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Ppkg.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Pprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Ppublic.h" />
+    <ClInclude Include="headers\libs\hdf5\H5private.h" />
+    <ClInclude Include="headers\libs\hdf5\H5pubconf.h" />
+    <ClInclude Include="headers\libs\hdf5\H5public.h" />
+    <ClInclude Include="headers\libs\hdf5\H5RCprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Rpkg.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Rprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Rpublic.h" />
+    <ClInclude Include="headers\libs\hdf5\H5RSprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5SLprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5SMpkg.h" />
+    <ClInclude Include="headers\libs\hdf5\H5SMprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Spkg.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Sprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Spublic.h" />
+    <ClInclude Include="headers\libs\hdf5\H5STprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Tpkg.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Tprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Tpublic.h" />
+    <ClInclude Include="headers\libs\hdf5\H5TSprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5version.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Vprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5WBprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5win32defs.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Zpkg.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Zprivate.h" />
+    <ClInclude Include="headers\libs\hdf5\H5Zpublic.h" />
+    <ClInclude Include="headers\libs\hdf5\hdf5.h" />
+    <ClInclude Include="headers\libs\highfive\bits\assert_compatible_spaces.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\compute_total_size.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\convert_size_vector.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\H5Annotate_traits.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\H5Annotate_traits_misc.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\H5Attribute_misc.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\h5a_wrapper.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\H5Converter_misc.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\H5DataSet_misc.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\H5Dataspace_misc.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\H5DataType_misc.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\h5d_wrapper.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\H5Exception_misc.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\h5e_wrapper.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\H5File_misc.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\H5Friends.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\h5f_wrapper.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\h5g_wrapper.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\H5Inspector_decl.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\H5Inspector_misc.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\H5Iterables_misc.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\h5i_wrapper.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\h5l_wrapper.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\H5Node_traits.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\H5Node_traits_misc.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\H5Object_misc.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\h5o_wrapper.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\H5Path_traits.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\H5Path_traits_misc.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\H5PropertyList_misc.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\h5p_wrapper.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\H5ReadWrite_misc.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\H5Reference_misc.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\h5r_wrapper.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\H5Selection_misc.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\H5Slice_traits.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\H5Slice_traits_misc.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\h5s_wrapper.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\h5t_wrapper.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\H5Utils.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\H5_definitions.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\h5_wrapper.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\squeeze.hpp" />
+    <ClInclude Include="headers\libs\highfive\bits\string_padding.hpp" />
+    <ClInclude Include="headers\libs\highfive\boost.hpp" />
+    <ClInclude Include="headers\libs\highfive\eigen.hpp" />
+    <ClInclude Include="headers\libs\highfive\experimental\opencv.hpp" />
+    <ClInclude Include="headers\libs\highfive\H5Attribute.hpp" />
+    <ClInclude Include="headers\libs\highfive\H5DataSet.hpp" />
+    <ClInclude Include="headers\libs\highfive\H5DataSpace.hpp" />
+    <ClInclude Include="headers\libs\highfive\H5DataType.hpp" />
+    <ClInclude Include="headers\libs\highfive\H5Easy.hpp" />
+    <ClInclude Include="headers\libs\highfive\h5easy_bits\default_io_impl.hpp" />
+    <ClInclude Include="headers\libs\highfive\h5easy_bits\H5Easy_Eigen.hpp" />
+    <ClInclude Include="headers\libs\highfive\h5easy_bits\H5Easy_misc.hpp" />
+    <ClInclude Include="headers\libs\highfive\h5easy_bits\H5Easy_public.hpp" />
+    <ClInclude Include="headers\libs\highfive\h5easy_bits\H5Easy_scalar.hpp" />
+    <ClInclude Include="headers\libs\highfive\H5Exception.hpp" />
+    <ClInclude Include="headers\libs\highfive\H5File.hpp" />
+    <ClInclude Include="headers\libs\highfive\H5Group.hpp" />
+    <ClInclude Include="headers\libs\highfive\H5Object.hpp" />
+    <ClInclude Include="headers\libs\highfive\H5PropertyList.hpp" />
+    <ClInclude Include="headers\libs\highfive\H5Reference.hpp" />
+    <ClInclude Include="headers\libs\highfive\H5Selection.hpp" />
+    <ClInclude Include="headers\libs\highfive\H5Utility.hpp" />
+    <ClInclude Include="headers\libs\highfive\H5Version.hpp" />
+    <ClInclude Include="headers\libs\highfive\half_float.hpp" />
+    <ClInclude Include="headers\libs\highfive\highfive.hpp" />
+    <ClInclude Include="headers\libs\highfive\span.hpp" />
+    <ClInclude Include="headers\libs\highfive\xtensor.hpp" />
     <ClInclude Include="headers\libs\imgui\backends\imgui_impl_glfw.h" />
     <ClInclude Include="headers\libs\imgui\backends\imgui_impl_opengl3.h" />
     <ClInclude Include="headers\libs\imgui\backends\imgui_impl_opengl3_loader.h" />
@@ -188,6 +383,17 @@
     <ClInclude Include="headers\libs\imgui\imstb_textedit.h" />
     <ClInclude Include="headers\libs\imgui\imstb_truetype.h" />
     <ClInclude Include="headers\libs\json.h" />
+    <ClInclude Include="headers\libs\zlib\crc32.h" />
+    <ClInclude Include="headers\libs\zlib\deflate.h" />
+    <ClInclude Include="headers\libs\zlib\gzguts.h" />
+    <ClInclude Include="headers\libs\zlib\inffast.h" />
+    <ClInclude Include="headers\libs\zlib\inffixed.h" />
+    <ClInclude Include="headers\libs\zlib\inflate.h" />
+    <ClInclude Include="headers\libs\zlib\inftrees.h" />
+    <ClInclude Include="headers\libs\zlib\trees.h" />
+    <ClInclude Include="headers\libs\zlib\zconf.h" />
+    <ClInclude Include="headers\libs\zlib\zlib.h" />
+    <ClInclude Include="headers\libs\zlib\zutil.h" />
     <ClInclude Include="headers\obj_loader.h" />
     <ClInclude Include="headers\libs\openLinks.h" />
     <ClInclude Include="headers\point_cloud_loader.h" />
@@ -197,11 +403,27 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="assets\shaders\fragmentShader.glsl" />
-    <None Include="assets\shaders\shadowMappingFragmentShader.glsl" />
-    <None Include="assets\shaders\shadowMappingVertexShader.glsl" />
     <None Include="assets\shaders\vertexShader.glsl" />
     <None Include="assets\shaders\sphereVertexShader.glsl" />
     <None Include="assets\shaders\sphereFragmentShader.glsl" />
+    <None Include="headers\libs\highfive\H5Version.hpp.in" />
+    <None Include="headers\libs\zlib\ChangeLog" />
+    <None Include="headers\libs\zlib\configure" />
+    <None Include="headers\libs\zlib\FAQ" />
+    <None Include="headers\libs\zlib\INDEX" />
+    <None Include="headers\libs\zlib\Makefile.in" />
+    <None Include="headers\libs\zlib\zconf.h.cmakein" />
+    <None Include="headers\libs\zlib\zconf.h.in" />
+    <None Include="headers\libs\zlib\zlib.3" />
+    <None Include="headers\libs\zlib\zlib.map" />
+    <None Include="headers\libs\zlib\zlib.pc.cmakein" />
+    <None Include="headers\libs\zlib\zlib.pc.in" />
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="headers\libs\zlib\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Xml Include="headers\libs\zlib\treebuild.xml" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

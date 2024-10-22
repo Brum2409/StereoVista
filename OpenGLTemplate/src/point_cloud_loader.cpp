@@ -10,7 +10,7 @@
 #include <filesystem>
 #include <future>
 #include <map>
-#include <glm/gtx/norm.hpp> // This includes glm::length2
+#include <glm/gtx/norm.hpp>
 
 #include <random>
 #include <execution>
@@ -51,9 +51,9 @@ namespace Engine {
 
             while (std::getline(iss, line)) {
                 if (!line.empty() && pointCounter % downsampleFactor == 0) {
-                    float x, y, z;
-                    int intensity, r, g, b;
-                    if (sscanf(line.c_str(), "%f %f %f %d %d %d %d", &x, &y, &z, &intensity, &r, &g, &b) == 7) {
+                    float x, y, z, intensity;
+                    int r, g, b;
+                    if (sscanf(line.c_str(), "%f %f %f %f %d %d %d", &x, &y, &z, &intensity, &r, &g, &b) == 7) {
                         PointCloudPoint point;
                         point.position = glm::vec3(x, y, z);
                         point.intensity = 1.0f;
@@ -100,6 +100,30 @@ namespace Engine {
         setupPointCloudGLBuffers(pointCloud);
 
         generateChunks(pointCloud, 10.0f);
+
+        pointCloud.instanceMatrices.reserve(pointCloud.points.size());
+        for (const auto& point : pointCloud.points) {
+            glm::mat4 instanceMatrix = glm::translate(glm::mat4(1.0f), point.position);
+            // You can add rotation and scaling here if needed
+            pointCloud.instanceMatrices.push_back(instanceMatrix);
+        }
+        pointCloud.instanceCount = pointCloud.instanceMatrices.size();
+
+        // Create and populate instance VBO
+        glGenBuffers(1, &pointCloud.instanceVBO);
+        glBindBuffer(GL_ARRAY_BUFFER, pointCloud.instanceVBO);
+        glBufferData(GL_ARRAY_BUFFER, pointCloud.instanceCount * sizeof(glm::mat4),
+            pointCloud.instanceMatrices.data(), GL_STATIC_DRAW);
+
+        // Set up instanced array
+        glBindVertexArray(pointCloud.vao);
+        for (unsigned int i = 0; i < 4; i++) {
+            glEnableVertexAttribArray(3 + i);
+            glVertexAttribPointer(3 + i, 4, GL_FLOAT, GL_FALSE, sizeof(glm::mat4),
+                (void*)(sizeof(glm::vec4) * i));
+            glVertexAttribDivisor(3 + i, 1);
+        }
+        glBindVertexArray(0);
 
         return pointCloud;
     }
@@ -285,13 +309,6 @@ namespace Engine {
             std::cout << "Successfully loaded point cloud from: " << filePath << std::endl;
             std::cout << "Loaded " << pointCloud.points.size() << " points" << std::endl;
 
-            if (!pointCloud.points.empty()) {
-                for (int i = 0; i < std::min(5, static_cast<int>(pointCloud.points.size())); ++i) {
-                    std::cout << "Point " << i << " position: " << vec3_to_string(pointCloud.points[i].position) << std::endl;
-                    std::cout << "Point " << i << " color: " << vec3_to_string(pointCloud.points[i].color) << std::endl;
-                    std::cout << "Point " << i << " intensity: " << pointCloud.points[i].intensity << std::endl;
-                }
-            }
         }
         catch (const std::exception& e) {
             std::cerr << "Error loading point cloud: " << e.what() << std::endl;
@@ -299,6 +316,30 @@ namespace Engine {
         }
 
         generateChunks(pointCloud, 10.0f);
+
+        pointCloud.instanceMatrices.reserve(pointCloud.points.size());
+        for (const auto& point : pointCloud.points) {
+            glm::mat4 instanceMatrix = glm::translate(glm::mat4(1.0f), point.position);
+            // You can add rotation and scaling here if needed
+            pointCloud.instanceMatrices.push_back(instanceMatrix);
+        }
+        pointCloud.instanceCount = pointCloud.instanceMatrices.size();
+
+        // Create and populate instance VBO
+        glGenBuffers(1, &pointCloud.instanceVBO);
+        glBindBuffer(GL_ARRAY_BUFFER, pointCloud.instanceVBO);
+        glBufferData(GL_ARRAY_BUFFER, pointCloud.instanceCount * sizeof(glm::mat4),
+            pointCloud.instanceMatrices.data(), GL_STATIC_DRAW);
+
+        // Set up instanced array
+        glBindVertexArray(pointCloud.vao);
+        for (unsigned int i = 0; i < 4; i++) {
+            glEnableVertexAttribArray(3 + i);
+            glVertexAttribPointer(3 + i, 4, GL_FLOAT, GL_FALSE, sizeof(glm::mat4),
+                (void*)(sizeof(glm::vec4) * i));
+            glVertexAttribDivisor(3 + i, 1);
+        }
+        glBindVertexArray(0);
 
         return pointCloud;
     }

@@ -498,8 +498,7 @@ int main() {
         glm::mat4 leftProjection = camera.offsetProjection(projection, currentScene.settings.separation / 2, abs(camera.Position.z) * currentScene.settings.convergence);
         glm::mat4 rightProjection = camera.offsetProjection(projection, -currentScene.settings.separation / 2, abs(camera.Position.z) * currentScene.settings.convergence);
 
-        // ---- Update Cursor Position ----
-        updateCursorPosition(window, projection, view, shader);
+
 
         // ---- Set Common Shader Uniforms ----
         shader->use();
@@ -514,13 +513,27 @@ int main() {
         camera.AdjustMovementSpeed(distanceToNearestObject, largestDimension, currentScene.settings.farPlane);
         camera.isMoving = false;  // Reset the moving flag at the end of each frame
 
-        // ---- Render for Left Eye ----
+        // ---- Render for Left and Right Eye ----
+
         renderEye(GL_BACK_LEFT, leftProjection, view, shader, viewport, windowFlags);
 
-        // ---- Render for Right Eye (if in Stereo Mode) ----
+
+        // Render for Right Eye (if in Stereo Mode)
         if (isStereoWindow) {
             renderEye(GL_BACK_RIGHT, rightProjection, view, shader, viewport, windowFlags);
         }
+
+        // ---- Update Cursor Position ----
+        updateCursorPosition(window, projection, view, shader);
+
+        renderSphereCursor(leftProjection, view);
+
+        if (isStereoWindow) {
+            renderSphereCursor(rightProjection, view);
+        }
+
+        // Render GUI
+        renderGUI(GL_BACK_LEFT, viewport, windowFlags, shader);
 
         // ---- Swap Buffers and Poll Events ----
         glfwSwapBuffers(window);
@@ -547,6 +560,7 @@ void cleanup(Shader* shader) {
         for (auto& chunk : pointCloud.chunks) {
             glDeleteBuffers(chunk.lodVBOs.size(), chunk.lodVBOs.data());
         }
+        glDeleteBuffers(1, &pointCloud.instanceVBO);
         glDeleteVertexArrays(1, &pointCloud.vao);
     }
 
@@ -607,10 +621,6 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     renderModels(shader);
     renderPointClouds(shader);
     renderOrbitCenter(projection, view);
-    renderSphereCursor(projection, view);
-
-    // Render GUI
-    renderGUI(drawBuffer == GL_BACK_LEFT, viewport, windowFlags, shader);
 
     // Reset OpenGL state again
     glUseProgram(0);
@@ -780,10 +790,17 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
 
         if (ImGui::BeginChild("ObjectList", ImVec2(0, 68), true)) {
             ImGui::Columns(2, "ObjectColumns", false);
-            ImGui::SetColumnWidth(0, 200); // Adjust this value to fit your needs
+            ImGui::SetColumnWidth(0, 100); // Adjust this value to fit your needs
 
             for (int i = 0; i < currentScene.models.size(); i++) {
                 ImGui::PushID(i);
+
+                ImGui::AlignTextToFramePadding();
+                bool visible = currentScene.models[i].visible;
+                if (ImGui::Checkbox("##visible", &visible)) {
+                    currentScene.models[i].visible = visible;
+                }
+                ImGui::NextColumn();
                 bool isSelected = (currentSelectedIndex == i && currentSelectedType == SelectedType::Model);
 
                 ImGui::AlignTextToFramePadding();
@@ -791,13 +808,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                     currentSelectedIndex = i;
                     currentSelectedType = SelectedType::Model;
                 }
-                ImGui::NextColumn();
 
-                ImGui::AlignTextToFramePadding();
-                bool visible = currentScene.models[i].visible;
-                if (ImGui::Checkbox("##visible", &visible)) {
-                    currentScene.models[i].visible = visible;
-                }
+
+
 
                 ImGui::NextColumn();
                 ImGui::PopID();
@@ -807,6 +820,13 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                 ImGui::PushID(i + currentScene.models.size());
                 bool isSelected = (currentSelectedIndex == i && currentSelectedType == SelectedType::PointCloud);
 
+                bool visible = currentScene.pointClouds[i].visible;
+                if (ImGui::Checkbox("##visible", &visible)) {
+                    currentScene.pointClouds[i].visible = visible;
+                }
+
+                ImGui::NextColumn();
+
                 ImGui::AlignTextToFramePadding();
                 if (ImGui::Selectable(currentScene.pointClouds[i].name.c_str(), isSelected, ImGuiSelectableFlags_SpanAllColumns)) {
                     currentSelectedIndex = i;
@@ -815,12 +835,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                 ImGui::NextColumn();
 
                 ImGui::AlignTextToFramePadding();
-                bool visible = currentScene.pointClouds[i].visible;
-                if (ImGui::Checkbox("##visible", &visible)) {
-                    currentScene.pointClouds[i].visible = visible;
-                }
 
-                ImGui::NextColumn();
                 ImGui::PopID();
             }
 
@@ -1140,11 +1155,12 @@ void renderPointCloudManipulationPanel(Engine::PointCloud& pointCloud) {
         ImGui::DragFloat3("Scale", glm::value_ptr(pointCloud.scale), 0.01f, 0.01f, 100.0f);
     }
 
+
     // Point Cloud specific settings
     if (ImGui::CollapsingHeader("Point Cloud Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
         // Add any point cloud specific settings here
         // For example:
-        //ImGui::SliderFloat("Point Size", &pointCloud.pointSize, 1.0f, 10.0f);
+        ImGui::SliderFloat("Base Point Size", &pointCloud.basePointSize, 1.0f, 10.0f);
         // ImGui::ColorEdit3("Point Color", glm::value_ptr(pointCloud.color));
     }
 
@@ -1270,10 +1286,15 @@ void renderModels(Shader* shader)
         shader->setFloat(lightName + ".intensity", pointLights[i].intensity);
     }
     shader->setInt("numLights", std::min((int)pointLights.size(), MAX_LIGHTS));
+    glm::mat4 viewProj = camera.GetProjectionMatrix(aspectRatio, currentScene.settings.nearPlane, currentScene.settings.farPlane) * camera.GetViewMatrix();
 
     for (int i = 0; i < currentScene.models.size(); i++) {
         const auto& model = currentScene.models[i];
         if (!model.visible) continue;
+        glm::vec3 modelPos = glm::vec3(model.position);
+        if (!camera.isInFrustum(modelPos, model.boundingSphereRadius, viewProj)) {
+            continue;  // Skip this model if it's outside the frustum
+        }
 
         glm::mat4 modelMatrix = glm::mat4(1.0f);
         modelMatrix = glm::translate(modelMatrix, model.position);
@@ -1347,13 +1368,13 @@ void renderPointClouds(Shader* shader) {
         for (const auto& chunk : pointCloud.chunks) {
             glm::vec3 chunkWorldPos = glm::vec3(modelMatrix * glm::vec4(chunk.centerPosition, 1.0f));
 
-
-            float distanceToCamera = glm::distance(chunk.centerPosition, cameraPosition);
-
             // Frustum culling
             if (!camera.isInFrustum(chunkWorldPos, chunk.boundingRadius, viewProjectionMatrix)) {
                 continue;
             }
+
+            float distanceToCamera = glm::distance(chunk.centerPosition, cameraPosition);
+
 
             // Determine LOD based on distance
             int lodLevel = 4;  // Start with lowest detail
@@ -1364,6 +1385,9 @@ void renderPointClouds(Shader* shader) {
                     break;
                 }
             }
+
+            float pointSizeMultiplier = 1.0f +(lodLevel) * 0.5f;  // Increase size for higher detail levels
+            float adjustedPointSize = pointCloud.basePointSize * pointSizeMultiplier;
 
             // Bind the appropriate LOD VBO
             glBindBuffer(GL_ARRAY_BUFFER, chunk.lodVBOs[lodLevel]);
@@ -1377,8 +1401,9 @@ void renderPointClouds(Shader* shader) {
             glEnableVertexAttribArray(1);
             glEnableVertexAttribArray(2);
 
-            // Render the points
-            glPointSize(5.0f); // Set point size
+            // Set the point size
+            glPointSize(adjustedPointSize);
+
             glDrawArrays(GL_POINTS, 0, chunk.lodPointCounts[lodLevel]);
         }
 
@@ -1463,13 +1488,13 @@ PointCloud loadPointCloudFile(const std::string& filePath, size_t downsampleFact
 // ---- Cursor and Ray Casting ----
 #pragma region Cursor and Ray Casting
 void updateCursorPosition(GLFWwindow* window, const glm::mat4& projection, const glm::mat4& view, Shader* shader) {
-    // Prepare for rendering
-    glDrawBuffer(GL_BACK);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    shader->use();
-    shader->setMat4("projection", projection);
-    shader->setMat4("view", view);
-    renderModels(shader);
+    // Only update cursor position during left eye rendering
+    static bool isLeftEye = true;
+    if (!isLeftEye) {
+        isLeftEye = true;
+        return;
+    }
+    isLeftEye = false;
 
     // Read depth at cursor position
     float depth = 0.0;
@@ -1494,7 +1519,6 @@ void updateCursorPosition(GLFWwindow* window, const glm::mat4& projection, const
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
             }
             wasHit = true;
-
         }
         else {
             g_cursorValid = false;
@@ -1503,7 +1527,6 @@ void updateCursorPosition(GLFWwindow* window, const glm::mat4& projection, const
                 // Cursor just left an object
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
             }
-
             wasHit = false;
         }
     }

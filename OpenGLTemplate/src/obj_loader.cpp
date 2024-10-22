@@ -161,6 +161,15 @@ namespace Engine {
             }
         }
 
+        float maxDistSq = 0.0f;
+        for (const auto& vertex : model.vertices) {
+            float distSq = glm::dot(vertex.position, vertex.position);
+            if (distSq > maxDistSq) {
+                maxDistSq = distSq;
+            }
+        }
+        model.boundingSphereRadius = std::sqrt(maxDistSq);
+
         // If no texture was loaded, use the default white texture
         if (!textureLoaded) {
             model.texture = createDefaultWhiteTexture();
@@ -231,6 +240,15 @@ namespace Engine {
             cube.vertices.push_back(vertex);
             cube.indices.push_back(i);
         }
+
+        float maxDistSq = 0.0f;
+        for (const auto& vertex : cube.vertices) {
+            float distSq = glm::dot(vertex.position, vertex.position);
+            if (distSq > maxDistSq) {
+                maxDistSq = distSq;
+            }
+        }
+        cube.boundingSphereRadius = std::sqrt(maxDistSq);
 
         // Create VAO, VBO, EBO for the cube
         glGenVertexArrays(1, &cube.vao);

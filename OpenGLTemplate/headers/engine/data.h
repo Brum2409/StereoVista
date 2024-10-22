@@ -37,10 +37,16 @@ namespace Engine {
         GLuint vao;
         GLuint vbo;
 
+        GLuint instanceVBO;
+        std::vector<glm::mat4> instanceMatrices;
+        size_t instanceCount;
+
+        float basePointSize = 2.0f;
+
         std::vector<PointCloudChunk> chunks;
-        float lodDistances[5] = { 50.0f, 100.0f, 200.0f, 400.0f, 800.0f };
-        float chunkSize = 10.0f;
-        float newChunkSize = 10.0f;
+        float lodDistances[5] = { 10.0f, 20.0f, 30.0f, 40.0f, 50.0f };
+        float chunkSize = 5.0f;
+        float newChunkSize = 5.0f;
 
         GLuint chunkOutlineVAO;
         GLuint chunkOutlineVBO;

@@ -40,6 +40,8 @@ namespace Engine {
         std::string specularTexturePath;
         std::string aoTexturePath;
 
+        float boundingSphereRadius;
+
         ObjModel() : selected(false), color(1.0f, 1.0f, 1.0f), shininess(32.0f), emissive(0.0f),
             texture(0), normalMap(0), specularMap(0), aoMap(0) {}
     };

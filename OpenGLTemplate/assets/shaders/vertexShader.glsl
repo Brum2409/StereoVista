@@ -19,13 +19,19 @@ uniform bool isPointCloud;
 
 void main()
 {
-    FragPos = vec3(model * vec4(aPos, 1.0));
-    
     if (isPointCloud) {
-    VertexColor = aNormal;
-    Intensity = aTexCoords.x;  
-
+        // For point clouds, we're using the position directly
+        FragPos = vec3(model * vec4(aPos, 1.0));
+        VertexColor = aNormal;  // Using normal data to store color for point clouds
+        Intensity = aTexCoords.x;  // Using texCoord.x to store intensity for point clouds
+        
+        // We don't need to calculate Normal or TBN for point clouds
+        Normal = vec3(0.0);  // Unused for point clouds
+        TBN = mat3(1.0);  // Unused for point clouds
+        TexCoords = vec2(0.0);  // Unused for point clouds
     } else {
+        // For regular models
+        FragPos = vec3(model * vec4(aPos, 1.0));
         Normal = mat3(transpose(inverse(model))) * aNormal;  
         TexCoords = aTexCoords;
         

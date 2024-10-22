@@ -1,4 +1,29 @@
 {
+    "Test": {
+        "cursorCenterTransparency": 0.20000000298023224,
+        "cursorColor": [
+            0.643243134021759,
+            0.7306122779846191,
+            0.15208663046360016,
+            0.699999988079071
+        ],
+        "cursorEdgeSoftness": 0.800000011920929,
+        "fragmentBaseInnerRadius": 0.004000000189989805,
+        "innerSphereColor": [
+            0.8163264989852905,
+            0.006663896143436432,
+            0.006663896143436432,
+            1.0
+        ],
+        "innerSphereFactor": 0.10000000149011612,
+        "name": "Test",
+        "showFragmentCursor": false,
+        "showInnerSphere": true,
+        "showSphereCursor": true,
+        "sphereFixedRadius": 0.699999988079071,
+        "sphereScalingMode": 2,
+        "sphereTransparency": 1.0
+    },
     "combined": {
         "cursorCenterTransparency": 0.20000000298023224,
         "cursorColor": [

@@ -11,7 +11,6 @@ namespace Engine {
         static bool exportToBinary(const PointCloud& pointCloud, const std::string& filePath);
         static PointCloud loadFromBinary(const std::string& filePath);
 
-
     private:
         static void setupPointCloudGLBuffers(PointCloud& pointCloud);
         static constexpr char BINARY_MAGIC_NUMBER[4] = { 'P', 'C', 'B', '1' };
