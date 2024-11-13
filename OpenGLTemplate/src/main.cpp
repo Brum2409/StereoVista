@@ -457,18 +457,17 @@ int main() {
     float largestDimension = calculateLargestModelDimension();
 
     // ---- Initialize ImGui ----
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO(); (void)io;
-    ImGui_ImplGlfw_InitForOpenGL(window, true);
-    ImGui_ImplOpenGL3_Init("#version 330 core");
+    if (!InitializeImGuiWithFonts(window)) {
+        std::cerr << "Failed to initialize ImGui with fonts" << std::endl;
+        return -1;
+    }
+
+    // Configure additional ImGui settings
     ImGuiViewportP* viewport = (ImGuiViewportP*)(void*)ImGui::GetMainViewport();
     ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNavFocus;
     ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
 
-    // Setup ImGui style
-    SetupImGuiStyle(true, 1.0f);
-    strcpy_s(modelPathBuffer, modelPath.c_str());
+
 
     // ---- OpenGL Settings ----
     glEnable(GL_DEPTH_TEST);
@@ -789,7 +788,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
         ImGui::SetNextWindowSize(ImVec2(300, viewport->Size.y - ImGui::GetFrameHeight()));
         ImGui::Begin("Scene Objects", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
 
-        if (ImGui::BeginChild("ObjectList", ImVec2(0, 68), true)) {
+        if (ImGui::BeginChild("ObjectList", ImVec2(0, 268), true)) {
             ImGui::Columns(2, "ObjectColumns", false);
             ImGui::SetColumnWidth(0, 100); // Adjust this value to fit your needs
 

@@ -492,7 +492,7 @@ namespace Engine {
         // Define max points for each LOD level (for testing)
         const size_t maxPointsPerLevel[] = {
             std::numeric_limits<size_t>::max(), // LOD 0
-            80000 * chunk.boundingRadius,  // LOD 1:
+            120000 * chunk.boundingRadius,  // LOD 1:
             40000 * chunk.boundingRadius,  // LOD 2
             10000 * chunk.boundingRadius,  // LOD 3
             5000 * chunk.boundingRadius   // LOD 4
