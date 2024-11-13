@@ -23,6 +23,7 @@
 #include <json.h>
 #include <corecrt_math_defines.h>
 #include <openLinks.h>
+#include <glm/gtx/component_wise.hpp>
 
 
 using namespace Engine;
@@ -1117,7 +1118,7 @@ void renderModelManipulationPanel(Engine::ObjModel& model, Shader* shader) {
 
     ImGui::Separator();
 
-// Delete button
+    // Delete button
     if (ImGui::Button("Delete Model", ImVec2(-1, 0))) {
         ImGui::OpenPopup("Delete Model?");
     }
@@ -1166,10 +1167,10 @@ void renderPointCloudManipulationPanel(Engine::PointCloud& pointCloud) {
 
     if (ImGui::CollapsingHeader("LOD Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::SliderFloat("LOD Distance 1", &pointCloud.lodDistances[0], 1.0f, 15.0f);
-        ImGui::SliderFloat("LOD Distance 2", &pointCloud.lodDistances[1], 10.0f, 20.0f);
-        ImGui::SliderFloat("LOD Distance 3", &pointCloud.lodDistances[2], 15.0f, 30.0f);
-        ImGui::SliderFloat("LOD Distance 4", &pointCloud.lodDistances[3], 20.0f, 40.0f);
-        ImGui::SliderFloat("LOD Distance 5", &pointCloud.lodDistances[4], 25.0f, 50.0f);
+        ImGui::SliderFloat("LOD Distance 2", &pointCloud.lodDistances[1], 10.0f, 30.0f);
+        ImGui::SliderFloat("LOD Distance 3", &pointCloud.lodDistances[2], 15.0f, 40.0f);
+        ImGui::SliderFloat("LOD Distance 4", &pointCloud.lodDistances[3], 20.0f, 50.0f);
+        ImGui::SliderFloat("LOD Distance 5", &pointCloud.lodDistances[4], 25.0f, 60.0f);
 
         ImGui::SliderFloat("Chunk Size", &pointCloud.newChunkSize, 1.0f, 50.0f);
 
@@ -1366,14 +1367,15 @@ void renderPointClouds(Shader* shader) {
         glm::vec3 cameraPosition = camera.Position;
 
         for (const auto& chunk : pointCloud.chunks) {
+            // Calculate transformed chunk position using the point cloud's model matrix
             glm::vec3 chunkWorldPos = glm::vec3(modelMatrix * glm::vec4(chunk.centerPosition, 1.0f));
 
-            // Frustum culling
-            if (!camera.isInFrustum(chunkWorldPos, chunk.boundingRadius, viewProjectionMatrix)) {
+            // Frustum culling using transformed position
+            if (!camera.isInFrustum(chunkWorldPos, chunk.boundingRadius * glm::compMax(pointCloud.scale), viewProjectionMatrix)) {
                 continue;
             }
 
-            float distanceToCamera = glm::distance(chunk.centerPosition, cameraPosition);
+            float distanceToCamera = glm::distance(chunkWorldPos, cameraPosition);
 
 
             // Determine LOD based on distance
@@ -1386,7 +1388,7 @@ void renderPointClouds(Shader* shader) {
                 }
             }
 
-            float pointSizeMultiplier = 1.0f +(lodLevel) * 0.5f;  // Increase size for higher detail levels
+            float pointSizeMultiplier = 1.0f + (lodLevel) * 0.5f;  // Increase size for higher detail levels
             float adjustedPointSize = pointCloud.basePointSize * pointSizeMultiplier;
 
             // Bind the appropriate LOD VBO
@@ -1746,12 +1748,12 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
             }
         }
         else if (action == GLFW_RELEASE) {
-            leftMousePressed = false;
             if (orbitFollowsCursor && showSphereCursor && camera.IsOrbiting) {
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
                 isMouseCaptured = false;
                 glfwSetCursorPos(window, windowWidth / 2, windowHeight / 2);
             }
+            leftMousePressed = false;
             camera.StopOrbiting();
             isMovingModel = false;
             selectionMode = false;

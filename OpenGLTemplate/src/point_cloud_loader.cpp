@@ -407,6 +407,10 @@ namespace Engine {
         glBindVertexArray(0);
     }
 
+    glm::vec3 calculateTransformedChunkPosition(const glm::vec3& chunkPos, const glm::mat4& modelMatrix) {
+        glm::vec4 transformedPos = modelMatrix * glm::vec4(chunkPos, 1.0f);
+        return glm::vec3(transformedPos);
+    }
 
     void generateChunks(PointCloud& pointCloud, float chunkSize) {
         // Clean up old chunks
@@ -427,15 +431,25 @@ namespace Engine {
                 std::size_t h1 = std::hash<int>()(index.x);
                 std::size_t h2 = std::hash<int>()(index.y);
                 std::size_t h3 = std::hash<int>()(index.z);
-                return h1 ^ (h2 << 1) ^ (h3 << 2); // Combine hashes
+                return h1 ^ (h2 << 1) ^ (h3 << 2);
             }
         };
 
         std::unordered_map<glm::ivec3, std::vector<PointCloudPoint>, ChunkIndexHash> chunkMap;
 
+        // Create transformation matrix
+        glm::mat4 modelMatrix = glm::mat4(1.0f);
+        modelMatrix = glm::translate(modelMatrix, pointCloud.position);
+        modelMatrix = glm::rotate(modelMatrix, glm::radians(pointCloud.rotation.x), glm::vec3(1, 0, 0));
+        modelMatrix = glm::rotate(modelMatrix, glm::radians(pointCloud.rotation.y), glm::vec3(0, 1, 0));
+        modelMatrix = glm::rotate(modelMatrix, glm::radians(pointCloud.rotation.z), glm::vec3(0, 0, 1));
+        modelMatrix = glm::scale(modelMatrix, pointCloud.scale);
+
         // Populate the chunk map based on point positions
         for (const auto& point : pointCloud.points) {
-            glm::ivec3 chunkIndex = glm::floor(point.position / chunkSize);  // Properly handle negative coordinates
+            // Transform the point position
+            glm::vec3 transformedPos = glm::vec3(modelMatrix * glm::vec4(point.position, 1.0f));
+            glm::ivec3 chunkIndex = glm::floor(transformedPos / chunkSize);
             chunkMap[chunkIndex].push_back(point);
         }
 
@@ -444,7 +458,7 @@ namespace Engine {
             PointCloudChunk chunk;
             chunk.points = std::move(points);
 
-            // Calculate chunk center position based on chunk index
+            // Calculate chunk center position
             chunk.centerPosition = glm::vec3(
                 (chunkIndex.x + 0.5f) * chunkSize,
                 (chunkIndex.y + 0.5f) * chunkSize,
@@ -475,29 +489,71 @@ namespace Engine {
         chunk.lodVBOs.resize(numLODLevels);
         chunk.lodPointCounts.resize(numLODLevels);
 
+        // Define max points for each LOD level (for testing)
+        const size_t maxPointsPerLevel[] = {
+            std::numeric_limits<size_t>::max(), // LOD 0
+            80000 * chunk.boundingRadius,  // LOD 1:
+            40000 * chunk.boundingRadius,  // LOD 2
+            10000 * chunk.boundingRadius,  // LOD 3
+            5000 * chunk.boundingRadius   // LOD 4
+        };
+
         std::vector<std::vector<PointCloudPoint>> lodPoints(numLODLevels);
+
+        // LOD 0: Use all points
         lodPoints[0] = chunk.points;
 
+        // Random number generator for point selection
         std::random_device rd;
         std::mt19937 gen(rd());
 
+        // Generate subsequent LOD levels
         for (int i = 1; i < numLODLevels; ++i) {
-            size_t targetCount = std::max<size_t>(1, chunk.points.size() / static_cast<size_t>(std::pow(2, i)));
+            size_t targetCount = std::min(maxPointsPerLevel[i], chunk.points.size());
 
-            lodPoints[i] = lodPoints[i - 1];
-            if (lodPoints[i].size() > targetCount) {
-                std::shuffle(lodPoints[i].begin(), lodPoints[i].end(), gen);
-                lodPoints[i].resize(targetCount);
+            if (chunk.points.size() <= targetCount) {
+                // If we have fewer points than the target, use all points
+                lodPoints[i] = chunk.points;
+            }
+            else {
+                // Randomly select points while maintaining spatial distribution
+                std::vector<PointCloudPoint> selectedPoints;
+                selectedPoints.reserve(targetCount);
+
+                // Create a copy of points for sampling
+                std::vector<PointCloudPoint> availablePoints = chunk.points;
+
+                // Randomly select points
+                for (size_t j = 0; j < targetCount; ++j) {
+                    if (availablePoints.empty()) break;
+
+                    // Generate random index
+                    std::uniform_int_distribution<size_t> dist(0, availablePoints.size() - 1);
+                    size_t randomIndex = dist(gen);
+
+                    // Add randomly selected point to the LOD level
+                    selectedPoints.push_back(availablePoints[randomIndex]);
+
+                    // Remove selected point from available points (swap and pop for efficiency)
+                    std::swap(availablePoints[randomIndex], availablePoints.back());
+                    availablePoints.pop_back();
+                }
+
+                lodPoints[i] = std::move(selectedPoints);
             }
         }
 
+        // Create VBOs for each LOD level
         for (int i = 0; i < numLODLevels; ++i) {
             chunk.lodPointCounts[i] = lodPoints[i].size();
 
             if (!lodPoints[i].empty()) {
                 glGenBuffers(1, &chunk.lodVBOs[i]);
                 glBindBuffer(GL_ARRAY_BUFFER, chunk.lodVBOs[i]);
-                glBufferData(GL_ARRAY_BUFFER, lodPoints[i].size() * sizeof(PointCloudPoint), lodPoints[i].data(), GL_STATIC_DRAW);
+                glBufferData(GL_ARRAY_BUFFER,
+                    lodPoints[i].size() * sizeof(PointCloudPoint),
+                    lodPoints[i].data(),
+                    GL_STATIC_DRAW);
             }
             else {
                 chunk.lodVBOs[i] = 0;  // Use 0 to indicate an invalid buffer
@@ -505,6 +561,7 @@ namespace Engine {
         }
 
         glBindBuffer(GL_ARRAY_BUFFER, 0);
+
     }
 
 

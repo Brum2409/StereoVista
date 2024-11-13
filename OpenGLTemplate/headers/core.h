@@ -10,6 +10,7 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#include <array>
 
 #include "engine/window.h"
 #include "engine/input.h"

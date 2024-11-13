@@ -57,8 +57,11 @@ namespace Engine {
     const int MAX_LIGHTS = 180;
     struct PointLight {
         glm::vec3 position;
+        glm::vec3 direction;  // Direction of the cone
         glm::vec3 color;
         float intensity;
+        float innerConeAngle;  // Inner cone angle in radians
+        float outerConeAngle;  // Outer cone angle in radians
     };
 
 }

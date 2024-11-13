@@ -107,3 +107,6 @@ OpenGLTemplate/imgui.ini
 *.ipch
 OpenGLTemplate/x64/Debug/Stereo Demo.tlog/unsuccessfulbuild
 /OpenGLTemplate/x64/Debug
+/OpenGLTemplate/headers/libs/hdf5
+/OpenGLTemplate/headers/libs/highfive
+/OpenGLTemplate/headers/libs/zlib

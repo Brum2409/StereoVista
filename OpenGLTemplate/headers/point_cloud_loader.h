@@ -30,4 +30,6 @@ namespace Engine {
 
     void generateChunkOutlineVertices(PointCloud& pointCloud);
 
+    glm::vec3 calculateTransformedChunkPosition(const glm::vec3& chunkPos, const glm::mat4& modelMatrix);
+
 } // namespace Engine
