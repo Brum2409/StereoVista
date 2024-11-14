@@ -142,7 +142,7 @@ bool InitializeImGuiWithFonts(GLFWwindow* window) {
     };
 
     bool fontLoaded = false;
-    float defaultFontSize = 16.0f;
+    float defaultFontSize = 18.0f;
     float headerFontSize = 20.0f;
     float smallFontSize = 14.0f;
 
