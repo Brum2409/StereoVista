@@ -10,7 +10,7 @@ namespace Engine {
         float separation= 0.02;
         float convergence = 1.0f;
         float nearPlane = 0.1f;
-        float farPlane = 100.0f;
+        float farPlane = 200.0f;
     };
 
     struct Scene {

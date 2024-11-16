@@ -53,7 +53,7 @@ namespace Engine {
                 if (!line.empty() && pointCounter % downsampleFactor == 0) {
                     float x, y, z, intensity;
                     int r, g, b;
-                    if (sscanf(line.c_str(), "%f %f %f %f %d %d %d", &x, &y, &z, &intensity, &r, &g, &b) == 7) {
+                    if (sscanf_s(line.c_str(), "%f %f %f %f %d %d %d", &x, &y, &z, &intensity, &r, &g, &b) == 7) {
                         PointCloudPoint point;
                         point.position = glm::vec3(x, y, z);
                         point.intensity = 1.0f;
