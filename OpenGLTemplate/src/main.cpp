@@ -44,6 +44,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
 void renderSphereCursor(const glm::mat4& projection, const glm::mat4& view);
 void renderOrbitCenter(const glm::mat4& projection, const glm::mat4& view);
 void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags windowFlags, Shader* shader);
+void renderSunManipulationPanel();
 void renderCursorSettingsWindow();
 void renderModelManipulationPanel(Engine::ObjModel& model, Shader* shader);
 void renderPointCloudManipulationPanel(Engine::PointCloud& pointCloud);
@@ -106,7 +107,8 @@ bool showCursorSettingsWindow = false;
 enum class SelectedType {
     None,
     Model,
-    PointCloud
+    PointCloud,
+    Sun
 };
 
 std::atomic<bool> isRecalculatingChunks(false);
@@ -147,6 +149,12 @@ int windowHeight = 1080;
 // ---- Lighting ----
 std::vector<PointLight> pointLights;
 float zOffset = 0.5f;
+Sun sun = {
+    glm::normalize(glm::vec3(-1.0f, -1.0f, -1.0f)), // direction
+    glm::vec3(1.0f, 1.0f, 0.9f),                    // warm sunlight color
+    0.3f,                                           // intensity
+    true                                            // enabled
+};
 
 // ---- Sphere Cursor ----
 GLuint sphereVAO, sphereVBO, sphereEBO;
@@ -792,6 +800,22 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
             ImGui::Columns(2, "ObjectColumns", false);
             ImGui::SetColumnWidth(0, 100); // Adjust this value to fit your needs
 
+            ImGui::PushID("sun");
+            bool sunVisible = sun.enabled;
+            if (ImGui::Checkbox("##visible", &sunVisible)) {
+                sun.enabled = sunVisible;
+            }
+            ImGui::NextColumn();
+
+            bool isSunSelected = (currentSelectedType == SelectedType::Sun);
+            ImGui::AlignTextToFramePadding();
+            if (ImGui::Selectable("Sun", isSunSelected, ImGuiSelectableFlags_SpanAllColumns)) {
+                currentSelectedType = SelectedType::Sun;
+                currentSelectedIndex = -1;  // Not needed for sun
+            }
+            ImGui::NextColumn();
+            ImGui::PopID();
+
             for (int i = 0; i < currentScene.models.size(); i++) {
                 ImGui::PushID(i);
 
@@ -808,9 +832,6 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                     currentSelectedIndex = i;
                     currentSelectedType = SelectedType::Model;
                 }
-
-
-
 
                 ImGui::NextColumn();
                 ImGui::PopID();
@@ -839,6 +860,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                 ImGui::PopID();
             }
 
+
+
             ImGui::Columns(1);
         }
         ImGui::EndChild();
@@ -860,6 +883,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
         }
         else if (currentSelectedType == SelectedType::PointCloud && currentSelectedIndex >= 0 && currentSelectedIndex < currentScene.pointClouds.size()) {
             renderPointCloudManipulationPanel(currentScene.pointClouds[currentSelectedIndex]);
+        }
+        else if (currentSelectedType == SelectedType::Sun) {
+            renderSunManipulationPanel();
         }
 
         ImGui::End();
@@ -902,6 +928,35 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
 
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+}
+
+
+void renderSunManipulationPanel() {
+    ImGui::Text("Sun Settings");
+    ImGui::Separator();
+
+    // Direction control using angles
+    static glm::vec3 angles = glm::vec3(-45.0f, -45.0f, 0.0f);
+    if (ImGui::DragFloat3("Direction (Angles)", glm::value_ptr(angles), 1.0f, -180.0f, 180.0f)) {
+        // Convert angles to direction vector
+        float pitch = glm::radians(angles.x);
+        float yaw = glm::radians(angles.y);
+        sun.direction = glm::normalize(glm::vec3(
+            cos(pitch) * cos(yaw),
+            sin(pitch),
+            cos(pitch) * sin(yaw)
+        ));
+    }
+
+    // Color with color picker
+    ImGui::ColorEdit3("Color", glm::value_ptr(sun.color));
+
+    // Intensity with slider
+    ImGui::DragFloat("Intensity", &sun.intensity, 0.01f, 0.0f, 10.0f);
+
+    // Display current direction vector
+    ImGui::Text("Direction Vector: (%.2f, %.2f, %.2f)",
+        sun.direction.x, sun.direction.y, sun.direction.z);
 }
 
 void renderCursorSettingsWindow() {
@@ -1287,6 +1342,11 @@ void renderModels(Shader* shader)
     }
     shader->setInt("numLights", std::min((int)pointLights.size(), MAX_LIGHTS));
     glm::mat4 viewProj = camera.GetProjectionMatrix(aspectRatio, currentScene.settings.nearPlane, currentScene.settings.farPlane) * camera.GetViewMatrix();
+
+    shader->setBool("sun.enabled", sun.enabled);
+    shader->setVec3("sun.direction", sun.direction);
+    shader->setVec3("sun.color", sun.color);
+    shader->setFloat("sun.intensity", sun.intensity);
 
     for (int i = 0; i < currentScene.models.size(); i++) {
         const auto& model = currentScene.models[i];

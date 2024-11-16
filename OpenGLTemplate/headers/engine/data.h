@@ -54,6 +54,14 @@ namespace Engine {
         bool visualizeChunks;
     };
 
+    // In data.h, add after PointLight struct
+    struct Sun {
+        glm::vec3 direction;
+        glm::vec3 color;
+        float intensity;
+        bool enabled;
+    };
+
     const int MAX_LIGHTS = 180;
     struct PointLight {
         glm::vec3 position;

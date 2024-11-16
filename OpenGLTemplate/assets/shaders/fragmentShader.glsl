@@ -16,6 +16,14 @@ struct PointLight {
     float intensity;
 };
 
+// Sun structure
+struct Sun {
+    vec3 direction;
+    vec3 color;
+    float intensity;
+    bool enabled;
+};
+
 // Uniforms
 uniform bool isPointCloud;
 uniform vec3 viewPos;
@@ -44,9 +52,11 @@ uniform vec4 outerCursorColor;
 uniform vec4 innerCursorColor;
 uniform bool showFragmentCursor;
 
+// Lighting uniforms
 #define MAX_LIGHTS 180
 uniform PointLight lights[MAX_LIGHTS];
 uniform int numLights;
+uniform Sun sun;
 
 vec3 calculatePointLight(PointLight light, vec3 normal, vec3 fragPos, vec3 viewDir, float specularStrength)
 {
@@ -75,16 +85,37 @@ vec3 calculatePointLight(PointLight light, vec3 normal, vec3 fragPos, vec3 viewD
     return (ambient + diffuse + specular);
 }
 
+vec3 calculateSunLight(Sun sun, vec3 normal, vec3 viewDir, float specularStrength)
+{
+    if (!sun.enabled) return vec3(0.0);
+    
+    vec3 lightDir = normalize(-sun.direction);
+    
+    // Diffuse shading
+    float diff = max(dot(normal, lightDir), 0.0);
+    
+    // Specular shading
+    vec3 reflectDir = reflect(-lightDir, normal);
+    float spec = pow(max(dot(viewDir, reflectDir), 0.0), shininess);
+    
+    // Combine results
+    vec3 ambient = 0.1 * sun.color * sun.intensity;
+    vec3 diffuse = diff * sun.color * sun.intensity;
+    vec3 specular = specularStrength * spec * sun.color * sun.intensity;
+    
+    return (ambient + diffuse + specular);
+}
+
 void main()
 {
-if (isChunkOutline) {
-    FragColor = vec4(1.0, 1.0, 0.0, 1.0); // Yellow outline
-    return;
-}
+    if (isChunkOutline) {
+        FragColor = vec4(1.0, 1.0, 0.0, 1.0); // Yellow outline
+        return;
+    }
 
     if (isPointCloud) {
         // For point clouds, use the vertex color modulated by intensity
-    FragColor = vec4(VertexColor * Intensity, 1.0);
+        FragColor = vec4(VertexColor * Intensity, 1.0);
     } else {
         // Determine base color (either from texture or object color)
         vec3 baseColor = hasTexture > 0.5 ? texture(texture_diffuse1, TexCoords).rgb : objectColor;
@@ -108,9 +139,13 @@ if (isChunkOutline) {
         
         vec3 result = vec3(0.0);
         
+        // Add sun contribution
+        if (sun.enabled) {
+            result += calculateSunLight(sun, norm, viewDir, specularStrength);
+        }
+
         // Calculate contribution from all point lights
-        for(int i = 0; i < numLights; i++)
-        {
+        for(int i = 0; i < numLights; i++) {
             result += calculatePointLight(lights[i], norm, FragPos, viewDir, specularStrength);
         }
         
