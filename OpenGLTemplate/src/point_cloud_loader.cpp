@@ -104,7 +104,7 @@ namespace Engine {
         pointCloud.instanceMatrices.reserve(pointCloud.points.size());
         for (const auto& point : pointCloud.points) {
             glm::mat4 instanceMatrix = glm::translate(glm::mat4(1.0f), point.position);
-            // You can add rotation and scaling here if needed
+            // can add rotation and scaling here if needed
             pointCloud.instanceMatrices.push_back(instanceMatrix);
         }
         pointCloud.instanceCount = pointCloud.instanceMatrices.size();

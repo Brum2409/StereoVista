@@ -281,6 +281,8 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="assets\shaders\fragmentShader.glsl" />
+    <None Include="assets\shaders\simpleDepthFragmentShader.glsl" />
+    <None Include="assets\shaders\simpleDepthVertexShader.glsl" />
     <None Include="assets\shaders\vertexShader.glsl" />
     <None Include="assets\shaders\sphereVertexShader.glsl" />
     <None Include="assets\shaders\sphereFragmentShader.glsl" />

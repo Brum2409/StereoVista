@@ -25,7 +25,6 @@
 #include <openLinks.h>
 #include <glm/gtx/component_wise.hpp>
 
-
 using namespace Engine;
 using json = nlohmann::json;
 
@@ -50,7 +49,7 @@ void renderModelManipulationPanel(Engine::ObjModel& model, Shader* shader);
 void renderPointCloudManipulationPanel(Engine::PointCloud& pointCloud);
 void deleteSelectedPointCloud();
 void renderModels(Shader* shader);
-
+void applyPresetToGlobalSettings(const Engine::CursorPreset& preset);
 void renderPointClouds(Shader* shader);
 
 // ---- Update Functions ----
@@ -100,6 +99,7 @@ float maxConvergence = 3.0f;   // Maximum convergence
 // ---- GUI Settings ----
 bool showGui = true;
 bool showFPS = true;
+bool isDarkTheme = true;
 bool showInfoWindow = false;
 bool showSettingsWindow = false;
 bool show3DCursor = true;
@@ -115,6 +115,22 @@ std::atomic<bool> isRecalculatingChunks(false);
 
 SelectedType currentSelectedType = SelectedType::None;
 int currentSelectedIndex = -1;
+
+// ---- Preferences Structure ----
+struct ApplicationPreferences {
+    bool isDarkTheme = true;
+    float separation = 0.02f;
+    float convergence = 1.0f;
+    float nearPlane = 0.1f;
+    float farPlane = 200.0f;
+    std::string currentPresetName = "Default";
+    float cameraSpeedFactor = 1.0f;
+    bool showFPS = true;
+    bool show3DCursor = true;
+};
+
+ApplicationPreferences preferences;
+
 
 // ---- Scene Persistence ----
 static char saveFilename[256] = "scene.json"; // Buffer for saving scene filename
@@ -155,6 +171,13 @@ Sun sun = {
     0.3f,                                           // intensity
     true                                            // enabled
 };
+
+unsigned int depthMapFBO;
+unsigned int depthMap;
+const unsigned int SHADOW_WIDTH = 16384, SHADOW_HEIGHT = 16384;
+Shader* simpleDepthShader = nullptr;
+
+
 
 // ---- Sphere Cursor ----
 GLuint sphereVAO, sphereVBO, sphereEBO;
@@ -238,6 +261,132 @@ void setDefaultCursorSettings() {
 }
 #pragma endregion
 
+
+void savePreferences() {
+    json j;
+
+    // UI preferences
+    j["ui"]["darkTheme"] = preferences.isDarkTheme;
+    j["ui"]["showFPS"] = preferences.showFPS;
+    j["ui"]["show3DCursor"] = preferences.show3DCursor;
+
+    // Camera settings
+    j["camera"]["separation"] = preferences.separation;
+    j["camera"]["convergence"] = preferences.convergence;
+    j["camera"]["nearPlane"] = preferences.nearPlane;
+    j["camera"]["farPlane"] = preferences.farPlane;
+    j["camera"]["speedFactor"] = preferences.cameraSpeedFactor;
+
+    // Cursor settings
+    j["cursor"]["currentPreset"] = preferences.currentPresetName;
+
+    // Save to file
+    std::ofstream file("preferences.json");
+    if (file.is_open()) {
+        file << std::setw(4) << j << std::endl;
+        file.close();
+    }
+    else {
+        std::cerr << "Failed to save preferences" << std::endl;
+    }
+}
+
+void loadPreferences() {
+    std::ifstream file("preferences.json");
+    if (!file.is_open()) {
+        std::cout << "No preferences file found, using defaults" << std::endl;
+        return;
+    }
+
+    try {
+        json j;
+        file >> j;
+
+        // UI preferences
+        if (j.contains("ui")) {
+            preferences.isDarkTheme = j["ui"].value("darkTheme", true);
+            preferences.showFPS = j["ui"].value("showFPS", true);
+            preferences.show3DCursor = j["ui"].value("show3DCursor", true);
+        }
+
+        // Camera settings
+        if (j.contains("camera")) {
+            preferences.separation = j["camera"].value("separation", 0.02f);
+            preferences.convergence = j["camera"].value("convergence", 1.0f);
+            preferences.nearPlane = j["camera"].value("nearPlane", 0.1f);
+            preferences.farPlane = j["camera"].value("farPlane", 200.0f);
+            preferences.cameraSpeedFactor = j["camera"].value("speedFactor", 1.0f);
+        }
+
+        // Cursor settings
+        if (j.contains("cursor")) {
+            preferences.currentPresetName = j["cursor"].value("currentPreset", "Default");
+        }
+
+        // Apply loaded preferences
+        isDarkTheme = preferences.isDarkTheme;
+        SetupImGuiStyle(isDarkTheme, 1.0f);
+
+        showFPS = preferences.showFPS;
+        show3DCursor = preferences.show3DCursor;
+
+        currentScene.settings.separation = preferences.separation;
+        currentScene.settings.convergence = preferences.convergence;
+        currentScene.settings.nearPlane = preferences.nearPlane;
+        currentScene.settings.farPlane = preferences.farPlane;
+        camera.speedFactor = preferences.cameraSpeedFactor;
+
+        currentPresetName = preferences.currentPresetName;
+        if (!currentPresetName.empty()) {
+            try {
+                Engine::CursorPreset loadedPreset = Engine::CursorPresetManager::applyCursorPreset(currentPresetName);
+                applyPresetToGlobalSettings(loadedPreset);
+            }
+            catch (const std::exception& e) {
+                std::cerr << "Error loading cursor preset: " << e.what() << std::endl;
+            }
+        }
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error loading preferences: " << e.what() << std::endl;
+    }
+
+    file.close();
+}
+
+void setupShadowMapping() {
+    // Create depth map FBO
+    glGenFramebuffers(1, &depthMapFBO);
+
+    // Create depth texture
+    glGenTextures(1, &depthMap);
+    glBindTexture(GL_TEXTURE_2D, depthMap);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT,
+        SHADOW_WIDTH, SHADOW_HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    // Use CLAMP_TO_BORDER with white border color
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    float borderColor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+    glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
+
+    // Attach depth texture as FBO's depth buffer
+    glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    // Load shadow mapping shaders
+    try {
+        simpleDepthShader = Engine::loadShader("simpleDepthVertexShader.glsl", "simpleDepthFragmentShader.glsl");
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error loading depth shader: " << e.what() << std::endl;
+    }
+}
 
 // ---- Sphere Cursor Functions
 #pragma region Sphere Cursor Functions
@@ -461,11 +610,14 @@ int main() {
     }
     currentPresetName = Engine::CursorPresetManager::getPresetNames().front();
 
+    setupShadowMapping();
+    setupSphereCursor();
+
     // ---- Calculate Largest Model Dimension ----
     float largestDimension = calculateLargestModelDimension();
 
     // ---- Initialize ImGui ----
-    if (!InitializeImGuiWithFonts(window)) {
+    if (!InitializeImGuiWithFonts(window, true)) {
         std::cerr << "Failed to initialize ImGui with fonts" << std::endl;
         return -1;
     }
@@ -475,14 +627,12 @@ int main() {
     ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNavFocus;
     ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
 
-
+    loadPreferences();
 
     // ---- OpenGL Settings ----
     glEnable(GL_DEPTH_TEST);
     glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
     glfwSwapInterval(1); // Enable vsync
-
-    setupSphereCursor();
 
     // ---- Main Loop ----
     while (!glfwWindowShouldClose(window)) {
@@ -506,25 +656,13 @@ int main() {
         glm::mat4 leftProjection = camera.offsetProjection(projection, currentScene.settings.separation / 2, abs(camera.Position.z) * currentScene.settings.convergence);
         glm::mat4 rightProjection = camera.offsetProjection(projection, -currentScene.settings.separation / 2, abs(camera.Position.z) * currentScene.settings.convergence);
 
-
-
-        // ---- Set Common Shader Uniforms ----
-        shader->use();
-        shader->setVec3("viewPos", camera.Position);
-        shader->setVec4("cursorPos", camera.IsOrbiting && orbitFollowsCursor && showSphereCursor ?
-            glm::vec4(capturedCursorPos, g_cursorValid ? 1.0f : 0.0f) :
-            glm::vec4(g_cursorPos, g_cursorValid ? 1.0f : 0.0f));
-        updateFragmentShaderUniforms(shader);
-
         // Adjust camera speed
         float distanceToNearestObject = camera.getDistanceToNearestObject(camera, projection, view, currentScene.settings.farPlane, windowWidth, windowHeight);
         camera.AdjustMovementSpeed(distanceToNearestObject, largestDimension, currentScene.settings.farPlane);
         camera.isMoving = false;  // Reset the moving flag at the end of each frame
 
         // ---- Render for Left and Right Eye ----
-
         renderEye(GL_BACK_LEFT, leftProjection, view, shader, viewport, windowFlags);
-
 
         // Render for Right Eye (if in Stereo Mode)
         if (isStereoWindow) {
@@ -572,6 +710,10 @@ void cleanup(Shader* shader) {
         glDeleteVertexArrays(1, &pointCloud.vao);
     }
 
+    glDeleteFramebuffers(1, &depthMapFBO);
+    glDeleteTextures(1, &depthMap);
+    delete simpleDepthShader;
+
     glfwTerminate();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
@@ -613,45 +755,85 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    // Set up shader for this eye
+    // 1. First render pass: Shadow map generation
+    glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
+    glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+    glClear(GL_DEPTH_BUFFER_BIT);
+
+    // Calculate light's view and projection matrices
+    glm::mat4 lightProjection = glm::ortho(-50.0f, 50.0f, -50.0f, 50.0f, currentScene.settings.nearPlane, currentScene.settings.farPlane);
+    glm::mat4 lightView = glm::lookAt(-sun.direction * 20.0f,  // Light position
+        glm::vec3(0.0f),          // Look at origin
+        glm::vec3(0.0f, 1.0f, 0.0f));
+    glm::mat4 lightSpaceMatrix = lightProjection * lightView;
+
+    // Use depth shader for shadow map generation
+    simpleDepthShader->use();
+    simpleDepthShader->setMat4("lightSpaceMatrix", lightSpaceMatrix);
+
+    // Render scene to depth buffer
+    glDisable(GL_CULL_FACE);
+    renderModels(simpleDepthShader);
+    glEnable(GL_CULL_FACE);
+
+    // 2. Second pass: Regular rendering with shadows
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, windowWidth, windowHeight);
+
+    // Switch back to main shader
     shader->use();
+
+    // Update view and projection matrices
     shader->setMat4("projection", projection);
     shader->setMat4("view", view);
     shader->setVec3("viewPos", camera.Position);
+
+    // Set light space matrix for shadow mapping
+    shader->setMat4("lightSpaceMatrix", lightSpaceMatrix);
 
     // Set cursor position based on orbiting state
     shader->setVec4("cursorPos", camera.IsOrbiting && orbitFollowsCursor && showSphereCursor ?
         glm::vec4(capturedCursorPos, g_cursorValid ? 1.0f : 0.0f) :
         glm::vec4(g_cursorPos, g_cursorValid ? 1.0f : 0.0f));
+
+    // Update fragment shader uniforms for cursor
     updateFragmentShaderUniforms(shader);
 
-    // Render scene elements
+    // Bind textures
+    // Shadow map
+    glActiveTexture(GL_TEXTURE5);  // Use a texture unit not used by other textures
+    glBindTexture(GL_TEXTURE_2D, depthMap);
+    shader->setInt("shadowMap", 5);
+
+    // Render the scene
     renderModels(shader);
     renderPointClouds(shader);
-    renderOrbitCenter(projection, view);
 
-    // Reset OpenGL state again
+    // Render orbit center if needed
+    if (!orbitFollowsCursor && showOrbitCenter && camera.IsOrbiting) {
+        renderOrbitCenter(projection, view);
+    }
+
+    // Reset OpenGL state
     glUseProgram(0);
     glBindVertexArray(0);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, 0);
+
 }
 
 void renderSphereCursor(const glm::mat4& projection, const glm::mat4& view) {
     if (g_cursorValid && showSphereCursor) {
-        // Enable depth testing and blending
-        glEnable(GL_DEPTH_TEST);
-        glDepthFunc(GL_LESS);
+        // Enable blending and depth testing
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glEnable(GL_DEPTH_TEST);
 
-        // Set up sphere shader
         sphereShader->use();
         sphereShader->setMat4("projection", projection);
         sphereShader->setMat4("view", view);
         sphereShader->setVec3("viewPos", camera.Position);
 
-        // Calculate cursor position and size
         glm::vec3 cursorRenderPos = camera.IsOrbiting && orbitFollowsCursor ? capturedCursorPos : g_cursorPos;
         float sphereRadius = calculateSphereRadius(cursorRenderPos, camera.Position);
         glm::mat4 model = glm::translate(glm::mat4(1.0f), cursorRenderPos);
@@ -662,19 +844,19 @@ void renderSphereCursor(const glm::mat4& projection, const glm::mat4& view) {
 
         glBindVertexArray(sphereVAO);
 
-        // Render inner sphere if enabled
+        // First pass: Render back faces
+        glDepthMask(GL_TRUE);
+        glCullFace(GL_FRONT);
+
         if (showInnerSphere) {
-            glDepthMask(GL_FALSE);
             sphereShader->setBool("isInnerSphere", true);
             sphereShader->setVec4("sphereColor", innerSphereColor);
-            sphereShader->setFloat("transparency", 1.0); // Full opacity for inner sphere
+            sphereShader->setFloat("transparency", 1.0);
             glm::mat4 innerModel = glm::scale(model, glm::vec3(innerSphereFactor));
             sphereShader->setMat4("model", innerModel);
             glDrawElements(GL_TRIANGLES, sphereIndices.size(), GL_UNSIGNED_INT, 0);
         }
 
-        // Render outer sphere
-        glDepthMask(GL_TRUE);
         sphereShader->setBool("isInnerSphere", false);
         sphereShader->setVec4("sphereColor", cursorColor);
         sphereShader->setFloat("transparency", cursorTransparency);
@@ -683,10 +865,34 @@ void renderSphereCursor(const glm::mat4& projection, const glm::mat4& view) {
         sphereShader->setMat4("model", model);
         glDrawElements(GL_TRIANGLES, sphereIndices.size(), GL_UNSIGNED_INT, 0);
 
-        // Clean up
+        // Second pass: Render front faces
+        glDepthMask(GL_FALSE);
+        glCullFace(GL_BACK);
+
+        if (showInnerSphere) {
+            sphereShader->setBool("isInnerSphere", true);
+            sphereShader->setVec4("sphereColor", innerSphereColor);
+            sphereShader->setFloat("transparency", 1.0);
+            glm::mat4 innerModel = glm::scale(model, glm::vec3(innerSphereFactor));
+            sphereShader->setMat4("model", innerModel);
+            glDrawElements(GL_TRIANGLES, sphereIndices.size(), GL_UNSIGNED_INT, 0);
+        }
+
+        sphereShader->setBool("isInnerSphere", false);
+        sphereShader->setVec4("sphereColor", cursorColor);
+        sphereShader->setFloat("transparency", cursorTransparency);
+        sphereShader->setFloat("edgeSoftness", cursorEdgeSoftness);
+        sphereShader->setFloat("centerTransparencyFactor", cursorCenterTransparency);
+        sphereShader->setMat4("model", model);
+        glDrawElements(GL_TRIANGLES, sphereIndices.size(), GL_UNSIGNED_INT, 0);
+
+        // Reset OpenGL state
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
         glBindVertexArray(0);
         glUseProgram(0);
-        glDisable(GL_BLEND);
     }
 }
 
@@ -891,24 +1097,57 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
         ImGui::End();
 
         // Settings window
+        // Settings window
         if (showSettingsWindow) {
             ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
             ImGui::Begin("Settings", &showSettingsWindow);
 
-            ImGui::Text("Camera Settings");
-            ImGui::SliderFloat("Separation", &currentScene.settings.separation, minSeparation, maxSeparation);
-            ImGui::SliderFloat("Convergence / ZFocus", &currentScene.settings.convergence, minConvergence, maxConvergence);
-            ImGui::SliderFloat("Camera Speed Multiplier", &camera.speedFactor, 0.1f, 5.0f);
-            ImGui::SliderFloat("Near Plane", &currentScene.settings.nearPlane, 0.01f, 10.0f);
-            ImGui::SliderFloat("Far Plane", &currentScene.settings.farPlane, 10.0f, 1000.0f);
+            bool settingsChanged = false;
 
-            ImGui::Checkbox("Show FPS", &showFPS);
+            // Theme toggle
+            if (ImGui::Checkbox("Dark Theme", &isDarkTheme)) {
+                SetupImGuiStyle(isDarkTheme, 1.0f);
+                preferences.isDarkTheme = isDarkTheme;
+                settingsChanged = true;
+            }
 
             ImGui::Separator();
 
-            ImGui::Checkbox("Show 3D Cursor", &show3DCursor);
+            // Camera settings
+            ImGui::Text("Camera Settings");
+            if (ImGui::SliderFloat("Separation", &currentScene.settings.separation, minSeparation, maxSeparation)) {
+                preferences.separation = currentScene.settings.separation;
+                settingsChanged = true;
+            }
+            if (ImGui::SliderFloat("Convergence / ZFocus", &currentScene.settings.convergence, minConvergence, maxConvergence)) {
+                preferences.convergence = currentScene.settings.convergence;
+                settingsChanged = true;
+            }
+            if (ImGui::SliderFloat("Camera Speed Multiplier", &camera.speedFactor, 0.1f, 5.0f)) {
+                preferences.cameraSpeedFactor = camera.speedFactor;
+                settingsChanged = true;
+            }
+            if (ImGui::SliderFloat("Near Plane", &currentScene.settings.nearPlane, 0.01f, 10.0f)) {
+                preferences.nearPlane = currentScene.settings.nearPlane;
+                settingsChanged = true;
+            }
+            if (ImGui::SliderFloat("Far Plane", &currentScene.settings.farPlane, 10.0f, 1000.0f)) {
+                preferences.farPlane = currentScene.settings.farPlane;
+                settingsChanged = true;
+            }
+
+            if (ImGui::Checkbox("Show FPS", &showFPS)) {
+                preferences.showFPS = showFPS;
+                settingsChanged = true;
+            }
+
+            ImGui::Separator();
             if (ImGui::Button("Cursor Settings")) {
                 showCursorSettingsWindow = true;
+            }
+
+            if (settingsChanged) {
+                savePreferences();
             }
 
             ImGui::End();
@@ -967,7 +1206,7 @@ void renderCursorSettingsWindow() {
     if (ImGui::BeginCombo("Cursor Preset", currentPresetName.c_str())) {
         std::vector<std::string> presetNames = Engine::CursorPresetManager::getPresetNames();
 
-        // Add "New Preset" option
+
         if (ImGui::Selectable("New Preset")) {
             currentPresetName = "New Preset";
             isEditingPresetName = true;
@@ -981,6 +1220,8 @@ void renderCursorSettingsWindow() {
                 try {
                     Engine::CursorPreset loadedPreset = Engine::CursorPresetManager::applyCursorPreset(name);
                     applyPresetToGlobalSettings(loadedPreset);
+                    preferences.currentPresetName = currentPresetName;
+                    savePreferences();
                 }
                 catch (const std::exception& e) {
                     std::cerr << "Error loading preset: " << e.what() << std::endl;
@@ -1213,7 +1454,7 @@ void renderPointCloudManipulationPanel(Engine::PointCloud& pointCloud) {
 
     // Point Cloud specific settings
     if (ImGui::CollapsingHeader("Point Cloud Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
-        // Add any point cloud specific settings here
+        // any point cloud specific settings here
         // For example:
         ImGui::SliderFloat("Base Point Size", &pointCloud.basePointSize, 1.0f, 10.0f);
         // ImGui::ColorEdit3("Point Color", glm::value_ptr(pointCloud.color));
@@ -1329,33 +1570,49 @@ void deleteSelectedPointCloud() {
 }
 
 
-void renderModels(Shader* shader)
-{
-    updatePointLights();
+void renderModels(Shader* shader) {
+    // Only update lighting information for the main shader, not the depth shader
+    if (shader != simpleDepthShader) {
+        // Update point lights
+        updatePointLights();
 
-    // Set point light uniforms
-    for (int i = 0; i < pointLights.size() && i < MAX_LIGHTS; i++) {
-        std::string lightName = "lights[" + std::to_string(i) + "]";
-        shader->setVec3(lightName + ".position", pointLights[i].position);
-        shader->setVec3(lightName + ".color", pointLights[i].color);
-        shader->setFloat(lightName + ".intensity", pointLights[i].intensity);
+        // Set point light uniforms
+        for (int i = 0; i < pointLights.size() && i < MAX_LIGHTS; i++) {
+            std::string lightName = "lights[" + std::to_string(i) + "]";
+            shader->setVec3(lightName + ".position", pointLights[i].position);
+            shader->setVec3(lightName + ".color", pointLights[i].color);
+            shader->setFloat(lightName + ".intensity", pointLights[i].intensity);
+        }
+        shader->setInt("numLights", std::min((int)pointLights.size(), MAX_LIGHTS));
+
+        // Set sun properties
+        shader->setBool("sun.enabled", sun.enabled);
+        shader->setVec3("sun.direction", sun.direction);
+        shader->setVec3("sun.color", sun.color);
+        shader->setFloat("sun.intensity", sun.intensity);
     }
-    shader->setInt("numLights", std::min((int)pointLights.size(), MAX_LIGHTS));
-    glm::mat4 viewProj = camera.GetProjectionMatrix(aspectRatio, currentScene.settings.nearPlane, currentScene.settings.farPlane) * camera.GetViewMatrix();
 
-    shader->setBool("sun.enabled", sun.enabled);
-    shader->setVec3("sun.direction", sun.direction);
-    shader->setVec3("sun.color", sun.color);
-    shader->setFloat("sun.intensity", sun.intensity);
+    // Calculate view projection matrix for frustum culling
+    glm::mat4 viewProj;
+    if (shader != simpleDepthShader) {
+        viewProj = camera.GetProjectionMatrix(aspectRatio, currentScene.settings.nearPlane, currentScene.settings.farPlane) * camera.GetViewMatrix();
+    }
 
+    // Render all models
     for (int i = 0; i < currentScene.models.size(); i++) {
         const auto& model = currentScene.models[i];
         if (!model.visible) continue;
-        glm::vec3 modelPos = glm::vec3(model.position);
-        if (!camera.isInFrustum(modelPos, model.boundingSphereRadius, viewProj)) {
-            continue;  // Skip this model if it's outside the frustum
-        }
 
+        // Skip frustum culling for depth pass
+        /*
+        if (shader != simpleDepthShader) {
+            glm::vec3 modelPos = glm::vec3(model.position);
+            if (!camera.isInFrustum(modelPos, model.boundingSphereRadius, viewProj)) {
+                continue;  // Skip if outside frustum
+            }
+        }*/
+
+        // Calculate model matrix
         glm::mat4 modelMatrix = glm::mat4(1.0f);
         modelMatrix = glm::translate(modelMatrix, model.position);
         modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.x), glm::vec3(1, 0, 0));
@@ -1365,46 +1622,58 @@ void renderModels(Shader* shader)
 
         shader->setMat4("model", modelMatrix);
 
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, model.texture);
-        shader->setInt("texture_diffuse1", 0);
-        shader->setFloat("hasTexture", model.hasCustomTexture ? 1.0f : 0.0f);
-        shader->setVec3("objectColor", model.color);
+        // Only set material properties and textures for the main shader pass
+        if (shader != simpleDepthShader) {
+            // Texture bindings
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, model.texture);
+            shader->setInt("texture_diffuse1", 0);
+            shader->setFloat("hasTexture", model.hasCustomTexture ? 1.0f : 0.0f);
+            shader->setVec3("objectColor", model.color);
 
-        shader->setBool("isPointCloud", false);
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, model.normalMap);
+            shader->setInt("texture_normal1", 1);
 
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, model.normalMap);
-        shader->setInt("texture_normal1", 1);
+            glActiveTexture(GL_TEXTURE2);
+            glBindTexture(GL_TEXTURE_2D, model.specularMap);
+            shader->setInt("texture_specular1", 2);
 
-        glActiveTexture(GL_TEXTURE2);
-        glBindTexture(GL_TEXTURE_2D, model.specularMap);
-        shader->setInt("texture_specular1", 2);
+            glActiveTexture(GL_TEXTURE3);
+            glBindTexture(GL_TEXTURE_2D, model.aoMap);
+            shader->setInt("texture_ao1", 3);
 
-        glActiveTexture(GL_TEXTURE3);
-        glBindTexture(GL_TEXTURE_2D, model.aoMap);
-        shader->setInt("texture_ao1", 3);
+            // Material properties
+            shader->setInt("hasNormalMap", model.normalMap != 0);
+            shader->setInt("hasSpecularMap", model.specularMap != 0);
+            shader->setInt("hasAOMap", model.aoMap != 0);
+            shader->setFloat("shininess", model.shininess);
+            shader->setFloat("emissive", model.emissive);
 
-        // Set flags for texture availability
-        shader->setInt("hasNormalMap", model.normalMap != 0);
-        shader->setInt("hasSpecularMap", model.specularMap != 0);
-        shader->setInt("hasAOMap", model.aoMap != 0);
+            // Selection properties
+            shader->setBool("selectionMode", selectionMode);
+            shader->setBool("isSelected", selectionMode && (i == currentSelectedIndex) && (currentSelectedType == SelectedType::Model));
 
-        // Set color and material properties
-        shader->setFloat("shininess", model.shininess);
-        shader->setFloat("emissive", model.emissive);
+            // Shadow mapping uniforms
+            shader->setBool("isPointCloud", false);
+        }
 
-        // Set selection mode variables
-        shader->setBool("selectionMode", selectionMode);
-        shader->setBool("isSelected", selectionMode && (i == currentSelectedIndex) && (currentSelectedType == SelectedType::Model));
-
+        // Draw the model
         glBindVertexArray(model.vao);
         glDrawElements(GL_TRIANGLES, model.indices.size(), GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
     }
+
+    // Reset OpenGL state
+    if (shader != simpleDepthShader) {
+        shader->setBool("isPointCloud", false);
+    }
 }
 
 void renderPointClouds(Shader* shader) {
+    // Skip point cloud rendering for depth pass as points don't cast good shadows
+    if (shader == simpleDepthShader) return;
+
     for (auto& pointCloud : currentScene.pointClouds) {
         if (!pointCloud.visible) continue;
 
@@ -1436,10 +1705,8 @@ void renderPointClouds(Shader* shader) {
 
             float distanceToCamera = glm::distance(chunkWorldPos, cameraPosition);
 
-
             // Determine LOD based on distance
             int lodLevel = 4;  // Start with lowest detail
-
             for (int i = 0; i < 5; ++i) {
                 if (distanceToCamera < pointCloud.lodDistances[i] * 1.0f) {
                     lodLevel = i;
@@ -1447,13 +1714,10 @@ void renderPointClouds(Shader* shader) {
                 }
             }
 
-            float pointSizeMultiplier = 1.0f + (lodLevel) * 0.5f;  // Increase size for higher detail levels
+            float pointSizeMultiplier = 1.0f + (lodLevel) * 0.5f;
             float adjustedPointSize = pointCloud.basePointSize * pointSizeMultiplier;
 
-            // Bind the appropriate LOD VBO
             glBindBuffer(GL_ARRAY_BUFFER, chunk.lodVBOs[lodLevel]);
-
-            // Set up vertex attributes
             glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(PointCloudPoint), (void*)0);
             glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(PointCloudPoint), (void*)offsetof(PointCloudPoint, color));
             glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(PointCloudPoint), (void*)offsetof(PointCloudPoint, intensity));
@@ -1462,9 +1726,7 @@ void renderPointClouds(Shader* shader) {
             glEnableVertexAttribArray(1);
             glEnableVertexAttribArray(2);
 
-            // Set the point size
             glPointSize(adjustedPointSize);
-
             glDrawArrays(GL_POINTS, 0, chunk.lodPointCounts[lodLevel]);
         }
 
@@ -1473,7 +1735,7 @@ void renderPointClouds(Shader* shader) {
         // Visualize chunk boundaries if enabled
         if (pointCloud.visualizeChunks) {
             shader->setBool("isChunkOutline", true);
-            shader->setVec3("outlineColor", glm::vec3(1.0f, 1.0f, 0.0f)); // Yellow outline
+            shader->setVec3("outlineColor", glm::vec3(1.0f, 1.0f, 0.0f));
 
             glBindVertexArray(pointCloud.chunkOutlineVAO);
             glDrawArrays(GL_LINES, 0, pointCloud.chunkOutlineVertices.size());
@@ -1522,7 +1784,7 @@ void updatePointLights() {
             }
 
             // Create multiple point lights distributed across the model's bounding box
-            int numLightsPerDimension = 3; // Adjust this for more or fewer lights
+            int numLightsPerDimension = 2; // Adjust this for more or fewer lights
             glm::vec3 step = (maxBounds - minBounds) / float(numLightsPerDimension - 1);
             for (int x = 0; x < numLightsPerDimension; ++x) {
                 for (int y = 0; y < numLightsPerDimension; ++y) {

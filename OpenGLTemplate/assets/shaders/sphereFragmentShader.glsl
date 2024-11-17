@@ -33,7 +33,7 @@ void main()
     float alpha = sphereColor.a * transparency;
     
     if (!isInnerSphere) {
-        // Calculate edge factor
+        // Calculate edge factor for soft edges
         float edgeFactor = pow(1.0 - abs(dot(viewDir, norm)), edgeSoftness);
         
         // Calculate center transparency
@@ -44,7 +44,7 @@ void main()
         alpha *= mix(centerAlpha, 1.0, edgeFactor);
     }
     
-    // Add a subtle rim effect
+    // Add rim lighting effect
     float rimFactor = 1.0 - max(0.0, dot(viewDir, norm));
     finalColor += sphereColor.rgb * pow(rimFactor, 3.0) * 0.3;
     

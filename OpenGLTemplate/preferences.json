@@ -1,0 +1,17 @@
+{
+    "camera": {
+        "convergence": 0.22699999809265137,
+        "farPlane": 200.0,
+        "nearPlane": 0.10000000149011612,
+        "separation": 0.01600000075995922,
+        "speedFactor": 1.0
+    },
+    "cursor": {
+        "currentPreset": "combined"
+    },
+    "ui": {
+        "darkTheme": true,
+        "show3DCursor": true,
+        "showFPS": true
+    }
+}

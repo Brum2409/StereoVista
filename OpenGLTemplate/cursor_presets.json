@@ -46,7 +46,7 @@
         "showInnerSphere": false,
         "showSphereCursor": true,
         "sphereFixedRadius": 0.699999988079071,
-        "sphereScalingMode": 2,
+        "sphereScalingMode": 1,
         "sphereTransparency": 1.0
     },
     "only 3D": {

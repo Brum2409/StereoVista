@@ -411,5 +411,7 @@
     <None Include="headers\libs\assimp\vector3.inl">
       <Filter>Header Files</Filter>
     </None>
+    <None Include="assets\shaders\simpleDepthVertexShader.glsl" />
+    <None Include="assets\shaders\simpleDepthFragmentShader.glsl" />
   </ItemGroup>
 </Project>

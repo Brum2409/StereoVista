@@ -5,44 +5,50 @@ layout (location = 2) in vec2 aTexCoords;
 layout (location = 3) in vec3 aTangent;
 layout (location = 4) in vec3 aBitangent;
 
-out vec3 FragPos;
-out vec3 Normal;
-out vec2 TexCoords;
-out mat3 TBN;
-out vec3 VertexColor;
-out float Intensity;
+out VS_OUT {
+    vec3 FragPos;
+    vec3 Normal;
+    vec2 TexCoords;
+    vec4 FragPosLightSpace;
+    vec3 VertexColor;
+    float Intensity;
+    mat3 TBN;
+} vs_out;
 
 uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
+uniform mat4 lightSpaceMatrix;
 uniform bool isPointCloud;
 
 void main()
 {
+    vs_out.FragPos = vec3(model * vec4(aPos, 1.0));
+    
     if (isPointCloud) {
-        // For point clouds, we're using the position directly
-        FragPos = vec3(model * vec4(aPos, 1.0));
-        VertexColor = aNormal;  // Using normal data to store color for point clouds
-        Intensity = aTexCoords.x;  // Using texCoord.x to store intensity for point clouds
-        
-        // We don't need to calculate Normal or TBN for point clouds
-        Normal = vec3(0.0);  // Unused for point clouds
-        TBN = mat3(1.0);  // Unused for point clouds
-        TexCoords = vec2(0.0);  // Unused for point clouds
+        // For point clouds, we're using different attribute meanings
+        vs_out.VertexColor = aNormal;  // Using normal data to store color for point clouds
+        vs_out.Intensity = aTexCoords.x;  // Using texCoord.x to store intensity
+        vs_out.Normal = vec3(0.0);  // Not used for point clouds
+        vs_out.TexCoords = vec2(0.0);  // Not used for point clouds
+        vs_out.TBN = mat3(1.0);  // Not used for point clouds
     } else {
         // For regular models
-        FragPos = vec3(model * vec4(aPos, 1.0));
-        Normal = mat3(transpose(inverse(model))) * aNormal;  
-        TexCoords = aTexCoords;
+        vs_out.Normal = transpose(inverse(mat3(model))) * aNormal;
+        vs_out.TexCoords = aTexCoords;
         
+        // Calculate TBN matrix for normal mapping
         vec3 T = normalize(vec3(model * vec4(aTangent, 0.0)));
         vec3 B = normalize(vec3(model * vec4(aBitangent, 0.0)));
         vec3 N = normalize(vec3(model * vec4(aNormal, 0.0)));
-        TBN = mat3(T, B, N);
+        vs_out.TBN = mat3(T, B, N);
         
-        VertexColor = vec3(1.0);  // Default color for non-point cloud vertices
-        Intensity = 1.0;  // Default intensity for non-point cloud vertices
+        vs_out.VertexColor = vec3(1.0);
+        vs_out.Intensity = 1.0;
     }
     
-    gl_Position = projection * view * vec4(FragPos, 1.0);
+    // Transform vertex position to light space for shadow mapping
+    vs_out.FragPosLightSpace = lightSpaceMatrix * vec4(vs_out.FragPos, 1.0);
+    
+    gl_Position = projection * view * vec4(vs_out.FragPos, 1.0);
 }
