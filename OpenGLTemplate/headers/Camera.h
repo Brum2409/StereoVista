@@ -57,6 +57,8 @@ public:
     float AnimationProgress;
     float AnimationDuration;
 
+    bool useNewMethod = true;  // For stereo rendering method
+    bool wireframe = false;    // For wireframe mode
 
     std::function<void()> centeringCompletedCallback;
 

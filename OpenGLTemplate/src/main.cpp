@@ -39,7 +39,7 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos);
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 
 // ---- Rendering Functions ----
-void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& view, Shader* shader, ImGuiViewportP* viewport, ImGuiWindowFlags windowFlags);
+void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& view, Shader* shader, ImGuiViewportP* viewport, ImGuiWindowFlags windowFlags, GLFWwindow* window);
 void renderSphereCursor(const glm::mat4& projection, const glm::mat4& view);
 void renderOrbitCenter(const glm::mat4& projection, const glm::mat4& view);
 void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags windowFlags, Shader* shader);
@@ -94,7 +94,7 @@ float minSeparation = 0.0001f; // Minimum stereo separation
 
 // The convergence will shift the zFokus but there is still some weirdness when going into negative
 float minConvergence = -3.0f;  // Minimum convergence
-float maxConvergence = 3.0f;   // Maximum convergence
+float maxConvergence = 6.0f;   // Maximum convergence
 
 // ---- GUI Settings ----
 bool showGui = true;
@@ -119,14 +119,15 @@ int currentSelectedIndex = -1;
 // ---- Preferences Structure ----
 struct ApplicationPreferences {
     bool isDarkTheme = true;
-    float separation = 0.02f;
-    float convergence = 1.0f;
+    float separation = 0.005f;
+    float convergence = 1.5f;
     float nearPlane = 0.1f;
     float farPlane = 200.0f;
     std::string currentPresetName = "Default";
     float cameraSpeedFactor = 1.0f;
     bool showFPS = true;
     bool show3DCursor = true;
+    bool useNewStereoMethod = true;
 };
 
 ApplicationPreferences preferences;
@@ -276,6 +277,7 @@ void savePreferences() {
     j["camera"]["nearPlane"] = preferences.nearPlane;
     j["camera"]["farPlane"] = preferences.farPlane;
     j["camera"]["speedFactor"] = preferences.cameraSpeedFactor;
+    j["camera"]["useNewStereoMethod"] = preferences.useNewStereoMethod;
 
     // Cursor settings
     j["cursor"]["currentPreset"] = preferences.currentPresetName;
@@ -316,6 +318,8 @@ void loadPreferences() {
             preferences.nearPlane = j["camera"].value("nearPlane", 0.1f);
             preferences.farPlane = j["camera"].value("farPlane", 200.0f);
             preferences.cameraSpeedFactor = j["camera"].value("speedFactor", 1.0f);
+            camera.useNewMethod = j["camera"].value("useNewStereoMethod", true);
+            preferences.useNewStereoMethod = camera.useNewMethod;
         }
 
         // Cursor settings
@@ -529,6 +533,25 @@ void setupSphereCursor() {
 #pragma endregion
 
 
+void PerspectiveProjection(GLfloat* frustum, GLfloat dir,
+    GLfloat fovy, GLfloat aspect,
+    GLfloat znear, GLfloat zfar,
+    GLfloat eyesep, GLfloat focaldist)
+{
+    GLfloat h_half = tanf(glm::radians(fovy / 2.0f));
+    GLfloat w_half = h_half * aspect;
+
+    frustum[0] = -w_half * focaldist - ((eyesep / 2.0f) * dir);
+    frustum[1] = w_half * focaldist - ((eyesep / 2.0f) * dir);
+    frustum[0] = (frustum[0] / focaldist) * znear;
+    frustum[1] = (frustum[1] / focaldist) * znear;
+
+    frustum[2] = -h_half * znear;
+    frustum[3] = h_half * znear;
+    frustum[4] = znear;
+    frustum[5] = zfar;
+}
+
 int main() {
     // ---- Initialize GLFW ----
     if (!glfwInit()) {
@@ -653,33 +676,48 @@ int main() {
         glm::mat4 view = camera.GetViewMatrix();
         aspectRatio = (float)windowWidth / (float)windowHeight;
         glm::mat4 projection = camera.GetProjectionMatrix(aspectRatio, currentScene.settings.nearPlane, currentScene.settings.farPlane);
-        glm::mat4 leftProjection = camera.offsetProjection(projection, currentScene.settings.separation / 2, abs(camera.Position.z) * currentScene.settings.convergence);
-        glm::mat4 rightProjection = camera.offsetProjection(projection, -currentScene.settings.separation / 2, abs(camera.Position.z) * currentScene.settings.convergence);
+        glm::mat4 leftProjection;
+        glm::mat4 rightProjection;
+        if (!camera.useNewMethod) {
+            // Original method
+            leftProjection = camera.offsetProjection(projection, currentScene.settings.separation / 2,
+                abs(camera.Position.z) * currentScene.settings.convergence);
+            rightProjection = camera.offsetProjection(projection, -currentScene.settings.separation / 2,
+                abs(camera.Position.z) * currentScene.settings.convergence);
+        }
+        else {
+            // New method
+            GLfloat frustum[6];
+            PerspectiveProjection(frustum, +1.0f, camera.Zoom, aspectRatio,
+                currentScene.settings.nearPlane, currentScene.settings.farPlane,
+                currentScene.settings.separation * 10, currentScene.settings.convergence);
+            leftProjection = glm::frustum(frustum[0], frustum[1], frustum[2], frustum[3], frustum[4], frustum[5]);
 
+            PerspectiveProjection(frustum, -1.0f, camera.Zoom, aspectRatio,
+                currentScene.settings.nearPlane, currentScene.settings.farPlane,
+                currentScene.settings.separation * 10, currentScene.settings.convergence);
+            rightProjection = glm::frustum(frustum[0], frustum[1], frustum[2], frustum[3], frustum[4], frustum[5]);
+        }
+
+        // Set wireframe mode before rendering
+        if (camera.wireframe) {
+            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+        }
+        else {
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        }
         // Adjust camera speed
         float distanceToNearestObject = camera.getDistanceToNearestObject(camera, projection, view, currentScene.settings.farPlane, windowWidth, windowHeight);
         camera.AdjustMovementSpeed(distanceToNearestObject, largestDimension, currentScene.settings.farPlane);
         camera.isMoving = false;  // Reset the moving flag at the end of each frame
 
         // ---- Render for Left and Right Eye ----
-        renderEye(GL_BACK_LEFT, leftProjection, view, shader, viewport, windowFlags);
+        renderEye(GL_BACK_LEFT, leftProjection, view, shader, viewport, windowFlags, window);
 
         // Render for Right Eye (if in Stereo Mode)
         if (isStereoWindow) {
-            renderEye(GL_BACK_RIGHT, rightProjection, view, shader, viewport, windowFlags);
+            renderEye(GL_BACK_RIGHT, rightProjection, view, shader, viewport, windowFlags, window);
         }
-
-        // ---- Update Cursor Position ----
-        updateCursorPosition(window, projection, view, shader);
-
-        renderSphereCursor(leftProjection, view);
-
-        if (isStereoWindow) {
-            renderSphereCursor(rightProjection, view);
-        }
-
-        // Render GUI
-        renderGUI(GL_BACK_LEFT, viewport, windowFlags, shader);
 
         // ---- Swap Buffers and Poll Events ----
         glfwSwapBuffers(window);
@@ -744,7 +782,7 @@ float calculateLargestModelDimension() {
 
 // ---- Rendering ----
 #pragma region Rendering
-void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& view, Shader* shader, ImGuiViewportP* viewport, ImGuiWindowFlags windowFlags) {
+void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& view, Shader* shader, ImGuiViewportP* viewport, ImGuiWindowFlags windowFlags, GLFWwindow* window) {
     // Set the draw buffer and clear color and depth buffers
     glDrawBuffer(drawBuffer);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -780,38 +818,39 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, windowWidth, windowHeight);
 
-    // Switch back to main shader
     shader->use();
-
-    // Update view and projection matrices
     shader->setMat4("projection", projection);
     shader->setMat4("view", view);
     shader->setVec3("viewPos", camera.Position);
-
-    // Set light space matrix for shadow mapping
     shader->setMat4("lightSpaceMatrix", lightSpaceMatrix);
 
-    // Set cursor position based on orbiting state
-    shader->setVec4("cursorPos", camera.IsOrbiting && orbitFollowsCursor && showSphereCursor ?
-        glm::vec4(capturedCursorPos, g_cursorValid ? 1.0f : 0.0f) :
-        glm::vec4(g_cursorPos, g_cursorValid ? 1.0f : 0.0f));
-
-    // Update fragment shader uniforms for cursor
-    updateFragmentShaderUniforms(shader);
-
-    // Bind textures
-    // Shadow map
-    glActiveTexture(GL_TEXTURE5);  // Use a texture unit not used by other textures
+    // Shadow map binding
+    glActiveTexture(GL_TEXTURE5);
     glBindTexture(GL_TEXTURE_2D, depthMap);
     shader->setInt("shadowMap", 5);
 
-    // Render the scene
+    // Render scene
     renderModels(shader);
     renderPointClouds(shader);
+
+    // Update cursor position after scene is rendered
+    updateCursorPosition(window, projection, view, shader);
+
+    // Set cursor uniforms after position update
+    shader->setVec4("cursorPos", camera.IsOrbiting && orbitFollowsCursor && showSphereCursor ?
+        glm::vec4(capturedCursorPos, g_cursorValid ? 1.0f : 0.0f) :
+        glm::vec4(g_cursorPos, g_cursorValid ? 1.0f : 0.0f));
+    updateFragmentShaderUniforms(shader);
 
     // Render orbit center if needed
     if (!orbitFollowsCursor && showOrbitCenter && camera.IsOrbiting) {
         renderOrbitCenter(projection, view);
+    }
+
+    renderSphereCursor(projection, view);
+
+    if (showGui) {
+        renderGUI(drawBuffer == GL_BACK_LEFT, viewport, windowFlags, shader);
     }
 
     // Reset OpenGL state
@@ -931,241 +970,267 @@ void renderOrbitCenter(const glm::mat4& projection, const glm::mat4& view) {
 }
 
 void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags windowFlags, Shader* shader) {
-    ImGui_ImplOpenGL3_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
+    // Only create new frame for left eye
+    if (isLeftEye) {
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
 
-    if (showGui) {
-        // Top bar
-        if (ImGui::BeginMainMenuBar()) {
-            if (ImGui::BeginMenu("File")) {
-                if (ImGui::MenuItem("Open")) {
-                    auto selection = pfd::open_file("Select a file to open", ".",
-                        { "All Supported Files", "*.obj *.txt *.xyz *.ply *.pcb",
-                          "OBJ Files", "*.obj",
-                          "Point Cloud Files", "*.txt *.xyz *.ply *.pcb",
-                          "All Files", "*" }).result();
-                    if (!selection.empty()) {
-                        std::string filePath = selection[0];
-                        std::string extension = std::filesystem::path(filePath).extension().string();
-                        if (extension == ".obj") {
-                            Engine::ObjModel newModel = Engine::loadObjFile(filePath);
-                            currentScene.models.push_back(newModel);
-                            currentModelIndex = currentScene.models.size() - 1;
-                        }
-                        else if (extension == ".txt" || extension == ".xyz" || extension == ".ply") {
-                            PointCloud newPointCloud = Engine::PointCloudLoader::loadPointCloudFile(filePath);
-                            newPointCloud.filePath = filePath;
-                            currentScene.pointClouds.push_back(newPointCloud);
-                        }
-                        else if (extension == ".pcb") {
-                            PointCloud newPointCloud = Engine::PointCloudLoader::loadFromBinary(filePath);
-                            if (!newPointCloud.points.empty()) {
+        if (showGui) {
+            // Top bar
+            if (ImGui::BeginMainMenuBar()) {
+                if (ImGui::BeginMenu("File")) {
+                    if (ImGui::MenuItem("Open")) {
+                        auto selection = pfd::open_file("Select a file to open", ".",
+                            { "All Supported Files", "*.obj *.txt *.xyz *.ply *.pcb",
+                              "OBJ Files", "*.obj",
+                              "Point Cloud Files", "*.txt *.xyz *.ply *.pcb",
+                              "All Files", "*" }).result();
+                        if (!selection.empty()) {
+                            std::string filePath = selection[0];
+                            std::string extension = std::filesystem::path(filePath).extension().string();
+                            if (extension == ".obj") {
+                                Engine::ObjModel newModel = Engine::loadObjFile(filePath);
+                                currentScene.models.push_back(newModel);
+                                currentModelIndex = currentScene.models.size() - 1;
+                            }
+                            else if (extension == ".txt" || extension == ".xyz" || extension == ".ply") {
+                                PointCloud newPointCloud = Engine::PointCloudLoader::loadPointCloudFile(filePath);
                                 newPointCloud.filePath = filePath;
-                                newPointCloud.name = std::filesystem::path(filePath).stem().string();
                                 currentScene.pointClouds.push_back(newPointCloud);
-                                std::cout << "Added point cloud: " << newPointCloud.name << " with " << newPointCloud.points.size() << " points" << std::endl;
                             }
-                            else {
-                                std::cerr << "Failed to load point cloud from: " << filePath << std::endl;
+                            else if (extension == ".pcb") {
+                                PointCloud newPointCloud = Engine::PointCloudLoader::loadFromBinary(filePath);
+                                if (!newPointCloud.points.empty()) {
+                                    newPointCloud.filePath = filePath;
+                                    newPointCloud.name = std::filesystem::path(filePath).stem().string();
+                                    currentScene.pointClouds.push_back(newPointCloud);
+                                    std::cout << "Added point cloud: " << newPointCloud.name << " with " << newPointCloud.points.size() << " points" << std::endl;
+                                }
+                                else {
+                                    std::cerr << "Failed to load point cloud from: " << filePath << std::endl;
+                                }
                             }
                         }
                     }
+                    ImGui::EndMenu();
                 }
-                ImGui::EndMenu();
-            }
-            if (ImGui::BeginMenu("Scene")) {
-                if (ImGui::MenuItem("Load")) {
-                    auto selection = pfd::open_file("Select a scene file to load", ".",
-                        { "JSON Files", "*.json", "All Files", "*" }).result();
-                    if (!selection.empty()) {
-                        currentScene = Engine::loadScene(selection[0]);
-                        currentModelIndex = currentScene.models.empty() ? -1 : 0;
+                if (ImGui::BeginMenu("Scene")) {
+                    if (ImGui::MenuItem("Load")) {
+                        auto selection = pfd::open_file("Select a scene file to load", ".",
+                            { "JSON Files", "*.json", "All Files", "*" }).result();
+                        if (!selection.empty()) {
+                            currentScene = Engine::loadScene(selection[0]);
+                            currentModelIndex = currentScene.models.empty() ? -1 : 0;
+                        }
                     }
-                }
-                if (ImGui::MenuItem("Save")) {
-                    auto destination = pfd::save_file("Select a file to save scene", ".",
-                        { "JSON Files", "*.json", "All Files", "*" }).result();
-                    if (!destination.empty()) {
-                        Engine::saveScene(destination, currentScene);
+                    if (ImGui::MenuItem("Save")) {
+                        auto destination = pfd::save_file("Select a file to save scene", ".",
+                            { "JSON Files", "*.json", "All Files", "*" }).result();
+                        if (!destination.empty()) {
+                            Engine::saveScene(destination, currentScene);
+                        }
                     }
+                    ImGui::EndMenu();
                 }
-                ImGui::EndMenu();
+                if (ImGui::MenuItem("Settings")) {
+                    showSettingsWindow = true;
+                }
+                ImGui::EndMainMenuBar();
             }
-            if (ImGui::MenuItem("Settings")) {
-                showSettingsWindow = true;
-            }
-            ImGui::EndMainMenuBar();
-        }
 
-        ImGui::SetNextWindowPos(ImVec2(0, ImGui::GetFrameHeight()));
-        ImGui::SetNextWindowSize(ImVec2(300, viewport->Size.y - ImGui::GetFrameHeight()));
-        ImGui::Begin("Scene Objects", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
+            ImGui::SetNextWindowPos(ImVec2(0, ImGui::GetFrameHeight()));
+            ImGui::SetNextWindowSize(ImVec2(300, viewport->Size.y - ImGui::GetFrameHeight()));
+            ImGui::Begin("Scene Objects", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
 
-        if (ImGui::BeginChild("ObjectList", ImVec2(0, 268), true)) {
-            ImGui::Columns(2, "ObjectColumns", false);
-            ImGui::SetColumnWidth(0, 100); // Adjust this value to fit your needs
+            if (ImGui::BeginChild("ObjectList", ImVec2(0, 268), true)) {
+                ImGui::Columns(2, "ObjectColumns", false);
+                ImGui::SetColumnWidth(0, 100); // Adjust this value to fit your needs
 
-            ImGui::PushID("sun");
-            bool sunVisible = sun.enabled;
-            if (ImGui::Checkbox("##visible", &sunVisible)) {
-                sun.enabled = sunVisible;
-            }
-            ImGui::NextColumn();
-
-            bool isSunSelected = (currentSelectedType == SelectedType::Sun);
-            ImGui::AlignTextToFramePadding();
-            if (ImGui::Selectable("Sun", isSunSelected, ImGuiSelectableFlags_SpanAllColumns)) {
-                currentSelectedType = SelectedType::Sun;
-                currentSelectedIndex = -1;  // Not needed for sun
-            }
-            ImGui::NextColumn();
-            ImGui::PopID();
-
-            for (int i = 0; i < currentScene.models.size(); i++) {
-                ImGui::PushID(i);
-
-                ImGui::AlignTextToFramePadding();
-                bool visible = currentScene.models[i].visible;
-                if (ImGui::Checkbox("##visible", &visible)) {
-                    currentScene.models[i].visible = visible;
+                ImGui::PushID("sun");
+                bool sunVisible = sun.enabled;
+                if (ImGui::Checkbox("##visible", &sunVisible)) {
+                    sun.enabled = sunVisible;
                 }
                 ImGui::NextColumn();
-                bool isSelected = (currentSelectedIndex == i && currentSelectedType == SelectedType::Model);
 
+                bool isSunSelected = (currentSelectedType == SelectedType::Sun);
                 ImGui::AlignTextToFramePadding();
-                if (ImGui::Selectable(currentScene.models[i].name.c_str(), isSelected, ImGuiSelectableFlags_SpanAllColumns)) {
-                    currentSelectedIndex = i;
-                    currentSelectedType = SelectedType::Model;
+                if (ImGui::Selectable("Sun", isSunSelected, ImGuiSelectableFlags_SpanAllColumns)) {
+                    currentSelectedType = SelectedType::Sun;
+                    currentSelectedIndex = -1;  // Not needed for sun
                 }
-
                 ImGui::NextColumn();
                 ImGui::PopID();
-            }
 
-            for (int i = 0; i < currentScene.pointClouds.size(); i++) {
-                ImGui::PushID(i + currentScene.models.size());
-                bool isSelected = (currentSelectedIndex == i && currentSelectedType == SelectedType::PointCloud);
+                for (int i = 0; i < currentScene.models.size(); i++) {
+                    ImGui::PushID(i);
 
-                bool visible = currentScene.pointClouds[i].visible;
-                if (ImGui::Checkbox("##visible", &visible)) {
-                    currentScene.pointClouds[i].visible = visible;
+                    ImGui::AlignTextToFramePadding();
+                    bool visible = currentScene.models[i].visible;
+                    if (ImGui::Checkbox("##visible", &visible)) {
+                        currentScene.models[i].visible = visible;
+                    }
+                    ImGui::NextColumn();
+                    bool isSelected = (currentSelectedIndex == i && currentSelectedType == SelectedType::Model);
+
+                    ImGui::AlignTextToFramePadding();
+                    if (ImGui::Selectable(currentScene.models[i].name.c_str(), isSelected, ImGuiSelectableFlags_SpanAllColumns)) {
+                        currentSelectedIndex = i;
+                        currentSelectedType = SelectedType::Model;
+                    }
+
+                    ImGui::NextColumn();
+                    ImGui::PopID();
                 }
 
-                ImGui::NextColumn();
+                for (int i = 0; i < currentScene.pointClouds.size(); i++) {
+                    ImGui::PushID(i + currentScene.models.size());
+                    bool isSelected = (currentSelectedIndex == i && currentSelectedType == SelectedType::PointCloud);
 
-                ImGui::AlignTextToFramePadding();
-                if (ImGui::Selectable(currentScene.pointClouds[i].name.c_str(), isSelected, ImGuiSelectableFlags_SpanAllColumns)) {
-                    currentSelectedIndex = i;
-                    currentSelectedType = SelectedType::PointCloud;
+                    bool visible = currentScene.pointClouds[i].visible;
+                    if (ImGui::Checkbox("##visible", &visible)) {
+                        currentScene.pointClouds[i].visible = visible;
+                    }
+
+                    ImGui::NextColumn();
+
+                    ImGui::AlignTextToFramePadding();
+                    if (ImGui::Selectable(currentScene.pointClouds[i].name.c_str(), isSelected, ImGuiSelectableFlags_SpanAllColumns)) {
+                        currentSelectedIndex = i;
+                        currentSelectedType = SelectedType::PointCloud;
+                    }
+                    ImGui::NextColumn();
+
+                    ImGui::AlignTextToFramePadding();
+
+                    ImGui::PopID();
                 }
-                ImGui::NextColumn();
 
-                ImGui::AlignTextToFramePadding();
 
-                ImGui::PopID();
+
+                ImGui::Columns(1);
             }
+            ImGui::EndChild();
 
-
-
-            ImGui::Columns(1);
-        }
-        ImGui::EndChild();
-
-        if (ImGui::Button("Create Cube", ImVec2(-1, 0))) {
-            ObjModel newCube = Engine::createCube(glm::vec3(1.0f, 1.0f, 1.0f), 32.0f, 0.0f);
-            newCube.scale = glm::vec3(0.5f);
-            newCube.position = glm::vec3(0.0f, 0.0f, 0.0f);
-            currentScene.models.push_back(newCube);
-            currentSelectedIndex = currentScene.models.size() - 1;
-            currentSelectedType = SelectedType::Model;
-        }
-
-        ImGui::Separator();
-
-        // Manipulation panel
-        if (currentSelectedType == SelectedType::Model && currentSelectedIndex >= 0 && currentSelectedIndex < currentScene.models.size()) {
-            renderModelManipulationPanel(currentScene.models[currentSelectedIndex], shader);
-        }
-        else if (currentSelectedType == SelectedType::PointCloud && currentSelectedIndex >= 0 && currentSelectedIndex < currentScene.pointClouds.size()) {
-            renderPointCloudManipulationPanel(currentScene.pointClouds[currentSelectedIndex]);
-        }
-        else if (currentSelectedType == SelectedType::Sun) {
-            renderSunManipulationPanel();
-        }
-
-        ImGui::End();
-
-        // Settings window
-        // Settings window
-        if (showSettingsWindow) {
-            ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
-            ImGui::Begin("Settings", &showSettingsWindow);
-
-            bool settingsChanged = false;
-
-            // Theme toggle
-            if (ImGui::Checkbox("Dark Theme", &isDarkTheme)) {
-                SetupImGuiStyle(isDarkTheme, 1.0f);
-                preferences.isDarkTheme = isDarkTheme;
-                settingsChanged = true;
+            if (ImGui::Button("Create Cube", ImVec2(-1, 0))) {
+                ObjModel newCube = Engine::createCube(glm::vec3(1.0f, 1.0f, 1.0f), 32.0f, 0.0f);
+                newCube.scale = glm::vec3(0.5f);
+                newCube.position = glm::vec3(0.0f, 0.0f, 0.0f);
+                currentScene.models.push_back(newCube);
+                currentSelectedIndex = currentScene.models.size() - 1;
+                currentSelectedType = SelectedType::Model;
             }
 
             ImGui::Separator();
 
-            // Camera settings
-            ImGui::Text("Camera Settings");
-            if (ImGui::SliderFloat("Separation", &currentScene.settings.separation, minSeparation, maxSeparation)) {
-                preferences.separation = currentScene.settings.separation;
-                settingsChanged = true;
+            // Manipulation panel
+            if (currentSelectedType == SelectedType::Model && currentSelectedIndex >= 0 && currentSelectedIndex < currentScene.models.size()) {
+                renderModelManipulationPanel(currentScene.models[currentSelectedIndex], shader);
             }
-            if (ImGui::SliderFloat("Convergence / ZFocus", &currentScene.settings.convergence, minConvergence, maxConvergence)) {
-                preferences.convergence = currentScene.settings.convergence;
-                settingsChanged = true;
+            else if (currentSelectedType == SelectedType::PointCloud && currentSelectedIndex >= 0 && currentSelectedIndex < currentScene.pointClouds.size()) {
+                renderPointCloudManipulationPanel(currentScene.pointClouds[currentSelectedIndex]);
             }
-            if (ImGui::SliderFloat("Camera Speed Multiplier", &camera.speedFactor, 0.1f, 5.0f)) {
-                preferences.cameraSpeedFactor = camera.speedFactor;
-                settingsChanged = true;
-            }
-            if (ImGui::SliderFloat("Near Plane", &currentScene.settings.nearPlane, 0.01f, 10.0f)) {
-                preferences.nearPlane = currentScene.settings.nearPlane;
-                settingsChanged = true;
-            }
-            if (ImGui::SliderFloat("Far Plane", &currentScene.settings.farPlane, 10.0f, 1000.0f)) {
-                preferences.farPlane = currentScene.settings.farPlane;
-                settingsChanged = true;
-            }
-
-            if (ImGui::Checkbox("Show FPS", &showFPS)) {
-                preferences.showFPS = showFPS;
-                settingsChanged = true;
-            }
-
-            ImGui::Separator();
-            if (ImGui::Button("Cursor Settings")) {
-                showCursorSettingsWindow = true;
-            }
-
-            if (settingsChanged) {
-                savePreferences();
+            else if (currentSelectedType == SelectedType::Sun) {
+                renderSunManipulationPanel();
             }
 
             ImGui::End();
+
+            // Settings window
+            // Settings window
+            if (showSettingsWindow) {
+                ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
+                ImGui::Begin("Settings", &showSettingsWindow);
+
+                bool settingsChanged = false;
+
+                // Theme toggle
+                if (ImGui::Checkbox("Dark Theme", &isDarkTheme)) {
+                    SetupImGuiStyle(isDarkTheme, 1.0f);
+                    preferences.isDarkTheme = isDarkTheme;
+                    settingsChanged = true;
+                }
+
+                ImGui::Separator();
+
+                // Camera settings
+
+                ImGui::Text("Camera Settings");
+                if (ImGui::BeginCombo("Stereo Method", camera.useNewMethod ? "New Method" : "Legacy")) {
+                    if (ImGui::Selectable("Legacy", !camera.useNewMethod)) {
+                        camera.useNewMethod = false;
+                        currentScene.settings.separation = 0.02f; // Default for legacy
+                        preferences.useNewStereoMethod = false;
+                        savePreferences();
+                    }
+                    if (ImGui::Selectable("New Method", camera.useNewMethod)) {
+                        camera.useNewMethod = true;
+                        currentScene.settings.separation = 0.005f; // Default for new method
+                        preferences.useNewStereoMethod = true;
+                        savePreferences();
+                    }
+                    ImGui::EndCombo();
+                }
+
+                // Dynamic slider range based on method
+                float minSep = 0.0f;
+                float maxSep = camera.useNewMethod ? 0.025f : maxSeparation;
+                if (ImGui::SliderFloat("Separation", &currentScene.settings.separation, minSep, maxSep)) {
+                    preferences.separation = currentScene.settings.separation;
+                    savePreferences();
+                }
+
+                if (ImGui::SliderFloat("Convergence / ZFocus", &currentScene.settings.convergence, minConvergence, maxConvergence)) {
+                    preferences.convergence = currentScene.settings.convergence;
+                    settingsChanged = true;
+                }
+                if (ImGui::SliderFloat("Camera Speed Multiplier", &camera.speedFactor, 0.1f, 5.0f)) {
+                    preferences.cameraSpeedFactor = camera.speedFactor;
+                    settingsChanged = true;
+                }
+                if (ImGui::SliderFloat("Near Plane", &currentScene.settings.nearPlane, 0.01f, 10.0f)) {
+                    preferences.nearPlane = currentScene.settings.nearPlane;
+                    settingsChanged = true;
+                }
+                if (ImGui::SliderFloat("Far Plane", &currentScene.settings.farPlane, 10.0f, 1000.0f)) {
+                    preferences.farPlane = currentScene.settings.farPlane;
+                    settingsChanged = true;
+                }
+
+                ImGui::Checkbox("Wireframe Mode", &camera.wireframe);
+
+                if (ImGui::Checkbox("Show FPS", &showFPS)) {
+                    preferences.showFPS = showFPS;
+                    settingsChanged = true;
+                }
+
+                ImGui::Separator();
+                if (ImGui::Button("Cursor Settings")) {
+                    showCursorSettingsWindow = true;
+                }
+
+                if (settingsChanged) {
+                    savePreferences();
+                }
+
+                ImGui::End();
+            }
+
+            if (showCursorSettingsWindow) {
+                renderCursorSettingsWindow();
+            }
         }
 
-        if (showCursorSettingsWindow) {
-            renderCursorSettingsWindow();
+        if (showFPS) {
+            ImGui::SetNextWindowPos(ImVec2(windowWidth - 120, windowHeight - 60));
+            ImGui::Begin("FPS Counter", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoBackground);
+            ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+            ImGui::End();
         }
-    }
 
-    if (showFPS) {
-        ImGui::SetNextWindowPos(ImVec2(windowWidth - 120, windowHeight - 60));
-        ImGui::Begin("FPS Counter", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoBackground);
-        ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
-        ImGui::End();
+        ImGui::Render();
     }
-
-    ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 

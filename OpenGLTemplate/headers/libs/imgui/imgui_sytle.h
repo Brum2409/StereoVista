@@ -28,7 +28,7 @@ inline void SetupImGuiStyle(bool bStyleDark_, float alpha_) {
     style.PopupBorderSize = 1.0f;
     style.FramePadding = ImVec2(6, 4);
     style.FrameRounding = 6.0f;  // More rounded corners
-    style.FrameBorderSize = 0.0f;  // Remove borders for cleaner look
+    style.FrameBorderSize = 0.0f;
     style.ItemSpacing = ImVec2(8, 6);
     style.ItemInnerSpacing = ImVec2(6, 4);
     style.CellPadding = ImVec2(4, 2);
@@ -39,7 +39,7 @@ inline void SetupImGuiStyle(bool bStyleDark_, float alpha_) {
     style.GrabMinSize = 12.0f;
     style.GrabRounding = 6.0f;
     style.TabRounding = 6.0f;
-    style.TabBorderSize = 0.0f;  // Remove tab borders
+    style.TabBorderSize = 0.0f;  
     style.ColorButtonPosition = ImGuiDir_Right;
     style.ButtonTextAlign = ImVec2(0.5f, 0.5f);
     style.SelectableTextAlign = ImVec2(0.0f, 0.0f);

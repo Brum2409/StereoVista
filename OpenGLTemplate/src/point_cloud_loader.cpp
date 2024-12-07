@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <future>
 #include <map>
+#include <omp.h>
 #include <glm/gtx/norm.hpp>
 
 #include <random>
@@ -489,64 +490,91 @@ namespace Engine {
         chunk.lodVBOs.resize(numLODLevels);
         chunk.lodPointCounts.resize(numLODLevels);
 
-        // Define max points for each LOD level (for testing)
-        const size_t maxPointsPerLevel[] = {
-            std::numeric_limits<size_t>::max(), // LOD 0
-            120000 * chunk.boundingRadius,  // LOD 1:
-            40000 * chunk.boundingRadius,  // LOD 2
-            10000 * chunk.boundingRadius,  // LOD 3
-            5000 * chunk.boundingRadius   // LOD 4
-        };
-
         std::vector<std::vector<PointCloudPoint>> lodPoints(numLODLevels);
-
-        // LOD 0: Use all points
         lodPoints[0] = chunk.points;
 
-        // Random number generator for point selection
-        std::random_device rd;
-        std::mt19937 gen(rd());
+        const size_t thresholds[] = {
+            std::numeric_limits<size_t>::max(),
+            600000 * chunk.boundingRadius,
+            100000 * chunk.boundingRadius,
+            50000 * chunk.boundingRadius,
+            30000 * chunk.boundingRadius
+        };
 
-        // Generate subsequent LOD levels
-        for (int i = 1; i < numLODLevels; ++i) {
-            size_t targetCount = std::min(maxPointsPerLevel[i], chunk.points.size());
+        glm::vec3 chunkMin(std::numeric_limits<float>::max());
+        glm::vec3 chunkMax(std::numeric_limits<float>::lowest());
 
-            if (chunk.points.size() <= targetCount) {
-                // If we have fewer points than the target, use all points
-                lodPoints[i] = chunk.points;
+        const int gridSize = 8;
+        const int gridCells = gridSize * gridSize * gridSize;
+        std::vector<std::vector<PointCloudPoint>> grid(gridCells);
+        std::vector<std::mutex> mutexes(gridCells);
+
+#pragma omp parallel
+        {
+#pragma omp for schedule(dynamic) reduction(min:chunkMin) reduction(max:chunkMax)
+            for (int i = 0; i < chunk.points.size(); i++) {
+                chunkMin = glm::min(chunkMin, chunk.points[i].position);
+                chunkMax = glm::max(chunkMax, chunk.points[i].position);
             }
-            else {
-                // Randomly select points while maintaining spatial distribution
-                std::vector<PointCloudPoint> selectedPoints;
-                selectedPoints.reserve(targetCount);
 
-                // Create a copy of points for sampling
-                std::vector<PointCloudPoint> availablePoints = chunk.points;
+#pragma omp for schedule(dynamic)
+            for (int i = 0; i < chunk.points.size(); i++) {
+                const auto& point = chunk.points[i];
+                glm::vec3 normalized = (point.position - chunkMin) / (chunkMax - chunkMin);
+                int idx = glm::clamp(int(normalized.x * gridSize), 0, gridSize - 1) +
+                    glm::clamp(int(normalized.y * gridSize), 0, gridSize - 1) * gridSize +
+                    glm::clamp(int(normalized.z * gridSize), 0, gridSize - 1) * gridSize * gridSize;
 
-                // Randomly select points
-                for (size_t j = 0; j < targetCount; ++j) {
-                    if (availablePoints.empty()) break;
-
-                    // Generate random index
-                    std::uniform_int_distribution<size_t> dist(0, availablePoints.size() - 1);
-                    size_t randomIndex = dist(gen);
-
-                    // Add randomly selected point to the LOD level
-                    selectedPoints.push_back(availablePoints[randomIndex]);
-
-                    // Remove selected point from available points (swap and pop for efficiency)
-                    std::swap(availablePoints[randomIndex], availablePoints.back());
-                    availablePoints.pop_back();
-                }
-
-                lodPoints[i] = std::move(selectedPoints);
+                std::lock_guard<std::mutex> lock(mutexes[idx]);
+                grid[idx].push_back(point);
             }
         }
 
-        // Create VBOs for each LOD level
-        for (int i = 0; i < numLODLevels; ++i) {
-            chunk.lodPointCounts[i] = lodPoints[i].size();
+        for (int level = 1; level < numLODLevels; level++) {
+            if (chunk.points.size() <= thresholds[level]) {
+                lodPoints[level] = chunk.points;
+                continue;
+            }
 
+            size_t targetCount = std::min(thresholds[level], lodPoints[level - 1].size() / 2);
+            std::vector<PointCloudPoint> selectedPoints;
+            selectedPoints.reserve(targetCount);
+
+            size_t basePointsPerCell = targetCount / gridCells;
+            size_t remainder = targetCount % gridCells;
+
+#pragma omp parallel for schedule(dynamic)
+            for (int cell = 0; cell < gridCells; cell++) {
+                std::vector<PointCloudPoint> cellPoints;
+                size_t cellTargetCount = basePointsPerCell + (cell < remainder ? 1 : 0);
+
+                if (grid[cell].size() <= cellTargetCount) {
+                    cellPoints = grid[cell];
+                }
+                else {
+                    cellPoints.reserve(cellTargetCount);
+                    std::random_device rd;
+                    std::mt19937 gen(rd());
+                    std::vector<size_t> indices(grid[cell].size());
+                    std::iota(indices.begin(), indices.end(), 0);
+                    std::shuffle(indices.begin(), indices.end(), gen);
+
+                    for (size_t i = 0; i < cellTargetCount; i++) {
+                        cellPoints.push_back(grid[cell][indices[i]]);
+                    }
+                }
+
+#pragma omp critical
+                {
+                    selectedPoints.insert(selectedPoints.end(), cellPoints.begin(), cellPoints.end());
+                }
+            }
+
+            lodPoints[level] = std::move(selectedPoints);
+        }
+
+        for (int i = 0; i < numLODLevels; i++) {
+            chunk.lodPointCounts[i] = lodPoints[i].size();
             if (!lodPoints[i].empty()) {
                 glGenBuffers(1, &chunk.lodVBOs[i]);
                 glBindBuffer(GL_ARRAY_BUFFER, chunk.lodVBOs[i]);
@@ -556,12 +584,10 @@ namespace Engine {
                     GL_STATIC_DRAW);
             }
             else {
-                chunk.lodVBOs[i] = 0;  // Use 0 to indicate an invalid buffer
+                chunk.lodVBOs[i] = 0;
             }
         }
-
         glBindBuffer(GL_ARRAY_BUFFER, 0);
-
     }
 
 

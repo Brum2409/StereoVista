@@ -1,13 +1,14 @@
 {
     "camera": {
-        "convergence": 0.22699999809265137,
+        "convergence": 0.8180000185966492,
         "farPlane": 200.0,
         "nearPlane": 0.10000000149011612,
-        "separation": 0.01600000075995922,
-        "speedFactor": 1.0
+        "separation": 0.02500000037252903,
+        "speedFactor": 1.8910000324249268,
+        "useNewStereoMethod": true
     },
     "cursor": {
-        "currentPreset": "combined"
+        "currentPreset": "Test"
     },
     "ui": {
         "darkTheme": true,
