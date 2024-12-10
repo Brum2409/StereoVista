@@ -45,7 +45,7 @@
         "showFragmentCursor": true,
         "showInnerSphere": false,
         "showSphereCursor": true,
-        "sphereFixedRadius": 0.699999988079071,
+        "sphereFixedRadius": 0.12399999797344208,
         "sphereScalingMode": 1,
         "sphereTransparency": 1.0
     },

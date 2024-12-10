@@ -313,8 +313,8 @@ void loadPreferences() {
 
         // Camera settings
         if (j.contains("camera")) {
-            preferences.separation = j["camera"].value("separation", 0.02f);
-            preferences.convergence = j["camera"].value("convergence", 1.0f);
+            preferences.separation = j["camera"].value("separation", 0.005f);
+            preferences.convergence = j["camera"].value("convergence", 1.5f);
             preferences.nearPlane = j["camera"].value("nearPlane", 0.1f);
             preferences.farPlane = j["camera"].value("farPlane", 200.0f);
             preferences.cameraSpeedFactor = j["camera"].value("speedFactor", 1.0f);
