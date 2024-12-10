@@ -711,12 +711,15 @@ int main() {
         camera.AdjustMovementSpeed(distanceToNearestObject, largestDimension, currentScene.settings.farPlane);
         camera.isMoving = false;  // Reset the moving flag at the end of each frame
 
-        // ---- Render for Left and Right Eye ----
-        renderEye(GL_BACK_LEFT, leftProjection, view, shader, viewport, windowFlags, window);
+
 
         // Render for Right Eye (if in Stereo Mode)
         if (isStereoWindow) {
+            renderEye(GL_BACK_LEFT, leftProjection, view, shader, viewport, windowFlags, window);
             renderEye(GL_BACK_RIGHT, rightProjection, view, shader, viewport, windowFlags, window);
+        }
+        else {
+            renderEye(GL_BACK_LEFT, projection, view, shader, viewport, windowFlags, window);
         }
 
         // ---- Swap Buffers and Poll Events ----
