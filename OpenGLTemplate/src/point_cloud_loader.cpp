@@ -17,6 +17,8 @@
 #include <execution>
 #include <algorithm>
 
+#include <octree.h>
+
 
 namespace Engine {
 
@@ -100,7 +102,7 @@ namespace Engine {
 
         setupPointCloudGLBuffers(pointCloud);
 
-        generateChunks(pointCloud, 10.0f);
+        generateChunks(pointCloud, 2.0f);
 
         pointCloud.instanceMatrices.reserve(pointCloud.points.size());
         for (const auto& point : pointCloud.points) {
@@ -316,7 +318,7 @@ namespace Engine {
             pointCloud = PointCloud(); // Reset to empty point cloud
         }
 
-        generateChunks(pointCloud, 10.0f);
+        generateChunks(pointCloud, 2.0f);
 
         pointCloud.instanceMatrices.reserve(pointCloud.points.size());
         for (const auto& point : pointCloud.points) {
@@ -485,108 +487,104 @@ namespace Engine {
     }
 
 
+    struct OctreeNodeData {
+        // Store indices instead of full points
+        std::vector<size_t> pointIndices;
+    };
+
     void generateLODLevels(PointCloudChunk& chunk) {
         const int numLODLevels = 5;
         chunk.lodVBOs.resize(numLODLevels);
         chunk.lodPointCounts.resize(numLODLevels);
 
-        std::vector<std::vector<PointCloudPoint>> lodPoints(numLODLevels);
-        lodPoints[0] = chunk.points;
-
-        const size_t thresholds[] = {
+        // Only points in dense areas should be reduced
+        const size_t baseThresholds[] = {
             std::numeric_limits<size_t>::max(),
-            600000 * chunk.boundingRadius,
-            100000 * chunk.boundingRadius,
-            50000 * chunk.boundingRadius,
-            30000 * chunk.boundingRadius
+            40000, 15000, 5000, 2500
         };
 
+        // Calculate bounds in a single pass
         glm::vec3 chunkMin(std::numeric_limits<float>::max());
         glm::vec3 chunkMax(std::numeric_limits<float>::lowest());
 
-        const int gridSize = 8;
-        const int gridCells = gridSize * gridSize * gridSize;
-        std::vector<std::vector<PointCloudPoint>> grid(gridCells);
-        std::vector<std::mutex> mutexes(gridCells);
-
-#pragma omp parallel
-        {
-#pragma omp for schedule(dynamic) reduction(min:chunkMin) reduction(max:chunkMax)
-            for (int i = 0; i < chunk.points.size(); i++) {
-                chunkMin = glm::min(chunkMin, chunk.points[i].position);
-                chunkMax = glm::max(chunkMax, chunk.points[i].position);
-            }
-
-#pragma omp for schedule(dynamic)
-            for (int i = 0; i < chunk.points.size(); i++) {
-                const auto& point = chunk.points[i];
-                glm::vec3 normalized = (point.position - chunkMin) / (chunkMax - chunkMin);
-                int idx = glm::clamp(int(normalized.x * gridSize), 0, gridSize - 1) +
-                    glm::clamp(int(normalized.y * gridSize), 0, gridSize - 1) * gridSize +
-                    glm::clamp(int(normalized.z * gridSize), 0, gridSize - 1) * gridSize * gridSize;
-
-                std::lock_guard<std::mutex> lock(mutexes[idx]);
-                grid[idx].push_back(point);
-            }
+        for (const auto& point : chunk.points) {
+            chunkMin = glm::min(chunkMin, point.position);
+            chunkMax = glm::max(chunkMax, point.position);
         }
 
+        // Process points in batches for each LOD level
+        const size_t BATCH_SIZE = 1000000; // Process 1M points at a time
+
+        // First level is always original data
+        chunk.lodPointCounts[0] = chunk.points.size();
+        glGenBuffers(1, &chunk.lodVBOs[0]);
+        glBindBuffer(GL_ARRAY_BUFFER, chunk.lodVBOs[0]);
+        glBufferData(GL_ARRAY_BUFFER, chunk.points.size() * sizeof(PointCloudPoint),
+            chunk.points.data(), GL_STATIC_DRAW);
+
+        // For remaining levels
         for (int level = 1; level < numLODLevels; level++) {
-            if (chunk.points.size() <= thresholds[level]) {
-                lodPoints[level] = chunk.points;
+            if (chunk.points.size() <= baseThresholds[level]) {
+                // Just reference the original data if below threshold
+                chunk.lodVBOs[level] = chunk.lodVBOs[0];
+                chunk.lodPointCounts[level] = chunk.points.size();
                 continue;
             }
 
-            size_t targetCount = std::min(thresholds[level], lodPoints[level - 1].size() / 2);
+            // Calculate target size for this level
+            size_t targetCount = baseThresholds[level];
+            float selectionRatio = float(targetCount) / float(chunk.points.size());
+
+            // Process in batches to keep memory usage down
             std::vector<PointCloudPoint> selectedPoints;
             selectedPoints.reserve(targetCount);
 
-            size_t basePointsPerCell = targetCount / gridCells;
-            size_t remainder = targetCount % gridCells;
+            for (size_t offset = 0; offset < chunk.points.size(); offset += BATCH_SIZE) {
+                size_t batchSize = std::min(BATCH_SIZE, chunk.points.size() - offset);
+                size_t batchTargetCount = std::max(size_t(1), size_t(batchSize * selectionRatio));
 
-#pragma omp parallel for schedule(dynamic)
-            for (int cell = 0; cell < gridCells; cell++) {
-                std::vector<PointCloudPoint> cellPoints;
-                size_t cellTargetCount = basePointsPerCell + (cell < remainder ? 1 : 0);
+                // Create indices for this batch
+                std::vector<size_t> indices(batchSize);
+                std::iota(indices.begin(), indices.end(), 0);
 
-                if (grid[cell].size() <= cellTargetCount) {
-                    cellPoints = grid[cell];
-                }
-                else {
-                    cellPoints.reserve(cellTargetCount);
-                    std::random_device rd;
-                    std::mt19937 gen(rd());
-                    std::vector<size_t> indices(grid[cell].size());
-                    std::iota(indices.begin(), indices.end(), 0);
-                    std::shuffle(indices.begin(), indices.end(), gen);
+                // Randomly select points from this batch
+                std::random_device rd;
+                std::mt19937 gen(rd());
 
-                    for (size_t i = 0; i < cellTargetCount; i++) {
-                        cellPoints.push_back(grid[cell][indices[i]]);
+                if (batchTargetCount < batchSize) {
+                    // Reservoir sampling for the batch
+                    for (size_t i = 0; i < batchTargetCount; i++) {
+                        std::uniform_int_distribution<size_t> dist(i, batchSize - 1);
+                        size_t j = dist(gen);
+                        std::swap(indices[i], indices[j]);
                     }
+                    indices.resize(batchTargetCount);
                 }
 
-#pragma omp critical
-                {
-                    selectedPoints.insert(selectedPoints.end(), cellPoints.begin(), cellPoints.end());
+                // Add selected points to result
+                for (size_t idx : indices) {
+                    selectedPoints.push_back(chunk.points[offset + idx]);
+                }
+
+                // If we've collected enough points, stop
+                if (selectedPoints.size() >= targetCount) {
+                    selectedPoints.resize(targetCount);
+                    break;
                 }
             }
 
-            lodPoints[level] = std::move(selectedPoints);
+            // Create VBO for this level
+            glGenBuffers(1, &chunk.lodVBOs[level]);
+            glBindBuffer(GL_ARRAY_BUFFER, chunk.lodVBOs[level]);
+            glBufferData(GL_ARRAY_BUFFER, selectedPoints.size() * sizeof(PointCloudPoint),
+                selectedPoints.data(), GL_STATIC_DRAW);
+            chunk.lodPointCounts[level] = selectedPoints.size();
+
+            // Clear the temporary buffer immediately
+            selectedPoints.clear();
+            selectedPoints.shrink_to_fit();
         }
 
-        for (int i = 0; i < numLODLevels; i++) {
-            chunk.lodPointCounts[i] = lodPoints[i].size();
-            if (!lodPoints[i].empty()) {
-                glGenBuffers(1, &chunk.lodVBOs[i]);
-                glBindBuffer(GL_ARRAY_BUFFER, chunk.lodVBOs[i]);
-                glBufferData(GL_ARRAY_BUFFER,
-                    lodPoints[i].size() * sizeof(PointCloudPoint),
-                    lodPoints[i].data(),
-                    GL_STATIC_DRAW);
-            }
-            else {
-                chunk.lodVBOs[i] = 0;
-            }
-        }
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
 

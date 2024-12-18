@@ -25,7 +25,6 @@ namespace Engine {
 
     void generateLODLevels(PointCloudChunk& chunk);
 
-    std::vector<PointCloudPoint> selectPointsForLOD(const std::vector<PointCloudPoint>& points, size_t targetCount);
 
 
     void generateChunkOutlineVertices(PointCloud& pointCloud);

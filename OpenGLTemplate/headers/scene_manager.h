@@ -2,7 +2,7 @@
 
 #include <vector>
 #include <string>
-#include "obj_loader.h"
+#include <model_loader.h>
 
 namespace Engine {
 
@@ -14,12 +14,16 @@ namespace Engine {
     };
 
     struct Scene {
-        std::vector<ObjModel> models;
+        std::vector<Model> models;
         std::vector<PointCloud> pointClouds;
         SceneSettings settings;
     };
 
     void saveScene(const std::string& filename, const Scene& scene);
+    void saveModelData(const Model& model, const std::string& filename);
     Scene loadScene(const std::string& filename);
+
+    void loadModelData(Model& model, const std::string& filename);
+
 
 }  // namespace Engine

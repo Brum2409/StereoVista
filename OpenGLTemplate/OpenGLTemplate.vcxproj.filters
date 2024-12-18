@@ -66,6 +66,12 @@
     <ClCompile Include="src\point_cloud_loader.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\model_loader.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\stb_image_impl.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="headers\core.h">
@@ -377,6 +383,9 @@
     <ClInclude Include="headers\libs\assimp\ZipArchiveIOSystem.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="headers\model_loader.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="assets\shaders\vertexShader.glsl" />
@@ -413,5 +422,6 @@
     </None>
     <None Include="assets\shaders\simpleDepthVertexShader.glsl" />
     <None Include="assets\shaders\simpleDepthFragmentShader.glsl" />
+    <None Include="headers\octree.h" />
   </ItemGroup>
 </Project>

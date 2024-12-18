@@ -4,12 +4,8 @@
 #include <thread>
 #include <atomic>
 
-// ---- Asset Loading ----
-#define TINYOBJLOADER_IMPLEMENTATION
-#include "tiny_obj_loader.h"
-
 // ---- Project-Specific Includes ----
-#include "obj_loader.h"
+#include "model_loader.h"
 #include "Camera.h"
 #include "scene_manager.h"
 #include "cursor_presets.h"
@@ -45,7 +41,7 @@ void renderOrbitCenter(const glm::mat4& projection, const glm::mat4& view);
 void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags windowFlags, Shader* shader);
 void renderSunManipulationPanel();
 void renderCursorSettingsWindow();
-void renderModelManipulationPanel(Engine::ObjModel& model, Shader* shader);
+void renderModelManipulationPanel(Engine::Model& model, Shader* shader);
 void renderPointCloudManipulationPanel(Engine::PointCloud& pointCloud);
 void deleteSelectedPointCloud();
 void renderModels(Shader* shader);
@@ -63,7 +59,7 @@ PointCloud loadPointCloudFile(const std::string& filePath, size_t downsampleFact
 // ---- Utility Functions ----
 float calculateLargestModelDimension();
 void calculateMouseRay(float mouseX, float mouseY, glm::vec3& rayOrigin, glm::vec3& rayDirection, glm::vec3& rayNear, glm::vec3& rayFar, float aspect);
-bool rayIntersectsModel(const glm::vec3& rayOrigin, const glm::vec3& rayDirection, const Engine::ObjModel& model, float& distance);
+bool rayIntersectsModel(const glm::vec3& rayOrigin, const glm::vec3& rayDirection, const Engine::Model& model, float& distance);
 
 // ---- Scene Management Functions ----
 void deleteSelectedModel();
@@ -611,8 +607,9 @@ int main() {
     }
 
     // ---- Load Default cube ----
-    Engine::ObjModel cube = Engine::createCube(glm::vec3(1.0f, 1.0f, 1.0f), 32.0f, 0.0f);
+    Engine::Model cube = Engine::createCube(glm::vec3(1.0f, 1.0f, 1.0f), 32.0f, 0.0f);
     cube.scale = glm::vec3(0.5f);
+    cube.name = "Default_Cube";
     cube.position = glm::vec3(0.0f, 0.0f, 0.0f);
     cube.emissive = 0.5f;
     currentScene.models.push_back(cube);
@@ -771,9 +768,12 @@ float calculateLargestModelDimension() {
     glm::vec3 minBounds(std::numeric_limits<float>::max());
     glm::vec3 maxBounds(std::numeric_limits<float>::lowest());
 
-    for (const auto& vertex : currentScene.models[0].vertices) {
-        minBounds = glm::min(minBounds, vertex.position);
-        maxBounds = glm::max(maxBounds, vertex.position);
+    // Loop through all meshes in the first model
+    for (const auto& mesh : currentScene.models[0].getMeshes()) {
+        for (const auto& vertex : mesh.vertices) {
+            minBounds = glm::min(minBounds, vertex.position);
+            maxBounds = glm::max(maxBounds, vertex.position);
+        }
     }
 
     glm::vec3 modelsize = maxBounds - minBounds;
@@ -985,19 +985,26 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                 if (ImGui::BeginMenu("File")) {
                     if (ImGui::MenuItem("Open")) {
                         auto selection = pfd::open_file("Select a file to open", ".",
-                            { "All Supported Files", "*.obj *.txt *.xyz *.ply *.pcb",
-                              "OBJ Files", "*.obj",
+                            { "All Supported Files", "*.obj *.fbx *.3ds *.gltf *.glb",  // Updated extensions
+                              "3D Models", "*.obj *.fbx *.3ds *.gltf *.glb",
                               "Point Cloud Files", "*.txt *.xyz *.ply *.pcb",
                               "All Files", "*" }).result();
                         if (!selection.empty()) {
                             std::string filePath = selection[0];
                             std::string extension = std::filesystem::path(filePath).extension().string();
-                            if (extension == ".obj") {
-                                Engine::ObjModel newModel = Engine::loadObjFile(filePath);
-                                currentScene.models.push_back(newModel);
-                                currentModelIndex = currentScene.models.size() - 1;
+                            if (extension == ".obj" || extension == ".fbx" || extension == ".3ds" ||
+                                extension == ".gltf" || extension == ".glb") {
+                                try {
+                                    Engine::Model newModel = *Engine::loadModel(filePath);
+                                    currentScene.models.push_back(newModel);
+                                    currentModelIndex = currentScene.models.size() - 1;
+                                }
+                                catch (const std::exception& e) {
+                                    std::cerr << "Failed to load model: " << e.what() << std::endl;
+                                }
                             }
                             else if (extension == ".txt" || extension == ".xyz" || extension == ".ply") {
+                                // Point cloud loading remains the same
                                 PointCloud newPointCloud = Engine::PointCloudLoader::loadPointCloudFile(filePath);
                                 newPointCloud.filePath = filePath;
                                 currentScene.pointClouds.push_back(newPointCloud);
@@ -1021,17 +1028,30 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                 if (ImGui::BeginMenu("Scene")) {
                     if (ImGui::MenuItem("Load")) {
                         auto selection = pfd::open_file("Select a scene file to load", ".",
-                            { "JSON Files", "*.json", "All Files", "*" }).result();
+                            { "Scene Files", "*.scene", "All Files", "*" }).result();
                         if (!selection.empty()) {
-                            currentScene = Engine::loadScene(selection[0]);
-                            currentModelIndex = currentScene.models.empty() ? -1 : 0;
+                            try {
+                                currentScene = Engine::loadScene(selection[0]);
+                                currentModelIndex = currentScene.models.empty() ? -1 : 0;
+                            }
+                            catch (const std::exception& e) {
+                                std::cerr << "Failed to load scene: " << e.what() << std::endl;
+                            }
+                        }
+                        else {
+                            std::cerr << "Failed to load scene: "  << std::endl;
                         }
                     }
                     if (ImGui::MenuItem("Save")) {
                         auto destination = pfd::save_file("Select a file to save scene", ".",
-                            { "JSON Files", "*.json", "All Files", "*" }).result();
+                            { "Scene Files", "*.scene", "All Files", "*" }).result();
                         if (!destination.empty()) {
-                            Engine::saveScene(destination, currentScene);
+                            try {
+                                Engine::saveScene(destination, currentScene);
+                            }
+                            catch (const std::exception& e) {
+                                std::cerr << "Failed to save scene: " << e.what() << std::endl;
+                            }
                         }
                     }
                     ImGui::EndMenu();
@@ -1048,8 +1068,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
 
             if (ImGui::BeginChild("ObjectList", ImVec2(0, 268), true)) {
                 ImGui::Columns(2, "ObjectColumns", false);
-                ImGui::SetColumnWidth(0, 100); // Adjust this value to fit your needs
+                ImGui::SetColumnWidth(0, 60);
 
+                // Sun
                 ImGui::PushID("sun");
                 bool sunVisible = sun.enabled;
                 if (ImGui::Checkbox("##visible", &sunVisible)) {
@@ -1061,32 +1082,64 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                 ImGui::AlignTextToFramePadding();
                 if (ImGui::Selectable("Sun", isSunSelected, ImGuiSelectableFlags_SpanAllColumns)) {
                     currentSelectedType = SelectedType::Sun;
-                    currentSelectedIndex = -1;  // Not needed for sun
+                    currentSelectedIndex = -1;
                 }
                 ImGui::NextColumn();
                 ImGui::PopID();
 
+                // Models
                 for (int i = 0; i < currentScene.models.size(); i++) {
                     ImGui::PushID(i);
 
+                    // Checkbox column
                     ImGui::AlignTextToFramePadding();
                     bool visible = currentScene.models[i].visible;
                     if (ImGui::Checkbox("##visible", &visible)) {
                         currentScene.models[i].visible = visible;
                     }
                     ImGui::NextColumn();
+
                     bool isSelected = (currentSelectedIndex == i && currentSelectedType == SelectedType::Model);
+                    bool hasMeshes = currentScene.models[i].getMeshes().size() > 1;
 
                     ImGui::AlignTextToFramePadding();
-                    if (ImGui::Selectable(currentScene.models[i].name.c_str(), isSelected, ImGuiSelectableFlags_SpanAllColumns)) {
-                        currentSelectedIndex = i;
-                        currentSelectedType = SelectedType::Model;
-                    }
+                    ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth;
+                    if (!hasMeshes) flags |= ImGuiTreeNodeFlags_Leaf;
+                    if (isSelected) flags |= ImGuiTreeNodeFlags_Selected;
 
-                    ImGui::NextColumn();
+                    bool nodeOpen = false;
+                    if (hasMeshes) {
+                        nodeOpen = ImGui::TreeNodeEx(currentScene.models[i].name.c_str(), flags);
+                        if (ImGui::IsItemClicked()) {
+                            currentSelectedIndex = i;
+                            currentSelectedType = SelectedType::Model;
+                        }
+                        ImGui::NextColumn();
+
+                        if (nodeOpen) {
+                            // List meshes
+                            for (size_t meshIndex = 0; meshIndex < currentScene.models[i].getMeshes().size(); meshIndex++) {
+                                ImGui::Columns(1);
+                                // Use a smaller fixed indent value (e.g., 20 pixels)
+                                ImGui::Indent(20.0f);
+                                ImGui::BulletText("Mesh %zu", meshIndex + 1);
+                                ImGui::Unindent(20.0f);
+                                ImGui::Columns(2, "ObjectColumns");
+                            }
+                            ImGui::TreePop();
+                        }
+                    }
+                    else {
+                        if (ImGui::Selectable(currentScene.models[i].name.c_str(), isSelected, ImGuiSelectableFlags_SpanAllColumns)) {
+                            currentSelectedIndex = i;
+                            currentSelectedType = SelectedType::Model;
+                        }
+                        ImGui::NextColumn();
+                    }
                     ImGui::PopID();
                 }
 
+                // Point Clouds
                 for (int i = 0; i < currentScene.pointClouds.size(); i++) {
                     ImGui::PushID(i + currentScene.models.size());
                     bool isSelected = (currentSelectedIndex == i && currentSelectedType == SelectedType::PointCloud);
@@ -1095,7 +1148,6 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                     if (ImGui::Checkbox("##visible", &visible)) {
                         currentScene.pointClouds[i].visible = visible;
                     }
-
                     ImGui::NextColumn();
 
                     ImGui::AlignTextToFramePadding();
@@ -1104,20 +1156,15 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                         currentSelectedType = SelectedType::PointCloud;
                     }
                     ImGui::NextColumn();
-
-                    ImGui::AlignTextToFramePadding();
-
                     ImGui::PopID();
                 }
 
-
-
                 ImGui::Columns(1);
+                ImGui::EndChild();
             }
-            ImGui::EndChild();
 
             if (ImGui::Button("Create Cube", ImVec2(-1, 0))) {
-                ObjModel newCube = Engine::createCube(glm::vec3(1.0f, 1.0f, 1.0f), 32.0f, 0.0f);
+                Model newCube = Engine::createCube(glm::vec3(1.0f, 1.0f, 1.0f), 32.0f, 0.0f);
                 newCube.scale = glm::vec3(0.5f);
                 newCube.position = glm::vec3(0.0f, 0.0f, 0.0f);
                 currentScene.models.push_back(newCube);
@@ -1420,7 +1467,7 @@ void renderCursorSettingsWindow() {
     ImGui::End();
 }
 
-void renderModelManipulationPanel(Engine::ObjModel& model, Shader* shader) {
+void renderModelManipulationPanel(Engine::Model& model, Shader* shader) {
     ImGui::Text("Model Manipulation: %s", model.name.c_str());
     ImGui::Separator();
 
@@ -1440,43 +1487,39 @@ void renderModelManipulationPanel(Engine::ObjModel& model, Shader* shader) {
 
     // Textures
     if (ImGui::CollapsingHeader("Textures")) {
-        auto textureLoadingGUI = [&](const char* label, GLuint& textureID, std::string& texturePath, const char* uniformName) {
-            char pathBuffer[256];
-            strncpy_s(pathBuffer, texturePath.c_str(), sizeof(pathBuffer));
-            pathBuffer[sizeof(pathBuffer) - 1] = '\0';
-
-            ImGui::Text("%s", label);
-            if (ImGui::InputText(("Path##" + std::string(label)).c_str(), pathBuffer, IM_ARRAYSIZE(pathBuffer))) {
-                texturePath = pathBuffer;
+        // Display a list of loaded textures
+        if (!model.getMeshes().empty()) {
+            const auto& mesh = model.getMeshes()[0];
+            ImGui::Text("Loaded Textures:");
+            for (const auto& texture : mesh.textures) {
+                ImGui::BulletText("%s: %s", texture.type.c_str(), texture.path.c_str());
             }
-            if (ImGui::Button(("Browse##" + std::string(label)).c_str())) {
+        }
+
+        // Texture loading interface
+        auto textureLoadingGUI = [&](const char* label, const char* type) {
+            if (ImGui::Button(("Load " + std::string(label)).c_str())) {
                 auto selection = pfd::open_file("Select a texture file", ".",
                     { "Image Files", "*.png *.jpg *.jpeg *.bmp", "All Files", "*" }).result();
                 if (!selection.empty()) {
-                    texturePath = selection[0];
-                    strcpy_s(pathBuffer, texturePath.c_str());
-                }
-            }
-            ImGui::SameLine();
-            if (ImGui::Button(("Load##" + std::string(label)).c_str())) {
-                GLuint newTexture = loadTextureFromFile(texturePath.c_str());
-                if (newTexture != 0) {
-                    if (textureID != 0) {
-                        glDeleteTextures(1, &textureID);
+                    // Create and load new texture
+                    Texture texture;
+                    texture.id = model.TextureFromFile(selection[0].c_str(), selection[0], selection[0]);
+                    texture.type = type;
+                    texture.path = selection[0];
+
+                    // Add to all meshes
+                    for (auto& mesh : model.getMeshes()) {
+                        mesh.textures.push_back(texture);
                     }
-                    textureID = newTexture;
-                    std::cout << label << " loaded successfully." << std::endl;
-                    model.hasCustomTexture = true;
-                    shader->use();
-                    shader->setInt(uniformName, textureID);
                 }
             }
             };
 
-        textureLoadingGUI("Diffuse Texture", model.texture, model.diffuseTexturePath, "texture_diffuse1");
-        textureLoadingGUI("Normal Map", model.normalMap, model.normalTexturePath, "texture_normal1");
-        textureLoadingGUI("Specular Map", model.specularMap, model.specularTexturePath, "texture_specular1");
-        textureLoadingGUI("AO Map", model.aoMap, model.aoTexturePath, "texture_ao1");
+        textureLoadingGUI("Diffuse Texture", "texture_diffuse");
+        textureLoadingGUI("Normal Map", "texture_normal");
+        textureLoadingGUI("Specular Map", "texture_specular");
+        textureLoadingGUI("AO Map", "texture_ao");
     }
 
     ImGui::Separator();
@@ -1663,22 +1706,14 @@ void renderModels(Shader* shader) {
     // Calculate view projection matrix for frustum culling
     glm::mat4 viewProj;
     if (shader != simpleDepthShader) {
-        viewProj = camera.GetProjectionMatrix(aspectRatio, currentScene.settings.nearPlane, currentScene.settings.farPlane) * camera.GetViewMatrix();
+        viewProj = camera.GetProjectionMatrix(aspectRatio, currentScene.settings.nearPlane, currentScene.settings.farPlane)
+            * camera.GetViewMatrix();
     }
 
     // Render all models
     for (int i = 0; i < currentScene.models.size(); i++) {
-        const auto& model = currentScene.models[i];
+        auto& model = currentScene.models[i];
         if (!model.visible) continue;
-
-        // Skip frustum culling for depth pass
-        /*
-        if (shader != simpleDepthShader) {
-            glm::vec3 modelPos = glm::vec3(model.position);
-            if (!camera.isInFrustum(modelPos, model.boundingSphereRadius, viewProj)) {
-                continue;  // Skip if outside frustum
-            }
-        }*/
 
         // Calculate model matrix
         glm::mat4 modelMatrix = glm::mat4(1.0f);
@@ -1689,52 +1724,23 @@ void renderModels(Shader* shader) {
         modelMatrix = glm::scale(modelMatrix, model.scale);
 
         shader->setMat4("model", modelMatrix);
+        shader->setBool("useInstancing", false);
 
-        // Only set material properties and textures for the main shader pass
-        if (shader != simpleDepthShader) {
-            // Texture bindings
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, model.texture);
-            shader->setInt("texture_diffuse1", 0);
-            shader->setFloat("hasTexture", model.hasCustomTexture ? 1.0f : 0.0f);
-            shader->setVec3("objectColor", model.color);
+        // Set material properties
+        shader->setBool("material.hasNormalMap", model.hasNormalMap());
+        shader->setBool("material.hasSpecularMap", model.hasSpecularMap());
+        shader->setBool("material.hasAOMap", model.hasAOMap());
+        shader->setFloat("material.hasTexture", !model.getMeshes().empty() && !model.getMeshes()[0].textures.empty() ? 1.0f : 0.0f);
+        shader->setVec3("material.objectColor", model.color);
+        shader->setFloat("material.shininess", model.shininess);
+        shader->setFloat("material.emissive", model.emissive);
 
-            glActiveTexture(GL_TEXTURE1);
-            glBindTexture(GL_TEXTURE_2D, model.normalMap);
-            shader->setInt("texture_normal1", 1);
-
-            glActiveTexture(GL_TEXTURE2);
-            glBindTexture(GL_TEXTURE_2D, model.specularMap);
-            shader->setInt("texture_specular1", 2);
-
-            glActiveTexture(GL_TEXTURE3);
-            glBindTexture(GL_TEXTURE_2D, model.aoMap);
-            shader->setInt("texture_ao1", 3);
-
-            // Material properties
-            shader->setInt("hasNormalMap", model.normalMap != 0);
-            shader->setInt("hasSpecularMap", model.specularMap != 0);
-            shader->setInt("hasAOMap", model.aoMap != 0);
-            shader->setFloat("shininess", model.shininess);
-            shader->setFloat("emissive", model.emissive);
-
-            // Selection properties
-            shader->setBool("selectionMode", selectionMode);
-            shader->setBool("isSelected", selectionMode && (i == currentSelectedIndex) && (currentSelectedType == SelectedType::Model));
-
-            // Shadow mapping uniforms
-            shader->setBool("isPointCloud", false);
-        }
+        // Set selection state
+        shader->setBool("selectionMode", selectionMode);
+        shader->setBool("isSelected", selectionMode && (i == currentSelectedIndex) && (currentSelectedType == SelectedType::Model));
 
         // Draw the model
-        glBindVertexArray(model.vao);
-        glDrawElements(GL_TRIANGLES, model.indices.size(), GL_UNSIGNED_INT, 0);
-        glBindVertexArray(0);
-    }
-
-    // Reset OpenGL state
-    if (shader != simpleDepthShader) {
-        shader->setBool("isPointCloud", false);
+        model.Draw(*shader);
     }
 }
 
@@ -1844,11 +1850,15 @@ void updatePointLights() {
             // Calculate the model's bounding box in world space
             glm::vec3 minBounds(std::numeric_limits<float>::max());
             glm::vec3 maxBounds(std::numeric_limits<float>::lowest());
-            for (const auto& vertex : model.vertices) {
-                glm::vec4 rotatedPos = rotationMatrix * glm::vec4(vertex.position, 1.0f);
-                glm::vec3 worldPos = model.position + model.scale * glm::vec3(rotatedPos);
-                minBounds = glm::min(minBounds, worldPos);
-                maxBounds = glm::max(maxBounds, worldPos);
+
+            // Iterate through all meshes in the model
+            for (const auto& mesh : model.getMeshes()) {
+                for (const auto& vertex : mesh.vertices) {
+                    glm::vec4 rotatedPos = rotationMatrix * glm::vec4(vertex.position, 1.0f);
+                    glm::vec3 worldPos = model.position + model.scale * glm::vec3(rotatedPos);
+                    minBounds = glm::min(minBounds, worldPos);
+                    maxBounds = glm::max(maxBounds, worldPos);
+                }
             }
 
             // Create multiple point lights distributed across the model's bounding box
@@ -1953,50 +1963,55 @@ void calculateMouseRay(float mouseX, float mouseY, glm::vec3& rayOrigin, glm::ve
     rayDirection = glm::normalize(rayFar - rayNear);
 }
 
-bool rayIntersectsModel(const glm::vec3& rayOrigin, const glm::vec3& rayDirection, const Engine::ObjModel& model, float& distance) {
+bool rayIntersectsModel(const glm::vec3& rayOrigin, const glm::vec3& rayDirection, const Engine::Model& model, float& distance) {
     float closestDistance = std::numeric_limits<float>::max();
     bool intersected = false;
 
+    // Calculate model matrix
+    glm::mat4 modelMatrix = glm::translate(glm::mat4(1.0f), model.position);
+    modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.x), glm::vec3(1, 0, 0));
+    modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.y), glm::vec3(0, 1, 0));
+    modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.z), glm::vec3(0, 0, 1));
+    modelMatrix = glm::scale(modelMatrix, model.scale);
+
     // Transform ray to model space
-    glm::mat4 modelMatrix = glm::translate(glm::mat4(1.0f), model.position) *
-        glm::rotate(glm::mat4(1.0f), glm::radians(model.rotation.x), glm::vec3(1, 0, 0)) *
-        glm::rotate(glm::mat4(1.0f), glm::radians(model.rotation.y), glm::vec3(0, 1, 0)) *
-        glm::rotate(glm::mat4(1.0f), glm::radians(model.rotation.z), glm::vec3(0, 0, 1)) *
-        glm::scale(glm::mat4(1.0f), model.scale);
     glm::mat4 invModelMatrix = glm::inverse(modelMatrix);
     glm::vec3 rayOriginModel = glm::vec3(invModelMatrix * glm::vec4(rayOrigin, 1.0f));
-    glm::vec3 rayDirectionModel = glm::vec3(invModelMatrix * glm::vec4(rayDirection, 0.0f));
+    glm::vec3 rayDirectionModel = glm::normalize(glm::vec3(invModelMatrix * glm::vec4(rayDirection, 0.0f)));
 
-    // Iterate through all triangles in the model
-    for (size_t i = 0; i < model.indices.size(); i += 3) {
-        glm::vec3 v0 = model.vertices[model.indices[i]].position;
-        glm::vec3 v1 = model.vertices[model.indices[i + 1]].position;
-        glm::vec3 v2 = model.vertices[model.indices[i + 2]].position;
+    // Check each mesh in the model
+    for (const auto& mesh : model.getMeshes()) {
+        // Iterate through all triangles in the mesh
+        for (size_t i = 0; i < mesh.indices.size(); i += 3) {
+            glm::vec3 v0 = mesh.vertices[mesh.indices[i]].position;
+            glm::vec3 v1 = mesh.vertices[mesh.indices[i + 1]].position;
+            glm::vec3 v2 = mesh.vertices[mesh.indices[i + 2]].position;
 
-        // Möller–Trumbore intersection algorithm
-        glm::vec3 edge1 = v1 - v0;
-        glm::vec3 edge2 = v2 - v0;
-        glm::vec3 h = glm::cross(rayDirectionModel, edge2);
-        float a = glm::dot(edge1, h);
+            // Möller–Trumbore intersection algorithm
+            glm::vec3 edge1 = v1 - v0;
+            glm::vec3 edge2 = v2 - v0;
+            glm::vec3 h = glm::cross(rayDirectionModel, edge2);
+            float a = glm::dot(edge1, h);
 
-        if (a > -0.00001f && a < 0.00001f) continue; // Ray is parallel to triangle
+            if (a > -0.00001f && a < 0.00001f) continue; // Ray is parallel to triangle
 
-        float f = 1.0f / a;
-        glm::vec3 s = rayOriginModel - v0;
-        float u = f * glm::dot(s, h);
+            float f = 1.0f / a;
+            glm::vec3 s = rayOriginModel - v0;
+            float u = f * glm::dot(s, h);
 
-        if (u < 0.0f || u > 1.0f) continue;
+            if (u < 0.0f || u > 1.0f) continue;
 
-        glm::vec3 q = glm::cross(s, edge1);
-        float v = f * glm::dot(rayDirectionModel, q);
+            glm::vec3 q = glm::cross(s, edge1);
+            float v = f * glm::dot(rayDirectionModel, q);
 
-        if (v < 0.0f || u + v > 1.0f) continue;
+            if (v < 0.0f || u + v > 1.0f) continue;
 
-        float t = f * glm::dot(edge2, q);
+            float t = f * glm::dot(edge2, q);
 
-        if (t > 0.00001f && t < closestDistance) {
-            closestDistance = t;
-            intersected = true;
+            if (t > 0.00001f && t < closestDistance) {
+                closestDistance = t;
+                intersected = true;
+            }
         }
     }
 

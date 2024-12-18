@@ -44,15 +44,17 @@ namespace Engine {
         float basePointSize = 2.0f;
 
         std::vector<PointCloudChunk> chunks;
-        float lodDistances[5] = { 10.0f, 20.0f, 30.0f, 40.0f, 50.0f };
-        float chunkSize = 5.0f;
-        float newChunkSize = 5.0f;
+        float lodDistances[5] = { 5.0f, 15.0f, 23.0f, 30.0f, 50.0f };
+        float chunkSize = 2.0f;
+        float newChunkSize = 2.0f;
 
         GLuint chunkOutlineVAO;
         GLuint chunkOutlineVBO;
         std::vector<glm::vec3> chunkOutlineVertices;
         bool visualizeChunks;
     };
+
+
 
     struct Sun {
         glm::vec3 direction;
