@@ -1039,7 +1039,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                             }
                         }
                         else {
-                            std::cerr << "Failed to load scene: "  << std::endl;
+                            std::cerr << "Failed to load scene: " << std::endl;
                         }
                     }
                     if (ImGui::MenuItem("Save")) {

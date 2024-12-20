@@ -235,7 +235,7 @@ namespace Engine {
         return textures;
     }
 
-        GLuint Model::TextureFromFile(const char* path, const std::string& directory, std::string& outFullPath) {
+    GLuint Model::TextureFromFile(const char* path, const std::string& directory, std::string& outFullPath) {
 
         // First, get the base directory without the model file name
         std::string dir = directory;

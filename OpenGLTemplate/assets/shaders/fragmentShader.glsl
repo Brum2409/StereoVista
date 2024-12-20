@@ -80,7 +80,7 @@ float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir) {
            shadow += currentDepth - bias > pcfDepth ? 1.0 : 0.0;        
        }    
    }
-   shadow /= 20.0;
+   shadow /= 9.0;
    
    return shadow;
 }

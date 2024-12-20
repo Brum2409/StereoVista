@@ -76,7 +76,7 @@ public:
         updateCameraVectors();
     }
 
-    glm::mat4 GetViewMatrix() {
+    glm::mat4 GetViewMatrix() const {
         return glm::lookAt(Position, Position + Front, Up);
     }
 
@@ -86,7 +86,7 @@ public:
 
 
     // Function for stereo projection
-    glm::mat4 offsetProjection(glm::mat4& centerProjection, float separation, float convergence) {
+    glm::mat4 offsetProjection(glm::mat4& centerProjection, float separation, float convergence) const {
         glm::mat4 o = glm::mat4(centerProjection);
         o[2][0] = o[2][0] - separation;
         o[3][0] = o[3][0] - separation * convergence;
@@ -94,7 +94,6 @@ public:
     }
 
     bool isInFrustum(const glm::vec3& point, float radius, glm::mat4 viewProj) const {
-
         for (int i = 0; i < 6; ++i) {
             glm::vec4 plane(
                 viewProj[0][3] + (i % 2 == 0 ? viewProj[0][i / 2] : -viewProj[0][i / 2]),
@@ -354,7 +353,8 @@ public:
     void StopPanning() { IsPanning = false; }
 
 
-    float getDistanceToNearestObject(const Camera& camera, const glm::mat4& projection, const glm::mat4& view, const float farPlane, const int windowWidth, const int windowHeight) {
+    float getDistanceToNearestObject(const Camera& camera, const glm::mat4& projection, const glm::mat4& view,
+        const float farPlane, const int windowWidth, const int windowHeight) const {
         const int numSamples = 9; // 3x3 grid
         const int sampleOffset = 100; // pixels from center
         float minDepth = 1.0f;

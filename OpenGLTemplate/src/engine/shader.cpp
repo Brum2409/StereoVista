@@ -105,74 +105,74 @@ namespace Engine {
             glDeleteShader(geometry);
     }
 
-	Shader* loadShader(const std::string& vertexPath, const std::string& fragmentPath, const std::string& geometryPath) {
-		std::vector<std::string> searchPaths = {
-			"./shaders/",
-			"./",
-			"assets/shaders/"
-		};
+    Shader* loadShader(const std::string& vertexPath, const std::string& fragmentPath, const std::string& geometryPath) {
+        std::vector<std::string> searchPaths = {
+            "./shaders/",
+            "./",
+            "assets/shaders/"
+        };
 
-		for (const auto& basePath : searchPaths) {
-			std::string fullVertexPath = basePath + vertexPath;
-			std::string fullFragmentPath = basePath + fragmentPath;
-			std::string fullGeometryPath = geometryPath.empty() ? "" : basePath + geometryPath;
+        for (const auto& basePath : searchPaths) {
+            std::string fullVertexPath = basePath + vertexPath;
+            std::string fullFragmentPath = basePath + fragmentPath;
+            std::string fullGeometryPath = geometryPath.empty() ? "" : basePath + geometryPath;
 
-			// Check if required files exist
-			bool filesExist = std::ifstream(fullVertexPath).good() &&
-				std::ifstream(fullFragmentPath).good() &&
-				(geometryPath.empty() || std::ifstream(fullGeometryPath).good());
+            // Check if required files exist
+            bool filesExist = std::ifstream(fullVertexPath).good() &&
+                std::ifstream(fullFragmentPath).good() &&
+                (geometryPath.empty() || std::ifstream(fullGeometryPath).good());
 
-			if (filesExist) {
-				try {
-					return new Shader(fullVertexPath, fullFragmentPath, fullGeometryPath);
-				}
-				catch (const std::exception& e) {
-					std::cerr << "Error loading shader from " << fullVertexPath << ", "
-						<< fullFragmentPath;
-					if (!geometryPath.empty())
-						std::cerr << ", " << fullGeometryPath;
-					std::cerr << ": " << e.what() << std::endl;
-				}
-			}
-		}
+            if (filesExist) {
+                try {
+                    return new Shader(fullVertexPath, fullFragmentPath, fullGeometryPath);
+                }
+                catch (const std::exception& e) {
+                    std::cerr << "Error loading shader from " << fullVertexPath << ", "
+                        << fullFragmentPath;
+                    if (!geometryPath.empty())
+                        std::cerr << ", " << fullGeometryPath;
+                    std::cerr << ": " << e.what() << std::endl;
+                }
+            }
+        }
 
-		throw std::runtime_error("Unable to find shader files");
-	}
+        throw std::runtime_error("Unable to find shader files");
+    }
 
-	// Use / Activate the shader
-	void Shader::use() {
-		glUseProgram(shaderID);
-	}
+    // Use / Activate the shader
+    void Shader::use() {
+        glUseProgram(shaderID);
+    }
 
-	void Shader::setBool(const std::string& name, bool value) {
-		glUniform1i(glGetUniformLocation(shaderID, name.c_str()), (int)value);
-	}
+    void Shader::setBool(const std::string& name, bool value) {
+        glUniform1i(glGetUniformLocation(shaderID, name.c_str()), (int)value);
+    }
 
-	void Shader::setInt(const std::string& name, int value) {
-		glUniform1i(glGetUniformLocation(shaderID, name.c_str()), value);
-	}
+    void Shader::setInt(const std::string& name, int value) {
+        glUniform1i(glGetUniformLocation(shaderID, name.c_str()), value);
+    }
 
-	void Shader::setFloat(const std::string& name, float value) {
-		glUniform1f(glGetUniformLocation(shaderID, name.c_str()), value);
-	}
+    void Shader::setFloat(const std::string& name, float value) {
+        glUniform1f(glGetUniformLocation(shaderID, name.c_str()), value);
+    }
 
-	void Shader::setMat3(const std::string& name, const glm::mat3& mat) {
-		glUniformMatrix3fv(glGetUniformLocation(shaderID, name.c_str()), 1, GL_FALSE, glm::value_ptr(mat));
-	}
+    void Shader::setMat3(const std::string& name, const glm::mat3& mat) {
+        glUniformMatrix3fv(glGetUniformLocation(shaderID, name.c_str()), 1, GL_FALSE, glm::value_ptr(mat));
+    }
 
-	void Shader::setMat4(const std::string& name, const glm::mat4& mat) {
-		glUniformMatrix4fv(glGetUniformLocation(shaderID, name.c_str()), 1, GL_FALSE, glm::value_ptr(mat));
-	}
+    void Shader::setMat4(const std::string& name, const glm::mat4& mat) {
+        glUniformMatrix4fv(glGetUniformLocation(shaderID, name.c_str()), 1, GL_FALSE, glm::value_ptr(mat));
+    }
 
-	void Shader::setVec2(const std::string& name, glm::vec2 vec) {
-		glUniform2fv(glGetUniformLocation(shaderID, name.c_str()), 1, &vec[0]);
-	}
+    void Shader::setVec2(const std::string& name, glm::vec2 vec) {
+        glUniform2fv(glGetUniformLocation(shaderID, name.c_str()), 1, &vec[0]);
+    }
 
-	void Shader::setVec3(const std::string& name, glm::vec3 vec) {
-		glUniform3fv(glGetUniformLocation(shaderID, name.c_str()), 1, &vec[0]);
-	}
+    void Shader::setVec3(const std::string& name, glm::vec3 vec) {
+        glUniform3fv(glGetUniformLocation(shaderID, name.c_str()), 1, &vec[0]);
+    }
 
-	void Shader::setVec4(const std::string& name, glm::vec4 vec) {
-		glUniform4fv(glGetUniformLocation(shaderID, name.c_str()), 1, &vec[0]);
-	}
+    void Shader::setVec4(const std::string& name, glm::vec4 vec) {
+        glUniform4fv(glGetUniformLocation(shaderID, name.c_str()), 1, &vec[0]);
+    }
 }
