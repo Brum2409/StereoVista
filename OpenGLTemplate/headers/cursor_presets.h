@@ -21,6 +21,9 @@ namespace Engine {
         float innerSphereFactor;
         float cursorEdgeSoftness;
         float cursorCenterTransparency;
+        bool showPlaneCursor;
+        float planeDiameter;
+        glm::vec4 planeColor;
     };
 
     class CursorPresetManager {

@@ -1,14 +1,19 @@
 {
     "camera": {
-        "convergence": -0.9089999794960022,
+        "convergence": 2.9769999980926514,
         "farPlane": 250.0,
+        "fov": 45.775001525878906,
+        "maxScrollVelocity": 3.0,
         "nearPlane": 0.10000000149011612,
-        "separation": 0.004000000189989805,
-        "speedFactor": 0.9670000076293945,
-        "useNewStereoMethod": true
+        "scrollDeceleration": 5.0,
+        "scrollMomentum": 0.5699999928474426,
+        "separation": 0.014000000432133675,
+        "speedFactor": 1.090000033378601,
+        "useNewStereoMethod": true,
+        "useSmoothScrolling": true
     },
     "cursor": {
-        "currentPreset": "Test"
+        "currentPreset": "only 3D"
     },
     "ui": {
         "darkTheme": true,

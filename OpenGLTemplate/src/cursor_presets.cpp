@@ -37,6 +37,10 @@ namespace Engine {
         presetJson["innerSphereFactor"] = preset.innerSphereFactor;
         presetJson["cursorEdgeSoftness"] = preset.cursorEdgeSoftness;
         presetJson["cursorCenterTransparency"] = preset.cursorCenterTransparency;
+        presetJson["showPlaneCursor"] = preset.showPlaneCursor;
+        presetJson["planeDiameter"] = preset.planeDiameter;
+        presetJson["planeColor"] = { preset.planeColor.r, preset.planeColor.g, preset.planeColor.b, preset.planeColor.a };
+
 
         presets[name] = presetJson;
 
@@ -61,19 +65,37 @@ namespace Engine {
 
         json presetJson = presets[name];
         CursorPreset preset;
-        preset.name = presetJson["name"];
-        preset.showSphereCursor = presetJson["showSphereCursor"];
-        preset.showFragmentCursor = presetJson["showFragmentCursor"];
-        preset.fragmentBaseInnerRadius = presetJson["fragmentBaseInnerRadius"];
-        preset.sphereScalingMode = presetJson["sphereScalingMode"];
-        preset.sphereFixedRadius = presetJson["sphereFixedRadius"];
-        preset.sphereTransparency = presetJson["sphereTransparency"];
-        preset.showInnerSphere = presetJson["showInnerSphere"];
-        preset.cursorColor = glm::vec4(presetJson["cursorColor"][0], presetJson["cursorColor"][1], presetJson["cursorColor"][2], presetJson["cursorColor"][3]);
-        preset.innerSphereColor = glm::vec4(presetJson["innerSphereColor"][0], presetJson["innerSphereColor"][1], presetJson["innerSphereColor"][2], presetJson["innerSphereColor"][3]);
-        preset.innerSphereFactor = presetJson["innerSphereFactor"];
-        preset.cursorEdgeSoftness = presetJson["cursorEdgeSoftness"];
-        preset.cursorCenterTransparency = presetJson["cursorCenterTransparency"];
+
+        // Use value() with defaults for each property
+        preset.name = presetJson.value("name", "Default");
+        preset.showSphereCursor = presetJson.value("showSphereCursor", false);
+        preset.showFragmentCursor = presetJson.value("showFragmentCursor", false);
+        preset.fragmentBaseInnerRadius = presetJson.value("fragmentBaseInnerRadius", 0.004f);
+        preset.sphereScalingMode = presetJson.value("sphereScalingMode", 0);
+        preset.sphereFixedRadius = presetJson.value("sphereFixedRadius", 0.05f);
+        preset.sphereTransparency = presetJson.value("sphereTransparency", 0.7f);
+        preset.showInnerSphere = presetJson.value("showInnerSphere", false);
+
+        // Handle vec4 properties with proper defaults
+        auto defaultCursorColor = json::array({ 1.0f, 0.0f, 0.0f, 0.7f });
+        auto defaultInnerColor = json::array({ 0.0f, 1.0f, 0.0f, 1.0f });
+        auto defaultPlaneColor = json::array({ 0.0f, 1.0f, 0.0f, 0.7f });
+
+        auto cursorColorArr = presetJson.value("cursorColor", defaultCursorColor);
+        auto innerColorArr = presetJson.value("innerSphereColor", defaultInnerColor);
+        auto planeColorArr = presetJson.value("planeColor", defaultPlaneColor);
+
+        preset.cursorColor = glm::vec4(cursorColorArr[0], cursorColorArr[1], cursorColorArr[2], cursorColorArr[3]);
+        preset.innerSphereColor = glm::vec4(innerColorArr[0], innerColorArr[1], innerColorArr[2], innerColorArr[3]);
+        preset.planeColor = glm::vec4(planeColorArr[0], planeColorArr[1], planeColorArr[2], planeColorArr[3]);
+
+        preset.innerSphereFactor = presetJson.value("innerSphereFactor", 0.1f);
+        preset.cursorEdgeSoftness = presetJson.value("cursorEdgeSoftness", 0.8f);
+        preset.cursorCenterTransparency = presetJson.value("cursorCenterTransparency", 0.2f);
+
+        // New plane cursor properties with defaults
+        preset.showPlaneCursor = presetJson.value("showPlaneCursor", false);
+        preset.planeDiameter = presetJson.value("planeDiameter", 0.5f);
 
         return preset;
     }

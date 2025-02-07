@@ -33,9 +33,6 @@
     <ClCompile Include="src\engine\buffers.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\obj_loader.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="headers\libs\imgui\imgui.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -423,5 +420,9 @@
     <None Include="assets\shaders\simpleDepthVertexShader.glsl" />
     <None Include="assets\shaders\simpleDepthFragmentShader.glsl" />
     <None Include="headers\octree.h" />
+    <None Include="assets\shaders\skyboxVertexShader.glsl" />
+    <None Include="assets\shaders\skyboxFragmentShader.glsl" />
+    <None Include="assets\shaders\planeCursorVertexShader.glsl" />
+    <None Include="assets\shaders\planeCursorFragmentShader.glsl" />
   </ItemGroup>
 </Project>

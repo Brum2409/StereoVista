@@ -17,9 +17,17 @@
         ],
         "innerSphereFactor": 0.10000000149011612,
         "name": "Test",
+        "planeColor": [
+            1.0,
+            0.4301075339317322,
+            0.0,
+            0.699999988079071
+        ],
+        "planeDiameter": 0.5,
         "showFragmentCursor": false,
         "showInnerSphere": true,
-        "showSphereCursor": true,
+        "showPlaneCursor": true,
+        "showSphereCursor": false,
         "sphereFixedRadius": 0.699999988079071,
         "sphereScalingMode": 2,
         "sphereTransparency": 1.0

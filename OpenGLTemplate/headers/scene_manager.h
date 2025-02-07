@@ -11,6 +11,7 @@ namespace Engine {
         float convergence = 1.0f;
         float nearPlane = 0.1f;
         float farPlane = 200.0f;
+        int msaaSamples = 4;
     };
 
     struct Scene {

@@ -54,7 +54,7 @@ namespace Engine {
         glm::vec3 rotation = glm::vec3(0.0f);
         bool selected = false;
         glm::vec3 color = glm::vec3(1.0f);
-        float shininess = 32.0f;
+        float shininess = 1.0f;
         float emissive = 0.0f;
         bool visible = true;
         float boundingSphereRadius = 0.0f;

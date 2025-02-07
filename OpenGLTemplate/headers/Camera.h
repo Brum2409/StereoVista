@@ -43,6 +43,13 @@ public:
 
     float speedFactor = 1.0f;
 
+    float scrollMomentum = 0.5f;
+    float maxScrollVelocity = 3.0f;
+    float scrollDeceleration = 5.0f;
+
+    bool useSmoothScrolling = true;
+    float scrollVelocity = 0.0f;
+
     glm::vec3 OrbitPoint;
     float OrbitDistance;
     bool IsOrbiting;
@@ -245,8 +252,8 @@ public:
         }
         else if (IsPanning) {
             glm::vec3 right = glm::normalize(glm::cross(Front, WorldUp));
-            Position += right * xoffset * 0.02f; // Adjust the factor as needed could also be a setting
-            Position += WorldUp * yoffset * 0.02f; // Adjust the factor as needed could also be a setting
+            Position += right * xoffset * -0.02f; // Adjust the factor as needed could also be a setting
+            Position += WorldUp * yoffset * -0.02f; // Adjust the factor as needed could also be a setting
 
             // Update orbit point when panning
             OrbitPoint = Position + Front * OrbitDistance;
@@ -268,13 +275,45 @@ public:
     }
 
     void ProcessMouseScroll(float yoffset) {
-        if (IsAnimating) return; // Disable zooming during animation
+        if (IsAnimating) return;
 
-        Zoom -= (float)yoffset;
-        if (Zoom < 1.0f)
-            Zoom = 1.0f;
-        if (Zoom > 45.0f)
-            Zoom = 45.0f;
+        if (!useSmoothScrolling) {
+            // Direct movement
+            Position += Front * yoffset * MovementSpeed * 0.1f;
+            if (IsOrbiting) {
+                OrbitPoint = Position + Front * OrbitDistance;
+            }
+            return;
+        }
+
+        float currentTime = glfwGetTime();
+        float deltaTime = currentTime - lastScrollTime;
+        lastScrollTime = currentTime;
+
+        // Add to velocity with acceleration
+        scrollVelocity += yoffset * scrollMomentum;
+        scrollVelocity = glm::clamp(scrollVelocity, -maxScrollVelocity, maxScrollVelocity);
+    }
+
+    void UpdateScrolling(float deltaTime) {
+        if (scrollVelocity != 0.0f) {
+            // Move camera based on velocity
+            Position += Front * scrollVelocity * MovementSpeed * deltaTime;
+
+            // Decelerate
+            float deceleration = scrollDeceleration * deltaTime;
+            if (abs(scrollVelocity) <= deceleration) {
+                scrollVelocity = 0.0f;
+            }
+            else {
+                scrollVelocity -= glm::sign(scrollVelocity) * deceleration;
+            }
+
+            // Update orbit point
+            if (IsOrbiting) {
+                OrbitPoint = Position + Front * OrbitDistance;
+            }
+        }
     }
 
     void SetOrbitPoint(float distance) {
@@ -384,6 +423,9 @@ public:
     }
 
 private:
+    float lastScrollTime = 0.0f;
+
+
     void updateCameraVectors() {
         glm::vec3 front;
         front.x = cos(glm::radians(Yaw)) * cos(glm::radians(Pitch));

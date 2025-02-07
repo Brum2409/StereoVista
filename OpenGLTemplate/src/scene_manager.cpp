@@ -301,7 +301,7 @@ namespace Engine {
                                     modelJson["color"][1].get<float>(),
                                     modelJson["color"][2].get<float>()
                                 ),
-                                modelJson.value("shininess", 32.0f),
+                                modelJson.value("shininess", 1.0f),
                                 modelJson.value("emissive", 0.0f)
                             );
 
@@ -335,7 +335,7 @@ namespace Engine {
                             modelJson["color"][1].get<float>(),
                             modelJson["color"][2].get<float>()
                         );
-                        model.shininess = modelJson.value("shininess", 32.0f);
+                        model.shininess = modelJson.value("shininess", 1.0f);
                         model.emissive = modelJson.value("emissive", 0.0f);
                         model.visible = modelJson.value("visible", true);
 
