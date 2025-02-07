@@ -1,13 +1,13 @@
 {
     "camera": {
         "convergence": 2.9769999980926514,
-        "farPlane": 250.0,
-        "fov": 45.775001525878906,
-        "maxScrollVelocity": 3.0,
-        "nearPlane": 0.10000000149011612,
+        "farPlane": 200.0,
+        "fov": 60.80099868774414,
+        "maxScrollVelocity": 3.1500000953674316,
+        "nearPlane": 0.009999999776482582,
         "scrollDeceleration": 5.0,
-        "scrollMomentum": 0.5699999928474426,
-        "separation": 0.014000000432133675,
+        "scrollMomentum": 1.6959999799728394,
+        "separation": 0.004999999888241291,
         "speedFactor": 1.090000033378601,
         "useNewStereoMethod": true,
         "useSmoothScrolling": true

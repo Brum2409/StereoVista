@@ -957,7 +957,7 @@ int main() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_STEREO, GLFW_TRUE);  // Enable stereo hint
-    glfwWindowHint(GLFW_SAMPLES, 2);
+    glfwWindowHint(GLFW_SAMPLES, currentScene.settings.msaaSamples);
 
     // ---- Create GLFW Window ----
     GLFWwindow* window = glfwCreateWindow(windowWidth, windowHeight, "OpenGL Stereo Template", nullptr, nullptr);
@@ -1418,16 +1418,36 @@ void renderSettingsWindow() {
             ImGui::Text("Stereo Settings");
             ImGui::Separator();
 
+            if (ImGui::BeginCombo("Stereo Method", camera.useNewMethod ? "New Method" : "Legacy")) {
+                if (ImGui::Selectable("Legacy", !camera.useNewMethod)) {
+                    camera.useNewMethod = false;
+                    currentScene.settings.separation = 0.02f;
+                    preferences.useNewStereoMethod = false;
+                    savePreferences();
+                }
+                if (ImGui::Selectable("New Method", camera.useNewMethod)) {
+                    camera.useNewMethod = true;
+                    currentScene.settings.separation = 0.005f;
+                    preferences.useNewStereoMethod = true;
+                    savePreferences();
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SetItemTooltip("Switch between legacy and new stereo rendering methods. New method provides better depth perception");
+
             float minSep = 0.0f;
             float maxSep = camera.useNewMethod ? 0.025f : maxSeparation;
             if (ImGui::SliderFloat("Separation", &currentScene.settings.separation, minSep, maxSep)) {
                 preferences.separation = currentScene.settings.separation;
                 settingsChanged = true;
             }
+            ImGui::SetItemTooltip("Adjusts the distance between stereo views. Higher values increase 3D effect");
+
             if (ImGui::SliderFloat("Convergence", &currentScene.settings.convergence, minConvergence, maxConvergence)) {
                 preferences.convergence = currentScene.settings.convergence;
                 settingsChanged = true;
             }
+            ImGui::SetItemTooltip("Sets the focal point distance where left and right views converge");
 
             ImGui::Spacing();
             ImGui::Text("Camera Properties");
@@ -1437,24 +1457,36 @@ void renderSettingsWindow() {
                 preferences.fov = camera.Zoom;
                 settingsChanged = true;
             }
-            if (ImGui::SliderFloat("Speed Multiplier", &camera.speedFactor, 0.1f, 5.0f)) {
-                preferences.cameraSpeedFactor = camera.speedFactor;
-                settingsChanged = true;
-            }
+            ImGui::SetItemTooltip("Controls the camera's field of view. Higher values show more of the scene");
+
             if (ImGui::SliderFloat("Near Plane", &currentScene.settings.nearPlane, 0.01f, 10.0f)) {
                 preferences.nearPlane = currentScene.settings.nearPlane;
                 settingsChanged = true;
             }
+            ImGui::SetItemTooltip("Minimum visible distance from camera. Smaller values can cause visual artifacts");
+
             if (ImGui::SliderFloat("Far Plane", &currentScene.settings.farPlane, 10.0f, 1000.0f)) {
                 preferences.farPlane = currentScene.settings.farPlane;
                 settingsChanged = true;
             }
+            ImGui::SetItemTooltip("Maximum visible distance from camera. Higher values may impact performance");
 
             ImGui::EndTabItem();
         }
 
         // Movement Tab
         if (ImGui::BeginTabItem("Movement")) {
+            ImGui::Text("Mouse Settings");
+            ImGui::Separator();
+            ImGui::SliderFloat("Mouse Sensitivity", &camera.MouseSensitivity, 0.01f, 0.5f);
+            ImGui::SetItemTooltip("Adjusts how quickly the camera rotates in response to mouse movement");
+            if (ImGui::SliderFloat("Speed Multiplier", &camera.speedFactor, 0.1f, 5.0f)) {
+                preferences.cameraSpeedFactor = camera.speedFactor;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Multiplies base movement speed. Useful for navigating larger scenes");
+
+            ImGui::Spacing();
             ImGui::Text("Smooth Scrolling");
             ImGui::Separator();
 
@@ -1465,6 +1497,7 @@ void renderSettingsWindow() {
                 }
                 settingsChanged = true;
             }
+            ImGui::SetItemTooltip("Enables physics-based smooth scrolling instead of instant movement");
 
             if (camera.useSmoothScrolling) {
                 ImGui::BeginGroup();
@@ -1473,19 +1506,19 @@ void renderSettingsWindow() {
                     preferences.scrollMomentum = camera.scrollMomentum;
                     settingsChanged = true;
                 }
-                ImGui::SetItemTooltip("Controls how quickly scroll speed builds up");
+                ImGui::SetItemTooltip("Controls how quickly scroll speed builds up. Higher values feel more responsive");
 
                 if (ImGui::SliderFloat("Max Speed", &camera.maxScrollVelocity, 0.1f, 10.0f)) {
                     preferences.maxScrollVelocity = camera.maxScrollVelocity;
                     settingsChanged = true;
                 }
-                ImGui::SetItemTooltip("Maximum scrolling speed limit");
+                ImGui::SetItemTooltip("Limits maximum scrolling speed for more controlled movement");
 
                 if (ImGui::SliderFloat("Deceleration", &camera.scrollDeceleration, 0.1f, 5.0f)) {
                     preferences.scrollDeceleration = camera.scrollDeceleration;
                     settingsChanged = true;
                 }
-                ImGui::SetItemTooltip("How quickly scrolling slows down");
+                ImGui::SetItemTooltip("Determines how quickly scrolling comes to a stop");
                 ImGui::EndGroup();
             }
 
@@ -1497,13 +1530,22 @@ void renderSettingsWindow() {
             ImGui::Text("Skybox Settings");
             ImGui::Separator();
             ImGui::SliderFloat("Ambient Strength", &ambientStrengthFromSkybox, 0.0f, 1.0f);
-            ImGui::SetItemTooltip("Controls the intensity of ambient light from the skybox");
+            ImGui::SetItemTooltip("Controls how much the skybox illuminates the scene. Higher values create brighter ambient lighting");
 
             ImGui::Spacing();
             ImGui::Text("Sun Settings");
             ImGui::Separator();
             ImGui::ColorEdit3("Sun Color", glm::value_ptr(sun.color));
+            ImGui::SetItemTooltip("Sets the color of sunlight in the scene");
+
             ImGui::SliderFloat("Sun Intensity", &sun.intensity, 0.0f, 1.0f);
+            ImGui::SetItemTooltip("Controls the brightness of sunlight");
+
+            ImGui::DragFloat3("Sun Direction", glm::value_ptr(sun.direction), 0.01f, -1.0f, 1.0f);
+            ImGui::SetItemTooltip("Sets the direction of sunlight. Affects shadows and lighting");
+
+            ImGui::Checkbox("Enable Sun", &sun.enabled);
+            ImGui::SetItemTooltip("Toggles sun lighting on/off");
 
             ImGui::EndTabItem();
         }
@@ -1517,18 +1559,76 @@ void renderSettingsWindow() {
                 preferences.showFPS = showFPS;
                 settingsChanged = true;
             }
+            ImGui::SetItemTooltip("Shows/hides the FPS counter in the top-right corner");
 
             if (ImGui::Checkbox("Dark Theme", &isDarkTheme)) {
                 SetupImGuiStyle(isDarkTheme, 1.0f);
                 preferences.isDarkTheme = isDarkTheme;
                 settingsChanged = true;
             }
+            ImGui::SetItemTooltip("Switches between light and dark color themes for the interface");
 
             ImGui::Spacing();
             ImGui::Text("Rendering Settings");
             ImGui::Separator();
             ImGui::Checkbox("Wireframe Mode", &camera.wireframe);
+            ImGui::SetItemTooltip("Renders objects as wireframes instead of solid surfaces");
 
+            ImGui::EndTabItem();
+        }
+
+        // Keybinds Tab
+        if (ImGui::BeginTabItem("Keybinds")) {
+            ImGui::Text("Camera Controls");
+            ImGui::Separator();
+            ImGui::Columns(2, "keybinds");
+            ImGui::SetColumnWidth(0, 150);
+
+            ImGui::Text("W/S"); ImGui::NextColumn();
+            ImGui::Text("Move forward/backward"); ImGui::NextColumn();
+
+            ImGui::Text("A/D"); ImGui::NextColumn();
+            ImGui::Text("Move left/right"); ImGui::NextColumn();
+
+            ImGui::Text("Space/Shift"); ImGui::NextColumn();
+            ImGui::Text("Move up/down"); ImGui::NextColumn();
+
+            ImGui::Text("Left Mouse + Drag"); ImGui::NextColumn();
+            ImGui::Text("Orbit around the viewport center at cursor depth"); ImGui::NextColumn();
+
+            ImGui::Text("Right Mouse + Drag"); ImGui::NextColumn();
+            ImGui::Text("Rotate the camera"); ImGui::NextColumn();
+
+            ImGui::Text("Middle Mouse + Drag"); ImGui::NextColumn();
+            ImGui::Text("Pan camera"); ImGui::NextColumn();
+
+            ImGui::Text("Mouse Wheel"); ImGui::NextColumn();
+            ImGui::Text("Zoom in/out"); ImGui::NextColumn();
+
+            ImGui::Text("Double Click"); ImGui::NextColumn();
+            ImGui::Text("Center on cursor"); ImGui::NextColumn();
+
+            ImGui::Spacing(); ImGui::NextColumn(); ImGui::Spacing(); ImGui::NextColumn();
+
+            ImGui::Text("Other Controls");
+            ImGui::Separator();
+
+            ImGui::Text("G"); ImGui::NextColumn();
+            ImGui::Text("Toggle GUI"); ImGui::NextColumn();
+
+            ImGui::Text("Ctrl + Click"); ImGui::NextColumn();
+            ImGui::Text("Select object"); ImGui::NextColumn();
+
+            ImGui::Text("Ctrl + Click + Drag"); ImGui::NextColumn();
+            ImGui::Text("Move Objects around"); ImGui::NextColumn();
+
+            ImGui::Text("Delete"); ImGui::NextColumn();
+            ImGui::Text("Delete selected object"); ImGui::NextColumn();
+
+            ImGui::Text("Esc"); ImGui::NextColumn();
+            ImGui::Text("Exit application"); ImGui::NextColumn();
+
+            ImGui::Columns(1);
             ImGui::EndTabItem();
         }
 
