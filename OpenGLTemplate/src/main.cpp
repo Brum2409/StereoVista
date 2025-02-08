@@ -509,8 +509,8 @@ void createDefaultCubemap() {
 void initSkybox() {
     // Load and create skybox shader
     try {
-        skyboxShader = Engine::loadShader("assets/shaders/skyboxVertexShader.glsl",
-            "assets/shaders/skyboxFragmentShader.glsl");
+        skyboxShader = Engine::loadShader("skyboxVertexShader.glsl",
+            "skyboxFragmentShader.glsl");
     }
     catch (const std::exception& e) {
         std::cerr << "Error loading skybox shaders: " << e.what() << std::endl;
