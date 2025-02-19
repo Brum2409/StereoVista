@@ -69,6 +69,9 @@
     <ClCompile Include="src\stb_image_impl.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\voxalizer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="headers\core.h">
@@ -126,9 +129,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\libs\imgui\imgui_sytle.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\obj_loader.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\libs\json.h">
@@ -383,6 +383,9 @@
     <ClInclude Include="headers\model_loader.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="headers\voxalizer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="assets\shaders\vertexShader.glsl" />
@@ -424,5 +427,10 @@
     <None Include="assets\shaders\skyboxFragmentShader.glsl" />
     <None Include="assets\shaders\planeCursorVertexShader.glsl" />
     <None Include="assets\shaders\planeCursorFragmentShader.glsl" />
+    <None Include="assets\shaders\voxelVertexShader.glsl" />
+    <None Include="assets\shaders\voxelGeometryShader.glsl" />
+    <None Include="assets\shaders\voxelFragmentShader.glsl" />
+    <None Include="assets\shaders\voxelDebugVertex.glsl" />
+    <None Include="assets\shaders\voxelDebugFragment.glsl" />
   </ItemGroup>
 </Project>

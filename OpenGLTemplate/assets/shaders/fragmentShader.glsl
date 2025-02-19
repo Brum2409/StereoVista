@@ -9,6 +9,7 @@ in VS_OUT {
    vec3 VertexColor;
    float Intensity;
    mat3 TBN;
+   flat int meshIndex;
 } fs_in;
 
 struct Material {
@@ -62,6 +63,9 @@ uniform bool isPointCloud;
 uniform bool selectionMode;
 uniform bool isSelected;
 uniform bool isChunkOutline;
+
+uniform int selectedMeshIndex;
+uniform bool isMeshSelected;
 
 
 
@@ -214,9 +218,13 @@ void main() {
     result += material.emissive * baseColor;
     result *= aoFactor;
    
-    if (selectionMode && isSelected) {
-        result = mix(result, vec3(1.0, 0.0, 0.0), 0.3);
+if (selectionMode) {
+    if (isSelected) {
+        if (selectedMeshIndex == -1 || selectedMeshIndex == fs_in.meshIndex) { 
+            result = mix(result, vec3(1.0, 0.0, 0.0), 0.3);
+        }
     }
+}
    
     FragColor = vec4(result, 1.0);
    

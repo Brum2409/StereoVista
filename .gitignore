@@ -115,3 +115,7 @@ OpenGLTemplate/x64/Debug/Stereo Demo.tlog/unsuccessfulbuild
 /x64
 OpenGLTemplate/preferences.json
 OpenGLTemplate/preferences.json
+OpenGLTemplate/cursor_presets.json
+OpenGLTemplate/imgui.ini
+OpenGLTemplate/preferences.json
+*.json
