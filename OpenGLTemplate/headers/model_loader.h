@@ -71,6 +71,13 @@ namespace Engine {
         const std::vector<Mesh>& getMeshes() const { return meshes; }
         std::vector<Mesh>& getMeshes() { return meshes; }
 
+        float diffuseReflectivity = 0.8f;
+        glm::vec3 specularColor = glm::vec3(1.0f);
+        float specularDiffusion = 0.2f;
+        float specularReflectivity = 0.2f;
+        float refractiveIndex = 1.5f;
+        float transparency = 0.0f;
+
         std::vector<Mesh> meshes;
 
         bool hasNormalMap() const {

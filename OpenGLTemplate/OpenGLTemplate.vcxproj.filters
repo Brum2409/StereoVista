@@ -427,10 +427,14 @@
     <None Include="assets\shaders\skyboxFragmentShader.glsl" />
     <None Include="assets\shaders\planeCursorVertexShader.glsl" />
     <None Include="assets\shaders\planeCursorFragmentShader.glsl" />
-    <None Include="assets\shaders\voxelVertexShader.glsl" />
-    <None Include="assets\shaders\voxelGeometryShader.glsl" />
-    <None Include="assets\shaders\voxelFragmentShader.glsl" />
-    <None Include="assets\shaders\voxelDebugVertex.glsl" />
-    <None Include="assets\shaders\voxelDebugFragment.glsl" />
+    <None Include="assets\shaders\voxelization.frag" />
+    <None Include="assets\shaders\voxelization.geom" />
+    <None Include="assets\shaders\voxelization.vert" />
+    <None Include="assets\shaders\voxel_cube.frag" />
+    <None Include="assets\shaders\voxel_cube.vert" />
+    <None Include="assets\shaders\voxel_visualization.frag" />
+    <None Include="assets\shaders\voxel_visualization.vert" />
+    <None Include="assets\shaders\world_position.frag" />
+    <None Include="assets\shaders\world_position.vert" />
   </ItemGroup>
 </Project>
