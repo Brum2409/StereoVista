@@ -371,7 +371,7 @@ namespace Engine {
 
         if (data) {
             GLenum format;
-            GLenum internalFormat; 
+            GLenum internalFormat;
             if (nrComponents == 1) {
                 format = GL_RED;
                 internalFormat = GL_R8;

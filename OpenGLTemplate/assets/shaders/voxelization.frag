@@ -45,7 +45,9 @@ vec3 calculatePointLight(const PointLight light) {
     return diff * POINT_LIGHT_INTENSITY * attenuation * light.color;
 }
 
-vec3 scaleAndBias(vec3 p) { return 0.5f * p + vec3(0.5f); }
+vec3 scaleAndBias(vec3 p) {
+    return 0.5 * p + vec3(0.5f);
+}
 
 bool isInsideCube(const vec3 p, float e) { return abs(p.x) < 1 + e && abs(p.y) < 1 + e && abs(p.z) < 1 + e; }
 

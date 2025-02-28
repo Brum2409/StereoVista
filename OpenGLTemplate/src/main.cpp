@@ -1010,7 +1010,7 @@ int main() {
     glfwSetMouseButtonCallback(window, mouse_button_callback);
 
 
-    voxelizer = new Engine::Voxelizer(64);
+    voxelizer = new Engine::Voxelizer(128);
 
     // ---- Initialize Shader ----
     Shader* shader = nullptr;
@@ -1215,26 +1215,11 @@ float calculateLargestModelDimension() {
 
 #pragma endregion
 
-void setupVCTLighting(Shader* shader) {
-    if (!shader || !voxelizer) return;
 
-    // Set up basic voxel cone tracing settings
-    shader->setBool("settings.indirectSpecularLight", true);
-    shader->setBool("settings.indirectDiffuseLight", true);
-    shader->setBool("settings.directLight", true);
-    shader->setBool("settings.shadows", true);
-
-    // Bind the 3D voxel texture
-    glActiveTexture(GL_TEXTURE7); // Use a texture unit that's not already in use
-    glBindTexture(GL_TEXTURE_3D, voxelizer->getVoxelTexture());
-    shader->setInt("texture3D", 7);
-
-    // Set the current state for mipmap level
-    shader->setInt("state", voxelizer->getState());
-}
+// ---- Rendering ----
+#pragma region Rendering
 
 
-// Update your renderEye function to use VCT for lighting
 void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& view, Shader* shader, ImGuiViewportP* viewport, ImGuiWindowFlags windowFlags, GLFWwindow* window) {
     // Set the draw buffer and clear color and depth buffers
     glDrawBuffer(drawBuffer);
@@ -1246,10 +1231,42 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    // 1. Update the voxel grid using the existing voxelizer code
+    // 1. IMPORTANT: Update the voxel grid FIRST - this is crucial 
+    // so visualization can use the latest voxel data
     voxelizer->update(camera.Position, currentScene.models);
 
-    // 2. Setup rendering with voxel cone tracing lighting
+    // 2. First render pass: Shadow map generation
+    glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
+    glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+    glClear(GL_DEPTH_BUFFER_BIT);
+
+    // Calculate light's view and projection matrices
+    float sceneRadius = 10.0f;  // Adjust based on your scene size
+    glm::vec3 sceneCenter = glm::vec3(0.0f);
+    glm::vec3 lightDir = glm::normalize(sun.direction);
+    glm::vec3 lightPos = sceneCenter - lightDir * (sceneRadius * 2.0f);
+
+    glm::mat4 lightProjection = glm::ortho(
+        -sceneRadius, sceneRadius,
+        -sceneRadius, sceneRadius,
+        0.0f, sceneRadius * 4.0f);
+
+    glm::mat4 lightView = glm::lookAt(
+        lightPos,
+        sceneCenter,
+        glm::vec3(0.0f, 1.0f, 0.0f));
+    glm::mat4 lightSpaceMatrix = lightProjection * lightView;
+
+    // Use depth shader for shadow map generation
+    simpleDepthShader->use();
+    simpleDepthShader->setMat4("lightSpaceMatrix", lightSpaceMatrix);
+
+    // Render scene to depth buffer
+    glDisable(GL_CULL_FACE);
+    renderModels(simpleDepthShader);
+    glEnable(GL_CULL_FACE);
+
+    // 3. Second pass: Regular rendering with shadows
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, windowWidth, windowHeight);
 
@@ -1257,32 +1274,25 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     shader->setMat4("projection", projection);
     shader->setMat4("view", view);
     shader->setVec3("viewPos", camera.Position);
-
-    // 3. Setup VCT uniforms
-    setupVCTLighting(shader);
-
-    // 4. Setup other uniforms (lights, etc.)
-    for (int i = 0; i < pointLights.size(); i++) {
-        std::string prefix = "lights[" + std::to_string(i) + "]";
-        shader->setVec3(prefix + ".position", pointLights[i].position);
-        shader->setVec3(prefix + ".color", pointLights[i].color);
-        shader->setFloat(prefix + ".intensity", pointLights[i].intensity);
-    }
-    
+    shader->setMat4("lightSpaceMatrix", lightSpaceMatrix);
     shader->setVec3("sun.direction", sun.direction);
     shader->setVec3("sun.color", sun.color);
     shader->setFloat("sun.intensity", sun.intensity);
     shader->setBool("sun.enabled", sun.enabled);
-    
-    // 5. Bind skybox for environment lighting
-    bindSkyboxUniforms(shader);
 
-    // 6. Render the scene as usual
+    // Shadow map binding
+    glActiveTexture(GL_TEXTURE5);
+    glBindTexture(GL_TEXTURE_2D, depthMap);
+    shader->setInt("shadowMap", 5);
+
+    // Render scene
     renderModels(shader);
     renderPointClouds(shader);
 
-    // Update cursor position
+    // Update cursor position after scene is rendered
     updateCursorPosition(window, projection, view, shader);
+
+    // Set cursor uniforms after position update
     shader->setVec4("cursorPos", camera.IsOrbiting && orbitFollowsCursor && showSphereCursor ?
         glm::vec4(capturedCursorPos, g_cursorValid ? 1.0f : 0.0f) :
         glm::vec4(g_cursorPos, g_cursorValid ? 1.0f : 0.0f));
@@ -1293,14 +1303,13 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
         renderOrbitCenter(projection, view);
     }
 
-    // Render skybox
     renderSkybox(projection, view, shader);
 
-    // Render cursors
     renderSphereCursor(projection, view);
     renderPlaneCursor(projection, view);
 
-    // Debug visualization if enabled
+    // 4. IMPORTANT: Voxel visualization AFTER main rendering
+    // but don't update voxels again - we already did it at the beginning
     if (voxelizer->showDebugVisualization) {
         voxelizer->renderDebugVisualization(camera.Position, projection, view);
     }
@@ -2343,41 +2352,6 @@ void renderModelManipulationPanel(Engine::Model& model, Shader* shader) {
         ImGui::SliderFloat("Emissive", &model.emissive, 0.0f, 1.0f);
     }
 
-    if (ImGui::CollapsingHeader("Voxel Cone Tracing", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::SliderFloat("Diffuse Reflectivity", &model.diffuseReflectivity, 0.0f, 1.0f);
-        ImGui::ColorEdit3("Specular Color", glm::value_ptr(model.specularColor));
-        ImGui::SliderFloat("Specular Diffusion", &model.specularDiffusion, 0.0f, 1.0f);
-        ImGui::SliderFloat("Specular Reflectivity", &model.specularReflectivity, 0.0f, 1.0f);
-        ImGui::SliderFloat("Refractive Index", &model.refractiveIndex, 1.0f, 2.5f);
-        ImGui::SliderFloat("Transparency", &model.transparency, 0.0f, 1.0f);
-
-        // Advanced material presets
-        if (ImGui::Button("Metal")) {
-            model.diffuseReflectivity = 0.4f;
-            model.specularReflectivity = 0.9f;
-            model.specularColor = glm::vec3(0.95f, 0.95f, 0.95f);
-            model.specularDiffusion = 0.05f;
-            model.transparency = 0.0f;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Glass")) {
-            model.diffuseReflectivity = 0.1f;
-            model.specularReflectivity = 0.5f;
-            model.specularColor = glm::vec3(1.0f);
-            model.specularDiffusion = 0.05f;
-            model.transparency = 0.9f;
-            model.refractiveIndex = 1.5f;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Plastic")) {
-            model.diffuseReflectivity = 0.8f;
-            model.specularReflectivity = 0.3f;
-            model.specularColor = glm::vec3(1.0f);
-            model.specularDiffusion = 0.3f;
-            model.transparency = 0.0f;
-        }
-    }
-
     // Textures
     if (ImGui::CollapsingHeader("Textures")) {
         // Display a list of loaded textures
@@ -2627,36 +2601,9 @@ void renderModels(Shader* shader) {
         shader->setBool("material.hasSpecularMap", model.hasSpecularMap());
         shader->setBool("material.hasAOMap", model.hasAOMap());
         shader->setFloat("material.hasTexture", !model.getMeshes().empty() && !model.getMeshes()[0].textures.empty() ? 1.0f : 0.0f);
-        shader->setBool("material.hasNormalMap", model.hasNormalMap());
-        shader->setBool("material.hasSpecularMap", model.hasSpecularMap());
-        shader->setBool("material.hasAOMap", model.hasAOMap());
         shader->setVec3("material.objectColor", model.color);
         shader->setFloat("material.shininess", model.shininess);
         shader->setFloat("material.emissive", model.emissive);
-
-        // Set additional properties for voxel cone tracing
-        // If your Model class doesn't have these properties yet, use defaults
-        float diffuseReflectivity = 0.8f; // Default value
-        glm::vec3 specularColor = glm::vec3(1.0f); // Default value
-        float specularDiffusion = model.shininess / 128.0f; // Calculate from shininess
-        float specularReflectivity = 0.2f; // Default value
-        float refractiveIndex = 1.5f; // Default value
-        float transparency = 0.0f; // Default value
-
-        // If model has these properties, use them instead
-        if (model.diffuseReflectivity > 0.0f) diffuseReflectivity = model.diffuseReflectivity;
-        if (glm::length(model.specularColor) > 0.0f) specularColor = model.specularColor;
-        if (model.specularReflectivity > 0.0f) specularReflectivity = model.specularReflectivity;
-        if (model.specularDiffusion > 0.0f) specularDiffusion = model.specularDiffusion;
-        if (model.refractiveIndex > 0.0f) refractiveIndex = model.refractiveIndex;
-        if (model.transparency > 0.0f) transparency = model.transparency;
-
-        shader->setFloat("material.diffuseReflectivity", diffuseReflectivity);
-        shader->setVec3("material.specularColor", specularColor);
-        shader->setFloat("material.specularDiffusion", specularDiffusion);
-        shader->setFloat("material.specularReflectivity", specularReflectivity);
-        shader->setFloat("material.refractiveIndex", refractiveIndex);
-        shader->setFloat("material.transparency", transparency);
 
         // Set selection state
         shader->setBool("selectionMode", selectionMode);
@@ -2995,7 +2942,7 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                 calculateMouseRay(lastX, lastY, rayOrigin, rayDirection, rayNear, rayFar, (float)windowWidth / (float)windowHeight);
 
                 float closestDistance = std::numeric_limits<float>::max();
-                int closestModelIndex = -1; 
+                int closestModelIndex = -1;
                 int closestPointCloudIndex = -1;
 
                 // Check intersection with models

@@ -54,6 +54,8 @@ namespace Engine {
         bool visualizeChunks;
     };
 
+
+
     struct Sun {
         glm::vec3 direction;
         glm::vec3 color;
@@ -67,38 +69,6 @@ namespace Engine {
         glm::vec3 color;
         float intensity;
         glm::mat4 lightSpaceMatrix;
-    };
-
-    // Enhanced Material structure with voxel cone tracing properties
-    struct ExtendedMaterial {
-        // Original properties
-        glm::vec3 diffuseColor;
-        float diffuseReflectivity;
-
-        glm::vec3 specularColor;
-        float specularDiffusion;
-        float specularReflectivity;
-
-        float shininess;
-        float emissivity;
-
-        float refractiveIndex;
-        float transparency;
-
-        // Convert from standard material
-        static ExtendedMaterial fromBasicMaterial(const glm::vec3& color, float shininess, float emissive) {
-            ExtendedMaterial mat;
-            mat.diffuseColor = color;
-            mat.diffuseReflectivity = 0.8f;
-            mat.specularColor = glm::vec3(1.0f);
-            mat.specularDiffusion = 0.2f;
-            mat.specularReflectivity = 0.2f;
-            mat.shininess = shininess;
-            mat.emissivity = emissive;
-            mat.refractiveIndex = 1.0f;
-            mat.transparency = 0.0f;
-            return mat;
-        }
     };
 
 }

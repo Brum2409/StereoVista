@@ -24,16 +24,6 @@ namespace Engine {
         , voxelOpacity(0.5f)
         , voxelColorIntensity(1.0f) {
 
-        // Initialize default voxel cone tracing settings
-        coneTracingSettings.indirectSpecularLight = true;
-        coneTracingSettings.indirectDiffuseLight = true;
-        coneTracingSettings.directLight = true;
-        coneTracingSettings.shadows = true;
-        coneTracingSettings.mipMapHardcap = 5.4f;
-        coneTracingSettings.diffuseIndirectFactor = 0.52f;
-        coneTracingSettings.specularFactor = 4.0f;
-        coneTracingSettings.specularPower = 65.0f;
-
         initializeVoxelTexture();
         initializeVisualization();
 
@@ -105,45 +95,17 @@ namespace Engine {
         glGenTextures(1, &m_voxelTexture);
         glBindTexture(GL_TEXTURE_3D, m_voxelTexture);
 
-        // For voxel cone tracing, we need high-quality filtering settings
         glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
         glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
 
-        // Initialize with RGBA8 format - sufficient for voxel cone tracing
         glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA8,
             m_resolution, m_resolution, m_resolution,
             0, GL_RGBA, GL_FLOAT, nullptr);
 
-        // Generate mipmaps for the texture
         glGenerateMipmap(GL_TEXTURE_3D);
-
-        // Configure additional filtering based on quality settings
-        configureTextureFiltering();
-    }
-
-    void Voxelizer::configureTextureFiltering() {
-        glBindTexture(GL_TEXTURE_3D, m_voxelTexture);
-
-        // Apply quality settings
-        if (m_mipmapFilteringQuality == 0) {
-            // Low quality: nearest filtering
-            glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
-            glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        }
-        else if (m_mipmapFilteringQuality == 1) {
-            // Medium quality: linear filtering with nearest mipmap
-            glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST);
-            glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        }
-        else {
-            // High quality: trilinear filtering
-            glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-            glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        }
-
     }
 
     void Voxelizer::initializeVisualization() {
@@ -273,7 +235,7 @@ namespace Engine {
         glBindVertexArray(0);
     }
 
-   
+    // This function was moved to the constructor
 
     void Voxelizer::update(const glm::vec3& cameraPos, const std::vector<Model>& models) {
         // Clear voxel texture
@@ -299,25 +261,8 @@ namespace Engine {
             m_voxelShader->setVec3(lightName + ".color", m_lights[i].color);
         }
 
-        // Set ambient light information
-        m_voxelShader->setVec3("ambientLight", m_ambientLight);
-        m_voxelShader->setBool("enableAmbientOcclusion", m_enableAmbientOcclusion);
+        m_voxelShader->setInt("mipmapLevel", m_state);
 
-        // Use our corrected voxelization method
-        voxelizeScene(models);
-
-        // Generate enhanced mipmaps for voxel cone tracing
-        generateHighQualityMipmaps();
-
-        // Mark voxel data as needing update for visualization
-        m_voxelDataNeedsUpdate = true;
-
-        // Reset state
-        glEnable(GL_DEPTH_TEST);
-        glEnable(GL_CULL_FACE);
-    }
-
-    void Voxelizer::voxelizeScene(const std::vector<Model>& models) {
         // Voxelize each model
         for (const auto& model : models) {
             // Skip invisible models
@@ -338,8 +283,13 @@ namespace Engine {
             m_voxelShader->setMat4("V", glm::mat4(1.0f)); // Identity for voxelization
             m_voxelShader->setMat4("P", glm::mat4(1.0f)); // Identity for voxelization
 
-            // Apply material properties for this model to the shader
-            applyMaterialToVoxelShader(model);
+            // Set material properties
+            m_voxelShader->setVec3("material.diffuseColor", model.color);
+            m_voxelShader->setVec3("material.specularColor", glm::vec3(1.0f));
+            m_voxelShader->setFloat("material.diffuseReflectivity", 0.8f);
+            m_voxelShader->setFloat("material.specularReflectivity", 0.2f);
+            m_voxelShader->setFloat("material.emissivity", model.emissive);
+            m_voxelShader->setFloat("material.transparency", 0.0f); // Default to opaque
 
             // Draw each mesh of the model
             for (const auto& mesh : model.getMeshes()) {
@@ -351,71 +301,17 @@ namespace Engine {
                 glDrawElements(GL_TRIANGLES, mesh.indices.size(), GL_UNSIGNED_INT, 0);
             }
         }
-    }
 
-    void Voxelizer::applyMaterialToVoxelShader(const Model& model) {
-        // Apply base material properties
-        m_voxelShader->setVec3("material.diffuseColor", model.color);
-
-        // Default values for specular properties
-        glm::vec3 specularColor = glm::vec3(1.0f);
-        float diffuseReflectivity = 0.8f;
-        float specularReflectivity = 0.2f;
-        float specularDiffusion = model.shininess / 128.0f;
-        float emissivity = model.emissive;
-        float transparency = 0.0f;
-        float refractiveIndex = 1.5f;
-
-        // If the model has these properties defined (from the VCT extension),
-        // use those values instead
-        if (model.diffuseReflectivity > 0.0f) {
-            diffuseReflectivity = model.diffuseReflectivity;
-        }
-
-        if (glm::length(model.specularColor) > 0.0f) {
-            specularColor = model.specularColor;
-        }
-
-        if (model.specularReflectivity > 0.0f) {
-            specularReflectivity = model.specularReflectivity;
-        }
-
-        if (model.specularDiffusion > 0.0f) {
-            specularDiffusion = model.specularDiffusion;
-        }
-
-        if (model.transparency > 0.0f) {
-            transparency = model.transparency;
-            // Ensure transparent objects still contribute to the voxel grid
-            emissivity = std::max(0.1f, emissivity);
-        }
-
-        if (model.refractiveIndex > 1.0f) {
-            refractiveIndex = model.refractiveIndex;
-        }
-
-        // Set all material properties
-        m_voxelShader->setVec3("material.specularColor", specularColor);
-        m_voxelShader->setFloat("material.diffuseReflectivity", diffuseReflectivity);
-        m_voxelShader->setFloat("material.specularReflectivity", specularReflectivity);
-        m_voxelShader->setFloat("material.emissivity", emissivity);
-        m_voxelShader->setFloat("material.transparency", transparency);
-        m_voxelShader->setFloat("material.refractiveIndex", refractiveIndex);
-        m_voxelShader->setFloat("material.specularDiffusion", specularDiffusion);
-    }
-
-    void Voxelizer::generateHighQualityMipmaps() {
-        // Bind the 3D texture
+        // Generate mipmaps for 3D texture
         glBindTexture(GL_TEXTURE_3D, m_voxelTexture);
-
-        // Standard mipmap generation
         glGenerateMipmap(GL_TEXTURE_3D);
 
-        // For very high quality, we could implement a custom box filter here
-        // but for most purposes the standard mipmapping is sufficient
+        // Mark voxel data as needing update for visualization
+        m_voxelDataNeedsUpdate = true;
 
-        // Update filtering parameters based on current quality settings
-        configureTextureFiltering();
+        // Reset state
+        glEnable(GL_DEPTH_TEST);
+        glEnable(GL_CULL_FACE);
     }
 
     void Voxelizer::renderCubeFaces(const glm::vec3& cameraPos, const glm::mat4& projection, const glm::mat4& view) {
@@ -498,39 +394,39 @@ namespace Engine {
         m_visibleVoxels.clear();
 
         // Calculate voxel size based on grid size and resolution
-        float voxelSize = m_voxelGridSize / m_resolution;
+        float baseVoxelSize = m_voxelGridSize / m_resolution;
 
         // Bind the 3D texture
         glBindTexture(GL_TEXTURE_3D, m_voxelTexture);
 
-        // Create a buffer to store texture data
-        std::vector<glm::vec4> voxelData(m_resolution * m_resolution * m_resolution);
-
         // Get texture data for the current mipmap level
+        int effectiveResolution = m_resolution >> m_state; // Resolution at current mipmap level
+        if (effectiveResolution < 1) effectiveResolution = 1;
+
+        std::vector<glm::vec4> voxelData(effectiveResolution * effectiveResolution * effectiveResolution);
         glGetTexImage(GL_TEXTURE_3D, m_state, GL_RGBA, GL_FLOAT, voxelData.data());
 
-        // Loop through all voxels to find the visible ones
-        int stride = 1 << m_state; // Skip voxels based on mipmap level
+        // Calculate stride and scaled voxel size
+        int stride = 1 << m_state;
+        float scaledVoxelSize = baseVoxelSize * stride; // Scale voxel size based on mipmap level
         float halfGrid = m_voxelGridSize * 0.5f;
 
-        // Debug: track number of non-zero voxels
-        int nonZeroVoxels = 0;
+        // Loop through voxels at the current mipmap level
+        for (int x = 0; x < effectiveResolution; x++) {
+            for (int y = 0; y < effectiveResolution; y++) {
+                for (int z = 0; z < effectiveResolution; z++) {
+                    // Calculate index in the downsampled mipmap
+                    int index = (z * effectiveResolution * effectiveResolution) +
+                        (y * effectiveResolution) + x;
 
-        for (int x = 0; x < m_resolution; x += stride) {
-            for (int y = 0; y < m_resolution; y += stride) {
-                for (int z = 0; z < m_resolution; z += stride) {
-                    // Calculate 3D index
-                    int index = (z * m_resolution * m_resolution) + (y * m_resolution) + x;
-
-                    // Check if this voxel is visible (alpha > threshold)
-                    if (voxelData[index].a > 0.01f) { // Reduced threshold for more visibility
-                        nonZeroVoxels++;
-
-                        // Calculate the voxel position in world space
+                    // Check if this voxel is visible
+                    if (voxelData[index].a > 0.01f) {
+                        // Calculate world position using the scaled voxel size
+                        // and account for the position within the reduced resolution grid
                         glm::vec3 position(
-                            x * voxelSize - halfGrid + (voxelSize * 0.5f),
-                            y * voxelSize - halfGrid + (voxelSize * 0.5f),
-                            z * voxelSize - halfGrid + (voxelSize * 0.5f)
+                            (x * stride) * baseVoxelSize - halfGrid + (scaledVoxelSize * 0.5f),
+                            (y * stride) * baseVoxelSize - halfGrid + (scaledVoxelSize * 0.5f),
+                            (z * stride) * baseVoxelSize - halfGrid + (scaledVoxelSize * 0.5f)
                         );
 
                         // Add to visible voxels
@@ -544,11 +440,10 @@ namespace Engine {
         }
 
         // If we have too many voxels, randomly subsample to prevent performance issues
-        const size_t maxVoxels = 100000; // Increased max voxels
+        const size_t maxVoxels = 100000;
         if (m_visibleVoxels.size() > maxVoxels) {
             std::random_device rd;
             std::mt19937 g(rd());
-
             std::shuffle(m_visibleVoxels.begin(), m_visibleVoxels.end(), g);
             m_visibleVoxels.resize(maxVoxels);
         }
@@ -624,10 +519,16 @@ namespace Engine {
         m_voxelCubeShader->setFloat("opacity", voxelOpacity);
         m_voxelCubeShader->setFloat("colorIntensity", voxelColorIntensity);
 
-        // Calculate voxel size based on grid size and resolution
-        float voxelSize = m_voxelGridSize / m_resolution;
-        voxelSize *= (1 << m_state); // Adjust based on mipmap level
-        m_voxelCubeShader->setFloat("voxelSize", voxelSize);
+        // Calculate voxel size based on grid size and resolution - adjusted for mipmap level
+        float baseVoxelSize = m_voxelGridSize / m_resolution;
+        int stride = 1 << m_state;
+        float scaledVoxelSize = baseVoxelSize * stride;
+        m_voxelCubeShader->setFloat("voxelSize", scaledVoxelSize);
+
+        // Make sure the cube VAO is properly set up
+        if (m_cubeVAO == 0) {
+            setupUnitCube();
+        }
 
         // Render all voxel instances
         glBindVertexArray(m_cubeVAO);
@@ -641,33 +542,12 @@ namespace Engine {
     void Voxelizer::increaseState() {
         int maxMipLevels = static_cast<int>(std::log2(m_resolution)) + 1;
         m_state = std::min(m_state + 1, maxMipLevels - 1);
-        m_voxelDataNeedsUpdate = true;
+        m_voxelDataNeedsUpdate = true;  // Add this line
     }
 
     void Voxelizer::decreaseState() {
         m_state = std::max(m_state - 1, 0);
-        m_voxelDataNeedsUpdate = true;
-    }
-
-    void Voxelizer::addLight(const glm::vec3& position, const glm::vec3& color) {
-        VoxelLight light;
-        light.position = position;
-        light.color = color;
-        m_lights.push_back(light);
-    }
-
-    void Voxelizer::clearLights() {
-        m_lights.clear();
-    }
-
-    void Voxelizer::setMipmapFilteringQuality(int quality) {
-        m_mipmapFilteringQuality = glm::clamp(quality, 0, 2);
-        configureTextureFiltering();
-    }
-
-    void Voxelizer::setAnisotropicFiltering(bool enabled) {
-        m_anisotropicFiltering = enabled;
-        configureTextureFiltering();
+        m_voxelDataNeedsUpdate = true;  // Add this line
     }
 
 } // namespace Engine
