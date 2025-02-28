@@ -1994,6 +1994,31 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
             ImGui::MenuItem("Show Fragment Cursor", nullptr, &showFragmentCursor);
             ImGui::MenuItem("Show Plane Cursor", nullptr, &planeCursor.show);
             ImGui::Separator();
+            if (ImGui::RadioButton("Standard Orbit", !camera.orbitAroundCursor && !orbitFollowsCursor)) {
+                camera.orbitAroundCursor = false;
+                orbitFollowsCursor = false;
+                preferences.orbitAroundCursor = false;
+                preferences.orbitFollowsCursor = false;
+            }
+            ImGui::SetItemTooltip("Orbits around the viewport center at cursor depth");
+
+            if (ImGui::RadioButton("Orbit Around Cursor", camera.orbitAroundCursor)) {
+                camera.orbitAroundCursor = true;
+                orbitFollowsCursor = false;
+                preferences.orbitAroundCursor = true;
+                preferences.orbitFollowsCursor = false;
+            }
+            ImGui::SetItemTooltip("Orbits around the 3D position of the cursor without centering the view");
+
+            if (ImGui::RadioButton("Orbit Follows Cursor (Center)", !camera.orbitAroundCursor && orbitFollowsCursor)) {
+                camera.orbitAroundCursor = false;
+                orbitFollowsCursor = true;
+                preferences.orbitAroundCursor = false;
+                preferences.orbitFollowsCursor = true;
+            }
+            ImGui::SetItemTooltip("Centers the view on cursor position before orbiting");
+            ImGui::Separator();
+
             if (ImGui::BeginMenu("Presets")) {
                 std::vector<std::string> presetNames = Engine::CursorPresetManager::getPresetNames();
                 for (const auto& name : presetNames) {

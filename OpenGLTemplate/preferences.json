@@ -13,7 +13,7 @@
         "speedFactor": 1.2450000047683716,
         "useNewStereoMethod": true,
         "useSmoothScrolling": true,
-        "zoomToCursor": false
+        "zoomToCursor": true
     },
     "cursor": {
         "currentPreset": "Sphere"
