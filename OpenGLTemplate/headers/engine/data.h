@@ -9,7 +9,7 @@ namespace Engine {
         glm::vec2 texCoords;
         glm::vec3 tangent;
         glm::vec3 bitangent;
-        int materialID; 
+        int materialID;
     };
 
     struct PointCloudPoint {

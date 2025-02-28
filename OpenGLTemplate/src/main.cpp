@@ -1,4 +1,4 @@
-// ---- Core Definitions ----
+ï»¿// ---- Core Definitions ----
 #define NOMINMAX
 #include "core.h"
 #include <thread>
@@ -21,6 +21,7 @@
 #include <openLinks.h>
 #include <glm/gtx/component_wise.hpp>
 #include <stb_image.h>
+#include <voxalizer.h>
 
 using namespace Engine;
 using json = nlohmann::json;
@@ -110,8 +111,17 @@ enum class SelectedType {
 
 std::atomic<bool> isRecalculatingChunks(false);
 
-SelectedType currentSelectedType = SelectedType::None;
-int currentSelectedIndex = -1;
+struct SelectionState {
+    SelectedType type = SelectedType::None;
+    int modelIndex = -1;
+    int meshIndex = -1;  // New: track selected mesh within model
+};
+
+SelectedType currentSelectedType;
+int currentSelectedIndex;
+int currentSelectedMeshIndex;
+// Replace current selection globals with
+SelectionState currentSelection;
 
 // ---- Preferences Structure ----
 struct ApplicationPreferences {
@@ -130,6 +140,9 @@ struct ApplicationPreferences {
     float maxScrollVelocity = 3.0f;
     float scrollDeceleration = 2.0f;
     bool useSmoothScrolling = true;
+    bool zoomToCursor = false;
+    bool orbitAroundCursor = false;
+    bool orbitFollowsCursor = false;
 };
 
 ApplicationPreferences preferences;
@@ -232,6 +245,8 @@ struct PlaneCursor {
 };
 
 PlaneCursor planeCursor;
+
+Engine::Voxelizer* voxelizer = nullptr;
 
 
 // ---- Cursor Visibility ----
@@ -654,6 +669,10 @@ void savePreferences() {
     j["camera"]["maxScrollVelocity"] = preferences.maxScrollVelocity;
     j["camera"]["scrollDeceleration"] = preferences.scrollDeceleration;
     j["camera"]["useSmoothScrolling"] = preferences.useSmoothScrolling;
+    j["camera"]["zoomToCursor"] = preferences.zoomToCursor;
+    j["camera"]["orbitAroundCursor"] = preferences.orbitAroundCursor;
+    j["camera"]["orbitFollowsCursor"] = preferences.orbitFollowsCursor;
+
 
     // Cursor settings
     j["cursor"]["currentPreset"] = preferences.currentPresetName;
@@ -706,6 +725,12 @@ void loadPreferences() {
             camera.scrollDeceleration = preferences.scrollDeceleration;
             preferences.useSmoothScrolling = j["camera"].value("useSmoothScrolling", true);
             camera.useSmoothScrolling = preferences.useSmoothScrolling;
+            preferences.zoomToCursor = j["camera"].value("zoomToCursor", false);
+            camera.zoomToCursor = preferences.zoomToCursor;
+            preferences.orbitAroundCursor = j["camera"].value("orbitAroundCursor", false);
+            preferences.orbitFollowsCursor = j["camera"].value("orbitFollowsCursor", false);
+            camera.orbitAroundCursor = preferences.orbitAroundCursor;
+            orbitFollowsCursor = preferences.orbitFollowsCursor;
         }
 
         // Cursor settings
@@ -998,7 +1023,7 @@ int main() {
     glfwSetMouseButtonCallback(window, mouse_button_callback);
 
 
-
+    voxelizer = new Engine::Voxelizer(128);
 
     // ---- Initialize Shader ----
     Shader* shader = nullptr;
@@ -1055,6 +1080,8 @@ int main() {
     ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
 
     loadPreferences();
+
+
 
     // ---- OpenGL Settings ----
     glEnable(GL_DEPTH_TEST);
@@ -1119,7 +1146,6 @@ int main() {
         camera.isMoving = false;  // Reset the moving flag at the end of each frame
 
 
-
         // Render for Right Eye (if in Stereo Mode)
         if (isStereoWindow) {
             renderEye(GL_BACK_LEFT, leftProjection, view, shader, viewport, windowFlags, window);
@@ -1128,6 +1154,7 @@ int main() {
         else {
             renderEye(GL_BACK_LEFT, projection, view, shader, viewport, windowFlags, window);
         }
+
 
         // ---- Swap Buffers and Poll Events ----
         glfwSwapBuffers(window);
@@ -1202,6 +1229,8 @@ float calculateLargestModelDimension() {
 
 // ---- Rendering ----
 #pragma region Rendering
+
+
 void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& view, Shader* shader, ImGuiViewportP* viewport, ImGuiWindowFlags windowFlags, GLFWwindow* window) {
     // Set the draw buffer and clear color and depth buffers
     glDrawBuffer(drawBuffer);
@@ -1214,6 +1243,11 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     glBindTexture(GL_TEXTURE_2D, 0);
 
     // 1. First render pass: Shadow map generation
+    // 1. IMPORTANT: Update the voxel grid FIRST - this is crucial 
+    // so visualization can use the latest voxel data
+    //voxelizer->update(camera.Position, currentScene.models);
+
+    // 2. First render pass: Shadow map generation
     glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
     glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
     glClear(GL_DEPTH_BUFFER_BIT);
@@ -1239,13 +1273,12 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     simpleDepthShader->use();
     simpleDepthShader->setMat4("lightSpaceMatrix", lightSpaceMatrix);
 
-
     // Render scene to depth buffer
     glDisable(GL_CULL_FACE);
     renderModels(simpleDepthShader);
     glEnable(GL_CULL_FACE);
 
-    // 2. Second pass: Regular rendering with shadows
+    // 3. Second pass: Regular rendering with shadows
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, windowWidth, windowHeight);
 
@@ -1257,7 +1290,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     shader->setVec3("sun.direction", sun.direction);
     shader->setVec3("sun.color", sun.color);
     shader->setFloat("sun.intensity", sun.intensity);
-    shader->setMat4("lightSpaceMatrix", lightSpaceMatrix);
+    shader->setBool("sun.enabled", sun.enabled);
 
     // Shadow map binding
     glActiveTexture(GL_TEXTURE5);
@@ -1287,6 +1320,13 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     renderSphereCursor(projection, view);
     renderPlaneCursor(projection, view);
 
+    // 4. IMPORTANT: Voxel visualization AFTER main rendering
+    // but don't update voxels again - we already did it at the beginning
+    if (voxelizer->showDebugVisualization) {
+        voxelizer->renderDebugVisualization(camera.Position, projection, view);
+    }
+
+    // Render UI
     if (showGui) {
         renderGUI(drawBuffer == GL_BACK_LEFT, viewport, windowFlags, shader);
     }
@@ -1296,7 +1336,6 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     glBindVertexArray(0);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, 0);
-
 }
 
 void renderSphereCursor(const glm::mat4& projection, const glm::mat4& view) {
@@ -1413,6 +1452,41 @@ void renderSettingsWindow() {
     bool settingsChanged = false;
 
     if (ImGui::BeginTabBar("SettingsTabs")) {
+
+        if (ImGui::BeginTabItem("Voxelization")) {
+            ImGui::Text("CURRENTLY DISABLED!!!");
+            ImGui::Separator();
+            ImGui::Text("Voxelization Settings");
+            ImGui::Separator();
+
+            ImGui::Checkbox("Show Voxel Visualization", &voxelizer->showDebugVisualization);
+
+            static int currentState = 0;
+            ImGui::Text("Visualization Mipmap Level:");
+            if (ImGui::SliderInt("Level", &currentState, 0, 7)) {
+                // Adjust the visualization state
+                while (currentState > 0) {
+                    voxelizer->increaseState();
+                    currentState--;
+                }
+                while (currentState < 0) {
+                    voxelizer->decreaseState();
+                    currentState++;
+                }
+            }
+
+            ImGui::Text("Controls:");
+            ImGui::BulletText("V: Toggle visualization");
+            ImGui::BulletText("Page Up/Down: Change mipmap level");
+
+            float gridSize = voxelizer->getVoxelGridSize();
+            if (ImGui::SliderFloat("Grid Size", &gridSize, 1.0f, 50.0f)) {
+                voxelizer->setVoxelGridSize(gridSize);
+            }
+
+            ImGui::EndTabItem();
+        }
+
         // Camera Tab
         if (ImGui::BeginTabItem("Camera")) {
             ImGui::Text("Stereo Settings");
@@ -1486,6 +1560,13 @@ void renderSettingsWindow() {
             }
             ImGui::SetItemTooltip("Multiplies base movement speed. Useful for navigating larger scenes");
 
+            // Add Zoom to Cursor option
+            if (ImGui::Checkbox("Zoom to Cursor", &camera.zoomToCursor)) {
+                preferences.zoomToCursor = camera.zoomToCursor;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("When enabled, scrolling zooms toward or away from the 3D cursor position");
+
             ImGui::Spacing();
             ImGui::Text("Smooth Scrolling");
             ImGui::Separator();
@@ -1514,7 +1595,7 @@ void renderSettingsWindow() {
                 }
                 ImGui::SetItemTooltip("Limits maximum scrolling speed for more controlled movement");
 
-                if (ImGui::SliderFloat("Deceleration", &camera.scrollDeceleration, 0.1f, 5.0f)) {
+                if (ImGui::SliderFloat("Deceleration", &camera.scrollDeceleration, 0.1f, 10.0f)) {
                     preferences.scrollDeceleration = camera.scrollDeceleration;
                     settingsChanged = true;
                 }
@@ -1522,6 +1603,36 @@ void renderSettingsWindow() {
                 ImGui::EndGroup();
             }
 
+            ImGui::Spacing();
+            ImGui::Text("Orbiting Behavior");
+            ImGui::Separator();
+
+            if (ImGui::RadioButton("Standard Orbit", !camera.orbitAroundCursor && !orbitFollowsCursor)) {
+                camera.orbitAroundCursor = false;
+                orbitFollowsCursor = false;
+                preferences.orbitAroundCursor = false;
+                preferences.orbitFollowsCursor = false;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Orbits around the viewport center at cursor depth");
+
+            if (ImGui::RadioButton("Orbit Around Cursor", camera.orbitAroundCursor)) {
+                camera.orbitAroundCursor = true;
+                orbitFollowsCursor = false;
+                preferences.orbitAroundCursor = true;
+                preferences.orbitFollowsCursor = false;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Orbits around the 3D position of the cursor without centering the view");
+
+            if (ImGui::RadioButton("Orbit Follows Cursor (Center)", !camera.orbitAroundCursor && orbitFollowsCursor)) {
+                camera.orbitAroundCursor = false;
+                orbitFollowsCursor = true;
+                preferences.orbitAroundCursor = false;
+                preferences.orbitFollowsCursor = true;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Centers the view on cursor position before orbiting");
             ImGui::EndTabItem();
         }
 
@@ -1625,6 +1736,9 @@ void renderSettingsWindow() {
             ImGui::Text("Delete"); ImGui::NextColumn();
             ImGui::Text("Delete selected object"); ImGui::NextColumn();
 
+            ImGui::Text("C"); ImGui::NextColumn();
+            ImGui::Text("Center the Scene to the Cursor/Selected Model/Scene Center"); ImGui::NextColumn();
+
             ImGui::Text("Esc"); ImGui::NextColumn();
             ImGui::Text("Exit application"); ImGui::NextColumn();
 
@@ -1640,6 +1754,92 @@ void renderSettingsWindow() {
     }
 
     ImGui::End();
+}
+
+void renderMeshManipulationPanel(Model& model, int meshIndex, Shader* shader) {
+    auto& mesh = model.getMeshes()[meshIndex];
+
+    ImGui::Text("Mesh Manipulation: %s - Mesh %d", model.name.c_str(), meshIndex + 1);
+    ImGui::Separator();
+
+    // Add visibility toggle for the mesh
+    ImGui::Checkbox("Visible", &mesh.visible);
+
+    // Material properties specific to this mesh
+    if (ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::ColorEdit3("Color", glm::value_ptr(mesh.color));
+        ImGui::SliderFloat("Shininess", &mesh.shininess, 1.0f, 90.0f);
+        ImGui::SliderFloat("Emissive", &mesh.emissive, 0.0f, 1.0f);
+    }
+
+    // Texture management for this specific mesh
+    if (ImGui::CollapsingHeader("Textures")) {
+        ImGui::Text("Loaded Textures:");
+        for (const auto& texture : mesh.textures) {
+            ImGui::BulletText("%s: %s", texture.type.c_str(), texture.path.c_str());
+        }
+
+        // Texture loading buttons
+        auto textureLoadingGUI = [&](const char* label, const char* type) {
+            if (ImGui::Button(("Load " + std::string(label)).c_str())) {
+                auto selection = pfd::open_file("Select a texture file", ".",
+                    { "Image Files", "*.png *.jpg *.jpeg *.bmp", "All Files", "*" }).result();
+                if (!selection.empty()) {
+                    // Create and load new texture
+                    Texture texture;
+                    texture.id = model.TextureFromFile(selection[0].c_str(), selection[0], selection[0]);
+                    texture.type = type;
+                    texture.path = selection[0];
+
+                    // Add to this specific mesh
+                    mesh.textures.push_back(texture);
+                }
+            }
+            };
+
+        textureLoadingGUI("Diffuse Texture", "texture_diffuse");
+        textureLoadingGUI("Normal Map", "texture_normal");
+        textureLoadingGUI("Specular Map", "texture_specular");
+        textureLoadingGUI("AO Map", "texture_ao");
+    }
+
+    // Transform for individual mesh (if needed)
+    if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Text("Transform controls could be added here");
+        // Note: Implementing individual mesh transforms would require
+        // additional modifications to the mesh rendering system
+    }
+
+    ImGui::Separator();
+
+    // Delete mesh button
+    if (ImGui::Button("Delete Mesh", ImVec2(-1, 0))) {
+        ImGui::OpenPopup("Delete Mesh?");
+    }
+
+    if (ImGui::BeginPopupModal("Delete Mesh?", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Are you sure you want to delete this mesh?\nThis operation cannot be undone!\n\n");
+        ImGui::Separator();
+
+        if (ImGui::Button("Yes", ImVec2(120, 0))) {
+            // Only delete if there's more than one mesh (to avoid empty models)
+            if (model.getMeshes().size() > 1) {
+                model.getMeshes().erase(model.getMeshes().begin() + meshIndex);
+                currentSelectedMeshIndex = -1;  // Reset mesh selection
+            }
+            else {
+                // If this is the last mesh, maybe delete the whole model
+                std::cout << "Cannot delete last mesh. Delete the entire model instead." << std::endl;
+            }
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SetItemDefaultFocus();
+        ImGui::SameLine();
+        if (ImGui::Button("No", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 }
 
 void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags windowFlags, Shader* shader) {
@@ -1840,9 +2040,12 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
         if (ImGui::Selectable("Sun", isSunSelected, ImGuiSelectableFlags_SpanAllColumns)) {
             currentSelectedType = SelectedType::Sun;
             currentSelectedIndex = -1;
+            currentSelectedMeshIndex = -1;  // Reset mesh selection
         }
         ImGui::NextColumn();
-        ImGui::PopID();// Models List
+        ImGui::PopID();
+
+        // Models List
         for (int i = 0; i < currentScene.models.size(); i++) {
             ImGui::PushID(i);
             ImGui::AlignTextToFramePadding();
@@ -1853,39 +2056,70 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
             }
             ImGui::NextColumn();
 
-            bool isSelected = (currentSelectedIndex == i && currentSelectedType == SelectedType::Model);
-            bool hasMeshes = currentScene.models[i].getMeshes().size() > 1;
+            bool isModelSelected = (currentSelectedIndex == i && currentSelectedType == SelectedType::Model);
+            bool hasMeshes = currentScene.models[i].getMeshes().size() > 0;
 
             ImGui::AlignTextToFramePadding();
-            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth;
+            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+
+            // Only make it a leaf if there are no meshes
             if (!hasMeshes) flags |= ImGuiTreeNodeFlags_Leaf;
-            if (isSelected) flags |= ImGuiTreeNodeFlags_Selected;
 
-            if (hasMeshes) {
-                bool nodeOpen = ImGui::TreeNodeEx(currentScene.models[i].name.c_str(), flags);
-                if (ImGui::IsItemClicked()) {
-                    currentSelectedIndex = i;
-                    currentSelectedType = SelectedType::Model;
-                }
-                ImGui::NextColumn();
+            // Select the model node if it's selected and no mesh is selected
+            if (isModelSelected && currentSelectedMeshIndex == -1) flags |= ImGuiTreeNodeFlags_Selected;
 
-                if (nodeOpen) {
-                    for (size_t meshIndex = 0; meshIndex < currentScene.models[i].getMeshes().size(); meshIndex++) {
-                        ImGui::Columns(1);
-                        ImGui::Indent(20.0f);
-                        ImGui::BulletText("Mesh %zu", meshIndex + 1);
-                        ImGui::Unindent(20.0f);
-                        ImGui::Columns(2, "ObjectColumns");
-                    }
-                    ImGui::TreePop();
-                }
+            bool nodeOpen = ImGui::TreeNodeEx(currentScene.models[i].name.c_str(), flags);
+
+            // Handle model selection
+            if (ImGui::IsItemClicked()) {
+                currentSelectedType = SelectedType::Model;
+                currentSelectedIndex = i;
+                currentSelectedMeshIndex = -1;  // Reset mesh selection when selecting model
             }
-            else {
-                if (ImGui::Selectable(currentScene.models[i].name.c_str(), isSelected, ImGuiSelectableFlags_SpanAllColumns)) {
-                    currentSelectedIndex = i;
-                    currentSelectedType = SelectedType::Model;
+
+            ImGui::NextColumn();
+
+            if (nodeOpen && hasMeshes) {
+                // Display individual meshes
+                for (size_t meshIndex = 0; meshIndex < currentScene.models[i].getMeshes().size(); meshIndex++) {
+                    ImGui::Columns(2, "MeshColumns", false);
+                    ImGui::SetColumnWidth(0, 60);
+
+                    // Add visibility toggle for individual meshes
+                    ImGui::PushID(static_cast<int>(meshIndex));
+                    bool meshVisible = currentScene.models[i].getMeshes()[meshIndex].visible;
+                    if (ImGui::Checkbox("##meshvisible", &meshVisible)) {
+                        currentScene.models[i].getMeshes()[meshIndex].visible = meshVisible;
+                    }
+                    ImGui::PopID();
+                    ImGui::NextColumn();
+
+                    // Mesh selection flags
+                    ImGuiTreeNodeFlags meshFlags = ImGuiTreeNodeFlags_Leaf |
+                        ImGuiTreeNodeFlags_NoTreePushOnOpen |
+                        ImGuiTreeNodeFlags_SpanAvailWidth;
+
+                    // Highlight selected mesh
+                    if (isModelSelected && currentSelectedMeshIndex == static_cast<int>(meshIndex)) {
+                        meshFlags |= ImGuiTreeNodeFlags_Selected;
+                    }
+
+                    ImGui::Indent(20.0f);
+                    ImGui::TreeNodeEx(("Mesh " + std::to_string(meshIndex + 1)).c_str(), meshFlags);
+
+                    // Handle mesh selection
+                    if (ImGui::IsItemClicked()) {
+                        currentSelectedType = SelectedType::Model;
+                        currentSelectedIndex = i;
+                        currentSelectedMeshIndex = static_cast<int>(meshIndex);
+                    }
+
+                    ImGui::Unindent(20.0f);
+                    ImGui::NextColumn();
                 }
-                ImGui::NextColumn();
+                ImGui::Columns(2, "ObjectColumns", false);
+                ImGui::SetColumnWidth(0, 60);
+                ImGui::TreePop();
             }
             ImGui::PopID();
         }
@@ -1903,8 +2137,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
 
             ImGui::AlignTextToFramePadding();
             if (ImGui::Selectable(currentScene.pointClouds[i].name.c_str(), isSelected, ImGuiSelectableFlags_SpanAllColumns)) {
-                currentSelectedIndex = i;
                 currentSelectedType = SelectedType::PointCloud;
+                currentSelectedIndex = i;
+                currentSelectedMeshIndex = -1;  // Reset mesh selection
             }
             ImGui::NextColumn();
             ImGui::PopID();
@@ -1919,7 +2154,18 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
     // Object Manipulation Panels
     if (currentSelectedType == SelectedType::Model && currentSelectedIndex >= 0 &&
         currentSelectedIndex < currentScene.models.size()) {
-        renderModelManipulationPanel(currentScene.models[currentSelectedIndex], shader);
+
+        auto& model = currentScene.models[currentSelectedIndex];
+
+        // If a specific mesh is selected, render mesh manipulation panel
+        if (currentSelectedMeshIndex >= 0 &&
+            currentSelectedMeshIndex < static_cast<int>(model.getMeshes().size())) {
+            renderMeshManipulationPanel(model, currentSelectedMeshIndex, shader);
+        }
+        else {
+            // Otherwise render the model manipulation panel
+            renderModelManipulationPanel(model, shader);
+        }
     }
     else if (currentSelectedType == SelectedType::PointCloud && currentSelectedIndex >= 0 &&
         currentSelectedIndex < currentScene.pointClouds.size()) {
@@ -2074,13 +2320,60 @@ void renderCursorSettingsWindow() {
 
     ImGui::Separator();
 
+    if (ImGui::CollapsingHeader("Orbit Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Text("Camera Orbit Behavior:");
+
+        bool standardOrbit = !orbitFollowsCursor && !camera.orbitAroundCursor;
+        bool orbitAroundCursorOption = camera.orbitAroundCursor;
+        bool orbitFollowsCursorOption = orbitFollowsCursor;
+
+        if (ImGui::RadioButton("Standard Orbit", standardOrbit)) {
+            // Enable standard orbit - disable the other two
+            camera.orbitAroundCursor = false;
+            orbitFollowsCursor = false;
+            preferences.orbitAroundCursor = false;
+            preferences.orbitFollowsCursor = false;
+            savePreferences();
+        }
+        ImGui::SetItemTooltip("Orbits around the viewport center at cursor depth");
+
+        if (ImGui::RadioButton("Orbit Around Cursor", orbitAroundCursorOption)) {
+            // Enable orbit around cursor - disable the other one
+            camera.orbitAroundCursor = true;
+            orbitFollowsCursor = false;
+            preferences.orbitAroundCursor = true;
+            preferences.orbitFollowsCursor = false;
+            savePreferences();
+        }
+        ImGui::SetItemTooltip("Orbits around the 3D cursor position without centering the view");
+
+        if (ImGui::RadioButton("Orbit Follows Cursor (Center)", orbitFollowsCursorOption)) {
+            // Enable orbit follows cursor - disable the other one
+            camera.orbitAroundCursor = false;
+            orbitFollowsCursor = true;
+            preferences.orbitAroundCursor = false;
+            preferences.orbitFollowsCursor = true;
+            savePreferences();
+        }
+        ImGui::SetItemTooltip("Centers the view on cursor position before orbiting");
+
+        // Add orbit center visualization options
+        ImGui::Separator();
+        ImGui::Checkbox("Show Orbit Center", &showOrbitCenter);
+
+        if (showOrbitCenter) {
+            ImGui::ColorEdit4("Orbit Center Color", glm::value_ptr(orbitCenterColor));
+            ImGui::SliderFloat("Orbit Center Size", &orbitCenterSphereRadius, 0.01f, 1.0f);
+        }
+    }
+
+    ImGui::Separator();
+
     // 3D Sphere Cursor Settings
     if (ImGui::CollapsingHeader("3D Sphere Cursor", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Checkbox("Show 3D Sphere Cursor", &showSphereCursor);
 
         if (showSphereCursor) {
-            ImGui::Checkbox("Orbit Follows Cursor", &orbitFollowsCursor);
-
             if (!orbitFollowsCursor) {
                 ImGui::Checkbox("Show Orbit Center", &showOrbitCenter);
                 if (showOrbitCenter) {
@@ -2663,7 +2956,7 @@ bool rayIntersectsModel(const glm::vec3& rayOrigin, const glm::vec3& rayDirectio
             glm::vec3 v1 = mesh.vertices[mesh.indices[i + 1]].position;
             glm::vec3 v2 = mesh.vertices[mesh.indices[i + 2]].position;
 
-            // Möller–Trumbore intersection algorithm
+            // Mï¿½llerï¿½Trumbore intersection algorithm
             glm::vec3 edge1 = v1 - v0;
             glm::vec3 edge2 = v2 - v0;
             glm::vec3 h = glm::cross(rayDirectionModel, edge2);
@@ -2729,6 +3022,8 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height)
 
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
     if (!ImGui::GetIO().WantCaptureMouse) {
+        // Update cursor info before processing scroll
+        camera.UpdateCursorInfo(g_cursorPos, g_cursorValid);
         camera.ProcessMouseScroll(yoffset);
     }
 }
@@ -2776,16 +3071,22 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                 }
 
                 if (closestModelIndex != -1) {
-                    currentSelectedIndex = closestModelIndex;
                     currentSelectedType = SelectedType::Model;
+                    currentSelectedIndex = closestModelIndex;
+
+
+                    currentSelectedMeshIndex = -1;
+
+
                     if (ctrlPressed) {
                         selectionMode = true;
                         isMovingModel = true;
                     }
                 }
                 else if (closestPointCloudIndex != -1) {
-                    currentSelectedIndex = closestPointCloudIndex;
                     currentSelectedType = SelectedType::PointCloud;
+                    currentSelectedIndex = closestPointCloudIndex;
+                    currentSelectedMeshIndex = -1; // Always reset mesh selection for point clouds
                 }
             }
 
@@ -2805,11 +3106,17 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                 leftMousePressed = true;
 
                 if (g_cursorValid) {
-                    if (orbitFollowsCursor && showSphereCursor) {
+                    // Different orbiting behaviors based on settings
+                    if (camera.orbitAroundCursor) {
+                        camera.UpdateCursorInfo(g_cursorPos, g_cursorValid);
+                        camera.StartOrbiting(true); // Pass true to use current cursor position
+                        //isMouseCaptured = true;
+                        capturedCursorPos = g_cursorPos;
+                    }
+                    else if (orbitFollowsCursor && showSphereCursor) {
                         camera.StartCenteringAnimation(g_cursorPos);
                         capturedCursorPos = g_cursorPos;
-                        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-                        isMouseCaptured = true;
+                        //isMouseCaptured = true;
                     }
                     else {
                         float cursorDepth = glm::length(g_cursorPos - camera.Position);
@@ -2832,6 +3139,10 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
                 isMouseCaptured = false;
                 glfwSetCursorPos(window, windowWidth / 2, windowHeight / 2);
+            }
+            if (camera.orbitAroundCursor) {
+                glfwSetCursorPos(window, lastX, lastY);
+                isMouseCaptured = false;
             }
             leftMousePressed = false;
             camera.StopOrbiting();
@@ -2925,6 +3236,60 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
         showGui = !showGui;
         std::cout << "GUI visibility toggled. showGui = " << (showGui ? "true" : "false") << std::endl;
     }
+
+    // Add voxelizer state control
+    if (key == GLFW_KEY_PAGE_UP && action == GLFW_PRESS)
+    {
+        voxelizer->increaseState();
+    }
+    if (key == GLFW_KEY_PAGE_DOWN && action == GLFW_PRESS)
+    {
+        voxelizer->decreaseState();
+    }
+    if (key == GLFW_KEY_V && action == GLFW_PRESS)
+    {
+        voxelizer->showDebugVisualization = !voxelizer->showDebugVisualization;
+    }
+
+    if (key == GLFW_KEY_C && action == GLFW_PRESS)
+    {
+        // Try to find a good center point
+        glm::vec3 centerPoint(0.0f);
+        int objectCount = 0;
+
+        // First, try to use the current cursor position if valid
+        if (g_cursorValid) {
+            glfwSetCursorPos(window, windowWidth / 2, windowHeight / 2);
+            camera.StartCenteringAnimation(g_cursorPos);
+            std::cout << "Centering on cursor position" << std::endl;
+            return;
+        }
+
+        // If no cursor, calculate scene center
+        for (const auto& model : currentScene.models) {
+            centerPoint += model.position;
+            objectCount++;
+        }
+
+        for (const auto& pointCloud : currentScene.pointClouds) {
+            centerPoint += pointCloud.position;
+            objectCount++;
+        }
+
+        if (objectCount > 0) {
+            centerPoint /= objectCount;
+            camera.StartCenteringAnimation(centerPoint);
+            glfwSetCursorPos(window, windowWidth / 2, windowHeight / 2);
+            std::cout << "Centering on scene midpoint" << std::endl;
+        }
+        else {
+            // If no objects, center on the world origin
+            camera.StartCenteringAnimation(glm::vec3(0.0f));
+            glfwSetCursorPos(window, windowWidth / 2, windowHeight / 2);
+            std::cout << "Centering on world origin" << std::endl;
+        }
+    }
+
 
     // Handle Ctrl key
     if (key == GLFW_KEY_LEFT_CONTROL || key == GLFW_KEY_RIGHT_CONTROL)

@@ -42,6 +42,8 @@ namespace Engine {
     }
 
     void Mesh::Draw(Shader& shader) {
+        if (!visible) return;
+
         unsigned int diffuseNr = 0;
         unsigned int specularNr = 0;
         unsigned int normalNr = 0;
@@ -130,7 +132,7 @@ namespace Engine {
         // Process all meshes in current node
         for (unsigned int i = 0; i < node->mNumMeshes; i++) {
             aiMesh* mesh = scene->mMeshes[node->mMeshes[i]];
-            meshes.push_back(processMesh(mesh, scene));
+            meshes.push_back(processMesh(mesh, scene, meshes.size())); // Pass current mesh count as index
         }
 
         // Process children nodes
@@ -139,7 +141,7 @@ namespace Engine {
         }
     }
 
-    Mesh Model::processMesh(aiMesh* mesh, const aiScene* scene) {
+    Mesh Model::processMesh(aiMesh* mesh, const aiScene* scene, size_t meshIndex) {
         std::vector<Vertex> vertices;
         std::vector<GLuint> indices;
         std::vector<Texture> textures;
@@ -189,21 +191,54 @@ namespace Engine {
         if (mesh->mMaterialIndex >= 0) {
             aiMaterial* material = scene->mMaterials[mesh->mMaterialIndex];
 
-            // Load textures for this mesh
-            std::vector<Texture> diffuseMaps = loadMaterialTextures(material, aiTextureType_DIFFUSE, "texture_diffuse");
+            // Load textures for this specific mesh
+            std::vector<Texture> diffuseMaps = loadMaterialTextures(material,
+                aiTextureType_DIFFUSE, "texture_diffuse");
             textures.insert(textures.end(), diffuseMaps.begin(), diffuseMaps.end());
 
-            std::vector<Texture> specularMaps = loadMaterialTextures(material, aiTextureType_SPECULAR, "texture_specular");
+            std::vector<Texture> specularMaps = loadMaterialTextures(material,
+                aiTextureType_SPECULAR, "texture_specular");
             textures.insert(textures.end(), specularMaps.begin(), specularMaps.end());
 
-            std::vector<Texture> normalMaps = loadMaterialTextures(material, aiTextureType_HEIGHT, "texture_normal");
+            std::vector<Texture> normalMaps = loadMaterialTextures(material,
+                aiTextureType_HEIGHT, "texture_normal");
             textures.insert(textures.end(), normalMaps.begin(), normalMaps.end());
 
-            std::vector<Texture> aoMaps = loadMaterialTextures(material, aiTextureType_AMBIENT_OCCLUSION, "texture_ao");
+            std::vector<Texture> aoMaps = loadMaterialTextures(material,
+                aiTextureType_AMBIENT_OCCLUSION, "texture_ao");
             textures.insert(textures.end(), aoMaps.begin(), aoMaps.end());
+
+            // Store material properties
+            aiColor3D color(0.f, 0.f, 0.f);
+            material->Get(AI_MATKEY_COLOR_DIFFUSE, color);
         }
 
-        return Mesh(vertices, indices, textures);
+        Mesh result(vertices, indices, textures);
+
+        // Initialize mesh-specific properties from material if available
+        if (mesh->mMaterialIndex >= 0) {
+            aiMaterial* material = scene->mMaterials[mesh->mMaterialIndex];
+
+            aiColor3D color(0.f, 0.f, 0.f);
+            if (AI_SUCCESS == material->Get(AI_MATKEY_COLOR_DIFFUSE, color)) {
+                result.color = glm::vec3(color.r, color.g, color.b);
+            }
+
+            float shininess = 32.0f;
+            if (AI_SUCCESS == material->Get(AI_MATKEY_SHININESS, shininess)) {
+                result.shininess = shininess;
+            }
+
+            // Set name if available
+            if (mesh->mName.length > 0) {
+                result.name = mesh->mName.C_Str();
+            }
+            else {
+                result.name = "Mesh_" + std::to_string(meshIndex);
+            }
+        }
+
+        return result;
     }
 
     std::vector<Texture> Model::loadMaterialTextures(aiMaterial* mat, aiTextureType type, const std::string& typeName) {
@@ -215,7 +250,8 @@ namespace Engine {
             // Check if texture was loaded before
             bool skip = false;
             for (const auto& loadedTex : loadedTextures) {
-                if (std::strcmp(loadedTex.path.c_str(), str.C_Str()) == 0) {
+                if (std::strcmp(loadedTex.path.c_str(), str.C_Str()) == 0 &&
+                    loadedTex.type == typeName) {  // Added type check
                     textures.push_back(loadedTex);
                     skip = true;
                     break;
@@ -224,76 +260,109 @@ namespace Engine {
 
             if (!skip) {
                 Texture texture;
-                // Store both the original reference path and the full successful path
                 texture.path = str.C_Str();
-                texture.id = TextureFromFile(str.C_Str(), directory, texture.fullPath); // Modified to store full path
+                texture.id = TextureFromFile(str.C_Str(), directory, texture.fullPath);
                 texture.type = typeName;
                 textures.push_back(texture);
-                loadedTextures.push_back(texture);
+                loadedTextures.push_back(texture);  // Cache for reuse
             }
         }
         return textures;
     }
 
     GLuint Model::TextureFromFile(const char* path, const std::string& directory, std::string& outFullPath) {
-
-        // First, get the base directory without the model file name
-        std::string dir = directory;
-        size_t lastSlash = dir.find_last_of("/\\");
+        // Get the base directory without the model file name
+        std::string baseDir = directory;
+        size_t lastSlash = baseDir.find_last_of("/\\");
         if (lastSlash != std::string::npos) {
-            dir = dir.substr(0, lastSlash);
+            baseDir = baseDir.substr(0, lastSlash);
         }
 
-        // Get just the filename from the path
+        // Get just the filename from the path and try different extensions
         std::string textureName = std::string(path);
         size_t lastSlashTex = textureName.find_last_of("/\\");
         if (lastSlashTex != std::string::npos) {
             textureName = textureName.substr(lastSlashTex + 1);
         }
 
-        // Map common texture names to actual file names
-        std::map<std::string, std::vector<std::string>> textureAliases = {
-            {"diffuse.jpg", {"diffuse.jpg", "ao.jpg", "albedo.jpg"}},
-            {"specular.jpg", {"specular.jpg", "roughness.jpg", "metallic.jpg"}},
-            {"normal.png", {"normal.png", "normalmap.png"}}
+        // Remove extension if present
+        size_t lastDot = textureName.find_last_of('.');
+        std::string baseName = (lastDot != std::string::npos) ?
+            textureName.substr(0, lastDot) : textureName;
+
+        // Try different extensions
+        std::vector<std::string> extensions = {
+            ".jpg", ".jpeg", ".png", ".tga", ".bmp", ".psd", ".gif", ".hdr", ".pic"
         };
 
-        // Create list of paths to try
         std::vector<std::string> pathsToTry;
 
-        // If the texture name is in our alias map, try all its variants
-        auto it = textureAliases.find(textureName);
-        if (it != textureAliases.end()) {
-            for (const auto& alias : it->second) {
-                pathsToTry.push_back(dir + "/" + alias);
-                pathsToTry.push_back(dir + "/textures/" + alias);
-                pathsToTry.push_back("textures/" + alias);
-                pathsToTry.push_back(alias);
-            }
-        }
-        else {
-            // If not in alias map, try original name
-            pathsToTry.push_back(dir + "/" + textureName);
-            pathsToTry.push_back(dir + "/textures/" + textureName);
-            pathsToTry.push_back("textures/" + textureName);
-            pathsToTry.push_back(textureName);
+        // For each extension
+        for (const auto& ext : extensions) {
+            std::string textureNameWithExt = baseName + ext;
+
+            // Build list of paths to try
+            pathsToTry.push_back(directory + "/" + textureNameWithExt);
+            pathsToTry.push_back(baseDir + "/" + textureNameWithExt);
+            pathsToTry.push_back(baseDir + "/textures/" + textureNameWithExt);
+            pathsToTry.push_back("textures/" + textureNameWithExt);
+            pathsToTry.push_back("./textures/" + textureNameWithExt);
+            pathsToTry.push_back("../textures/" + textureNameWithExt);
+            pathsToTry.push_back(directory + "/textures/" + textureNameWithExt);
         }
 
-        // Try each path
+        // Try to load the texture from each path
         unsigned char* data = nullptr;
         int width, height, nrComponents;
         std::string successPath;
 
+        // Enable verbose debugging for stb_image
+        stbi_set_flip_vertically_on_load(true);
+
         for (const auto& tryPath : pathsToTry) {
-            std::cout << "Trying path: " << tryPath << std::endl;
-            data = stbi_load(tryPath.c_str(), &width, &height, &nrComponents, 0);
-            if (data) {
-                successPath = tryPath;
-                // Get full path using canonical form
-                std::error_code ec;
-                std::filesystem::path canonicalPath = std::filesystem::canonical(tryPath, ec);
-                outFullPath = ec ? tryPath : canonicalPath.string(); // If canonical fails, use original path
-                break;
+            // Convert to canonical path to handle ".." and "." in paths
+            std::filesystem::path canonicalPath;
+            try {
+                if (std::filesystem::exists(tryPath)) {
+                    canonicalPath = std::filesystem::canonical(tryPath);
+                    std::cout << "Attempting to load texture: " << canonicalPath.string() << std::endl;
+
+                    // Read file into memory first
+                    std::ifstream file(canonicalPath, std::ios::binary | std::ios::ate);
+                    if (!file.is_open()) {
+                        continue;
+                    }
+
+                    std::streamsize size = file.tellg();
+                    file.seekg(0, std::ios::beg);
+
+                    std::vector<char> buffer(size);
+                    if (!file.read(buffer.data(), size)) {
+                        continue;
+                    }
+
+                    // Try to load from memory
+                    data = stbi_load_from_memory(
+                        reinterpret_cast<unsigned char*>(buffer.data()),
+                        static_cast<int>(size),
+                        &width, &height, &nrComponents, 0
+                    );
+
+                    if (data) {
+                        successPath = canonicalPath.string();
+                        outFullPath = successPath;
+                        break;
+                    }
+                    else {
+                        std::cout << "STB failed to load " << canonicalPath.string()
+                            << ": " << stbi_failure_reason() << std::endl;
+                    }
+                }
+            }
+            catch (const std::filesystem::filesystem_error& e) {
+                std::cout << "Filesystem error while trying path " << tryPath
+                    << ": " << e.what() << std::endl;
+                continue;
             }
         }
 
@@ -301,16 +370,33 @@ namespace Engine {
         glGenTextures(1, &textureID);
 
         if (data) {
-            GLenum format = GL_RGB;
-            if (nrComponents == 1)
+            GLenum format;
+            GLenum internalFormat;
+            if (nrComponents == 1) {
                 format = GL_RED;
-            else if (nrComponents == 3)
+                internalFormat = GL_R8;
+            }
+            else if (nrComponents == 2) {
+                format = GL_RG;
+                internalFormat = GL_RG8;
+            }
+            else if (nrComponents == 3) {
                 format = GL_RGB;
-            else if (nrComponents == 4)
+                internalFormat = GL_RGB8;
+            }
+            else if (nrComponents == 4) {
                 format = GL_RGBA;
+                internalFormat = GL_RGBA8;
+            }
+            else {
+                std::cout << "Unexpected number of components: " << nrComponents << std::endl;
+                format = GL_RGB;
+                internalFormat = GL_RGB8;
+            }
 
             glBindTexture(GL_TEXTURE_2D, textureID);
-            glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+            // Use internalFormat instead of format for the internal format parameter
+            glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, GL_UNSIGNED_BYTE, data);
             glGenerateMipmap(GL_TEXTURE_2D);
 
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
@@ -319,16 +405,17 @@ namespace Engine {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
             stbi_image_free(data);
-            std::cout << "Successfully loaded texture: " << successPath << std::endl;
+            std::cout << "Successfully loaded texture: " << successPath
+                << " (" << width << "x" << height << ", " << nrComponents << " components)" << std::endl;
         }
         else {
             std::cout << "Failed to load texture from all attempted paths for: " << textureName << std::endl;
-            std::cout << "STB Image error: " << stbi_failure_reason() << std::endl;
+            std::cout << "Last STB Image error: " << stbi_failure_reason() << std::endl;
 
-            // Create a default white texture
-            unsigned char white[] = { 255, 255, 255, 255 };
+            // Create a default colored texture
+            unsigned char defaultColor[] = { 255, 0, 255, 255 };  // Magenta
             glBindTexture(GL_TEXTURE_2D, textureID);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, white);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, defaultColor);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -350,9 +437,11 @@ namespace Engine {
         shader.setFloat("material.shininess", shininess);
         shader.setFloat("material.emissive", emissive);
 
-        // Draw all meshes
         for (unsigned int i = 0; i < meshes.size(); i++) {
-            meshes[i].Draw(shader);
+            if (meshes[i].visible) {  // Only draw if mesh is visible
+                shader.setInt("currentMeshIndex", i);
+                meshes[i].Draw(shader);
+            }
         }
 
         // Reset textures

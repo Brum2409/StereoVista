@@ -1,85 +1,101 @@
 {
-    "Test": {
+    "Default": {
         "cursorCenterTransparency": 0.20000000298023224,
         "cursorColor": [
-            0.643243134021759,
-            0.7306122779846191,
-            0.15208663046360016,
+            1.0,
+            0.0,
+            0.0,
             0.699999988079071
         ],
         "cursorEdgeSoftness": 0.800000011920929,
         "fragmentBaseInnerRadius": 0.004000000189989805,
         "innerSphereColor": [
-            0.8163264989852905,
-            0.006663896143436432,
-            0.006663896143436432,
+            0.0,
+            1.0,
+            0.0,
             1.0
         ],
         "innerSphereFactor": 0.10000000149011612,
-        "name": "Test",
+        "name": "Default",
         "planeColor": [
+            0.0,
             1.0,
-            0.4301075339317322,
+            0.0,
+            0.699999988079071
+        ],
+        "planeDiameter": 0.5,
+        "showFragmentCursor": true,
+        "showInnerSphere": false,
+        "showPlaneCursor": false,
+        "showSphereCursor": false,
+        "sphereFixedRadius": 0.699999988079071,
+        "sphereScalingMode": 2,
+        "sphereTransparency": 1.0
+    },
+    "Hybrid": {
+        "cursorCenterTransparency": 0.8849999904632568,
+        "cursorColor": [
+            0.9068100452423096,
+            0.10075666755437851,
+            0.10075666755437851,
+            0.699999988079071
+        ],
+        "cursorEdgeSoftness": 0.9490000009536743,
+        "fragmentBaseInnerRadius": 0.004000000189989805,
+        "innerSphereColor": [
+            0.30859053134918213,
+            1.0,
+            0.010752677917480469,
+            1.0
+        ],
+        "innerSphereFactor": 0.10000000149011612,
+        "name": "Hybrid",
+        "planeColor": [
+            0.0,
+            1.0,
+            0.0,
+            0.699999988079071
+        ],
+        "planeDiameter": 0.5,
+        "showFragmentCursor": true,
+        "showInnerSphere": false,
+        "showPlaneCursor": false,
+        "showSphereCursor": true,
+        "sphereFixedRadius": 0.10899999737739563,
+        "sphereScalingMode": 1,
+        "sphereTransparency": 1.0
+    },
+    "Sphere": {
+        "cursorCenterTransparency": 0.20000000298023224,
+        "cursorColor": [
+            0.6559139490127563,
+            0.18337377905845642,
+            0.18337377905845642,
+            0.699999988079071
+        ],
+        "cursorEdgeSoftness": 0.800000011920929,
+        "fragmentBaseInnerRadius": 0.004000000189989805,
+        "innerSphereColor": [
+            0.30859053134918213,
+            1.0,
+            0.010752677917480469,
+            1.0
+        ],
+        "innerSphereFactor": 0.10000000149011612,
+        "name": "Sphere",
+        "planeColor": [
+            0.0,
+            1.0,
             0.0,
             0.699999988079071
         ],
         "planeDiameter": 0.5,
         "showFragmentCursor": false,
         "showInnerSphere": true,
-        "showPlaneCursor": true,
-        "showSphereCursor": false,
+        "showPlaneCursor": false,
+        "showSphereCursor": true,
         "sphereFixedRadius": 0.699999988079071,
         "sphereScalingMode": 2,
-        "sphereTransparency": 1.0
-    },
-    "combined": {
-        "cursorCenterTransparency": 0.20000000298023224,
-        "cursorColor": [
-            0.0,
-            1.0,
-            0.19512200355529785,
-            0.699999988079071
-        ],
-        "cursorEdgeSoftness": 0.800000011920929,
-        "fragmentBaseInnerRadius": 0.004000000189989805,
-        "innerSphereColor": [
-            0.0,
-            1.0,
-            0.0,
-            1.0
-        ],
-        "innerSphereFactor": 0.10000000149011612,
-        "name": "combined",
-        "showFragmentCursor": true,
-        "showInnerSphere": false,
-        "showSphereCursor": true,
-        "sphereFixedRadius": 0.12399999797344208,
-        "sphereScalingMode": 1,
-        "sphereTransparency": 1.0
-    },
-    "only 3D": {
-        "cursorCenterTransparency": 0.20000000298023224,
-        "cursorColor": [
-            0.0,
-            1.0,
-            0.19512200355529785,
-            0.699999988079071
-        ],
-        "cursorEdgeSoftness": 0.800000011920929,
-        "fragmentBaseInnerRadius": 0.004000000189989805,
-        "innerSphereColor": [
-            0.0,
-            0.17682933807373047,
-            1.0,
-            1.0
-        ],
-        "innerSphereFactor": 0.10000000149011612,
-        "name": "only 3D",
-        "showFragmentCursor": false,
-        "showInnerSphere": true,
-        "showSphereCursor": true,
-        "sphereFixedRadius": 0.699999988079071,
-        "sphereScalingMode": 1,
         "sphereTransparency": 1.0
     }
 }

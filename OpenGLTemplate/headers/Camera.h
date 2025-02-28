@@ -1,4 +1,4 @@
-#ifndef CAMERA_H
+﻿#ifndef CAMERA_H
 #define CAMERA_H
 
 #include <core.h>
@@ -67,6 +67,18 @@ public:
     bool useNewMethod = true;  // For stereo rendering method
     bool wireframe = false;    // For wireframe mode
 
+    bool zoomToCursor = false;
+    glm::vec3 cursorPosition = glm::vec3(0.0f);
+    bool cursorValid = false;
+    glm::vec3 scrollTargetPos = glm::vec3(0.0f);
+    bool isScrollingToCursor = false;
+
+    float distanceToNearestObject = 0.0f;
+    bool distanceUpdated = false;
+
+    bool orbitAroundCursor = false;
+
+
     std::function<void()> centeringCompletedCallback;
 
     Camera(glm::vec3 position = glm::vec3(0.0f, 0.0f, 3.0f), glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f), float yaw = YAW, float pitch = PITCH)
@@ -91,7 +103,16 @@ public:
         return glm::perspective(glm::radians(Zoom), aspectRatio, nearPlane, farPlane);
     }
 
+    void UpdateCursorInfo(const glm::vec3& pos, bool valid) {
+        cursorPosition = pos;
+        cursorValid = valid;
+    }
 
+    void UpdateDistanceToObject(float distance) {
+        distanceToNearestObject = distance;
+        distanceUpdated = true;
+
+    }
     // Function for stereo projection
     glm::mat4 offsetProjection(glm::mat4& centerProjection, float separation, float convergence) const {
         glm::mat4 o = glm::mat4(centerProjection);
@@ -207,6 +228,43 @@ public:
             << ", Current movement speed: " << MovementSpeed << std::endl;*/
     }
 
+    float CalculateScrollFactor(float modelSize) {
+        if (!distanceUpdated) {
+            return 1.0f; // Default multiplier when distance isn't available
+        }
+
+        // Use same parameters as AdjustMovementSpeed for consistency
+        float minDistance = modelSize * 0.1f;
+        float maxDistance = modelSize * 10.0f;
+
+        // Ensure minDistance is not too small
+        minDistance = glm::max(minDistance, 0.01f);
+
+        // Ensure maxDistance is sufficiently larger than minDistance
+        maxDistance = glm::max(maxDistance, minDistance * 10.0f);
+
+        // Normalize the distance
+        float normalizedDistance = (distanceToNearestObject - minDistance) / (maxDistance - minDistance);
+        normalizedDistance = glm::clamp(normalizedDistance, 0.0f, 1.0f);
+
+        // Apply logarithmic function using the same logFactor as movement speed
+        float logFactor = 4.0f;
+        float t = glm::log(1 + normalizedDistance * (exp(logFactor) - 1)) / logFactor;
+
+        // Calculate scroll factor - similar to speed calculation but with scroll-specific multipliers
+        float minScrollFactor = 0.1f;
+        float maxScrollFactor = 3.0f;
+
+        float scrollFactor = minScrollFactor + t * (maxScrollFactor - minScrollFactor);
+
+        // If looking at empty space, gradually increase factor
+        if (isLookingAtEmptySpace) {
+            scrollFactor *= 1.5f; // Slightly more aggressive than movement speed
+        }
+
+        return scrollFactor;
+    }
+
 
     void ProcessMouseMovement(float xoffset, float yoffset, bool constrainPitch = true) {
         if (IsAnimating) return; // Disable mouse movement during animation
@@ -215,45 +273,90 @@ public:
         yoffset *= MouseSensitivity;
 
         if (IsOrbiting) {
-            // Convert to radians
-            float yawRad = glm::radians(xoffset);
-            float pitchRad = glm::radians(yoffset);
+            if (orbitAroundCursor) {
+                // Pure orbit around cursor implementation
 
-            // Calculate the vector from orbit point to camera
-            glm::vec3 toCamera = Position - OrbitPoint;
+                // Store initial values to calculate relative changes
+                glm::vec3 initialPosition = Position;
+                glm::vec3 initialFront = Front;
+                glm::vec3 initialRight = Right;
+                glm::vec3 initialUp = Up;
 
-            // Rotate around world up vector for yaw
-            toCamera = glm::rotate(toCamera, -yawRad, WorldUp);
+                // Vector from orbit point to camera
+                glm::vec3 orbitToCamera = Position - OrbitPoint;
+                float distance = glm::length(orbitToCamera);
 
-            // Rotate around right vector for pitch
-            glm::vec3 right = glm::normalize(glm::cross(toCamera, WorldUp));
-            toCamera = glm::rotate(toCamera, -pitchRad, right);
+                // Calculate rotation quaternions
+                glm::quat yawQuat = glm::angleAxis(-glm::radians(xoffset), WorldUp);
+                glm::vec3 rightAxis = glm::normalize(glm::cross(orbitToCamera, WorldUp));
+                glm::quat pitchQuat = glm::angleAxis(-glm::radians(yoffset), rightAxis);
 
-            // Update camera position
-            Position = OrbitPoint + toCamera;
+                // Apply rotations to orbit-to-camera vector
+                orbitToCamera = pitchQuat * (yawQuat * orbitToCamera);
 
-            // Update Front vector
-            Front = glm::normalize(-toCamera);
+                // Normalize and scale back to original distance
+                orbitToCamera = glm::normalize(orbitToCamera) * distance;
 
-            // Recalculate Right and Up vectors
-            Right = glm::normalize(glm::cross(Front, WorldUp));
-            Up = glm::normalize(glm::cross(Right, Front));
+                // Update camera position
+                Position = OrbitPoint + orbitToCamera;
 
-            // Update Yaw and Pitch
-            Yaw += xoffset;
-            Pitch += yoffset;
+                // Calculate camera rotation to maintain orientation relative to orbit path
+                // This is the key part - we rotate the basis vectors by the same amount
+                // as we rotated the orbit-to-camera vector
+                Front = glm::normalize(pitchQuat * (yawQuat * initialFront));
+                Right = glm::normalize(pitchQuat * (yawQuat * initialRight));
+                Up = glm::normalize(pitchQuat * (yawQuat * initialUp));
 
-            if (constrainPitch) {
-                if (Pitch > 89.0f)
-                    Pitch = 89.0f;
-                if (Pitch < -89.0f)
-                    Pitch = -89.0f;
+                // Update Yaw and Pitch for consistency, though we don't use them directly
+                Yaw += xoffset;
+                Pitch += yoffset;
+
+                if (constrainPitch) {
+                    if (Pitch > 89.0f) Pitch = 89.0f;
+                    if (Pitch < -89.0f) Pitch = -89.0f;
+                }
+            }
+            else {
+                // Original standard orbiting behavior
+
+                // Convert to radians
+                float yawRad = glm::radians(xoffset);
+                float pitchRad = glm::radians(yoffset);
+
+                // Calculate the vector from orbit point to camera
+                glm::vec3 toCamera = Position - OrbitPoint;
+
+                // Rotate around world up vector for yaw
+                toCamera = glm::rotate(toCamera, -yawRad, WorldUp);
+
+                // Rotate around right vector for pitch
+                glm::vec3 right = glm::normalize(glm::cross(toCamera, WorldUp));
+                toCamera = glm::rotate(toCamera, -pitchRad, right);
+
+                // Update camera position
+                Position = OrbitPoint + toCamera;
+
+                // Point camera at orbit point
+                Front = glm::normalize(OrbitPoint - Position);
+
+                // Update Yaw and Pitch
+                Yaw += xoffset;
+                Pitch += yoffset;
+
+                if (constrainPitch) {
+                    if (Pitch > 89.0f) Pitch = 89.0f;
+                    if (Pitch < -89.0f) Pitch = -89.0f;
+                }
+
+                // Recalculate Right and Up vectors
+                Right = glm::normalize(glm::cross(Front, WorldUp));
+                Up = glm::normalize(glm::cross(Right, Front));
             }
         }
         else if (IsPanning) {
             glm::vec3 right = glm::normalize(glm::cross(Front, WorldUp));
-            Position += right * xoffset * -0.02f; // Adjust the factor as needed could also be a setting
-            Position += WorldUp * yoffset * -0.02f; // Adjust the factor as needed could also be a setting
+            Position += right * xoffset * -0.02f;
+            Position += WorldUp * yoffset * -0.02f;
 
             // Update orbit point when panning
             OrbitPoint = Position + Front * OrbitDistance;
@@ -264,10 +367,8 @@ public:
             Pitch += yoffset;
 
             if (constrainPitch) {
-                if (Pitch > 89.0f)
-                    Pitch = 89.0f;
-                if (Pitch < -89.0f)
-                    Pitch = -89.0f;
+                if (Pitch > 89.0f) Pitch = 89.0f;
+                if (Pitch < -89.0f) Pitch = -89.0f;
             }
 
             updateCameraVectors();
@@ -277,9 +378,37 @@ public:
     void ProcessMouseScroll(float yoffset) {
         if (IsAnimating) return;
 
+        // Calculate base scroll amount using model size and distance
+        float modelSize = 1.0f; // This should be passed from outside or stored in the camera
+        float scrollFactor = CalculateScrollFactor(modelSize);
+        float scaledYOffset = yoffset * scrollFactor;
+
         if (!useSmoothScrolling) {
             // Direct movement
-            Position += Front * yoffset * MovementSpeed * 0.1f;
+            if (zoomToCursor && cursorValid) {
+                // Calculate direction to cursor
+                glm::vec3 dirToCursor = cursorPosition - Position;
+                float distance = glm::length(dirToCursor);
+
+                // Only use zoom to cursor if the cursor is at a reasonable distance
+                if (distance > 0.01f) {
+                    // Normalize direction
+                    dirToCursor = glm::normalize(dirToCursor);
+
+                    // Move toward cursor if scrolling forward, away if scrolling backward
+                    // Apply scroll factor to make movement distance-dependent
+                    Position += dirToCursor * scaledYOffset * MovementSpeed * 0.1f;
+                }
+                else {
+                    // Fallback to standard scrolling
+                    Position += Front * scaledYOffset * MovementSpeed * 0.1f;
+                }
+            }
+            else {
+                // Original behavior - move along Front vector
+                Position += Front * scaledYOffset * MovementSpeed * 0.1f;
+            }
+
             if (IsOrbiting) {
                 OrbitPoint = Position + Front * OrbitDistance;
             }
@@ -290,18 +419,56 @@ public:
         float deltaTime = currentTime - lastScrollTime;
         lastScrollTime = currentTime;
 
-        // Add to velocity with acceleration
-        scrollVelocity += yoffset * scrollMomentum;
+        // Apply scroll factor to momentum as well
+        scrollVelocity += scaledYOffset * scrollMomentum;
         scrollVelocity = glm::clamp(scrollVelocity, -maxScrollVelocity, maxScrollVelocity);
+
+        // Store cursor position for smooth scrolling if zoomToCursor is enabled
+        if (zoomToCursor && cursorValid) {
+            scrollTargetPos = cursorPosition;
+            isScrollingToCursor = true;
+        }
+        else {
+            isScrollingToCursor = false;
+        }
     }
 
+    // Updated UpdateScrolling method
     void UpdateScrolling(float deltaTime) {
         if (scrollVelocity != 0.0f) {
+            // Calculate scroll factor for this frame
+            float modelSize = 1.0f; // This should be passed from outside or stored in the camera
+            float scrollFactor = CalculateScrollFactor(modelSize);
+
+            // Apply scroll factor to velocity
+            float adjustedVelocity = scrollVelocity * scrollFactor;
+
             // Move camera based on velocity
-            Position += Front * scrollVelocity * MovementSpeed * deltaTime;
+            if (isScrollingToCursor) {
+                // Calculate direction to cursor
+                glm::vec3 dirToCursor = scrollTargetPos - Position;
+                float distance = glm::length(dirToCursor);
+
+                if (distance > 0.01f) {
+                    // Normalize direction
+                    dirToCursor = glm::normalize(dirToCursor);
+
+                    // Move along direction based on adjusted velocity
+                    Position += dirToCursor * adjustedVelocity * MovementSpeed * deltaTime;
+                }
+                else {
+                    // If we're too close to target, revert to standard scrolling
+                    Position += Front * adjustedVelocity * MovementSpeed * deltaTime;
+                    isScrollingToCursor = false;
+                }
+            }
+            else {
+                // Original behavior - move along Front vector with adjusted velocity
+                Position += Front * adjustedVelocity * MovementSpeed * deltaTime;
+            }
 
             // Decelerate
-            float deceleration = scrollDeceleration * deltaTime;
+            float deceleration = scrollDeceleration * deltaTime * scrollFactor;
             if (abs(scrollVelocity) <= deceleration) {
                 scrollVelocity = 0.0f;
             }
@@ -386,7 +553,15 @@ public:
         Yaw = glm::degrees(atan2(Front.z, Front.x));
     }
 
-    void StartOrbiting() { IsOrbiting = true; }
+    void StartOrbiting(bool useCurrentCursorPosition = false) {
+        if (useCurrentCursorPosition && cursorValid) {
+            // Just set the orbit point to the cursor position without changing camera position
+            OrbitPoint = cursorPosition;
+            // Calculate distance from camera to this orbit point
+            OrbitDistance = glm::length(Position - OrbitPoint);
+        }
+        IsOrbiting = true;
+    }
     void StopOrbiting() { IsOrbiting = false; }
     void StartPanning() { IsPanning = true; }
     void StopPanning() { IsPanning = false; }

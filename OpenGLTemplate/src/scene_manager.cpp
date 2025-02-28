@@ -2,7 +2,6 @@
 #include <fstream>
 #include <iostream>
 #include <json.h>
-#include "obj_loader.h"
 #include "point_cloud_loader.h"
 #include <filesystem>
 #include <unordered_set>

@@ -174,6 +174,7 @@
     <ClCompile Include="src\point_cloud_loader.cpp" />
     <ClCompile Include="src\scene_manager.cpp" />
     <ClCompile Include="src\stb_image_impl.cpp" />
+    <ClCompile Include="src\voxalizer.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="headers\core.h" />
@@ -274,12 +275,12 @@
     <ClInclude Include="headers\libs\imgui\imstb_truetype.h" />
     <ClInclude Include="headers\libs\json.h" />
     <ClInclude Include="headers\model_loader.h" />
-    <ClInclude Include="headers\obj_loader.h" />
     <ClInclude Include="headers\libs\openLinks.h" />
     <ClInclude Include="headers\point_cloud_loader.h" />
     <ClInclude Include="headers\scene_manager.h" />
     <ClInclude Include="headers\libs\stb_image.h" />
     <ClInclude Include="headers\libs\tiny_obj_loader.h" />
+    <ClInclude Include="headers\voxalizer.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="assets\shaders\fragmentShader.glsl" />
@@ -292,6 +293,15 @@
     <None Include="assets\shaders\vertexShader.glsl" />
     <None Include="assets\shaders\sphereVertexShader.glsl" />
     <None Include="assets\shaders\sphereFragmentShader.glsl" />
+    <None Include="assets\shaders\voxelization.frag" />
+    <None Include="assets\shaders\voxelization.geom" />
+    <None Include="assets\shaders\voxelization.vert" />
+    <None Include="assets\shaders\voxel_cube.frag" />
+    <None Include="assets\shaders\voxel_cube.vert" />
+    <None Include="assets\shaders\voxel_visualization.frag" />
+    <None Include="assets\shaders\voxel_visualization.vert" />
+    <None Include="assets\shaders\world_position.frag" />
+    <None Include="assets\shaders\world_position.vert" />
     <None Include="headers\libs\assimp\.editorconfig" />
     <None Include="headers\libs\assimp\color4.inl" />
     <None Include="headers\libs\assimp\config.h.in" />

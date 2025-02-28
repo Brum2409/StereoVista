@@ -1,19 +1,22 @@
 {
     "camera": {
-        "convergence": 2.9769999980926514,
-        "farPlane": 200.0,
-        "fov": 60.80099868774414,
-        "maxScrollVelocity": 3.1500000953674316,
+        "convergence": 1.5,
+        "farPlane": 252.5,
+        "fov": 45.0,
+        "maxScrollVelocity": 3.0,
         "nearPlane": 0.009999999776482582,
-        "scrollDeceleration": 5.0,
-        "scrollMomentum": 1.6959999799728394,
+        "orbitAroundCursor": false,
+        "orbitFollowsCursor": false,
+        "scrollDeceleration": 6.965000152587891,
+        "scrollMomentum": 0.5,
         "separation": 0.004999999888241291,
-        "speedFactor": 1.090000033378601,
+        "speedFactor": 1.2450000047683716,
         "useNewStereoMethod": true,
-        "useSmoothScrolling": true
+        "useSmoothScrolling": true,
+        "zoomToCursor": false
     },
     "cursor": {
-        "currentPreset": "only 3D"
+        "currentPreset": "Sphere"
     },
     "ui": {
         "darkTheme": true,

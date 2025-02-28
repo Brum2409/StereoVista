@@ -24,8 +24,15 @@ namespace Engine {
         std::vector<Texture> textures;
         GLuint VAO, VBO, EBO;
 
+        bool visible = true;
+        glm::vec3 color = glm::vec3(1.0f);
+        float shininess = 32.0f;
+        float emissive = 0.0f;
+        std::string name;  // Optional: for better identification
+
         Mesh(std::vector<Vertex> vertices, std::vector<GLuint> indices, std::vector<Texture> textures)
-            : vertices(vertices), indices(indices), textures(textures) {
+            : vertices(vertices), indices(indices), textures(textures),
+            visible(true), color(1.0f), shininess(32.0f), emissive(0.0f) {
             setupMesh();
         }
 
@@ -40,7 +47,7 @@ namespace Engine {
     class Model {
     public:
         // Constructor
-        Model() = default;  // Add default constructor
+        Model() = default;
         Model(const std::string& path);
 
         // Public methods
@@ -59,6 +66,7 @@ namespace Engine {
         bool visible = true;
         float boundingSphereRadius = 0.0f;
         std::string directory;
+        std::vector<bool> selectedMeshes;
         static GLuint TextureFromFile(const char* path, const std::string& directory, std::string& outFullPath);
         const std::vector<Mesh>& getMeshes() const { return meshes; }
         std::vector<Mesh>& getMeshes() { return meshes; }
@@ -71,6 +79,10 @@ namespace Engine {
                 if (texture.type == "texture_normal") return true;
             }
             return false;
+        }
+
+        void initializeMeshSelection() {
+            selectedMeshes.resize(meshes.size(), false);
         }
 
         bool hasSpecularMap() const {
@@ -96,7 +108,7 @@ namespace Engine {
 
         void loadModel(const std::string& path);
         void processNode(aiNode* node, const aiScene* scene);
-        Mesh processMesh(aiMesh* mesh, const aiScene* scene);
+        Mesh processMesh(aiMesh* mesh, const aiScene* scene, size_t meshIndex);
         std::vector<Texture> loadMaterialTextures(aiMaterial* mat, aiTextureType type, const std::string& typeName);
 
     };

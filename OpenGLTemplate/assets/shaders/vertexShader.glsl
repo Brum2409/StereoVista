@@ -1,4 +1,4 @@
-#version 330 core
+#version 460
 layout (location = 0) in vec3 aPos;
 layout (location = 1) in vec3 aNormal;
 layout (location = 2) in vec2 aTexCoords;
@@ -16,6 +16,7 @@ out VS_OUT {
     vec3 VertexColor;
     float Intensity;
     mat3 TBN;
+    flat int meshIndex;
 } vs_out;
 
 // Transformation matrices
@@ -27,6 +28,9 @@ uniform mat4 lightSpaceMatrix;
 // Render states
 uniform bool isPointCloud;
 uniform bool useInstancing;
+
+uniform int currentMeshIndex;
+uniform bool isMeshSelected;
 
 void main() {
     // Calculate model matrix based on whether we're using instancing
@@ -62,6 +66,7 @@ void main() {
         vs_out.TBN = mat3(T, B, N);
         vs_out.VertexColor = vec3(1.0);
         vs_out.Intensity = 1.0;
+        vs_out.meshIndex = gl_DrawID;
     }
     
     // Transform position to light space for shadow mapping

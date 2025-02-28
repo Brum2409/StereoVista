@@ -21,6 +21,10 @@ namespace Engine {
         void setVec3(const std::string& name, glm::vec3 vec);
         void setVec4(const std::string& name, glm::vec4 vec);
         GLuint getID() const { return shaderID; }
+
+        Shader(GLuint programID) {
+            shaderID = programID;
+        }
     };
 
     // Modified shader loader function
