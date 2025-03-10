@@ -128,81 +128,90 @@ inline void SetupImGuiStyle(bool bStyleDark_, float alpha_) {
     else {
         ImVec4* colors = style.Colors;
 
-        // Background colors - keeping these muted
-        colors[ImGuiCol_WindowBg] = ImVec4(0.90f, 0.90f, 0.90f, 0.95f);
-        colors[ImGuiCol_ChildBg] = ImVec4(0.90f, 0.90f, 0.90f, 0.00f);
-        colors[ImGuiCol_PopupBg] = ImVec4(0.90f, 0.90f, 0.90f, 0.94f);
-        colors[ImGuiCol_Border] = ImVec4(0.60f, 0.60f, 0.60f, 0.50f);
+        // Color palette:
+        // F0F5F9 - Very light grayish blue (background)
+        // C9D6DF - Light grayish blue (elements, secondary surfaces)
+        // 52616B - Dark grayish blue (text, accents)
+        // 1E2022 - Very dark gray (primary text)
+
+        const ImVec4 bgColor = ImVec4(0.941f, 0.961f, 0.976f, 1.00f);         // F0F5F9
+        const ImVec4 elementColor = ImVec4(0.788f, 0.839f, 0.875f, 1.00f);    // C9D6DF
+        const ImVec4 accentColor = ImVec4(0.322f, 0.380f, 0.420f, 1.00f);     // 52616B
+        const ImVec4 textColor = ImVec4(0.118f, 0.125f, 0.133f, 1.00f);       // 1E2022
+
+        const ImVec4 accentHovered = ImVec4(0.369f, 0.435f, 0.482f, 1.00f);   // 52616B lighter
+        const ImVec4 accentActive = ImVec4(0.275f, 0.325f, 0.357f, 1.00f);    // 52616B darker
+
+        // Background colors
+        colors[ImGuiCol_WindowBg] = ImVec4(bgColor.x, bgColor.y, bgColor.z, 0.95f);
+        colors[ImGuiCol_ChildBg] = ImVec4(bgColor.x, bgColor.y, bgColor.z, 0.00f);
+        colors[ImGuiCol_PopupBg] = ImVec4(bgColor.x, bgColor.y, bgColor.z, 0.94f);
+        colors[ImGuiCol_Border] = ImVec4(elementColor.x, elementColor.y, elementColor.z, 0.50f);
         colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
 
-        // Text colors - darker for better contrast
-        colors[ImGuiCol_Text] = ImVec4(0.15f, 0.15f, 0.15f, 1.00f);
-        colors[ImGuiCol_TextDisabled] = ImVec4(0.45f, 0.45f, 0.45f, 1.00f);
+        // Text colors
+        colors[ImGuiCol_Text] = textColor;
+        colors[ImGuiCol_TextDisabled] = ImVec4(accentColor.x, accentColor.y, accentColor.z, 0.65f);
 
-        // Interactive element colors - Darker blue
-        const ImVec4 accentColor = ImVec4(0.20f, 0.45f, 0.80f, 1.00f);
-        const ImVec4 accentHovered = ImVec4(0.30f, 0.55f, 0.90f, 1.00f);
-        const ImVec4 accentActive = ImVec4(0.15f, 0.40f, 0.75f, 1.00f);
-
-        // Headers - darker
-        colors[ImGuiCol_Header] = ImVec4(0.70f, 0.70f, 0.70f, 0.55f);
+        // Headers
+        colors[ImGuiCol_Header] = ImVec4(elementColor.x, elementColor.y, elementColor.z, 0.80f);
         colors[ImGuiCol_HeaderHovered] = accentHovered;
         colors[ImGuiCol_HeaderActive] = accentActive;
 
-        // Buttons - darker
-        colors[ImGuiCol_Button] = ImVec4(0.75f, 0.75f, 0.75f, 0.90f);
+        // Buttons
+        colors[ImGuiCol_Button] = elementColor;
         colors[ImGuiCol_ButtonHovered] = accentHovered;
         colors[ImGuiCol_ButtonActive] = accentActive;
 
-        // Frame backgrounds - darker
-        colors[ImGuiCol_FrameBg] = ImVec4(0.72f, 0.72f, 0.72f, 0.54f);
-        colors[ImGuiCol_FrameBgHovered] = ImVec4(0.77f, 0.77f, 0.77f, 0.54f);
-        colors[ImGuiCol_FrameBgActive] = ImVec4(0.80f, 0.80f, 0.80f, 0.54f);
+        // Frame backgrounds
+        colors[ImGuiCol_FrameBg] = ImVec4(elementColor.x, elementColor.y, elementColor.z, 0.60f);
+        colors[ImGuiCol_FrameBgHovered] = ImVec4(elementColor.x * 1.1f, elementColor.y * 1.1f, elementColor.z * 1.1f, 0.60f);
+        colors[ImGuiCol_FrameBgActive] = ImVec4(elementColor.x * 1.2f, elementColor.y * 1.2f, elementColor.z * 1.2f, 0.60f);
 
-        // Tabs - darker
-        colors[ImGuiCol_Tab] = ImVec4(0.72f, 0.72f, 0.72f, 0.86f);
+        // Tabs
+        colors[ImGuiCol_Tab] = ImVec4(elementColor.x, elementColor.y, elementColor.z, 0.86f);
         colors[ImGuiCol_TabHovered] = accentHovered;
         colors[ImGuiCol_TabActive] = accentActive;
-        colors[ImGuiCol_TabUnfocused] = ImVec4(0.75f, 0.75f, 0.75f, 0.97f);
-        colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.72f, 0.72f, 0.72f, 1.00f);
+        colors[ImGuiCol_TabUnfocused] = ImVec4(elementColor.x * 0.9f, elementColor.y * 0.9f, elementColor.z * 0.9f, 0.97f);
+        colors[ImGuiCol_TabUnfocusedActive] = ImVec4(elementColor.x, elementColor.y, elementColor.z, 1.00f);
 
-        // Title - darker
-        colors[ImGuiCol_TitleBg] = ImVec4(0.70f, 0.70f, 0.70f, 1.00f);
-        colors[ImGuiCol_TitleBgActive] = ImVec4(0.65f, 0.65f, 0.65f, 1.00f);
-        colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.72f, 0.72f, 0.72f, 0.75f);
-        colors[ImGuiCol_MenuBarBg] = ImVec4(0.68f, 0.68f, 0.68f, 1.00f);
+        // Title
+        colors[ImGuiCol_TitleBg] = elementColor;
+        colors[ImGuiCol_TitleBgActive] = ImVec4(accentColor.x, accentColor.y, accentColor.z, 0.8f);
+        colors[ImGuiCol_TitleBgCollapsed] = ImVec4(elementColor.x, elementColor.y, elementColor.z, 0.75f);
+        colors[ImGuiCol_MenuBarBg] = ImVec4(elementColor.x * 0.9f, elementColor.y * 0.9f, elementColor.z * 0.9f, 1.00f);
 
-        // Scrollbar - darker
-        colors[ImGuiCol_ScrollbarBg] = ImVec4(0.70f, 0.70f, 0.70f, 0.60f);
-        colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.55f, 0.55f, 0.55f, 0.80f);
-        colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.50f, 0.50f, 0.50f, 0.80f);
-        colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.45f, 0.45f, 0.45f, 0.80f);
+        // Scrollbar
+        colors[ImGuiCol_ScrollbarBg] = ImVec4(elementColor.x, elementColor.y, elementColor.z, 0.60f);
+        colors[ImGuiCol_ScrollbarGrab] = accentColor;
+        colors[ImGuiCol_ScrollbarGrabHovered] = accentHovered;
+        colors[ImGuiCol_ScrollbarGrabActive] = accentActive;
 
         // Slider/CheckBox
         colors[ImGuiCol_CheckMark] = accentColor;
         colors[ImGuiCol_SliderGrab] = accentColor;
         colors[ImGuiCol_SliderGrabActive] = accentActive;
 
-        // Interactive elements - darker
-        colors[ImGuiCol_Separator] = ImVec4(0.60f, 0.60f, 0.60f, 0.50f);
+        // Interactive elements
+        colors[ImGuiCol_Separator] = ImVec4(accentColor.x, accentColor.y, accentColor.z, 0.50f);
         colors[ImGuiCol_SeparatorHovered] = accentHovered;
         colors[ImGuiCol_SeparatorActive] = accentActive;
-        colors[ImGuiCol_ResizeGrip] = ImVec4(0.60f, 0.60f, 0.60f, 0.20f);
+        colors[ImGuiCol_ResizeGrip] = ImVec4(accentColor.x, accentColor.y, accentColor.z, 0.20f);
         colors[ImGuiCol_ResizeGripHovered] = accentHovered;
         colors[ImGuiCol_ResizeGripActive] = accentActive;
 
-        // Plot/Visual elements - darker
-        colors[ImGuiCol_PlotLines] = ImVec4(0.35f, 0.35f, 0.35f, 1.00f);
+        // Plot/Visual elements
+        colors[ImGuiCol_PlotLines] = textColor;
         colors[ImGuiCol_PlotLinesHovered] = accentHovered;
-        colors[ImGuiCol_PlotHistogram] = ImVec4(0.70f, 0.50f, 0.00f, 1.00f);
-        colors[ImGuiCol_PlotHistogramHovered] = ImVec4(0.80f, 0.40f, 0.00f, 1.00f);
+        colors[ImGuiCol_PlotHistogram] = accentColor;
+        colors[ImGuiCol_PlotHistogramHovered] = accentHovered;
 
-        // Miscellaneous - adjusted
-        colors[ImGuiCol_TextSelectedBg] = ImVec4(0.20f, 0.45f, 0.80f, 0.35f);
+        // Miscellaneous
+        colors[ImGuiCol_TextSelectedBg] = ImVec4(accentColor.x, accentColor.y, accentColor.z, 0.35f);
         colors[ImGuiCol_DragDropTarget] = accentColor;
         colors[ImGuiCol_NavHighlight] = accentColor;
-        colors[ImGuiCol_NavWindowingHighlight] = ImVec4(0.20f, 0.20f, 0.20f, 0.70f);
-        colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.20f, 0.20f, 0.20f, 0.20f);
+        colors[ImGuiCol_NavWindowingHighlight] = ImVec4(accentColor.x, accentColor.y, accentColor.z, 0.80f);
+        colors[ImGuiCol_NavWindowingDimBg] = ImVec4(accentColor.x, accentColor.y, accentColor.z, 0.20f);
         colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.20f, 0.20f, 0.20f, 0.35f);
     }
 

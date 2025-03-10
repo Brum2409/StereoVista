@@ -85,6 +85,7 @@ Camera camera(glm::vec3(0.0f, 0.0f, 3.0f));
 float lastX = 1920.0f / 2.0;
 float lastY = 1080.0f / 2.0;
 float aspectRatio = 1.0f;
+float mouseSmoothingFactor = 0.7;
 
 // ---- Stereo Rendering Settings ----
 float maxSeparation = 0.05f;   // Maximum stereo separation
@@ -130,7 +131,7 @@ struct ApplicationPreferences {
     float convergence = 1.5f;
     float nearPlane = 0.1f;
     float farPlane = 200.0f;
-    std::string currentPresetName = "Default";
+    std::string currentPresetName = "Sphere";
     float cameraSpeedFactor = 1.0f;
     bool showFPS = true;
     bool show3DCursor = true;
@@ -138,12 +139,15 @@ struct ApplicationPreferences {
     float fov = 45.0f;
     float scrollMomentum = 0.5f;
     float maxScrollVelocity = 3.0f;
-    float scrollDeceleration = 2.0f;
+    float scrollDeceleration = 10.0f;
     bool useSmoothScrolling = true;
-    bool zoomToCursor = false;
-    bool orbitAroundCursor = false;
+    bool zoomToCursor = true;
+    bool orbitAroundCursor = true;
     bool orbitFollowsCursor = false;
+    float mouseSmoothingFactor = 1.0f;
+    float mouseSensitivity = 0.17f;
 };
+
 
 ApplicationPreferences preferences;
 
@@ -672,7 +676,8 @@ void savePreferences() {
     j["camera"]["zoomToCursor"] = preferences.zoomToCursor;
     j["camera"]["orbitAroundCursor"] = preferences.orbitAroundCursor;
     j["camera"]["orbitFollowsCursor"] = preferences.orbitFollowsCursor;
-
+    j["camera"]["mouseSmoothingFactor"] = preferences.mouseSmoothingFactor;
+    j["camera"]["mouseSensitivity"] = preferences.mouseSensitivity; 
 
     // Cursor settings
     j["cursor"]["currentPreset"] = preferences.currentPresetName;
@@ -688,13 +693,86 @@ void savePreferences() {
     }
 }
 
+void applyPreferencesToProgram() {
+    // Apply UI preferences
+    isDarkTheme = preferences.isDarkTheme;
+    SetupImGuiStyle(isDarkTheme, 1.0f);
+    showFPS = preferences.showFPS;
+    show3DCursor = preferences.show3DCursor;
+
+    // Apply camera preferences
+    currentScene.settings.separation = preferences.separation;
+    currentScene.settings.convergence = preferences.convergence;
+    currentScene.settings.nearPlane = preferences.nearPlane;
+    currentScene.settings.farPlane = preferences.farPlane;
+    camera.useNewMethod = preferences.useNewStereoMethod;
+    camera.Zoom = preferences.fov;
+    camera.scrollMomentum = preferences.scrollMomentum;
+    camera.maxScrollVelocity = preferences.maxScrollVelocity;
+    camera.scrollDeceleration = preferences.scrollDeceleration;
+    camera.useSmoothScrolling = preferences.useSmoothScrolling;
+    camera.zoomToCursor = preferences.zoomToCursor;
+    camera.orbitAroundCursor = preferences.orbitAroundCursor;
+    camera.speedFactor = preferences.cameraSpeedFactor;
+    orbitFollowsCursor = preferences.orbitFollowsCursor;
+    mouseSmoothingFactor = preferences.mouseSmoothingFactor;
+    camera.MouseSensitivity = preferences.mouseSensitivity;
+
+    // Load cursor preset
+    currentPresetName = preferences.currentPresetName;
+    if (!currentPresetName.empty()) {
+        try {
+            Engine::CursorPreset loadedPreset = Engine::CursorPresetManager::applyCursorPreset(currentPresetName);
+            applyPresetToGlobalSettings(loadedPreset);
+        }
+        catch (const std::exception& e) {
+            std::cerr << "Error loading cursor preset: " << e.what() << std::endl;
+            // If preset doesn't exist, we might want to create it
+            if (currentPresetName == "Sphere" &&
+                Engine::CursorPresetManager::getPresetNames().empty()) {
+                // Create the Sphere preset if it doesn't exist
+                Engine::CursorPreset spherePreset;
+                spherePreset.name = "Sphere";
+                spherePreset.showSphereCursor = true;
+                spherePreset.showFragmentCursor = false;
+                spherePreset.fragmentBaseInnerRadius = 0.004f;
+                spherePreset.sphereScalingMode = static_cast<int>(CURSOR_CONSTRAINED_DYNAMIC);
+                spherePreset.sphereFixedRadius = 0.05f;
+                spherePreset.sphereTransparency = 0.7f;
+                spherePreset.showInnerSphere = false;
+                spherePreset.cursorColor = glm::vec4(1.0f, 0.0f, 0.0f, 0.7f);
+                spherePreset.innerSphereColor = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
+                spherePreset.innerSphereFactor = 0.1f;
+                spherePreset.cursorEdgeSoftness = 0.8f;
+                spherePreset.cursorCenterTransparency = 0.2f;
+                spherePreset.showPlaneCursor = false;
+                spherePreset.planeDiameter = 0.5f;
+                spherePreset.planeColor = glm::vec4(0.0f, 1.0f, 0.0f, 0.7f);
+
+                Engine::CursorPresetManager::savePreset("Sphere", spherePreset);
+                applyPresetToGlobalSettings(spherePreset);
+            }
+        }
+    }
+}
+
 void loadPreferences() {
     std::ifstream file("preferences.json");
-    if (!file.is_open()) {
+    bool fileExists = file.is_open();
+
+    // Initialize with default values first
+    preferences = ApplicationPreferences(); // This uses the default values from the struct
+
+    // Apply these defaults to the actual variables
+    applyPreferencesToProgram();
+
+    // If no file exists, we're done - defaults have been applied
+    if (!fileExists) {
         std::cout << "No preferences file found, using defaults" << std::endl;
         return;
     }
 
+    // If file exists, load values from it
     try {
         json j;
         file >> j;
@@ -713,61 +791,94 @@ void loadPreferences() {
             preferences.nearPlane = j["camera"].value("nearPlane", 0.1f);
             preferences.farPlane = j["camera"].value("farPlane", 200.0f);
             preferences.cameraSpeedFactor = j["camera"].value("speedFactor", 1.0f);
-            camera.useNewMethod = j["camera"].value("useNewStereoMethod", true);
-            preferences.useNewStereoMethod = camera.useNewMethod;
+            preferences.useNewStereoMethod = j["camera"].value("useNewStereoMethod", true);
             preferences.fov = j["camera"].value("fov", 45.0f);
-            camera.Zoom = preferences.fov;
             preferences.scrollMomentum = j["camera"].value("scrollMomentum", 0.5f);
             preferences.maxScrollVelocity = j["camera"].value("maxScrollVelocity", 3.0f);
-            preferences.scrollDeceleration = j["camera"].value("scrollDeceleration", 2.0f);
-            camera.scrollMomentum = preferences.scrollMomentum;
-            camera.maxScrollVelocity = preferences.maxScrollVelocity;
-            camera.scrollDeceleration = preferences.scrollDeceleration;
+            preferences.scrollDeceleration = j["camera"].value("scrollDeceleration", 10.0f);
             preferences.useSmoothScrolling = j["camera"].value("useSmoothScrolling", true);
-            camera.useSmoothScrolling = preferences.useSmoothScrolling;
-            preferences.zoomToCursor = j["camera"].value("zoomToCursor", false);
-            camera.zoomToCursor = preferences.zoomToCursor;
-            preferences.orbitAroundCursor = j["camera"].value("orbitAroundCursor", false);
+            preferences.zoomToCursor = j["camera"].value("zoomToCursor", true);
+            preferences.orbitAroundCursor = j["camera"].value("orbitAroundCursor", true);
             preferences.orbitFollowsCursor = j["camera"].value("orbitFollowsCursor", false);
-            camera.orbitAroundCursor = preferences.orbitAroundCursor;
-            orbitFollowsCursor = preferences.orbitFollowsCursor;
+            preferences.mouseSmoothingFactor = j["camera"].value("mouseSmoothingFactor", 1.0f);
+            preferences.mouseSensitivity = j["camera"].value("mouseSensitivity", 0.17f);
         }
 
         // Cursor settings
         if (j.contains("cursor")) {
-            preferences.currentPresetName = j["cursor"].value("currentPreset", "Default");
+            preferences.currentPresetName = j["cursor"].value("currentPreset", "Sphere");
         }
 
         // Apply loaded preferences
-        isDarkTheme = preferences.isDarkTheme;
-        SetupImGuiStyle(isDarkTheme, 1.0f);
-
-        showFPS = preferences.showFPS;
-        show3DCursor = preferences.show3DCursor;
-
-        currentScene.settings.separation = preferences.separation;
-        currentScene.settings.convergence = preferences.convergence;
-        currentScene.settings.nearPlane = preferences.nearPlane;
-        currentScene.settings.farPlane = preferences.farPlane;
-        camera.speedFactor = preferences.cameraSpeedFactor;
-
-        currentPresetName = preferences.currentPresetName;
-        if (!currentPresetName.empty()) {
-            try {
-                Engine::CursorPreset loadedPreset = Engine::CursorPresetManager::applyCursorPreset(currentPresetName);
-                applyPresetToGlobalSettings(loadedPreset);
-            }
-            catch (const std::exception& e) {
-                std::cerr << "Error loading cursor preset: " << e.what() << std::endl;
-            }
-        }
+        applyPreferencesToProgram();
     }
     catch (const std::exception& e) {
         std::cerr << "Error loading preferences: " << e.what() << std::endl;
+        // If an error occurs, we already applied defaults above
     }
 
     file.close();
 }
+
+void InitializeDefaults() {
+    // Set up default values
+    preferences = ApplicationPreferences();
+
+    // Initialize the camera with default values from preferences
+    camera.useNewMethod = preferences.useNewStereoMethod;
+    camera.Zoom = preferences.fov;
+    camera.scrollMomentum = preferences.scrollMomentum;
+    camera.maxScrollVelocity = preferences.maxScrollVelocity;
+    camera.scrollDeceleration = preferences.scrollDeceleration;
+    camera.useSmoothScrolling = preferences.useSmoothScrolling;
+    camera.zoomToCursor = preferences.zoomToCursor;
+    camera.orbitAroundCursor = preferences.orbitAroundCursor;
+    camera.speedFactor = preferences.cameraSpeedFactor;
+    camera.MouseSensitivity = preferences.mouseSensitivity;
+
+    // Set global variables
+    orbitFollowsCursor = preferences.orbitFollowsCursor;
+    mouseSmoothingFactor = preferences.mouseSmoothingFactor;
+    isDarkTheme = preferences.isDarkTheme;
+    showFPS = preferences.showFPS;
+    show3DCursor = preferences.show3DCursor;
+
+    // Apply to scene settings
+    currentScene.settings.separation = preferences.separation;
+    currentScene.settings.convergence = preferences.convergence;
+    currentScene.settings.nearPlane = preferences.nearPlane;
+    currentScene.settings.farPlane = preferences.farPlane;
+
+    // Set up default cursor preset if needed
+    if (Engine::CursorPresetManager::getPresetNames().empty()) {
+        // Create and save the default Sphere preset
+        Engine::CursorPreset spherePreset;
+        spherePreset.name = "Sphere";
+        spherePreset.showSphereCursor = true;
+        spherePreset.showFragmentCursor = false;
+        spherePreset.fragmentBaseInnerRadius = 0.004f;
+        spherePreset.sphereScalingMode = static_cast<int>(CURSOR_CONSTRAINED_DYNAMIC);
+        spherePreset.sphereFixedRadius = 0.05f;
+        spherePreset.sphereTransparency = 0.7f;
+        spherePreset.showInnerSphere = false;
+        spherePreset.cursorColor = glm::vec4(1.0f, 0.0f, 0.0f, 0.7f);
+        spherePreset.innerSphereColor = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
+        spherePreset.innerSphereFactor = 0.1f;
+        spherePreset.cursorEdgeSoftness = 0.8f;
+        spherePreset.cursorCenterTransparency = 0.2f;
+        spherePreset.showPlaneCursor = false;
+        spherePreset.planeDiameter = 0.5f;
+        spherePreset.planeColor = glm::vec4(0.0f, 1.0f, 0.0f, 0.7f);
+
+        Engine::CursorPresetManager::savePreset("Sphere", spherePreset);
+        currentPresetName = "Sphere";
+        applyPresetToGlobalSettings(spherePreset);
+    }
+
+    // Set ImGui style
+    SetupImGuiStyle(isDarkTheme, 1.0f);
+}
+
 
 void setupShadowMapping() {
     // Create multisampled depth map FBO
@@ -1004,8 +1115,6 @@ int main() {
     Window::nativeWindow = window;
 
 
-
-
     // ---- Initialize GLAD ----
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
         std::cout << "Failed to initialize GLAD" << std::endl;
@@ -1078,6 +1187,8 @@ int main() {
     ImGuiViewportP* viewport = (ImGuiViewportP*)(void*)ImGui::GetMainViewport();
     ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNavFocus;
     ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+
+    InitializeDefaults();
 
     loadPreferences();
 
@@ -1305,9 +1416,10 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     updateCursorPosition(window, projection, view, shader);
 
     // Set cursor uniforms after position update
-    shader->setVec4("cursorPos", camera.IsOrbiting && orbitFollowsCursor && showSphereCursor ?
-        glm::vec4(capturedCursorPos, g_cursorValid ? 1.0f : 0.0f) :
+    shader->setVec4("cursorPos", camera.IsOrbiting ?
+        glm::vec4(capturedCursorPos, true) : // Always valid during orbiting
         glm::vec4(g_cursorPos, g_cursorValid ? 1.0f : 0.0f));
+
     updateFragmentShaderUniforms(shader);
 
     // Render orbit center if needed
@@ -1317,8 +1429,10 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
 
     renderSkybox(projection, view, shader);
 
-    renderSphereCursor(projection, view);
-    renderPlaneCursor(projection, view);
+    if (camera.IsPanning == false) {
+        renderSphereCursor(projection, view);
+        renderPlaneCursor(projection, view);
+    }
 
     // 4. IMPORTANT: Voxel visualization AFTER main rendering
     // but don't update voxels again - we already did it at the beginning
@@ -1339,7 +1453,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
 }
 
 void renderSphereCursor(const glm::mat4& projection, const glm::mat4& view) {
-    if (g_cursorValid && showSphereCursor) {
+    if ((g_cursorValid || camera.IsOrbiting) && showSphereCursor) {
         // Enable blending and depth testing
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -1350,7 +1464,8 @@ void renderSphereCursor(const glm::mat4& projection, const glm::mat4& view) {
         sphereShader->setMat4("view", view);
         sphereShader->setVec3("viewPos", camera.Position);
 
-        glm::vec3 cursorRenderPos = camera.IsOrbiting && orbitFollowsCursor ? capturedCursorPos : g_cursorPos;
+        // Use captured position when orbiting
+        glm::vec3 cursorRenderPos = camera.IsOrbiting ? capturedCursorPos : g_cursorPos;
         float sphereRadius = calculateSphereRadius(cursorRenderPos, camera.Position);
         glm::mat4 model = glm::translate(glm::mat4(1.0f), cursorRenderPos);
         model = glm::scale(model, glm::vec3(sphereRadius));
@@ -1453,6 +1568,7 @@ void renderSettingsWindow() {
 
     if (ImGui::BeginTabBar("SettingsTabs")) {
 
+        /*
         if (ImGui::BeginTabItem("Voxelization")) {
             ImGui::Text("CURRENTLY DISABLED!!!");
             ImGui::Separator();
@@ -1485,7 +1601,7 @@ void renderSettingsWindow() {
             }
 
             ImGui::EndTabItem();
-        }
+        }*/
 
         // Camera Tab
         if (ImGui::BeginTabItem("Camera")) {
@@ -1552,15 +1668,24 @@ void renderSettingsWindow() {
         if (ImGui::BeginTabItem("Movement")) {
             ImGui::Text("Mouse Settings");
             ImGui::Separator();
-            ImGui::SliderFloat("Mouse Sensitivity", &camera.MouseSensitivity, 0.01f, 0.5f);
+            if (ImGui::SliderFloat("Mouse Sensitivity", &camera.MouseSensitivity, 0.01f, 0.5f)) {
+                preferences.mouseSensitivity = camera.MouseSensitivity;
+                settingsChanged = true;
+            }
             ImGui::SetItemTooltip("Adjusts how quickly the camera rotates in response to mouse movement");
+            
+            if (ImGui::SliderFloat("Mouse Smoothing", &mouseSmoothingFactor, 0.1f, 1.0f)) {
+                preferences.mouseSmoothingFactor = mouseSmoothingFactor;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Controls smoothness of mouse movement. Lower values = smoother, higher values = more responsive");
+
             if (ImGui::SliderFloat("Speed Multiplier", &camera.speedFactor, 0.1f, 5.0f)) {
                 preferences.cameraSpeedFactor = camera.speedFactor;
                 settingsChanged = true;
             }
             ImGui::SetItemTooltip("Multiplies base movement speed. Useful for navigating larger scenes");
 
-            // Add Zoom to Cursor option
             if (ImGui::Checkbox("Zoom to Cursor", &camera.zoomToCursor)) {
                 preferences.zoomToCursor = camera.zoomToCursor;
                 settingsChanged = true;
@@ -1607,7 +1732,11 @@ void renderSettingsWindow() {
             ImGui::Text("Orbiting Behavior");
             ImGui::Separator();
 
-            if (ImGui::RadioButton("Standard Orbit", !camera.orbitAroundCursor && !orbitFollowsCursor)) {
+            bool standardOrbit = !camera.orbitAroundCursor && !orbitFollowsCursor;
+            bool orbitAroundCursorOption = camera.orbitAroundCursor;
+            bool orbitFollowsCursorOption = orbitFollowsCursor;
+
+            if (ImGui::RadioButton("Standard Orbit", standardOrbit)) {
                 camera.orbitAroundCursor = false;
                 orbitFollowsCursor = false;
                 preferences.orbitAroundCursor = false;
@@ -1616,7 +1745,7 @@ void renderSettingsWindow() {
             }
             ImGui::SetItemTooltip("Orbits around the viewport center at cursor depth");
 
-            if (ImGui::RadioButton("Orbit Around Cursor", camera.orbitAroundCursor)) {
+            if (ImGui::RadioButton("Orbit Around Cursor", orbitAroundCursorOption)) {
                 camera.orbitAroundCursor = true;
                 orbitFollowsCursor = false;
                 preferences.orbitAroundCursor = true;
@@ -1625,7 +1754,7 @@ void renderSettingsWindow() {
             }
             ImGui::SetItemTooltip("Orbits around the 3D position of the cursor without centering the view");
 
-            if (ImGui::RadioButton("Orbit Follows Cursor (Center)", !camera.orbitAroundCursor && orbitFollowsCursor)) {
+            if (ImGui::RadioButton("Orbit Follows Cursor (Center)", orbitFollowsCursorOption)) {
                 camera.orbitAroundCursor = false;
                 orbitFollowsCursor = true;
                 preferences.orbitAroundCursor = false;
@@ -1762,7 +1891,6 @@ void renderMeshManipulationPanel(Model& model, int meshIndex, Shader* shader) {
     ImGui::Text("Mesh Manipulation: %s - Mesh %d", model.name.c_str(), meshIndex + 1);
     ImGui::Separator();
 
-    // Add visibility toggle for the mesh
     ImGui::Checkbox("Visible", &mesh.visible);
 
     // Material properties specific to this mesh
@@ -1994,27 +2122,35 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
             ImGui::MenuItem("Show Fragment Cursor", nullptr, &showFragmentCursor);
             ImGui::MenuItem("Show Plane Cursor", nullptr, &planeCursor.show);
             ImGui::Separator();
-            if (ImGui::RadioButton("Standard Orbit", !camera.orbitAroundCursor && !orbitFollowsCursor)) {
+
+            bool standardOrbit = !camera.orbitAroundCursor && !orbitFollowsCursor;
+            bool orbitAroundCursorOption = camera.orbitAroundCursor;
+            bool orbitFollowsCursorOption = orbitFollowsCursor;
+
+            if (ImGui::RadioButton("Standard Orbit", standardOrbit)) {
                 camera.orbitAroundCursor = false;
                 orbitFollowsCursor = false;
                 preferences.orbitAroundCursor = false;
                 preferences.orbitFollowsCursor = false;
+                savePreferences(); 
             }
             ImGui::SetItemTooltip("Orbits around the viewport center at cursor depth");
 
-            if (ImGui::RadioButton("Orbit Around Cursor", camera.orbitAroundCursor)) {
+            if (ImGui::RadioButton("Orbit Around Cursor", orbitAroundCursorOption)) {
                 camera.orbitAroundCursor = true;
                 orbitFollowsCursor = false;
                 preferences.orbitAroundCursor = true;
                 preferences.orbitFollowsCursor = false;
+                savePreferences(); 
             }
             ImGui::SetItemTooltip("Orbits around the 3D position of the cursor without centering the view");
 
-            if (ImGui::RadioButton("Orbit Follows Cursor (Center)", !camera.orbitAroundCursor && orbitFollowsCursor)) {
+            if (ImGui::RadioButton("Orbit Follows Cursor (Center)", orbitFollowsCursorOption)) {
                 camera.orbitAroundCursor = false;
                 orbitFollowsCursor = true;
                 preferences.orbitAroundCursor = false;
                 preferences.orbitFollowsCursor = true;
+                savePreferences();
             }
             ImGui::SetItemTooltip("Centers the view on cursor position before orbiting");
             ImGui::Separator();
@@ -2110,7 +2246,6 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                     ImGui::Columns(2, "MeshColumns", false);
                     ImGui::SetColumnWidth(0, 60);
 
-                    // Add visibility toggle for individual meshes
                     ImGui::PushID(static_cast<int>(meshIndex));
                     bool meshVisible = currentScene.models[i].getMeshes()[meshIndex].visible;
                     if (ImGui::Checkbox("##meshvisible", &meshVisible)) {
@@ -2382,7 +2517,6 @@ void renderCursorSettingsWindow() {
         }
         ImGui::SetItemTooltip("Centers the view on cursor position before orbiting");
 
-        // Add orbit center visualization options
         ImGui::Separator();
         ImGui::Checkbox("Show Orbit Center", &showOrbitCenter);
 
@@ -2438,10 +2572,10 @@ void renderCursorSettingsWindow() {
         ImGui::Checkbox("Show Fragment Shader Cursor", &showFragmentCursor);
 
         if (showFragmentCursor) {
-            ImGui::SliderFloat("Outer Radius", &fragmentCursorSettings.baseOuterRadius, 0.0f, 0.2f);
-            ImGui::SliderFloat("Outer Border Thickness", &fragmentCursorSettings.baseOuterBorderThickness, 0.01f, 0.05f);
-            ImGui::SliderFloat("Inner Radius", &fragmentCursorSettings.baseInnerRadius, 0.0f, 0.1f);
-            ImGui::SliderFloat("Inner Border Thickness", &fragmentCursorSettings.baseInnerBorderThickness, 0.01f, 0.05f);
+            ImGui::SliderFloat("Outer Radius", &fragmentCursorSettings.baseOuterRadius, 0.0f, 0.3f);
+            ImGui::SliderFloat("Outer Border Thickness", &fragmentCursorSettings.baseOuterBorderThickness, 0.0f, 0.08f);
+            ImGui::SliderFloat("Inner Radius", &fragmentCursorSettings.baseInnerRadius, 0.0f, 0.2f);
+            ImGui::SliderFloat("Inner Border Thickness", &fragmentCursorSettings.baseInnerBorderThickness, 0.0f, 0.08f);
             ImGui::ColorEdit4("Outer Color", glm::value_ptr(fragmentCursorSettings.outerColor));
             ImGui::ColorEdit4("Inner Color", glm::value_ptr(fragmentCursorSettings.innerColor));
         }
@@ -2451,7 +2585,7 @@ void renderCursorSettingsWindow() {
         ImGui::Checkbox("Show Plane Cursor", &planeCursor.show);
         if (planeCursor.show) {
             ImGui::ColorEdit4("Plane Color", glm::value_ptr(planeCursor.color));
-            ImGui::SliderFloat("Plane Diameter", &planeCursor.diameter, 0.1f, 5.0f);
+            ImGui::SliderFloat("Plane Diameter", &planeCursor.diameter, 0.f, 5.0f);
         }
     }
 
@@ -2883,6 +3017,12 @@ PointCloud loadPointCloudFile(const std::string& filePath, size_t downsampleFact
 // ---- Cursor and Ray Casting ----
 #pragma region Cursor and Ray Casting
 void updateCursorPosition(GLFWwindow* window, const glm::mat4& projection, const glm::mat4& view, Shader* shader) {
+
+    if (ImGui::GetIO().WantCaptureMouse) {
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        return;
+    }
+
     // Only update cursor position during left eye rendering
     static bool isLeftEye = true;
     if (!isLeftEye) {
@@ -2890,6 +3030,18 @@ void updateCursorPosition(GLFWwindow* window, const glm::mat4& projection, const
         return;
     }
     isLeftEye = false;
+
+    // During orbiting, maintain cursor at the captured position
+    if (camera.IsOrbiting) {
+        g_cursorValid = true;
+        g_cursorPos = capturedCursorPos;
+        return;
+    }
+
+    // Only update if not animating
+    if (camera.IsAnimating) {
+        return;
+    }
 
     // Read depth at cursor position
     float depth = 0.0;
@@ -2902,28 +3054,20 @@ void updateCursorPosition(GLFWwindow* window, const glm::mat4& projection, const
     auto worldPos = worldPosH / worldPosH.w;
     auto isHit = depth != 1.0;
 
-    static bool wasHit = false; // Keep track of previous hit state
 
-    if (!((camera.IsOrbiting && orbitFollowsCursor) || camera.IsAnimating)) {
-        if (isHit && (showSphereCursor || showFragmentCursor || planeCursor.show)) {
-            g_cursorValid = true;
-            g_cursorPos = glm::vec3(worldPos);
+    if (isHit && (showSphereCursor || showFragmentCursor || planeCursor.show)) {
+        g_cursorValid = true;
+        g_cursorPos = glm::vec3(worldPos);
+        if (camera.IsPanning || rightMousePressed) return;
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
 
-            if (!wasHit) {
-                // Cursor just entered an object
-                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
-            }
-            wasHit = true;
-        }
-        else {
-            g_cursorValid = false;
+    }
+    else {
+        g_cursorValid = false;
 
-            if (wasHit) {
-                // Cursor just left an object
-                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-            }
-            wasHit = false;
-        }
+        if (camera.IsPanning || rightMousePressed) return;
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+
     }
 }
 
@@ -3053,6 +3197,9 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
     }
 }
 
+bool firstMouse = true;
+
+
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
     if (ImGui::GetIO().WantCaptureMouse) {
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
@@ -3098,10 +3245,7 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                 if (closestModelIndex != -1) {
                     currentSelectedType = SelectedType::Model;
                     currentSelectedIndex = closestModelIndex;
-
-
                     currentSelectedMeshIndex = -1;
-
 
                     if (ctrlPressed) {
                         selectionMode = true;
@@ -3135,13 +3279,17 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                     if (camera.orbitAroundCursor) {
                         camera.UpdateCursorInfo(g_cursorPos, g_cursorValid);
                         camera.StartOrbiting(true); // Pass true to use current cursor position
-                        //isMouseCaptured = true;
                         capturedCursorPos = g_cursorPos;
+                        // Enable mouse capture when orbiting starts
+                        isMouseCaptured = true;
+                        firstMouse = true; // Reset the first mouse flag
+                        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                        // Center cursor
+                        glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
                     }
                     else if (orbitFollowsCursor && showSphereCursor) {
                         camera.StartCenteringAnimation(g_cursorPos);
                         capturedCursorPos = g_cursorPos;
-                        //isMouseCaptured = true;
                     }
                     else {
                         float cursorDepth = glm::length(g_cursorPos - camera.Position);
@@ -3150,78 +3298,175 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                         camera.SetOrbitPointDirectly(capturedCursorPos);
                         camera.OrbitDistance = cursorDepth;
                         camera.StartOrbiting();
+                        // Enable mouse capture when orbiting starts
+                        isMouseCaptured = true;
+                        firstMouse = true; // Reset the first mouse flag
+                        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                        // Center cursor
+                        glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
                     }
                 }
                 else {
                     capturedCursorPos = camera.Position + camera.Front * camera.OrbitDistance;
                     camera.SetOrbitPointDirectly(capturedCursorPos);
                     camera.StartOrbiting();
+                    // Enable mouse capture when orbiting starts
+                    isMouseCaptured = true;
+                    firstMouse = true; // Reset the first mouse flag
+                    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                    // Center cursor
+                    glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
                 }
             }
         }
         else if (action == GLFW_RELEASE) {
-            if (orbitFollowsCursor && showSphereCursor && camera.IsOrbiting) {
+            if (isMouseCaptured) {
+                // Disable mouse capture when orbiting ends
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
                 isMouseCaptured = false;
-                glfwSetCursorPos(window, windowWidth / 2, windowHeight / 2);
+                firstMouse = true; // Reset first mouse flag for next time
             }
-            if (camera.orbitAroundCursor) {
-                glfwSetCursorPos(window, lastX, lastY);
-                isMouseCaptured = false;
+
+            if (camera.orbitAroundCursor == false) {
+                glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
             }
+
             leftMousePressed = false;
             camera.StopOrbiting();
             isMovingModel = false;
             selectionMode = false;
+    
         }
     }
     else if (button == GLFW_MOUSE_BUTTON_MIDDLE) {
         if (action == GLFW_PRESS) {
             middleMousePressed = true;
             camera.StartPanning();
+            // Enable mouse capture for middle button panning
+            isMouseCaptured = true;
+            firstMouse = true; // Reset the first mouse flag
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+            // Center cursor
+            glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
         }
         else if (action == GLFW_RELEASE) {
             middleMousePressed = false;
             camera.StopPanning();
+            // Disable mouse capture
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+            isMouseCaptured = false;
+            firstMouse = true; // Reset first mouse flag for next time
         }
     }
     else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
         if (action == GLFW_PRESS) {
             rightMousePressed = true;
+            // Enable mouse capture for right button rotation
+            isMouseCaptured = true;
+            firstMouse = true; // Reset the first mouse flag
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+
+            // Center cursor
+            glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
         }
         else if (action == GLFW_RELEASE) {
             rightMousePressed = false;
+            // Disable mouse capture
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+            isMouseCaptured = false;
+            firstMouse = true; // Reset first mouse flag for next time
         }
     }
 }
 
 void mouse_callback(GLFWwindow* window, double xposIn, double yposIn) {
+    // Skip if ImGui is capturing mouse
     if (ImGui::GetIO().WantCaptureMouse) {
-        // Mouse is over ImGui UI, ensure Windows cursor is visible
-        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        firstMouse = true;
         return;
     }
+
     float xpos = static_cast<float>(xposIn);
     float ypos = static_cast<float>(yposIn);
 
+    // When mouse is captured for orbit, panning, or rotation
     if (isMouseCaptured) {
-        // Calculate offset from center of window
-        float xoffset = xpos - (windowWidth / 2);
-        float yoffset = (windowHeight / 2) - ypos;  // Reversed since y-coordinates go from bottom to top
+        if (firstMouse) {
+            lastX = xpos;
+            lastY = ypos;
+            firstMouse = false;
+            return;
+        }
 
-        // Reset cursor to center of window
-        glfwSetCursorPos(window, windowWidth / 2, windowHeight / 2);
+        // Calculate deltas directly - no center position involved
+        float xoffset = xpos - lastX;
+        float yoffset = lastY - ypos; // Reversed since y-coordinates range from bottom to top
 
-        // Use these offsets for camera movement
-        if (camera.IsOrbiting && !camera.IsAnimating) {
+        // Update last positions for next frame
+        lastX = xpos;
+        lastY = ypos;
+
+        // Only reset cursor position if it's near the edge of the window
+        // This prevents constant recentering which can cause jumpiness
+        const float edgeBuffer = 50.0f; // Distance from edge to trigger reset
+        bool needsReset = xpos < edgeBuffer || xpos > windowWidth - edgeBuffer ||
+            ypos < edgeBuffer || ypos > windowHeight - edgeBuffer;
+
+        if (needsReset) {
+            // Only reset when necessary - place cursor in middle
+            lastX = windowWidth / 2.0f;
+            lastY = windowHeight / 2.0f;
+            glfwSetCursorPos(window, lastX, lastY);
+        }
+
+        // Apply smoothing
+        xoffset *= mouseSmoothingFactor;
+        yoffset *= mouseSmoothingFactor;
+
+        // Apply sensitivity scaling
+        xoffset *= camera.MouseSensitivity;
+        yoffset *= camera.MouseSensitivity;
+
+        // Clamp to prevent extreme movements
+        const float maxMovement = 5.0f;
+        xoffset = glm::clamp(xoffset, -maxMovement, maxMovement);
+        yoffset = glm::clamp(yoffset, -maxMovement, maxMovement);
+
+        // Apply movement based on mode
+        if (isMovingModel && currentSelectedType == SelectedType::Model && currentSelectedIndex != -1) {
+            // Move selected model
+            float distanceToModel = glm::distance(camera.Position, currentScene.models[currentSelectedIndex].position);
+            float normalizedXOffset = xoffset / static_cast<float>(windowWidth);
+            float normalizedYOffset = yoffset / static_cast<float>(windowHeight);
+            float baseSensitivity = 0.7f;
+            float sensitivityFactor = (baseSensitivity * distanceToModel);
+            normalizedXOffset *= aspectRatio;
+
+            glm::vec3 right = glm::normalize(glm::cross(camera.Front, camera.Up));
+            glm::vec3 up = glm::normalize(glm::cross(right, camera.Front));
+
+            currentScene.models[currentSelectedIndex].position += right * normalizedXOffset * sensitivityFactor;
+            currentScene.models[currentSelectedIndex].position += up * normalizedYOffset * sensitivityFactor;
+        }
+        else if (camera.IsOrbiting && !camera.IsAnimating) {
+            // When orbiting, pass deltas directly to camera
             camera.ProcessMouseMovement(xoffset, yoffset);
-            glm::vec3 directionToCamera = glm::normalize(camera.Position - camera.OrbitPoint);
-            camera.Position = camera.OrbitPoint + directionToCamera * camera.OrbitDistance;
+        }
+        else if ((leftMousePressed || rightMousePressed || middleMousePressed) && !camera.IsAnimating) {
+            camera.ProcessMouseMovement(xoffset, yoffset);
         }
     }
     else {
-        float xoffset = (xpos - lastX);
-        float yoffset = (lastY - ypos);
+        // For non-captured mouse behavior (fallback)
+        if (firstMouse) {
+            lastX = xpos;
+            lastY = ypos;
+            firstMouse = false;
+            return;
+        }
+
+        float xoffset = xpos - lastX;
+        float yoffset = lastY - ypos;
 
         lastX = xpos;
         lastY = ypos;
@@ -3231,7 +3476,7 @@ void mouse_callback(GLFWwindow* window, double xposIn, double yposIn) {
             float distanceToModel = glm::distance(camera.Position, currentScene.models[currentSelectedIndex].position);
             float normalizedXOffset = xoffset / static_cast<float>(windowWidth);
             float normalizedYOffset = yoffset / static_cast<float>(windowHeight);
-            float baseSensitivity = 0.66f;
+            float baseSensitivity = 0.7f;
             float sensitivityFactor = (baseSensitivity * distanceToModel);
             normalizedXOffset *= aspectRatio;
 
@@ -3262,7 +3507,6 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
         std::cout << "GUI visibility toggled. showGui = " << (showGui ? "true" : "false") << std::endl;
     }
 
-    // Add voxelizer state control
     if (key == GLFW_KEY_PAGE_UP && action == GLFW_PRESS)
     {
         voxelizer->increaseState();
