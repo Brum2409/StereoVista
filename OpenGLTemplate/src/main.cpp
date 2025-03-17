@@ -57,6 +57,8 @@ void updatePointLights();
 
 PointCloud loadPointCloudFile(const std::string& filePath, size_t downsampleFactor = 1);
 
+void createDefaultCubemap();
+void initSkybox();
 
 // ---- Utility Functions ----
 float calculateLargestModelDimension();
@@ -124,6 +126,23 @@ int currentSelectedMeshIndex;
 // Replace current selection globals with
 SelectionState currentSelection;
 
+
+enum SkyboxType {
+    SKYBOX_CUBEMAP,     // Standard cubemap texture
+    SKYBOX_SOLID_COLOR, // Solid color
+    SKYBOX_GRADIENT     // Gradient color
+};
+
+struct SkyboxConfig {
+    SkyboxType type = SKYBOX_CUBEMAP;
+    glm::vec3 solidColor = glm::vec3(0.2f, 0.3f, 0.4f);
+    glm::vec3 gradientTopColor = glm::vec3(0.1f, 0.1f, 0.3f);
+    glm::vec3 gradientBottomColor = glm::vec3(0.7f, 0.7f, 1.0f);
+    int selectedCubemap = 0;  // Index of the selected predefined cubemap
+};
+
+SkyboxConfig skyboxConfig;
+
 // ---- Preferences Structure ----
 struct ApplicationPreferences {
     bool isDarkTheme = true;
@@ -146,6 +165,12 @@ struct ApplicationPreferences {
     bool orbitFollowsCursor = false;
     float mouseSmoothingFactor = 1.0f;
     float mouseSensitivity = 0.17f;
+
+    int skyboxType = SKYBOX_CUBEMAP;
+    glm::vec3 skyboxSolidColor = glm::vec3(0.2f, 0.3f, 0.4f);
+    glm::vec3 skyboxGradientTop = glm::vec3(0.1f, 0.1f, 0.3f);
+    glm::vec3 skyboxGradientBottom = glm::vec3(0.7f, 0.7f, 1.0f);
+    int selectedCubemap = 0;
 };
 
 
@@ -198,6 +223,21 @@ const unsigned int SHADOW_WIDTH = 4096, SHADOW_HEIGHT = 4096;
 Shader* simpleDepthShader = nullptr;
 
 
+
+// Predefined cubemap paths
+struct CubemapPreset {
+    std::string name;
+    std::string path;
+    std::string description;
+};
+
+std::vector<CubemapPreset> cubemapPresets = {
+    {"Default", "skybox/Default/", "Default skybox environment"},
+    {"Yokohama", "skybox/Yokohama/", "Yokohama, Japan. View towards Intercontinental Yokohama Grand hotel."},
+    {"Storforsen", "skybox/Storforsen/", "At the top of Storforsen. Taken with long exposure, resulting in smooth looking water flow."},
+    {"Yokohama Night", "skybox/YokohamaNight/", "Yokohama at night."},
+    {"Lycksele", "skybox/Lycksele/", "Lycksele. View of Ansia Camping, Lycksele."}
+};
 
 // ---- Sphere Cursor ----
 GLuint sphereVAO, sphereVBO, sphereEBO;
@@ -387,8 +427,272 @@ void setupSkyboxVAO(GLuint& skyboxVAO, GLuint& skyboxVBO) {
 
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+
+    std::vector<std::string> skyboxDirs = {
+    "skybox",
+    "skybox/Default",
+    "skybox/Yokohama",
+    "skybox/Storforsen",
+    "skybox/YokohamaNight",
+    "skybox/Lycksele"
+    };
+
+    for (const auto& dir : skyboxDirs) {
+        if (!std::filesystem::exists(dir)) {
+            std::filesystem::create_directory(dir);
+            std::cout << "Created directory: " << dir << std::endl;
+        }
+    }
 }
 
+void createSolidColorSkybox(const glm::vec3& color) {
+    glGenTextures(1, &cubemapTexture);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
+
+    // Create a 1x1 texture for each face with the specified color
+    GLubyte texData[] = {
+        static_cast<GLubyte>(color.r * 255),
+        static_cast<GLubyte>(color.g * 255),
+        static_cast<GLubyte>(color.b * 255),
+        255  // Alpha (fully opaque)
+    };
+
+    for (int i = 0; i < 6; i++) {
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGBA, 1, 1, 0,
+            GL_RGBA, GL_UNSIGNED_BYTE, texData);
+    }
+
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+
+}
+
+// Create a gradient skybox
+void createGradientSkybox(const glm::vec3& topColor, const glm::vec3& bottomColor) {
+    glGenTextures(1, &cubemapTexture);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
+
+    // Create a simple gradient for each face
+    const int size = 128;
+    std::vector<GLubyte> faceData(size * size * 3);
+
+    for (int face = 0; face < 6; face++) {
+        // Clear the face data buffer
+        std::fill(faceData.begin(), faceData.end(), 0);
+
+        // Determine which face we're working with
+        // 0: right, 1: left, 2: top, 3: bottom, 4: front, 5: back
+
+        if (face == 3) {
+            // Top face - solid top color
+            glm::vec3 color = topColor;
+            for (int y = 0; y < size; y++) {
+                for (int x = 0; x < size; x++) {
+                    int idx = (y * size + x) * 3;
+                    faceData[idx] = static_cast<GLubyte>(color.r * 255);
+                    faceData[idx + 1] = static_cast<GLubyte>(color.g * 255);
+                    faceData[idx + 2] = static_cast<GLubyte>(color.b * 255);
+                }
+            }
+        }
+        else if (face == 2) {
+            // Bottom face - solid bottom color
+            glm::vec3 color = bottomColor;
+            for (int y = 0; y < size; y++) {
+                for (int x = 0; x < size; x++) {
+                    int idx = (y * size + x) * 3;
+                    faceData[idx] = static_cast<GLubyte>(color.r * 255);
+                    faceData[idx + 1] = static_cast<GLubyte>(color.g * 255);
+                    faceData[idx + 2] = static_cast<GLubyte>(color.b * 255);
+                }
+            }
+        }
+        else {
+            // Side faces - create a vertical gradient
+            for (int y = 0; y < size; y++) {
+                // Calculate gradient factor (0 at bottom, 1 at top)
+                float factor = static_cast<float>(y) / (size - 1);
+
+                // Interpolate between bottom and top colors
+                glm::vec3 color = bottomColor * (1.0f - factor) + topColor * factor;
+
+                for (int x = 0; x < size; x++) {
+                    int idx = (y * size + x) * 3;
+                    faceData[idx] = static_cast<GLubyte>(color.r * 255);
+                    faceData[idx + 1] = static_cast<GLubyte>(color.g * 255);
+                    faceData[idx + 2] = static_cast<GLubyte>(color.b * 255);
+                }
+            }
+        }
+
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, GL_RGB,
+            size, size, 0, GL_RGB, GL_UNSIGNED_BYTE, faceData.data());
+    }
+
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+
+}
+
+// Load a specific cubemap from path
+bool loadSkyboxFromPath(const std::string& basePath) {
+    // If basePath is empty, use default loading logic
+    if (basePath.empty()) {
+        return loadSkyboxFromPath("skybox/Default/");
+    }
+
+    // Different naming conventions to try
+    struct NamingConvention {
+        std::vector<std::string> faceNames;
+        std::string description;
+    };
+
+    std::vector<NamingConvention> conventions = {
+        // Standard naming (right, left, top, etc.)
+        {
+            {"right.jpg", "left.jpg", "top.jpg", "bottom.jpg", "front.jpg", "back.jpg"},
+            "Standard naming"
+        },
+        // Directional naming (posx, negx, etc.)
+        {
+            {"posx.jpg", "negx.jpg", "posy.jpg", "negy.jpg", "posz.jpg", "negz.jpg"},
+            "Directional naming"
+        },
+        // Alternative naming
+        {
+            {"east.jpg", "west.jpg", "up.jpg", "down.jpg", "north.jpg", "south.jpg"},
+            "Cardinal directions"
+        }
+    };
+
+    // Try different file extensions
+    std::vector<std::string> extensions = { ".jpg", ".png", ".tga", ".bmp" };
+
+    // Check if directory exists
+    std::string fullPath = basePath;
+    if (fullPath.back() != '/' && fullPath.back() != '\\') {
+        fullPath += '/';
+    }
+
+    for (const auto& convention : conventions) {
+        for (const auto& ext : extensions) {
+            std::vector<std::string> faces;
+            bool allFilesExist = true;
+
+            // Build list of faces with current convention and extension
+            for (int i = 0; i < 6; ++i) {
+                std::string filename = convention.faceNames[i];
+
+                // Replace extension if needed
+                if (filename.size() > 4) {
+                    std::string currentExt = filename.substr(filename.size() - 4);
+                    if (currentExt == ".jpg" || currentExt == ".png" || currentExt == ".tga" || currentExt == ".bmp") {
+                        filename = filename.substr(0, filename.size() - 4) + ext;
+                    }
+                    else {
+                        filename += ext;
+                    }
+                }
+                else {
+                    filename += ext;
+                }
+
+                std::string facePath = fullPath + filename;
+                faces.push_back(facePath);
+
+                // Check if file exists
+                std::ifstream f(facePath.c_str());
+                if (!f.good()) {
+                    allFilesExist = false;
+                    break;
+                }
+            }
+
+            if (allFilesExist) {
+                try {
+                    cubemapTexture = loadCubemap(faces);
+                    std::cout << "Skybox textures loaded from: " << fullPath
+                        << " using " << convention.description << std::endl;
+                    return true;
+                }
+                catch (const std::exception& e) {
+                    std::cerr << "Failed to load skybox textures from " << fullPath
+                        << ": " << e.what() << std::endl;
+                }
+            }
+        }
+    }
+
+    std::cerr << "Could not find a complete set of skybox textures in " << fullPath << std::endl;
+    return false;
+}
+
+void cleanupSkybox() {
+    glDeleteVertexArrays(1, &skyboxVAO);
+    glDeleteBuffers(1, &skyboxVBO);
+    glDeleteTextures(1, &cubemapTexture);
+
+    // Set cubemapTexture to 0 after deletion
+    cubemapTexture = 0;
+
+    // Only delete shader if it exists, then set to nullptr
+    if (skyboxShader) {
+        delete skyboxShader;
+        skyboxShader = nullptr;
+    }
+}
+
+void updateSkybox() {
+    // Clean up existing skybox resources, including shader
+    cleanupSkybox();
+
+    // Setup skybox VAO again
+    setupSkyboxVAO(skyboxVAO, skyboxVBO);
+
+    // Create/load skybox based on the current type
+    switch (skyboxConfig.type) {
+    case SKYBOX_SOLID_COLOR:
+        createSolidColorSkybox(skyboxConfig.solidColor);
+        break;
+
+    case SKYBOX_GRADIENT:
+        createGradientSkybox(skyboxConfig.gradientBottomColor, skyboxConfig.gradientTopColor);
+        break;
+
+    case SKYBOX_CUBEMAP:
+    default:
+        // Try to load the selected cubemap
+        if (skyboxConfig.selectedCubemap >= 0 &&
+            skyboxConfig.selectedCubemap < cubemapPresets.size()) {
+
+            if (!loadSkyboxFromPath(cubemapPresets[skyboxConfig.selectedCubemap].path)) {
+                // Fallback to default cubemap
+                createDefaultCubemap();
+            }
+        }
+        else {
+            // Fallback to default cubemap
+            createDefaultCubemap();
+        }
+        break;
+    }
+
+    // Always (re)create the skybox shader
+    try {
+        skyboxShader = Engine::loadShader("skyboxVertexShader.glsl",
+            "skyboxFragmentShader.glsl");
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error loading skybox shaders: " << e.what() << std::endl;
+        skyboxShader = nullptr;  // Ensure shader is nullptr if loading fails
+    }
+}
 
 void setupPlaneCursor() {
     // Create a circular plane using triangles
@@ -521,8 +825,6 @@ void createDefaultCubemap() {
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-
-    std::cout << "Created default colored cubemap as fallback" << std::endl;
 }
 
 void initSkybox() {
@@ -595,8 +897,16 @@ void initSkybox() {
 }
 
 void renderSkybox(const glm::mat4& projection, const glm::mat4& view, Shader* mainShader) {
-    if (!skyboxShader || !cubemapTexture) {
-        return; // Don't render if resources aren't properly initialized
+    // More robust check to ensure both shader and texture are valid
+    if (!skyboxShader || !cubemapTexture || cubemapTexture == 0) {
+        // Don't render if resources aren't properly initialized
+        if (mainShader) {
+            // Still set up skybox texture for the main shader, using a default value
+            mainShader->use();
+            mainShader->setInt("skybox", 6);
+            mainShader->setFloat("skyboxIntensity", ambientStrengthFromSkybox);
+        }
+        return;
     }
 
     // Save current OpenGL state
@@ -645,12 +955,7 @@ void bindSkyboxUniforms(Shader* shader) {
 }
 
 
-void cleanupSkybox() {
-    glDeleteVertexArrays(1, &skyboxVAO);
-    glDeleteBuffers(1, &skyboxVBO);
-    glDeleteTextures(1, &cubemapTexture);
-    delete skyboxShader;
-}
+
 
 
 void savePreferences() {
@@ -681,6 +986,31 @@ void savePreferences() {
 
     // Cursor settings
     j["cursor"]["currentPreset"] = preferences.currentPresetName;
+
+    j["skybox"]["type"] = skyboxConfig.type;
+    j["skybox"]["solidColor"] = {
+        skyboxConfig.solidColor.r,
+        skyboxConfig.solidColor.g,
+        skyboxConfig.solidColor.b
+    };
+    j["skybox"]["gradientTop"] = {
+        skyboxConfig.gradientTopColor.r,
+        skyboxConfig.gradientTopColor.g,
+        skyboxConfig.gradientTopColor.b
+    };
+    j["skybox"]["gradientBottom"] = {
+        skyboxConfig.gradientBottomColor.r,
+        skyboxConfig.gradientBottomColor.g,
+        skyboxConfig.gradientBottomColor.b
+    };
+    j["skybox"]["selectedCubemap"] = skyboxConfig.selectedCubemap;
+
+    // Update preferences struct
+    preferences.skyboxType = skyboxConfig.type;
+    preferences.skyboxSolidColor = skyboxConfig.solidColor;
+    preferences.skyboxGradientTop = skyboxConfig.gradientTopColor;
+    preferences.skyboxGradientBottom = skyboxConfig.gradientBottomColor;
+    preferences.selectedCubemap = skyboxConfig.selectedCubemap;
 
     // Save to file
     std::ofstream file("preferences.json");
@@ -717,6 +1047,14 @@ void applyPreferencesToProgram() {
     orbitFollowsCursor = preferences.orbitFollowsCursor;
     mouseSmoothingFactor = preferences.mouseSmoothingFactor;
     camera.MouseSensitivity = preferences.mouseSensitivity;
+
+    skyboxConfig.type = static_cast<SkyboxType>(preferences.skyboxType);
+    skyboxConfig.solidColor = preferences.skyboxSolidColor;
+    skyboxConfig.gradientTopColor = preferences.skyboxGradientTop;
+    skyboxConfig.gradientBottomColor = preferences.skyboxGradientBottom;
+    skyboxConfig.selectedCubemap = preferences.selectedCubemap;
+
+    updateSkybox();
 
     // Load cursor preset
     currentPresetName = preferences.currentPresetName;
@@ -804,6 +1142,39 @@ void loadPreferences() {
             preferences.mouseSensitivity = j["camera"].value("mouseSensitivity", 0.17f);
         }
 
+        if (j.contains("skybox")) {
+            preferences.skyboxType = j["skybox"].value("type", SKYBOX_CUBEMAP);
+
+            if (j["skybox"].contains("solidColor")) {
+                auto& color = j["skybox"]["solidColor"];
+                preferences.skyboxSolidColor = glm::vec3(
+                    color[0].get<float>(),
+                    color[1].get<float>(),
+                    color[2].get<float>()
+                );
+            }
+
+            if (j["skybox"].contains("gradientTop")) {
+                auto& color = j["skybox"]["gradientTop"];
+                preferences.skyboxGradientTop = glm::vec3(
+                    color[0].get<float>(),
+                    color[1].get<float>(),
+                    color[2].get<float>()
+                );
+            }
+
+            if (j["skybox"].contains("gradientBottom")) {
+                auto& color = j["skybox"]["gradientBottom"];
+                preferences.skyboxGradientBottom = glm::vec3(
+                    color[0].get<float>(),
+                    color[1].get<float>(),
+                    color[2].get<float>()
+                );
+            }
+
+            preferences.selectedCubemap = j["skybox"].value("selectedCubemap", 0);
+        }
+
         // Cursor settings
         if (j.contains("cursor")) {
             preferences.currentPresetName = j["cursor"].value("currentPreset", "Sphere");
@@ -869,6 +1240,23 @@ void InitializeDefaults() {
         spherePreset.showPlaneCursor = false;
         spherePreset.planeDiameter = 0.5f;
         spherePreset.planeColor = glm::vec4(0.0f, 1.0f, 0.0f, 0.7f);
+
+        skyboxConfig.type = SKYBOX_CUBEMAP;
+        skyboxConfig.solidColor = glm::vec3(0.2f, 0.3f, 0.4f);
+        skyboxConfig.gradientTopColor = glm::vec3(0.1f, 0.1f, 0.3f);
+        skyboxConfig.gradientBottomColor = glm::vec3(0.7f, 0.7f, 1.0f);
+        skyboxConfig.selectedCubemap = 0;
+
+        // default cubemap presets with descriptions
+        if (cubemapPresets.empty()) {
+            cubemapPresets = {
+                {"Default", "skybox/Default/", "Default skybox environment"},
+                {"Yokohama", "skybox/Yokohama/", "Yokohama, Japan. View towards Intercontinental Yokohama Grand hotel."},
+                {"Storforsen", "skybox/Storforsen/", "At the top of Storforsen. Taken with long exposure, resulting in smooth looking water flow."},
+                {"Yokohama Night", "skybox/YokohamaNight/", "Yokohama at night."},
+                {"Lycksele", "skybox/Lycksele/", "Lycksele. View of Ansia Camping, Lycksele."}
+            };
+        }
 
         Engine::CursorPresetManager::savePreset("Sphere", spherePreset);
         currentPresetName = "Sphere";
@@ -1169,10 +1557,11 @@ int main() {
     }
     currentPresetName = Engine::CursorPresetManager::getPresetNames().front();
 
+
     setupShadowMapping();
     setupSphereCursor();
     setupPlaneCursor();
-    initSkybox();
+    setupSkyboxVAO(skyboxVAO, skyboxVBO);
 
     // ---- Calculate Largest Model Dimension ----
     float largestDimension = calculateLargestModelDimension();
@@ -1767,25 +2156,118 @@ void renderSettingsWindow() {
 
         // Environment Tab
         if (ImGui::BeginTabItem("Environment")) {
+            bool settingsChanged = false;
             ImGui::Text("Skybox Settings");
             ImGui::Separator();
-            ImGui::SliderFloat("Ambient Strength", &ambientStrengthFromSkybox, 0.0f, 1.0f);
+
+            // Skybox type dropdown
+            const char* skyboxTypes[] = { "Cubemap Texture", "Solid Color", "Gradient" };
+            int currentType = static_cast<int>(skyboxConfig.type);
+            if (ImGui::Combo("Skybox Type", &currentType, skyboxTypes, IM_ARRAYSIZE(skyboxTypes))) {
+                skyboxConfig.type = static_cast<SkyboxType>(currentType);
+                updateSkybox();
+
+                // Save the preferences
+                preferences.skyboxType = skyboxConfig.type;
+                savePreferences();
+            }
+            ImGui::SetItemTooltip("Change the type of skybox used in the scene");
+
+            // Type-specific controls
+            if (skyboxConfig.type == SKYBOX_CUBEMAP) {
+                // Create a vector of preset names for the combo box
+                std::vector<const char*> presetNames;
+                for (const auto& preset : cubemapPresets) {
+                    presetNames.push_back(preset.name.c_str());
+                }
+
+                if (ImGui::Combo("Cubemap Theme", &skyboxConfig.selectedCubemap,
+                    presetNames.data(), static_cast<int>(presetNames.size()))) {
+                    updateSkybox();
+
+                    // Save the preferences
+                    preferences.selectedCubemap = skyboxConfig.selectedCubemap;
+                    savePreferences();
+                }
+
+                // Display description as tooltip
+                if (skyboxConfig.selectedCubemap >= 0 && skyboxConfig.selectedCubemap < cubemapPresets.size()) {
+                    ImGui::SetItemTooltip("%s", cubemapPresets[skyboxConfig.selectedCubemap].description.c_str());
+                }
+
+                if (ImGui::Button("Browse Custom Skybox")) {
+                    auto selection = pfd::select_folder("Select skybox directory").result();
+                    if (!selection.empty()) {
+                        std::string path = selection + "/";
+
+                        // Create a name from the directory name
+                        std::string dirName = std::filesystem::path(selection).filename().string();
+                        std::string name = "Custom: " + dirName;
+
+                        // Add to presets
+                        cubemapPresets.push_back({ name, path, "Custom skybox from: " + path });
+                        skyboxConfig.selectedCubemap = static_cast<int>(cubemapPresets.size()) - 1;
+                        updateSkybox();
+
+                        // Save the preferences (including new cubemap preset in preferences.json)
+                        preferences.selectedCubemap = skyboxConfig.selectedCubemap;
+                        savePreferences();
+                    }
+                }
+                ImGui::SetItemTooltip("Select a directory containing skybox textures (right.jpg, left.jpg, etc. OR posx.jpg, negx.jpg, etc.)");
+            }
+            else if (skyboxConfig.type == SKYBOX_SOLID_COLOR) {
+                if (ImGui::ColorEdit3("Skybox Color", glm::value_ptr(skyboxConfig.solidColor))) {
+                    updateSkybox();
+
+                    // Save the preferences
+                    preferences.skyboxSolidColor = skyboxConfig.solidColor;
+                    savePreferences();
+                }
+                ImGui::SetItemTooltip("Set a single color for the entire skybox");
+            }
+            else if (skyboxConfig.type == SKYBOX_GRADIENT) {
+                bool colorChanged = false;
+                colorChanged |= ImGui::ColorEdit3("Top Color", glm::value_ptr(skyboxConfig.gradientTopColor));
+                ImGui::SetItemTooltip("Color of the top portion of the skybox");
+
+                colorChanged |= ImGui::ColorEdit3("Bottom Color", glm::value_ptr(skyboxConfig.gradientBottomColor));
+                ImGui::SetItemTooltip("Color of the bottom portion of the skybox");
+
+                if (colorChanged) {
+                    updateSkybox();
+
+                    // Save the preferences
+                    preferences.skyboxGradientTop = skyboxConfig.gradientTopColor;
+                    preferences.skyboxGradientBottom = skyboxConfig.gradientBottomColor;
+                    savePreferences();
+                }
+            }
+
+            ImGui::Spacing();
+            if (ImGui::SliderFloat("Ambient Strength", &ambientStrengthFromSkybox, 0.0f, 1.0f)) {
+                settingsChanged = true;
+            }
             ImGui::SetItemTooltip("Controls how much the skybox illuminates the scene. Higher values create brighter ambient lighting");
 
             ImGui::Spacing();
             ImGui::Text("Sun Settings");
             ImGui::Separator();
-            ImGui::ColorEdit3("Sun Color", glm::value_ptr(sun.color));
+            settingsChanged |= ImGui::ColorEdit3("Sun Color", glm::value_ptr(sun.color));
             ImGui::SetItemTooltip("Sets the color of sunlight in the scene");
 
-            ImGui::SliderFloat("Sun Intensity", &sun.intensity, 0.0f, 1.0f);
+            settingsChanged |= ImGui::SliderFloat("Sun Intensity", &sun.intensity, 0.0f, 1.0f);
             ImGui::SetItemTooltip("Controls the brightness of sunlight");
 
-            ImGui::DragFloat3("Sun Direction", glm::value_ptr(sun.direction), 0.01f, -1.0f, 1.0f);
+            settingsChanged |= ImGui::DragFloat3("Sun Direction", glm::value_ptr(sun.direction), 0.01f, -1.0f, 1.0f);
             ImGui::SetItemTooltip("Sets the direction of sunlight. Affects shadows and lighting");
 
-            ImGui::Checkbox("Enable Sun", &sun.enabled);
+            settingsChanged |= ImGui::Checkbox("Enable Sun", &sun.enabled);
             ImGui::SetItemTooltip("Toggles sun lighting on/off");
+
+            if (settingsChanged) {
+                savePreferences();
+            }
 
             ImGui::EndTabItem();
         }
@@ -3322,7 +3804,6 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
         else if (action == GLFW_RELEASE) {
             if (isMouseCaptured) {
                 // Disable mouse capture when orbiting ends
-                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
                 isMouseCaptured = false;
                 firstMouse = true; // Reset first mouse flag for next time
             }
@@ -3353,7 +3834,6 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
             middleMousePressed = false;
             camera.StopPanning();
             // Disable mouse capture
-            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
             isMouseCaptured = false;
             firstMouse = true; // Reset first mouse flag for next time
         }
@@ -3372,7 +3852,6 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
         else if (action == GLFW_RELEASE) {
             rightMousePressed = false;
             // Disable mouse capture
-            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
             isMouseCaptured = false;
             firstMouse = true; // Reset first mouse flag for next time
         }
@@ -3398,7 +3877,7 @@ void mouse_callback(GLFWwindow* window, double xposIn, double yposIn) {
             return;
         }
 
-        // Calculate deltas directly - no center position involved
+        // Calculate deltas directly
         float xoffset = xpos - lastX;
         float yoffset = lastY - ypos; // Reversed since y-coordinates range from bottom to top
 
@@ -3406,18 +3885,6 @@ void mouse_callback(GLFWwindow* window, double xposIn, double yposIn) {
         lastX = xpos;
         lastY = ypos;
 
-        // Only reset cursor position if it's near the edge of the window
-        // This prevents constant recentering which can cause jumpiness
-        const float edgeBuffer = 50.0f; // Distance from edge to trigger reset
-        bool needsReset = xpos < edgeBuffer || xpos > windowWidth - edgeBuffer ||
-            ypos < edgeBuffer || ypos > windowHeight - edgeBuffer;
-
-        if (needsReset) {
-            // Only reset when necessary - place cursor in middle
-            lastX = windowWidth / 2.0f;
-            lastY = windowHeight / 2.0f;
-            glfwSetCursorPos(window, lastX, lastY);
-        }
 
         // Apply smoothing
         xoffset *= mouseSmoothingFactor;
