@@ -13,7 +13,7 @@ in VS_OUT {
 } fs_in;
 
 struct Material {
-   sampler2D textures[32];  // Array to hold multiple textures
+   sampler2D textures[16];  // Array to hold multiple textures
    int numDiffuseTextures;
    int numSpecularTextures;
    int numNormalTextures;

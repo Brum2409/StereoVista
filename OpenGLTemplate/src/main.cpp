@@ -94,8 +94,15 @@ float maxSeparation = 0.05f;   // Maximum stereo separation
 float minSeparation = 0.0001f; // Minimum stereo separation
 
 // The convergence will shift the zFokus but there is still some weirdness when going into negative
-float minConvergence = -3.0f;  // Minimum convergence
-float maxConvergence = 6.0f;   // Maximum convergence
+float minConvergence = 0.0f;  // Minimum convergence
+float maxConvergence = 200.0f;   // Maximum convergence
+
+
+double accumulatedXOffset = 0.0;
+double accumulatedYOffset = 0.0;
+bool windowHasFocus = true; // Assume focused initially
+bool justRegainedFocus = false; // Flag to handle the first mouse event after focus regain
+bool firstMouse = true;
 
 // ---- GUI Settings ----
 bool showGui = true;
@@ -146,8 +153,8 @@ SkyboxConfig skyboxConfig;
 // ---- Preferences Structure ----
 struct ApplicationPreferences {
     bool isDarkTheme = true;
-    float separation = 0.005f;
-    float convergence = 1.5f;
+    float separation = 10.0f;
+    float convergence = 50.0f;
     float nearPlane = 0.1f;
     float farPlane = 200.0f;
     std::string currentPresetName = "Sphere";
@@ -165,6 +172,8 @@ struct ApplicationPreferences {
     bool orbitFollowsCursor = false;
     float mouseSmoothingFactor = 1.0f;
     float mouseSensitivity = 0.17f;
+
+    bool showStereoVisualization = true;
 
     int skyboxType = SKYBOX_CUBEMAP;
     glm::vec3 skyboxSolidColor = glm::vec3(0.2f, 0.3f, 0.4f);
@@ -342,6 +351,20 @@ void setDefaultCursorSettings() {
 GLuint skyboxVAO, skyboxVBO, cubemapTexture;
 float ambientStrengthFromSkybox = 0.1f;
 Shader* skyboxShader = nullptr;
+
+
+void window_focus_callback(GLFWwindow* window, int focused) {
+    if (focused) {
+        // The window gained input focus
+        windowHasFocus = true;
+        justRegainedFocus = true; 
+        firstMouse = true;       
+    }
+    else {
+        // The window lost input focus
+        windowHasFocus = false;
+    }
+}
 
 // Helper functions for cubemap and skybox rendering
 GLuint loadCubemap(const std::vector<std::string>& faces) {
@@ -956,6 +979,181 @@ void bindSkyboxUniforms(Shader* shader) {
 
 
 
+void renderStereoCameraVisualization(const Camera& camera, const SceneSettings& settings) {
+    // --- Setup Canvas ---
+    ImVec2 canvasPos = ImGui::GetCursorScreenPos();
+    ImVec2 contentSize = ImGui::GetContentRegionAvail();
+    float canvasSize = std::min(contentSize.x, 300.0f); // Limit max size, increased slightly
+    // Ensure minimum size to avoid division by zero or extreme scales
+    canvasSize = std::max(canvasSize, 50.0f);
+    ImVec2 squareSize(canvasSize, canvasSize);
+    ImVec2 canvasBottomRight = ImVec2(canvasPos.x + squareSize.x, canvasPos.y + squareSize.y);
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+    // Background
+    drawList->AddRectFilled(canvasPos, canvasBottomRight, IM_COL32(20, 20, 25, 255)); // Darker background
+    drawList->AddRect(canvasPos, canvasBottomRight, IM_COL32(100, 100, 100, 255));
+
+    // --- Coordinate System ---
+    float margin = canvasSize * 0.05f; // Smaller margin
+    float drawingWidth = squareSize.x - 2 * margin;
+    float drawingHeight = squareSize.y - 2 * margin;
+    ImVec2 drawingTopLeft = ImVec2(canvasPos.x + margin, canvasPos.y + margin);
+
+    // World parameters
+    float separation = settings.separation;
+    float convergence = settings.convergence;
+    // Ensure convergence is positive to avoid math errors
+    convergence = std::max(0.01f, convergence);
+    float fovDeg = camera.Zoom;
+    float fovRad = glm::radians(fovDeg);
+    float halfFovRad = fovRad / 2.0f;
+    float halfSeparation = separation / 2.0f;
+
+    // Determine world bounds for scaling
+    // Calculate max extent of frustums to set scale appropriately
+    float maxReach = convergence * 1.2f; // Extend slightly beyond convergence
+    float worldViewHeight = separation * 1.5f; // Initial estimate based on separation
+    // Consider frustum width at maxReach for height calculation
+    if (convergence > 0.01f) {
+        // Angle of the center ray for one camera
+        float centerAngle = atan2(halfSeparation, convergence);
+        // Angle of the outer edge
+        float outerAngle = centerAngle + halfFovRad;
+        // Y position of the outer edge at maxReach distance (approximation using tan)
+        float maxYEdge = halfSeparation + tan(outerAngle) * maxReach;
+        // Consider the max Y extent based on frustum spread
+        worldViewHeight = std::max(worldViewHeight, std::abs(maxYEdge) * 2.5f); // Include buffer
+    }
+    worldViewHeight = std::max(worldViewHeight, separation * 1.5f); // Ensure separation is visible
+    worldViewHeight = std::max(worldViewHeight, 0.1f); // Minimum height
+
+
+    // Scaling: Fit maxReach horizontally and worldViewHeight vertically
+    float scaleX = drawingWidth / maxReach;
+    float scaleY = drawingHeight / worldViewHeight;
+    float scale = std::min(scaleX, scaleY); // Use uniform scaling
+
+    // Origin: Cameras start at x=0, centered vertically in the world space view
+    float originX = drawingTopLeft.x;
+    float originY = drawingTopLeft.y + drawingHeight / 2.0f;
+
+    // Lambda to convert world coords (x=depth, y=horizontal) to screen coords
+    auto worldToScreen = [&](float worldX, float worldY) -> ImVec2 {
+        return ImVec2(originX + worldX * scale, originY - worldY * scale); // y flips
+        };
+
+    // --- Calculations for Asymmetric Frustums ---
+
+    // Camera world positions (Top-down view: Y represents horizontal separation)
+    // LEFT Camera is typically drawn on TOP in these diagrams
+    float leftCamY = halfSeparation;
+    float rightCamY = -halfSeparation;
+
+    // Screen positions of cameras
+    ImVec2 leftCameraPosScreen = worldToScreen(0.0f, leftCamY);
+    ImVec2 rightCameraPosScreen = worldToScreen(0.0f, rightCamY);
+
+    // Calculate the angles of the cameras' center lines aiming at convergence point (convergence, 0)
+    float angleLeftCenter = atan2(-leftCamY, convergence); // Points from (0, leftCamY) to (convergence, 0)
+    float angleRightCenter = atan2(-rightCamY, convergence); // Points from (0, rightCamY) to (convergence, 0)
+
+    // Calculate the angles of the frustum edges relative to the world's X-axis
+    float angleLeftOuter = angleLeftCenter + halfFovRad;
+    float angleLeftInner = angleLeftCenter - halfFovRad;
+    float angleRightInner = angleRightCenter + halfFovRad; // Inner for right is wider angle
+    float angleRightOuter = angleRightCenter - halfFovRad;
+
+    // Calculate the Y coordinates where the frustum edges intersect the convergence plane (x = convergence)
+    // Formula: y = cameraY + tan(angle) * (targetX - cameraX)
+    // Here cameraX = 0, targetX = convergence
+    float yLeftOuterConv = leftCamY + tan(angleLeftOuter) * convergence;
+    float yLeftInnerConv = leftCamY + tan(angleLeftInner) * convergence;
+    float yRightInnerConv = rightCamY + tan(angleRightInner) * convergence;
+    float yRightOuterConv = rightCamY + tan(angleRightOuter) * convergence;
+
+    // Calculate far points for drawing (extend beyond convergence for visualization)
+    float farDist = maxReach * 0.98f; // Draw almost to the edge of the view
+    float yLeftOuterFar = leftCamY + tan(angleLeftOuter) * farDist;
+    float yLeftInnerFar = leftCamY + tan(angleLeftInner) * farDist;
+    float yRightInnerFar = rightCamY + tan(angleRightInner) * farDist;
+    float yRightOuterFar = rightCamY + tan(angleRightOuter) * farDist;
+
+
+    // Convert world frustum points to screen coordinates
+    ImVec2 leftFarOuter = worldToScreen(farDist, yLeftOuterFar);
+    ImVec2 leftFarInner = worldToScreen(farDist, yLeftInnerFar);
+    ImVec2 rightFarInner = worldToScreen(farDist, yRightInnerFar);
+    ImVec2 rightFarOuter = worldToScreen(farDist, yRightOuterFar);
+
+    // Points on the convergence plane (for focus line and overlap)
+    ImVec2 leftConvInner = worldToScreen(convergence, yLeftInnerConv);
+    ImVec2 rightConvInner = worldToScreen(convergence, yRightInnerConv);
+
+
+    // --- Drawing ---
+
+    // Draw Frustums (Draw overlap last)
+    // Use colors similar to user example: Left=Blue, Right=Reddish, Overlap=Purple
+    ImU32 colorLeftFill = IM_COL32(0, 100, 255, 50);    // Blueish transparent
+    ImU32 colorLeftLine = IM_COL32(100, 150, 255, 180); // Lighter Blue line
+    ImU32 colorRightFill = IM_COL32(210, 80, 80, 50);   // Reddish transparent
+    ImU32 colorRightLine = IM_COL32(255, 130, 130, 180);// Lighter Red line
+    ImU32 colorOverlapFill = IM_COL32(150, 100, 255, 60); // Purpleish transparent
+    ImU32 colorFocus = IM_COL32(255, 50, 50, 255);      // Bright Red for focus
+
+    // Left Camera Frustum (Blue)
+    drawList->AddTriangleFilled(leftCameraPosScreen, leftFarOuter, leftFarInner, colorLeftFill);
+    drawList->AddLine(leftCameraPosScreen, leftFarOuter, colorLeftLine, 1.0f);
+    drawList->AddLine(leftCameraPosScreen, leftFarInner, colorLeftLine, 1.0f);
+    // drawList->AddLine(leftFarOuter, leftFarInner, colorLeftLine, 1.0f); // Optional far plane line
+
+    // Right Camera Frustum (Red)
+    // Note: Order for triangle fill is Camera, Inner, Outer for consistency with Blue
+    drawList->AddTriangleFilled(rightCameraPosScreen, rightFarInner, rightFarOuter, colorRightFill);
+    drawList->AddLine(rightCameraPosScreen, rightFarInner, colorRightLine, 1.0f);
+    drawList->AddLine(rightCameraPosScreen, rightFarOuter, colorRightLine, 1.0f);
+    // drawList->AddLine(rightFarInner, rightFarOuter, colorRightLine, 1.0f); // Optional far plane line
+
+
+    // Draw Overlap Area (Purple) - Quadrilateral
+    // Defined by the two camera positions and the *inner* frustum edges out to the far distance
+    if (yLeftInnerFar < yRightInnerFar) // Check if inner edges actually cross
+    {
+        ImVec2 overlapPoints[] = {
+            leftCameraPosScreen,
+            rightCameraPosScreen,
+            rightFarInner,
+            leftFarInner
+        };
+        // Draw filled overlap area
+        drawList->AddConvexPolyFilled(overlapPoints, 4, colorOverlapFill);
+        // Optional: Outline the overlap area
+        // drawList->AddPolyline(overlapPoints, 4, IM_COL32(255, 255, 255, 100), true, 1.0f);
+    }
+
+
+    // Draw Convergence Segment (Focus Plane Intersection) - Thick Red Line
+    // This line goes between the points where the inner frustum edges hit the convergence plane
+    drawList->AddLine(leftConvInner, rightConvInner, colorFocus, 2.5f);
+
+
+    // Draw Cameras Markers
+    float cameraMarkerRadius = 4.0f;
+    drawList->AddCircleFilled(leftCameraPosScreen, cameraMarkerRadius, colorLeftLine);
+    drawList->AddCircleFilled(rightCameraPosScreen, cameraMarkerRadius, colorRightLine);
+
+    // Optional: Add labels (adjust positions as needed)
+    // ImGui::SetCursorScreenPos(ImVec2(leftCameraPosScreen.x - 30, leftCameraPosScreen.y - 15));
+    // ImGui::TextColored(ImColor(colorLeftLine), "Left");
+    // ImGui::SetCursorScreenPos(ImVec2(rightCameraPosScreen.x - 35, rightCameraPosScreen.y + 5));
+    // ImGui::TextColored(ImColor(colorRightLine), "Right");
+    // ImGui::SetCursorScreenPos(canvasPos); // Reset cursor position
+
+
+    // --- Reserve space ---
+    ImGui::Dummy(squareSize); // Reserve the space used by the drawing
+}
 
 
 void savePreferences() {
@@ -1503,6 +1701,14 @@ int main() {
     Window::nativeWindow = window;
 
 
+    if (glfwRawMouseMotionSupported()) {
+        glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+        std::cout << "Raw mouse motion enabled." << std::endl;
+    }
+    else {
+        std::cout << "Raw mouse motion not supported." << std::endl;
+    }
+
     // ---- Initialize GLAD ----
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
         std::cout << "Failed to initialize GLAD" << std::endl;
@@ -1518,6 +1724,7 @@ int main() {
     glfwSetScrollCallback(window, scroll_callback);
     glfwSetKeyCallback(window, key_callback);
     glfwSetMouseButtonCallback(window, mouse_button_callback);
+    glfwSetWindowFocusCallback(window, window_focus_callback);
 
 
     voxelizer = new Engine::Voxelizer(128);
@@ -1543,11 +1750,13 @@ int main() {
     currentModelIndex = 0;
 
     camera.centeringCompletedCallback = [&]() {
+
         if (orbitFollowsCursor) {
             camera.SetOrbitPointDirectly(capturedCursorPos);
             camera.StartOrbiting();
+
         }
-        };
+    };
 
     // ---- Init Preset ----
     if (Engine::CursorPresetManager::getPresetNames().empty()) {
@@ -1591,74 +1800,173 @@ int main() {
     // ---- Main Loop ----
     while (!glfwWindowShouldClose(window)) {
         // ---- Per-frame Time Logic ----
-        float currentFrame = glfwGetTime();
+        float currentFrame = static_cast<float>(glfwGetTime()); // Use static_cast for clarity
         deltaTime = currentFrame - lastFrame;
         lastFrame = currentFrame;
 
+        // Prevent division by zero or negative delta time issues
+        if (deltaTime <= 0.0f) {
+            deltaTime = 0.0001f; // Assign a very small positive value if frame time is zero or negative
+        }
 
-        if (deltaTime <= 0.0f) continue;
+        // ---- Process Events ----
+        // This will call callbacks like mouse_callback, key_callback etc.
+        // mouse_callback will now update `accumulatedXOffset` and `accumulatedYOffset` if mouse is captured.
+        glfwPollEvents();
 
+        // --- Process Accumulated Mouse Input (Once Per Frame) ---
+        // Check if mouse is captured and if there's any accumulated movement to process
+        if (isMouseCaptured && windowHasFocus && !ImGui::GetIO().WantCaptureMouse && (accumulatedXOffset != 0.0 || accumulatedYOffset != 0.0)) {
+
+            // Use the *total* accumulated offset for this frame
+            float totalXOffset = static_cast<float>(accumulatedXOffset);
+            float totalYOffset = static_cast<float>(accumulatedYOffset);
+
+            // --- Process Movement Based on Active Mode ---
+            if (isMovingModel && currentSelectedType == SelectedType::Model && currentSelectedIndex != -1)
+            {
+                // Calculate sensitivity based on distance to the model
+                float distanceToModel = glm::distance(camera.Position, currentScene.models[currentSelectedIndex].position);
+                distanceToModel = glm::max(distanceToModel, 0.1f); // Prevent sensitivity from becoming zero or negative
+
+                // Normalize the raw accumulated offset relative to window size for consistent feel
+                // This makes the movement speed less dependent on raw pixel offset values
+                float normalizedXOffset = totalXOffset / static_cast<float>(windowWidth);
+                float normalizedYOffset = totalYOffset / static_cast<float>(windowHeight);
+
+                // Define base sensitivity for model dragging (tune this value)
+                float baseSensitivity = 0.71f; // Increased base sensitivity might feel better for normalized input
+                float sensitivityFactor = baseSensitivity * distanceToModel; // Scale sensitivity by distance
+
+                // Adjust horizontal movement by aspect ratio
+                normalizedXOffset *= aspectRatio;
+
+                // Determine movement directions based on camera's current orientation
+                glm::vec3 rightDir = glm::normalize(glm::cross(camera.Front, camera.Up));
+                glm::vec3 upDir = camera.Up; // Use camera's up vector for vertical movement
+
+                // Apply the movement to the selected model's position
+                currentScene.models[currentSelectedIndex].position += rightDir * normalizedXOffset * sensitivityFactor;
+                currentScene.models[currentSelectedIndex].position += upDir * normalizedYOffset * sensitivityFactor;
+            }
+            else if ((camera.IsOrbiting || camera.IsPanning || rightMousePressed) && !camera.IsAnimating)
+            {
+                // Pass the accumulated offsets directly to the camera's processing function.
+                // The Camera class handles applying its own MouseSensitivity and determining
+                // whether to Orbit, Pan, or Free-Look based on its internal state (IsOrbiting, IsPanning).
+                camera.ProcessMouseMovement(totalXOffset, totalYOffset);
+            }
+
+            // --- Reset accumulators for the next frame ---
+            accumulatedXOffset = 0.0;
+            accumulatedYOffset = 0.0;
+        }
+        else {
+            // Ensure accumulators are zero if not processing (capture stopped, lost focus, etc.)
+            accumulatedXOffset = 0.0;
+            accumulatedYOffset = 0.0;
+        }
+
+
+        // ---- Handle Keyboard Input ----
+        // Process continuous key presses (like WASD movement) after event polling.
+        Input::handleKeyInput(camera, deltaTime); // Make sure handleKeyInput uses deltaTime
+
+        // ---- Update Camera State ----
+        // Update smooth scrolling deceleration, centering animation etc.
         camera.UpdateScrolling(deltaTime);
-
-        // ---- Handle Input ----
-        Input::handleKeyInput(camera, deltaTime);
-
-        // ---- Update Camera Animation ----
         camera.UpdateAnimation(deltaTime);
 
-        // ---- Set Projection Matrices ----
+        // ---- Calculate View and Projection ----
         glm::mat4 view = camera.GetViewMatrix();
-        aspectRatio = (float)windowWidth / (float)windowHeight;
+
+        // Hack malo - Ensure valid window dimensions
+        if (windowWidth <= 0 || windowHeight <= 0) {
+            // Get current framebuffer size as a fallback
+            glfwGetFramebufferSize(window, &windowWidth, &windowHeight);
+            if (windowWidth <= 0 || windowHeight <= 0) {
+                // If still invalid, use defaults to prevent division by zero
+                windowWidth = 1920;
+                windowHeight = 1080;
+                glViewport(0, 0, windowWidth, windowHeight); // Reset viewport explicitly
+            }
+        }
+
+        aspectRatio = static_cast<float>(windowWidth) / static_cast<float>(windowHeight);
         glm::mat4 projection = camera.GetProjectionMatrix(aspectRatio, currentScene.settings.nearPlane, currentScene.settings.farPlane);
-        glm::mat4 leftProjection;
-        glm::mat4 rightProjection;
-        if (!camera.useNewMethod) {
-            // Original method
-            leftProjection = camera.offsetProjection(projection, currentScene.settings.separation / 2,
-                abs(camera.Position.z) * currentScene.settings.convergence);
-            rightProjection = camera.offsetProjection(projection, -currentScene.settings.separation / 2,
-                abs(camera.Position.z) * currentScene.settings.convergence);
-        }
-        else {
-            // New method
-            GLfloat frustum[6];
-            PerspectiveProjection(frustum, +1.0f, camera.Zoom, aspectRatio,
-                currentScene.settings.nearPlane, currentScene.settings.farPlane,
-                currentScene.settings.separation * 10, currentScene.settings.convergence);
-            leftProjection = glm::frustum(frustum[0], frustum[1], frustum[2], frustum[3], frustum[4], frustum[5]);
 
-            PerspectiveProjection(frustum, -1.0f, camera.Zoom, aspectRatio,
-                currentScene.settings.nearPlane, currentScene.settings.farPlane,
-                currentScene.settings.separation * 10, currentScene.settings.convergence);
-            rightProjection = glm::frustum(frustum[0], frustum[1], frustum[2], frustum[3], frustum[4], frustum[5]);
+        // Calculate stereo projections if needed
+        glm::mat4 leftProjection = projection; // Default to mono projection
+        glm::mat4 rightProjection = projection;
+        glm::mat4 leftView = view; // Default to mono view
+        glm::mat4 rightView = view;
+
+        if (isStereoWindow) { // Check if stereo was successfully enabled
+            if (!camera.useNewMethod) {
+                // Original method using offsetProjection
+                leftProjection = camera.offsetProjection(projection, currentScene.settings.separation / 2.0f,
+                    currentScene.settings.convergence); // Convergence usually shouldn't be scaled by distance directly
+                rightProjection = camera.offsetProjection(projection, -currentScene.settings.separation / 2.0f,
+                    currentScene.settings.convergence);
+                // View matrix remains the same for this method
+            }
+            else {
+                // New method using asymmetric frustums and view offset
+                GLfloat frustum[6];
+                float effectiveSeparation = currentScene.settings.separation; // No *10 needed if units are consistent
+
+                PerspectiveProjection(frustum, -1.0f, camera.Zoom, aspectRatio,
+                    currentScene.settings.nearPlane, currentScene.settings.farPlane,
+                    effectiveSeparation, currentScene.settings.convergence);
+                leftProjection = glm::frustum(frustum[0], frustum[1], frustum[2], frustum[3], frustum[4], frustum[5]);
+
+                PerspectiveProjection(frustum, +1.0f, camera.Zoom, aspectRatio,
+                    currentScene.settings.nearPlane, currentScene.settings.farPlane,
+                    effectiveSeparation, currentScene.settings.convergence);
+                rightProjection = glm::frustum(frustum[0], frustum[1], frustum[2], frustum[3], frustum[4], frustum[5]);
+
+                // Calculate offset view matrices
+                glm::vec3 pos = camera.Position;
+                glm::vec3 rightVec = camera.Right; // Use the camera's calculated Right vector
+                glm::vec3 upVec = camera.Up;       // Use the camera's calculated Up vector
+                glm::vec3 frontVec = camera.Front; // Use the camera's calculated Front vector
+
+                glm::vec3 leftEyePos = pos - (rightVec * effectiveSeparation / 2.0f);
+                leftView = glm::lookAt(leftEyePos, leftEyePos + frontVec, upVec);
+
+                glm::vec3 rightEyePos = pos + (rightVec * effectiveSeparation / 2.0f);
+                rightView = glm::lookAt(rightEyePos, rightEyePos + frontVec, upVec);
+            }
         }
 
+        // ---- Update Scene State ----
         // Set wireframe mode before rendering
-        if (camera.wireframe) {
-            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-        }
-        else {
-            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-        }
-        // Adjust camera speed
+        glPolygonMode(GL_FRONT_AND_BACK, camera.wireframe ? GL_LINE : GL_FILL);
+
+        // Adjust camera movement speed based on distance
         float distanceToNearestObject = camera.getDistanceToNearestObject(camera, projection, view, currentScene.settings.farPlane, windowWidth, windowHeight);
-        camera.AdjustMovementSpeed(distanceToNearestObject, largestDimension, currentScene.settings.farPlane);
-        camera.isMoving = false;  // Reset the moving flag at the end of each frame
+        // Update camera's internal distance info AFTER getting it
+        camera.UpdateDistanceToObject(distanceToNearestObject);
+        // Now adjust speed using the updated internal value
+        camera.AdjustMovementSpeed(distanceToNearestObject, largestDimension, currentScene.settings.farPlane); // Assuming largestDimension is calculated elsewhere
 
+        // Reset camera's moving flag (if Input::handleKeyInput doesn't already do this)
+        // camera.isMoving = false; // Reset here if needed, or manage within Input/Camera classes
 
-        // Render for Right Eye (if in Stereo Mode)
+        // ---- Rendering ----
         if (isStereoWindow) {
-            renderEye(GL_BACK_LEFT, leftProjection, view, shader, viewport, windowFlags, window);
-            renderEye(GL_BACK_RIGHT, rightProjection, view, shader, viewport, windowFlags, window);
+            // Render left eye to left buffer
+            renderEye(GL_BACK_LEFT, leftProjection, leftView, shader, viewport, windowFlags, window);
+            // Render right eye to right buffer
+            renderEye(GL_BACK_RIGHT, rightProjection, rightView, shader, viewport, windowFlags, window);
         }
         else {
-            renderEye(GL_BACK_LEFT, projection, view, shader, viewport, windowFlags, window);
+            // Render mono view to default buffer (usually GL_BACK_LEFT or just GL_BACK)
+            renderEye(GL_BACK_LEFT, projection, view, shader, viewport, windowFlags, window); // Or use GL_BACK if not explicitly stereo
         }
 
-
-        // ---- Swap Buffers and Poll Events ----
+        // ---- Swap Buffers ----
         glfwSwapBuffers(window);
-        glfwPollEvents();
     }
 
     // ---- Cleanup ----
@@ -1957,7 +2265,7 @@ void renderSettingsWindow() {
 
     if (ImGui::BeginTabBar("SettingsTabs")) {
 
-        /*
+        
         if (ImGui::BeginTabItem("Voxelization")) {
             ImGui::Text("CURRENTLY DISABLED!!!");
             ImGui::Separator();
@@ -1990,12 +2298,22 @@ void renderSettingsWindow() {
             }
 
             ImGui::EndTabItem();
-        }*/
+        }
 
         // Camera Tab
         if (ImGui::BeginTabItem("Camera")) {
             ImGui::Text("Stereo Settings");
             ImGui::Separator();
+
+            if (ImGui::Checkbox("Show Stereo Visualization", &preferences.showStereoVisualization)) {
+                savePreferences(); // Save when changed
+            }
+            ImGui::SetItemTooltip("Show a visualization of the stereo camera setup");
+
+
+            if (preferences.showStereoVisualization) {
+                renderStereoCameraVisualization(camera, currentScene.settings);
+            }
 
             if (ImGui::BeginCombo("Stereo Method", camera.useNewMethod ? "New Method" : "Legacy")) {
                 if (ImGui::Selectable("Legacy", !camera.useNewMethod)) {
@@ -2015,7 +2333,7 @@ void renderSettingsWindow() {
             ImGui::SetItemTooltip("Switch between legacy and new stereo rendering methods. New method provides better depth perception");
 
             float minSep = 0.0f;
-            float maxSep = camera.useNewMethod ? 0.025f : maxSeparation;
+            float maxSep = camera.useNewMethod ? 20.0f : maxSeparation;
             if (ImGui::SliderFloat("Separation", &currentScene.settings.separation, minSep, maxSep)) {
                 preferences.separation = currentScene.settings.separation;
                 settingsChanged = true;
@@ -2057,7 +2375,7 @@ void renderSettingsWindow() {
         if (ImGui::BeginTabItem("Movement")) {
             ImGui::Text("Mouse Settings");
             ImGui::Separator();
-            if (ImGui::SliderFloat("Mouse Sensitivity", &camera.MouseSensitivity, 0.01f, 0.5f)) {
+            if (ImGui::SliderFloat("Mouse Sensitivity", &camera.MouseSensitivity, 0.01f, 0.08f)) {
                 preferences.mouseSensitivity = camera.MouseSensitivity;
                 settingsChanged = true;
             }
@@ -3679,7 +3997,7 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
     }
 }
 
-bool firstMouse = true;
+
 
 
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
@@ -3729,6 +4047,12 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                     currentSelectedIndex = closestModelIndex;
                     currentSelectedMeshIndex = -1;
 
+                    if (!isMouseCaptured) {
+                        isMouseCaptured = true;
+                        firstMouse = true; // Reset flag for delta calculation
+                        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                    }
+
                     if (ctrlPressed) {
                         selectionMode = true;
                         isMovingModel = true;
@@ -3738,6 +4062,10 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                     currentSelectedType = SelectedType::PointCloud;
                     currentSelectedIndex = closestPointCloudIndex;
                     currentSelectedMeshIndex = -1; // Always reset mesh selection for point clouds
+                }
+                else {
+                    // Ctrl+Clicked empty space or non-model object
+                    isMovingModel = false;
                 }
             }
 
@@ -3769,9 +4097,14 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                         // Center cursor
                         glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
                     }
-                    else if (orbitFollowsCursor && showSphereCursor) {
+                    else if (orbitFollowsCursor) {
                         camera.StartCenteringAnimation(g_cursorPos);
                         capturedCursorPos = g_cursorPos;
+
+                        isMouseCaptured = true;
+                        firstMouse = true;
+                        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                        glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
                     }
                     else {
                         float cursorDepth = glm::length(g_cursorPos - camera.Position);
@@ -3859,111 +4192,63 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 }
 
 void mouse_callback(GLFWwindow* window, double xposIn, double yposIn) {
-    // Skip if ImGui is capturing mouse
-    if (ImGui::GetIO().WantCaptureMouse) {
-        firstMouse = true;
+    // --- Early exit if window doesn't have focus ---
+    if (!windowHasFocus) {
         return;
     }
 
     float xpos = static_cast<float>(xposIn);
     float ypos = static_cast<float>(yposIn);
 
-    // When mouse is captured for orbit, panning, or rotation
+    // --- Handle first mouse input OR first input after regaining focus ---
+    if (firstMouse || justRegainedFocus) {
+        // This is the first event, or the first one after regaining focus.
+        // Treat the current position as the starting point. Don't calculate offset.
+        lastX = xpos;
+        lastY = ypos;
+        firstMouse = false;
+        justRegainedFocus = false; // Handled the focus regain
+
+        // Ensure accumulators are zeroed at the start or on focus regain
+        accumulatedXOffset = 0.0;
+        accumulatedYOffset = 0.0;
+        return; // Don't process movement on this initial event
+    }
+
+    // --- Calculate Delta from last position (standard approach) ---
+    double frameXOffset = static_cast<double>(xpos) - lastX;
+    double frameYOffset = lastY - static_cast<double>(ypos); // Reversed
+
+    // --- Update last position for the next frame ---
+    // Crucial: Do this *before* checking capture or ImGui
+    lastX = xpos;
+    lastY = ypos;
+
+    // --- ImGui Check ---
+    // If ImGui wants the mouse *after* we've calculated delta and updated lastX/Y
+    if (ImGui::GetIO().WantCaptureMouse) {
+        // Don't accumulate the delta if ImGui wants it
+        // Reset accumulators to prevent processing stale input on next non-ImGui frame
+        accumulatedXOffset = 0.0;
+        accumulatedYOffset = 0.0;
+        // If we *were* capturing, ImGui might need the cursor visible
+        if (isMouseCaptured) {
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        }
+        return;
+    }
+
+    // --- Accumulate if mouse is captured ---
     if (isMouseCaptured) {
-        if (firstMouse) {
-            lastX = xpos;
-            lastY = ypos;
-            firstMouse = false;
-            return;
-        }
+        // Apply Smoothing (Optional) - Apply to the calculated delta
+        frameXOffset *= mouseSmoothingFactor;
+        frameYOffset *= mouseSmoothingFactor;
 
-        // Calculate deltas directly
-        float xoffset = xpos - lastX;
-        float yoffset = lastY - ypos; // Reversed since y-coordinates range from bottom to top
-
-        // Update last positions for next frame
-        lastX = xpos;
-        lastY = ypos;
-
-
-        // Apply smoothing
-        xoffset *= mouseSmoothingFactor;
-        yoffset *= mouseSmoothingFactor;
-
-        // Apply sensitivity scaling
-        xoffset *= camera.MouseSensitivity;
-        yoffset *= camera.MouseSensitivity;
-
-        // Clamp to prevent extreme movements
-        const float maxMovement = 5.0f;
-        xoffset = glm::clamp(xoffset, -maxMovement, maxMovement);
-        yoffset = glm::clamp(yoffset, -maxMovement, maxMovement);
-
-        // Apply movement based on mode
-        if (isMovingModel && currentSelectedType == SelectedType::Model && currentSelectedIndex != -1) {
-            // Move selected model
-            float distanceToModel = glm::distance(camera.Position, currentScene.models[currentSelectedIndex].position);
-            float normalizedXOffset = xoffset / static_cast<float>(windowWidth);
-            float normalizedYOffset = yoffset / static_cast<float>(windowHeight);
-            float baseSensitivity = 0.7f;
-            float sensitivityFactor = (baseSensitivity * distanceToModel);
-            normalizedXOffset *= aspectRatio;
-
-            glm::vec3 right = glm::normalize(glm::cross(camera.Front, camera.Up));
-            glm::vec3 up = glm::normalize(glm::cross(right, camera.Front));
-
-            currentScene.models[currentSelectedIndex].position += right * normalizedXOffset * sensitivityFactor;
-            currentScene.models[currentSelectedIndex].position += up * normalizedYOffset * sensitivityFactor;
-        }
-        else if (camera.IsOrbiting && !camera.IsAnimating) {
-            // When orbiting, pass deltas directly to camera
-            camera.ProcessMouseMovement(xoffset, yoffset);
-        }
-        else if ((leftMousePressed || rightMousePressed || middleMousePressed) && !camera.IsAnimating) {
-            camera.ProcessMouseMovement(xoffset, yoffset);
-        }
+        // Add to accumulators
+        accumulatedXOffset += frameXOffset;
+        accumulatedYOffset += frameYOffset;
     }
-    else {
-        // For non-captured mouse behavior (fallback)
-        if (firstMouse) {
-            lastX = xpos;
-            lastY = ypos;
-            firstMouse = false;
-            return;
-        }
-
-        float xoffset = xpos - lastX;
-        float yoffset = lastY - ypos;
-
-        lastX = xpos;
-        lastY = ypos;
-
-        if (isMovingModel && currentSelectedType == SelectedType::Model && currentSelectedIndex != -1) {
-            // Move selected model
-            float distanceToModel = glm::distance(camera.Position, currentScene.models[currentSelectedIndex].position);
-            float normalizedXOffset = xoffset / static_cast<float>(windowWidth);
-            float normalizedYOffset = yoffset / static_cast<float>(windowHeight);
-            float baseSensitivity = 0.7f;
-            float sensitivityFactor = (baseSensitivity * distanceToModel);
-            normalizedXOffset *= aspectRatio;
-
-            glm::vec3 right = glm::normalize(glm::cross(camera.Front, camera.Up));
-            glm::vec3 up = glm::normalize(glm::cross(right, camera.Front));
-
-            currentScene.models[currentSelectedIndex].position += right * normalizedXOffset * sensitivityFactor;
-            currentScene.models[currentSelectedIndex].position += up * normalizedYOffset * sensitivityFactor;
-        }
-        else if (camera.IsOrbiting && !camera.IsAnimating) {
-            // Handle camera orbiting
-            camera.ProcessMouseMovement(xoffset, yoffset);
-            glm::vec3 directionToCamera = glm::normalize(camera.Position - camera.OrbitPoint);
-            camera.Position = camera.OrbitPoint + directionToCamera * camera.OrbitDistance;
-        }
-        else if ((leftMousePressed || rightMousePressed || middleMousePressed) && !camera.IsAnimating) {
-            // Handle regular camera movement
-            camera.ProcessMouseMovement(xoffset, yoffset);
-        }
-    }
+    // No need for an 'else' here, if not captured, we just don't accumulate.
 }
 
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)

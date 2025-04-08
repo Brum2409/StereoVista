@@ -354,12 +354,17 @@ public:
             }
         }
         else if (IsPanning) {
-            glm::vec3 right = glm::normalize(glm::cross(Front, WorldUp));
-            Position += right * xoffset * -0.02f;
-            Position += WorldUp * yoffset * -0.02f;
+            float panFactor = OrbitDistance * 0.01f; // Scale based on distance to orbit point
+            panFactor = glm::max(panFactor, 0.001f); // Clamp minimum factor
+
+            glm::vec3 right = glm::normalize(glm::cross(Front, WorldUp)); // Use WorldUp for consistent panning plane
+            glm::vec3 up = WorldUp; // Pan vertically along world up
+
+            Position -= right * xoffset * panFactor; // Use scaled offset
+            Position -= up * yoffset * panFactor; // Use scaled offset
 
             // Update orbit point when panning
-            OrbitPoint = Position + Front * OrbitDistance;
+            OrbitPoint = Position + Front * OrbitDistance; // Keep orbit point relative
         }
         else {
             // Non-orbiting mouse movement 
@@ -372,6 +377,8 @@ public:
             }
 
             updateCameraVectors();
+
+            OrbitPoint = Position + Front * OrbitDistance;
         }
     }
 

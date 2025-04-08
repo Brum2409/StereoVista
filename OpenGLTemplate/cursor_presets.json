@@ -97,5 +97,38 @@
         "sphereFixedRadius": 0.699999988079071,
         "sphereScalingMode": 2,
         "sphereTransparency": 1.0
+    },
+    "awdawdd": {
+        "cursorCenterTransparency": 0.8849999904632568,
+        "cursorColor": [
+            0.9068100452423096,
+            0.10075666755437851,
+            0.10075666755437851,
+            0.699999988079071
+        ],
+        "cursorEdgeSoftness": 0.9490000009536743,
+        "fragmentBaseInnerRadius": 0.004000000189989805,
+        "innerSphereColor": [
+            0.30859053134918213,
+            1.0,
+            0.010752677917480469,
+            1.0
+        ],
+        "innerSphereFactor": 0.10000000149011612,
+        "name": "awdawdd",
+        "planeColor": [
+            0.0,
+            1.0,
+            0.0,
+            0.699999988079071
+        ],
+        "planeDiameter": 0.5,
+        "showFragmentCursor": true,
+        "showInnerSphere": false,
+        "showPlaneCursor": false,
+        "showSphereCursor": true,
+        "sphereFixedRadius": 0.10899999737739563,
+        "sphereScalingMode": 1,
+        "sphereTransparency": 1.0
     }
 }
