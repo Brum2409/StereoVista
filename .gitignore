@@ -29,6 +29,8 @@
 *.exe
 *.out
 *.app
+
+OpenGLTemplate\imgui.ini
 .vs/OpenGLTemplate/FileContentIndex/30fe56fa-9fef-4db8-ab93-558762c32454.vsidx
 .vs/OpenGLTemplate/FileContentIndex/9db4adfd-935f-4dc2-a816-9ed3aa630e32.vsidx
 .vs/OpenGLTemplate/FileContentIndex/9dccecd2-1023-4b43-9b04-9be979da7b51.vsidx
