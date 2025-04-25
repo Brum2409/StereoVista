@@ -1,4 +1,9 @@
 #pragma once
+
+// include windows before glfw/glad to prevent apientry redefinitions
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
