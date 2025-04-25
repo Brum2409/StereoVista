@@ -1896,24 +1896,23 @@ int main() {
         glm::mat4 projection = camera.GetProjectionMatrix(aspectRatio, currentScene.settings.nearPlane, currentScene.settings.farPlane);
 
         // Calculate stereo projections if needed
-        glm::mat4 leftProjection = projection; // Default to mono projection
+        glm::mat4 leftProjection = projection; 
         glm::mat4 rightProjection = projection;
-        glm::mat4 leftView = view; // Default to mono view
+        glm::mat4 leftView = view; 
         glm::mat4 rightView = view;
 
-        if (isStereoWindow) { // Check if stereo was successfully enabled
+        if (isStereoWindow) { 
             if (!camera.useNewMethod) {
                 // Original method using offsetProjection
                 leftProjection = camera.offsetProjection(projection, currentScene.settings.separation / 2.0f,
-                    currentScene.settings.convergence); // Convergence usually shouldn't be scaled by distance directly
+                    currentScene.settings.convergence);
                 rightProjection = camera.offsetProjection(projection, -currentScene.settings.separation / 2.0f,
                     currentScene.settings.convergence);
-                // View matrix remains the same for this method
             }
             else {
                 // New method using asymmetric frustums and view offset
                 GLfloat frustum[6];
-                float effectiveSeparation = currentScene.settings.separation; // No *10 needed if units are consistent
+                float effectiveSeparation = currentScene.settings.separation;
 
                 PerspectiveProjection(frustum, -1.0f, camera.Zoom, aspectRatio,
                     currentScene.settings.nearPlane, currentScene.settings.farPlane,
@@ -1927,9 +1926,9 @@ int main() {
 
                 // Calculate offset view matrices
                 glm::vec3 pos = camera.Position;
-                glm::vec3 rightVec = camera.Right; // Use the camera's calculated Right vector
-                glm::vec3 upVec = camera.Up;       // Use the camera's calculated Up vector
-                glm::vec3 frontVec = camera.Front; // Use the camera's calculated Front vector
+                glm::vec3 rightVec = camera.Right;
+                glm::vec3 upVec = camera.Up;      
+                glm::vec3 frontVec = camera.Front; 
 
                 glm::vec3 leftEyePos = pos - (rightVec * effectiveSeparation / 2.0f);
                 leftView = glm::lookAt(leftEyePos, leftEyePos + frontVec, upVec);
@@ -2798,7 +2797,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
         if (ImGui::BeginMenu("File")) {
             if (ImGui::MenuItem("Open")) {
                 auto selection = pfd::open_file("Select a file to open", ".",
-                    { "All Supported Files", "*.obj *.fbx *.3ds *.gltf *.glb",
+                    { "All Supported Files", "*.obj *.fbx *.3ds *.gltf *.glb *.txt *.xyz *.ply *.pcb",
                       "3D Models", "*.obj *.fbx *.3ds *.gltf *.glb",
                       "Point Cloud Files", "*.txt *.xyz *.ply *.pcb",
                       "All Files", "*" }).result();
