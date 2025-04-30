@@ -92,9 +92,6 @@
     <ClInclude Include="headers\engine\data.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="headers\libs\tiny_obj_loader.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="headers\Camera.h">
       <Filter>Header Files</Filter>
     </ClInclude>

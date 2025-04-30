@@ -285,7 +285,6 @@
     <ClInclude Include="headers\point_cloud_loader.h" />
     <ClInclude Include="headers\scene_manager.h" />
     <ClInclude Include="headers\libs\stb_image.h" />
-    <ClInclude Include="headers\libs\tiny_obj_loader.h" />
     <ClInclude Include="headers\voxalizer.h" />
   </ItemGroup>
   <ItemGroup>
