@@ -164,6 +164,8 @@
   <ItemGroup>
     <ClCompile Include="headers\libs\glad.c" />
     <ClCompile Include="headers\libs\imgui\imgui_style.cpp" />
+    <ClCompile Include="src\Cursor.cpp" />
+    <ClCompile Include="src\CursorManager.cpp" />
     <ClCompile Include="src\cursor_presets.cpp" />
     <ClCompile Include="src\engine\buffers.cpp" />
     <ClCompile Include="src\engine\input.cpp" />
@@ -175,17 +177,22 @@
     <ClCompile Include="headers\libs\imgui\imgui_draw.cpp" />
     <ClCompile Include="headers\libs\imgui\imgui_tables.cpp" />
     <ClCompile Include="headers\libs\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="src\FragmentCursor.cpp" />
     <ClCompile Include="src\GUI.cpp" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\model_loader.cpp" />
     <ClCompile Include="headers\libs\portable-file-dialogs.h" />
+    <ClCompile Include="src\PlaneCursor.cpp" />
     <ClCompile Include="src\point_cloud_loader.cpp" />
     <ClCompile Include="src\scene_manager.cpp" />
+    <ClCompile Include="src\SphereCursor.cpp" />
     <ClCompile Include="src\stb_image_impl.cpp" />
     <ClCompile Include="src\voxalizer.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="headers\core.h" />
+    <ClInclude Include="headers\Cursor.h" />
+    <ClInclude Include="headers\CursorManager.h" />
     <ClInclude Include="headers\cursor_presets.h" />
     <ClInclude Include="headers\engine\buffers.h" />
     <ClInclude Include="headers\engine\data.h" />
@@ -193,6 +200,7 @@
     <ClInclude Include="headers\engine\shader.h" />
     <ClInclude Include="headers\engine\window.h" />
     <ClInclude Include="headers\Camera.h" />
+    <ClInclude Include="headers\FragmentCursor.h" />
     <ClInclude Include="headers\GUI.h" />
     <ClInclude Include="headers\GUI_Types.h" />
     <ClInclude Include="headers\libs\assimp\aabb.h" />
@@ -286,9 +294,11 @@
     <ClInclude Include="headers\libs\json.h" />
     <ClInclude Include="headers\model_loader.h" />
     <ClInclude Include="headers\libs\openLinks.h" />
+    <ClInclude Include="headers\PlaneCursor.h" />
     <ClInclude Include="headers\point_cloud_loader.h" />
     <ClInclude Include="headers\scene_manager.h" />
     <ClInclude Include="headers\libs\stb_image.h" />
+    <ClInclude Include="headers\SphereCursor.h" />
     <ClInclude Include="headers\voxalizer.h" />
   </ItemGroup>
   <ItemGroup>

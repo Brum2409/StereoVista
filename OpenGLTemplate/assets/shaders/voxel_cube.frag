@@ -17,5 +17,5 @@ void main() {
 
     
     // Apply opacity and final color
-    FragColor = vec4(result, VoxelColor.a * opacity);
+    FragColor = vec4(result, 1);
 }

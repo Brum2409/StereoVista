@@ -261,7 +261,11 @@ namespace Engine {
             m_voxelShader->setVec3(lightName + ".color", m_lights[i].color);
         }
 
+        // Pass the current mipmap level to the shader
         m_voxelShader->setInt("mipmapLevel", m_state);
+
+        // CRITICAL: Pass the actual grid size to the shader
+        m_voxelShader->setFloat("gridSize", m_voxelGridSize);
 
         // Voxelize each model
         for (const auto& model : models) {
@@ -276,9 +280,11 @@ namespace Engine {
             modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.z), glm::vec3(0, 0, 1));
             modelMatrix = glm::scale(modelMatrix, model.scale);
 
-            // Scale to voxel grid space (-1 to 1)
-            glm::mat4 scaledModel = glm::scale(modelMatrix, glm::vec3(1.0f / (m_voxelGridSize * 0.5f)));
+            // CRITICAL: Always use a fixed scaling factor of 2.0
+            // This ensures objects are voxelized at the correct scale regardless of grid size
+            glm::mat4 scaledModel = glm::scale(modelMatrix, glm::vec3(1.0f));
 
+            // Set transformation matrices
             m_voxelShader->setMat4("M", scaledModel);
             m_voxelShader->setMat4("V", glm::mat4(1.0f)); // Identity for voxelization
             m_voxelShader->setMat4("P", glm::mat4(1.0f)); // Identity for voxelization
@@ -315,7 +321,13 @@ namespace Engine {
     }
 
     void Voxelizer::renderCubeFaces(const glm::vec3& cameraPos, const glm::mat4& projection, const glm::mat4& view) {
-        // Set up cube transforms
+        // Calculate effective grid size based on mipmap level
+        int effectiveResolution = m_resolution >> m_state;
+        if (effectiveResolution < 1) effectiveResolution = 1;
+
+        float scaleFactor = static_cast<float>(m_resolution) / effectiveResolution;
+
+        // Set up cube transforms - maintain the same scale regardless of mipmap level
         glm::mat4 modelMatrix = glm::scale(glm::mat4(1.0f), glm::vec3(m_voxelGridSize * 0.5f));
 
         m_worldPositionShader->use();
@@ -370,8 +382,8 @@ namespace Engine {
             glBindTexture(GL_TEXTURE_3D, m_voxelTexture);
             m_visualizationShader->setInt("texture3D", 2);
 
-            // Set other uniforms
-            m_visualizationShader->setVec3("cameraPosition", cameraPos / (m_voxelGridSize * 0.5f)); // Scale to voxel grid space
+            // Set other uniforms - normalize camera position consistently regardless of mipmap level
+            m_visualizationShader->setVec3("cameraPosition", cameraPos / (m_voxelGridSize * 0.5f));
             m_visualizationShader->setMat4("V", view);
             m_visualizationShader->setInt("state", m_state); // Current mipmap level
 
@@ -409,6 +421,8 @@ namespace Engine {
         // Calculate stride and scaled voxel size
         int stride = 1 << m_state;
         float scaledVoxelSize = baseVoxelSize * stride; // Scale voxel size based on mipmap level
+
+        // Calculate the half grid size (in world units)
         float halfGrid = m_voxelGridSize * 0.5f;
 
         // Loop through voxels at the current mipmap level
@@ -421,12 +435,17 @@ namespace Engine {
 
                     // Check if this voxel is visible
                     if (voxelData[index].a > 0.01f) {
-                        // Calculate world position using the scaled voxel size
-                        // and account for the position within the reduced resolution grid
+                        // Calculate normalized position in [0,1] range
+                        float nx = (float)x / (float)(effectiveResolution - 1);
+                        float ny = (float)y / (float)(effectiveResolution - 1);
+                        float nz = (float)z / (float)(effectiveResolution - 1);
+
+                        // Convert to world space position in [-halfGrid, halfGrid] range
+                        // This ensures voxels are positioned correctly regardless of mipmap level
                         glm::vec3 position(
-                            (x * stride) * baseVoxelSize - halfGrid + (scaledVoxelSize * 0.5f),
-                            (y * stride) * baseVoxelSize - halfGrid + (scaledVoxelSize * 0.5f),
-                            (z * stride) * baseVoxelSize - halfGrid + (scaledVoxelSize * 0.5f)
+                            (nx * 2.0f - 1.0f) * halfGrid,
+                            (ny * 2.0f - 1.0f) * halfGrid,
+                            (nz * 2.0f - 1.0f) * halfGrid
                         );
 
                         // Add to visible voxels

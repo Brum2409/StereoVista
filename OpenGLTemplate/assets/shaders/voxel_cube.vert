@@ -17,8 +17,9 @@ uniform float voxelSize;
 
 void main() {
     // Calculate voxel position and size
+    // aInstancePos already comes in at the correct world position
     vec3 scaledPos = aPos * voxelSize; // Scale the unit cube to voxel size
-    vec3 worldPos = scaledPos + aInstancePos; // Position in world space
+    vec3 worldPos = scaledPos + aInstancePos; // Final world position
     
     Normal = mat3(transpose(inverse(model))) * aNormal;
     FragPos = worldPos;

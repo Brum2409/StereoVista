@@ -10,6 +10,7 @@
 #include "scene_manager.h"
 #include "cursor_presets.h"
 #include "point_cloud_loader.h"
+#include "CursorManager.h"  // New include for cursor management
 
 // ---- GUI and Dialog ----
 #include "imgui/imgui_incl.h"
@@ -40,7 +41,6 @@ using GUI::CURSOR_CONSTRAINED_DYNAMIC;
 using GUI::CURSOR_LOGARITHMIC;
 using GUI::CubemapPreset;
 using GUI::FragmentShaderCursorSettings;
-using GUI::PlaneCursor;
 using GUI::ApplicationPreferences;
 
 // ---- Function Declarations ----
@@ -54,14 +54,10 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 
 // ---- Rendering Functions ----
 void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& view, Engine::Shader* shader, ImGuiViewportP* viewport, ImGuiWindowFlags windowFlags, GLFWwindow* window);
-void renderSphereCursor(const glm::mat4& projection, const glm::mat4& view);
-void renderOrbitCenter(const glm::mat4& projection, const glm::mat4& view);
 void renderModels(Engine::Shader* shader);
 void renderPointClouds(Engine::Shader* shader);
 
 // ---- Update Functions ----
-void updateCursorPosition(GLFWwindow* window, const glm::mat4& projection, const glm::mat4& view, Engine::Shader* shader);
-void updateFragmentShaderUniforms(Engine::Shader* shader);
 void updatePointLights();
 
 PointCloud loadPointCloudFile(const std::string& filePath, size_t downsampleFactor = 1);
@@ -100,7 +96,6 @@ float minSeparation = 0.0001f; // Minimum stereo separation
 // The convergence will shift the zFokus but there is still some weirdness when going into negative
 float minConvergence = 0.0f;  // Minimum convergence
 float maxConvergence = 200.0f;   // Maximum convergence
-
 
 double accumulatedXOffset = 0.0;
 double accumulatedYOffset = 0.0;
@@ -151,7 +146,6 @@ std::string currentPresetName = "Default";
 bool isEditingPresetName = false;
 char editPresetNameBuffer[256] = "";
 
-
 // ---- Input and Interaction ----
 bool selectionMode = false;
 bool isMovingModel = false;
@@ -167,9 +161,10 @@ const double doubleClickTime = 0.3; // 300 ms double-click threshold
 float deltaTime = 0.0f;
 float lastFrame = 0.0f;
 
-// ---- Cursor Position ----
-glm::vec3 g_cursorPos(0.0f);
-bool g_cursorValid = false;
+// ---- Cursor System ----
+Cursor::CursorManager cursorManager;
+glm::vec3 capturedCursorPos;
+bool orbitFollowsCursor = false;
 
 // ---- Window Configuration ----
 int windowWidth = 1920;
@@ -181,7 +176,7 @@ float zOffset = 0.5f;
 Sun sun = {
     glm::normalize(glm::vec3(-1.0f, -2.0f, -1.0f)), // More vertical angle
     glm::vec3(1.0f, 0.95f, 0.8f),                   // Warmer color
-    0.16f,                                            // Higher intensity
+    0.16f,                                          // Higher intensity
     true
 };
 
@@ -199,45 +194,8 @@ std::vector<GUI::CubemapPreset> cubemapPresets = {
     {"Lycksele", "skybox/Lycksele/", "Lycksele. View of Ansia Camping, Lycksele."}
 };
 
-// ---- Sphere Cursor ----
-GLuint sphereVAO, sphereVBO, sphereEBO;
-std::vector<float> sphereVertices;
-std::vector<unsigned int> sphereIndices;
-Engine::Shader* sphereShader = nullptr;
-
-GUI::CursorScalingMode currentCursorScalingMode = GUI::CURSOR_CONSTRAINED_DYNAMIC;
-float fixedSphereRadius = 0.7f;
-float minDiff = 0.01f;
-float maxDiff = 0.1f;
-float oldSphereRadius = fixedSphereRadius;
-glm::vec4 cursorColor = glm::vec4(1.0f, 0.0f, 0.0f, 0.7f); // Initial color: semi-transparent red
-float cursorTransparency = 1.0f;
-bool showCursor = true;
-float cursorEdgeSoftness = 0.8f;
-float cursorCenterTransparency = 0.2f;
-
-bool showInnerSphere = false;
-glm::vec4 innerSphereColor = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f); // Initial color: semi-transparent green
-float innerSphereFactor = 0.1f;
-
-// ---- Fragment Shader Cursor ----
-GUI::FragmentShaderCursorSettings fragmentCursorSettings;
-
-// ---- Plane Cursor ----
-GUI::PlaneCursor planeCursor;
-
 Engine::Voxelizer* voxelizer = nullptr;
 
-// ---- Cursor Visibility ----
-bool showSphereCursor = false;
-bool showFragmentCursor = true;
-
-// ---- Orbit Settings ----
-glm::vec3 capturedCursorPos;
-bool orbitFollowsCursor = false;
-bool showOrbitCenter = false;
-glm::vec4 orbitCenterColor = glm::vec4(0.0f, 1.0f, 0.0f, 0.7f); // Initial color: semi-transparent green
-float orbitCenterSphereRadius = 0.2f; // Fixed size for the orbit center sphere
 #pragma endregion
 
 
@@ -610,95 +568,40 @@ void updateSkybox() {
     }
 }
 
-void setupPlaneCursor() {
-    // Create a circular plane using triangles
-    std::vector<float> vertices;
-    std::vector<unsigned int> indices;
+void setupShadowMapping() {
+    // Create multisampled depth map FBO
 
-    const int segments = 32;
-    const float radius = 0.5f; // Unit radius, will be scaled by diameter
+    glGenFramebuffers(1, &depthMapFBO);
+    glGenTextures(1, &depthMap);
+    glBindTexture(GL_TEXTURE_2D, depthMap);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24,
+        SHADOW_WIDTH, SHADOW_HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    float borderColor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+    glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
 
-    // Center vertex
-    vertices.push_back(0.0f); // x
-    vertices.push_back(0.0f); // y
-    vertices.push_back(0.0f); // z
+    glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
 
-    // Circle vertices
-    for (int i = 0; i <= segments; i++) {
-        float angle = (2.0f * M_PI * i) / segments;
-        vertices.push_back(radius * cos(angle));
-        vertices.push_back(radius * sin(angle));
-        vertices.push_back(0.0f);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        std::cout << "Shadow framebuffer is not complete!" << std::endl;
     }
 
-    // Indices for triangle fan
-    for (int i = 0; i < segments; i++) {
-        indices.push_back(0);
-        indices.push_back(i + 1);
-        indices.push_back(i + 2);
-    }
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-    glGenVertexArrays(1, &planeCursor.VAO);
-    glGenBuffers(1, &planeCursor.VBO);
-    glGenBuffers(1, &planeCursor.EBO);
-
-    glBindVertexArray(planeCursor.VAO);
-
-    glBindBuffer(GL_ARRAY_BUFFER, planeCursor.VBO);
-    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, planeCursor.EBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
-
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-
+    // Load shadow mapping shaders
     try {
-        planeCursor.shader = Engine::loadShader("planeCursorVertexShader.glsl", "planeCursorFragmentShader.glsl");
+        simpleDepthShader = Engine::loadShader("simpleDepthVertexShader.glsl", "simpleDepthFragmentShader.glsl");
     }
     catch (const std::exception& e) {
-        std::cerr << "Failed to load plane cursor shaders: " << e.what() << std::endl;
+        std::cerr << "Error loading depth shader: " << e.what() << std::endl;
     }
 }
-
-void renderPlaneCursor(const glm::mat4& projection, const glm::mat4& view) {
-    if (!planeCursor.show || !g_cursorValid) return;
-
-    planeCursor.shader->use();
-    planeCursor.shader->setMat4("projection", projection);
-    planeCursor.shader->setMat4("view", view);
-
-    glm::mat4 model = glm::translate(glm::mat4(1.0f), g_cursorPos);
-
-    // Orient plane to face camera
-    glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
-    glm::vec3 forward = glm::normalize(camera.Position - g_cursorPos);
-    glm::vec3 right = glm::normalize(glm::cross(up, forward));
-    up = glm::cross(forward, right);
-
-    glm::mat4 rotation = glm::mat4(
-        glm::vec4(right, 0.0f),
-        glm::vec4(up, 0.0f),
-        glm::vec4(forward, 0.0f),
-        glm::vec4(0.0f, 0.0f, 0.0f, 1.0f)
-    );
-
-    model = model * rotation;
-    model = glm::scale(model, glm::vec3(planeCursor.diameter));
-
-    planeCursor.shader->setMat4("model", model);
-    planeCursor.shader->setVec4("color", planeCursor.color);
-
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-    glBindVertexArray(planeCursor.VAO);
-    glDrawElements(GL_TRIANGLES, 96, GL_UNSIGNED_INT, 0);
-
-    glDisable(GL_BLEND);
-    glBindVertexArray(0);
-}
-
 
 // Helper function to create a default colored cubemap when textures can't be loaded
 void createDefaultCubemap() {
@@ -973,7 +876,32 @@ void applyPreferencesToProgram() {
     if (!currentPresetName.empty()) {
         try {
             Engine::CursorPreset loadedPreset = Engine::CursorPresetManager::applyCursorPreset(currentPresetName);
-            applyPresetToGlobalSettings(loadedPreset);
+
+            // Apply preset to cursor manager
+            auto* sphereCursor = cursorManager.getSphereCursor();
+            auto* fragmentCursor = cursorManager.getFragmentCursor();
+            auto* planeCursor = cursorManager.getPlaneCursor();
+
+            // Sphere cursor settings
+            sphereCursor->setVisible(loadedPreset.showSphereCursor);
+            sphereCursor->setScalingMode(static_cast<GUI::CursorScalingMode>(loadedPreset.sphereScalingMode));
+            sphereCursor->setFixedRadius(loadedPreset.sphereFixedRadius);
+            sphereCursor->setTransparency(loadedPreset.sphereTransparency);
+            sphereCursor->setShowInnerSphere(loadedPreset.showInnerSphere);
+            sphereCursor->setColor(loadedPreset.cursorColor);
+            sphereCursor->setInnerSphereColor(loadedPreset.innerSphereColor);
+            sphereCursor->setInnerSphereFactor(loadedPreset.innerSphereFactor);
+            sphereCursor->setEdgeSoftness(loadedPreset.cursorEdgeSoftness);
+            sphereCursor->setCenterTransparency(loadedPreset.cursorCenterTransparency);
+
+            // Fragment cursor settings
+            fragmentCursor->setVisible(loadedPreset.showFragmentCursor);
+            fragmentCursor->setBaseInnerRadius(loadedPreset.fragmentBaseInnerRadius);
+
+            // Plane cursor settings
+            planeCursor->setVisible(loadedPreset.showPlaneCursor);
+            planeCursor->setDiameter(loadedPreset.planeDiameter);
+            planeCursor->setColor(loadedPreset.planeColor);
         }
         catch (const std::exception& e) {
             std::cerr << "Error loading cursor preset: " << e.what() << std::endl;
@@ -1000,7 +928,32 @@ void applyPreferencesToProgram() {
                 spherePreset.planeColor = glm::vec4(0.0f, 1.0f, 0.0f, 0.7f);
 
                 Engine::CursorPresetManager::savePreset("Sphere", spherePreset);
-                applyPresetToGlobalSettings(spherePreset);
+
+                // Apply preset to cursor manager
+                auto* sphereCursor = cursorManager.getSphereCursor();
+                auto* fragmentCursor = cursorManager.getFragmentCursor();
+                auto* planeCursor = cursorManager.getPlaneCursor();
+
+                // Sphere cursor settings
+                sphereCursor->setVisible(spherePreset.showSphereCursor);
+                sphereCursor->setScalingMode(static_cast<GUI::CursorScalingMode>(spherePreset.sphereScalingMode));
+                sphereCursor->setFixedRadius(spherePreset.sphereFixedRadius);
+                sphereCursor->setTransparency(spherePreset.sphereTransparency);
+                sphereCursor->setShowInnerSphere(spherePreset.showInnerSphere);
+                sphereCursor->setColor(spherePreset.cursorColor);
+                sphereCursor->setInnerSphereColor(spherePreset.innerSphereColor);
+                sphereCursor->setInnerSphereFactor(spherePreset.innerSphereFactor);
+                sphereCursor->setEdgeSoftness(spherePreset.cursorEdgeSoftness);
+                sphereCursor->setCenterTransparency(spherePreset.cursorCenterTransparency);
+
+                // Fragment cursor settings
+                fragmentCursor->setVisible(spherePreset.showFragmentCursor);
+                fragmentCursor->setBaseInnerRadius(spherePreset.fragmentBaseInnerRadius);
+
+                // Plane cursor settings
+                planeCursor->setVisible(spherePreset.showPlaneCursor);
+                planeCursor->setDiameter(spherePreset.planeDiameter);
+                planeCursor->setColor(spherePreset.planeColor);
             }
         }
     }
@@ -1172,155 +1125,37 @@ void InitializeDefaults() {
 
         Engine::CursorPresetManager::savePreset("Sphere", spherePreset);
         currentPresetName = "Sphere";
-        applyPresetToGlobalSettings(spherePreset);
+
+        // Apply preset to cursor manager
+        auto* sphereCursor = cursorManager.getSphereCursor();
+        auto* fragmentCursor = cursorManager.getFragmentCursor();
+        auto* planeCursor = cursorManager.getPlaneCursor();
+
+        // Sphere cursor settings
+        sphereCursor->setVisible(spherePreset.showSphereCursor);
+        sphereCursor->setScalingMode(static_cast<GUI::CursorScalingMode>(spherePreset.sphereScalingMode));
+        sphereCursor->setFixedRadius(spherePreset.sphereFixedRadius);
+        sphereCursor->setTransparency(spherePreset.sphereTransparency);
+        sphereCursor->setShowInnerSphere(spherePreset.showInnerSphere);
+        sphereCursor->setColor(spherePreset.cursorColor);
+        sphereCursor->setInnerSphereColor(spherePreset.innerSphereColor);
+        sphereCursor->setInnerSphereFactor(spherePreset.innerSphereFactor);
+        sphereCursor->setEdgeSoftness(spherePreset.cursorEdgeSoftness);
+        sphereCursor->setCenterTransparency(spherePreset.cursorCenterTransparency);
+
+        // Fragment cursor settings
+        fragmentCursor->setVisible(spherePreset.showFragmentCursor);
+        fragmentCursor->setBaseInnerRadius(spherePreset.fragmentBaseInnerRadius);
+
+        // Plane cursor settings
+        planeCursor->setVisible(spherePreset.showPlaneCursor);
+        planeCursor->setDiameter(spherePreset.planeDiameter);
+        planeCursor->setColor(spherePreset.planeColor);
     }
 
     // Set ImGui style
     SetupImGuiStyle(isDarkTheme, 1.0f);
 }
-
-
-void setupShadowMapping() {
-    // Create multisampled depth map FBO
-
-    glGenFramebuffers(1, &depthMapFBO);
-    glGenTextures(1, &depthMap);
-    glBindTexture(GL_TEXTURE_2D, depthMap);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24,
-        SHADOW_WIDTH, SHADOW_HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-    float borderColor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
-    glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
-
-    glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
-    glDrawBuffer(GL_NONE);
-    glReadBuffer(GL_NONE);
-
-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-        std::cout << "Shadow framebuffer is not complete!" << std::endl;
-    }
-
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-    // Load shadow mapping shaders
-    try {
-        simpleDepthShader = Engine::loadShader("simpleDepthVertexShader.glsl", "simpleDepthFragmentShader.glsl");
-    }
-    catch (const std::exception& e) {
-        std::cerr << "Error loading depth shader: " << e.what() << std::endl;
-    }
-}
-
-// ---- Sphere Cursor Functions
-#pragma region Sphere Cursor Functions
-// ---- Sphere Cursor Calculations ----
-float calculateSphereRadius(const glm::vec3& cursorPosition, const glm::vec3& cameraPosition) {
-    float distance = glm::distance(cursorPosition, cameraPosition);
-
-    switch (currentCursorScalingMode) {
-    case GUI::CURSOR_NORMAL:
-        return fixedSphereRadius;
-
-    case GUI::CURSOR_FIXED:
-        return fixedSphereRadius * distance;
-
-    case GUI::CURSOR_CONSTRAINED_DYNAMIC: {
-        float distanceFactor = std::sqrt(distance);
-        float defaultScreenSize = std::pow(fixedSphereRadius, 2) * distanceFactor;
-        float minScreenSize = std::pow(fixedSphereRadius - minDiff, 2) * distanceFactor;
-        float maxScreenSize = std::pow(fixedSphereRadius + maxDiff, 2) * distanceFactor;
-        oldSphereRadius = glm::clamp(oldSphereRadius, minScreenSize, maxScreenSize);
-        return oldSphereRadius;
-    }
-
-    case GUI::CURSOR_LOGARITHMIC:
-        return fixedSphereRadius * (1.0f + std::log(distance));
-
-    default:
-        return fixedSphereRadius * distance;
-    }
-}
-
-// ---- Sphere Mesh Generation ----
-void generateSphereMesh(float radius, unsigned int rings, unsigned int sectors) {
-    sphereVertices.clear();
-    sphereIndices.clear();
-
-    float const R = 1.0f / (float)(rings - 1);
-    float const S = 1.0f / (float)(sectors - 1);
-
-    for (unsigned int r = 0; r < rings; ++r) {
-        for (unsigned int s = 0; s < sectors; ++s) {
-            float const y = sin(-M_PI_2 + M_PI * r * R);
-            float const x = cos(2 * M_PI * s * S) * sin(M_PI * r * R);
-            float const z = sin(2 * M_PI * s * S) * sin(M_PI * r * R);
-
-            sphereVertices.push_back(x * radius);
-            sphereVertices.push_back(y * radius);
-            sphereVertices.push_back(z * radius);
-
-            sphereVertices.push_back(x);
-            sphereVertices.push_back(y);
-            sphereVertices.push_back(z);
-        }
-    }
-
-    for (unsigned int r = 0; r < rings - 1; ++r) {
-        for (unsigned int s = 0; s < sectors - 1; ++s) {
-            sphereIndices.push_back(r * sectors + s);
-            sphereIndices.push_back(r * sectors + (s + 1));
-            sphereIndices.push_back((r + 1) * sectors + (s + 1));
-
-            sphereIndices.push_back(r * sectors + s);
-            sphereIndices.push_back((r + 1) * sectors + (s + 1));
-            sphereIndices.push_back((r + 1) * sectors + s);
-        }
-    }
-}
-
-// ---- Sphere Cursor Setup ----
-void setupSphereCursor() {
-    generateSphereMesh(0.05f, 32, 32);
-
-    glGenVertexArrays(1, &sphereVAO);
-    glGenBuffers(1, &sphereVBO);
-    glGenBuffers(1, &sphereEBO);
-
-    glBindVertexArray(sphereVAO);
-
-    glBindBuffer(GL_ARRAY_BUFFER, sphereVBO);
-    glBufferData(GL_ARRAY_BUFFER, sphereVertices.size() * sizeof(float), sphereVertices.data(), GL_STATIC_DRAW);
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sphereEBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sphereIndices.size() * sizeof(unsigned int), sphereIndices.data(), GL_STATIC_DRAW);
-
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
-
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
-
-    glBindVertexArray(0);
-
-    try {
-        sphereShader = Engine::loadShader("sphereVertexShader.glsl", "sphereFragmentShader.glsl");
-    }
-    catch (const std::exception& e) {
-        std::cerr << "Fatal error: " << e.what() << std::endl;
-    }
-
-    // Initialize uniforms for both shaders
-    sphereShader->use();
-    sphereShader->setMat4("projection", glm::mat4(1.0f));
-    sphereShader->setMat4("view", glm::mat4(1.0f));
-    sphereShader->setMat4("model", glm::mat4(1.0f));
-    sphereShader->setVec3("viewPos", camera.Position);
-}
-#pragma endregion
 
 
 void PerspectiveProjection(GLfloat* frustum, GLfloat dir,
@@ -1441,10 +1276,10 @@ int main() {
     }
     currentPresetName = Engine::CursorPresetManager::getPresetNames().front();
 
+    // Initialize cursor manager
+    cursorManager.initialize();
 
     setupShadowMapping();
-    setupSphereCursor();
-    setupPlaneCursor();
     setupSkyboxVAO(skyboxVAO, skyboxVBO);
 
     // ---- Calculate Largest Model Dimension ----
@@ -1622,9 +1457,6 @@ int main() {
         // Now adjust speed using the updated internal value
         camera.AdjustMovementSpeed(distanceToNearestObject, largestDimension, currentScene.settings.farPlane); // Assuming largestDimension is calculated elsewhere
 
-        // Reset camera's moving flag (if Input::handleKeyInput doesn't already do this)
-        // camera.isMoving = false; // Reset here if needed, or manage within Input/Camera classes
-
         // ---- Rendering ----
         if (isStereoWindow) {
             // Render left eye to left buffer
@@ -1651,11 +1483,8 @@ int main() {
 // ---- Initialization and Cleanup -----
 #pragma region Initialization and Cleanup
 void cleanup(Engine::Shader* shader) {
-    // Delete sphere cursor resources
-    glDeleteVertexArrays(1, &sphereVAO);
-    glDeleteBuffers(1, &sphereVBO);
-    glDeleteBuffers(1, &sphereEBO);
-    delete sphereShader;
+    // Delete cursor manager resources
+    cursorManager.cleanup();
 
     // Delete point cloud resources
     for (auto& pointCloud : currentScene.pointClouds) {
@@ -1665,12 +1494,6 @@ void cleanup(Engine::Shader* shader) {
         glDeleteBuffers(1, &pointCloud.instanceVBO);
         glDeleteVertexArrays(1, &pointCloud.vao);
     }
-
-    // Delete plane cursor resources
-    glDeleteVertexArrays(1, &planeCursor.VAO);
-    glDeleteBuffers(1, &planeCursor.VBO);
-    glDeleteBuffers(1, &planeCursor.EBO);
-    delete planeCursor.shader;
 
     // Delete skybox resources
     glDeleteVertexArrays(1, &skyboxVAO);
@@ -1731,7 +1554,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     // 1. First render pass: Shadow map generation
     // 1. IMPORTANT: Update the voxel grid FIRST - this is crucial 
     // so visualization can use the latest voxel data
-    //voxelizer->update(camera.Position, currentScene.models);
+    voxelizer->update(camera.Position, currentScene.models);
 
     // 2. First render pass: Shadow map generation
     glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
@@ -1788,25 +1611,25 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     renderPointClouds(shader);
 
     // Update cursor position after scene is rendered
-    updateCursorPosition(window, projection, view, shader);
+    cursorManager.updateCursorPosition(window, projection, view, shader);
 
-    // Set cursor uniforms after position update
-    shader->setVec4("cursorPos", camera.IsOrbiting ?
-        glm::vec4(capturedCursorPos, true) : // Always valid during orbiting
-        glm::vec4(g_cursorPos, g_cursorValid ? 1.0f : 0.0f));
+    // Update the cursor's captured position if available
+    if (cursorManager.isCursorPositionValid()) {
+        capturedCursorPos = cursorManager.getCursorPosition();
+    }
 
-    updateFragmentShaderUniforms(shader);
+    // Update shader uniforms for cursors
+    cursorManager.updateShaderUniforms(shader);
 
     // Render orbit center if needed
-    if (!orbitFollowsCursor && showOrbitCenter && camera.IsOrbiting) {
-        renderOrbitCenter(projection, view);
+    if (!orbitFollowsCursor && cursorManager.isShowOrbitCenter() && camera.IsOrbiting) {
+        cursorManager.renderOrbitCenter(projection, view, camera.OrbitPoint);
     }
 
     renderSkybox(projection, view, shader);
 
     if (camera.IsPanning == false) {
-        renderSphereCursor(projection, view);
-        renderPlaneCursor(projection, view);
+        cursorManager.renderCursors(projection, view);
     }
 
     // 4. IMPORTANT: Voxel visualization AFTER main rendering
@@ -1825,115 +1648,6 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     glBindVertexArray(0);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, 0);
-}
-
-void renderSphereCursor(const glm::mat4& projection, const glm::mat4& view) {
-    if ((g_cursorValid || camera.IsOrbiting) && showSphereCursor) {
-        // Enable blending and depth testing
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glEnable(GL_DEPTH_TEST);
-
-        sphereShader->use();
-        sphereShader->setMat4("projection", projection);
-        sphereShader->setMat4("view", view);
-        sphereShader->setVec3("viewPos", camera.Position);
-
-        // Use captured position when orbiting
-        glm::vec3 cursorRenderPos = camera.IsOrbiting ? capturedCursorPos : g_cursorPos;
-        float sphereRadius = calculateSphereRadius(cursorRenderPos, camera.Position);
-        glm::mat4 model = glm::translate(glm::mat4(1.0f), cursorRenderPos);
-        model = glm::scale(model, glm::vec3(sphereRadius));
-
-        sphereShader->setMat4("model", model);
-        sphereShader->setFloat("innerSphereFactor", innerSphereFactor);
-
-        glBindVertexArray(sphereVAO);
-
-        // First pass: Render back faces
-        glDepthMask(GL_TRUE);
-        glCullFace(GL_FRONT);
-
-        if (showInnerSphere) {
-            sphereShader->setBool("isInnerSphere", true);
-            sphereShader->setVec4("sphereColor", innerSphereColor);
-            sphereShader->setFloat("transparency", 1.0);
-            glm::mat4 innerModel = glm::scale(model, glm::vec3(innerSphereFactor));
-            sphereShader->setMat4("model", innerModel);
-            glDrawElements(GL_TRIANGLES, sphereIndices.size(), GL_UNSIGNED_INT, 0);
-        }
-
-        sphereShader->setBool("isInnerSphere", false);
-        sphereShader->setVec4("sphereColor", cursorColor);
-        sphereShader->setFloat("transparency", cursorTransparency);
-        sphereShader->setFloat("edgeSoftness", cursorEdgeSoftness);
-        sphereShader->setFloat("centerTransparencyFactor", cursorCenterTransparency);
-        sphereShader->setMat4("model", model);
-        glDrawElements(GL_TRIANGLES, sphereIndices.size(), GL_UNSIGNED_INT, 0);
-
-        // Second pass: Render front faces
-        glDepthMask(GL_FALSE);
-        glCullFace(GL_BACK);
-
-        if (showInnerSphere) {
-            sphereShader->setBool("isInnerSphere", true);
-            sphereShader->setVec4("sphereColor", innerSphereColor);
-            sphereShader->setFloat("transparency", 1.0);
-            glm::mat4 innerModel = glm::scale(model, glm::vec3(innerSphereFactor));
-            sphereShader->setMat4("model", innerModel);
-            glDrawElements(GL_TRIANGLES, sphereIndices.size(), GL_UNSIGNED_INT, 0);
-        }
-
-        sphereShader->setBool("isInnerSphere", false);
-        sphereShader->setVec4("sphereColor", cursorColor);
-        sphereShader->setFloat("transparency", cursorTransparency);
-        sphereShader->setFloat("edgeSoftness", cursorEdgeSoftness);
-        sphereShader->setFloat("centerTransparencyFactor", cursorCenterTransparency);
-        sphereShader->setMat4("model", model);
-        glDrawElements(GL_TRIANGLES, sphereIndices.size(), GL_UNSIGNED_INT, 0);
-
-        // Reset OpenGL state
-        glEnable(GL_CULL_FACE);
-        glCullFace(GL_BACK);
-        glDepthMask(GL_TRUE);
-        glDisable(GL_BLEND);
-        glBindVertexArray(0);
-        glUseProgram(0);
-    }
-}
-
-void renderOrbitCenter(const glm::mat4& projection, const glm::mat4& view) {
-    if (!orbitFollowsCursor && showOrbitCenter && camera.IsOrbiting) {
-        // Enable depth testing and blending
-        glEnable(GL_DEPTH_TEST);
-        glDepthFunc(GL_LESS);
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-        // Set up sphere shader for orbit center
-        sphereShader->use();
-        sphereShader->setMat4("projection", projection);
-        sphereShader->setMat4("view", view);
-
-        // Create model matrix for orbit center
-        glm::mat4 model = glm::translate(glm::mat4(1.0f), camera.OrbitPoint);
-        model = glm::scale(model, glm::vec3(orbitCenterSphereRadius));
-
-        // Set shader uniforms
-        sphereShader->setMat4("model", model);
-        sphereShader->setVec3("viewPos", camera.Position);
-        sphereShader->setVec4("sphereColor", orbitCenterColor);
-        sphereShader->setFloat("transparency", 1.0f);
-        sphereShader->setFloat("edgeSoftness", 0.0f);
-        sphereShader->setFloat("centerTransparencyFactor", 0.0f);
-
-        // Render orbit center sphere
-        glBindVertexArray(sphereVAO);
-        glDrawElements(GL_TRIANGLES, sphereIndices.size(), GL_UNSIGNED_INT, 0);
-        glBindVertexArray(0);
-
-        glDisable(GL_BLEND);
-    }
 }
 
 void renderModels(Engine::Shader* shader) {
@@ -2084,17 +1798,6 @@ void renderPointClouds(Engine::Shader* shader) {
 
 // ---- Shader and Lighting ----
 #pragma region Shader and Lighting
-void updateFragmentShaderUniforms(Engine::Shader* shader) {
-    // Set fragment shader uniforms for cursor rendering
-    shader->setFloat("baseOuterRadius", showFragmentCursor ? fragmentCursorSettings.baseOuterRadius : 0.0f);
-    shader->setFloat("baseOuterBorderThickness", showFragmentCursor ? fragmentCursorSettings.baseOuterBorderThickness : 0.0f);
-    shader->setFloat("baseInnerRadius", showFragmentCursor ? fragmentCursorSettings.baseInnerRadius : 0.0f);
-    shader->setFloat("baseInnerBorderThickness", showFragmentCursor ? fragmentCursorSettings.baseInnerBorderThickness : 0.0f);
-    shader->setVec4("outerCursorColor", showFragmentCursor ? fragmentCursorSettings.outerColor : glm::vec4(0.0f));
-    shader->setVec4("innerCursorColor", showFragmentCursor ? fragmentCursorSettings.innerColor : glm::vec4(0.0f));
-    shader->setBool("showFragmentCursor", showFragmentCursor);
-}
-
 void updatePointLights() {
     pointLights.clear();
     for (const auto& model : currentScene.models) {
@@ -2144,63 +1847,8 @@ PointCloud loadPointCloudFile(const std::string& filePath, size_t downsampleFact
 }
 
 
-// ---- Cursor and Ray Casting ----
-#pragma region Cursor and Ray Casting
-void updateCursorPosition(GLFWwindow* window, const glm::mat4& projection, const glm::mat4& view, Engine::Shader* shader) {
-
-    if (ImGui::GetIO().WantCaptureMouse) {
-        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-        return;
-    }
-
-    // Only update cursor position during left eye rendering
-    static bool isLeftEye = true;
-    if (!isLeftEye) {
-        isLeftEye = true;
-        return;
-    }
-    isLeftEye = false;
-
-    // During orbiting, maintain cursor at the captured position
-    if (camera.IsOrbiting) {
-        g_cursorValid = true;
-        g_cursorPos = capturedCursorPos;
-        return;
-    }
-
-    // Only update if not animating
-    if (camera.IsAnimating) {
-        return;
-    }
-
-    // Read depth at cursor position
-    float depth = 0.0;
-    glReadPixels(lastX, (float)windowHeight - lastY, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &depth);
-
-    // Convert cursor position to world space
-    glm::mat4 vpInv = glm::inverse(projection * view);
-    glm::vec4 ndc = glm::vec4((lastX / (float)windowWidth) * 2.0 - 1.0, 1.0 - (lastY / (float)windowHeight) * 2.0, depth * 2.0 - 1.0, 1.0);
-    auto worldPosH = vpInv * ndc;
-    auto worldPos = worldPosH / worldPosH.w;
-    auto isHit = depth != 1.0;
-
-
-    if (isHit && (showSphereCursor || showFragmentCursor || planeCursor.show)) {
-        g_cursorValid = true;
-        g_cursorPos = glm::vec3(worldPos);
-        if (camera.IsPanning || rightMousePressed) return;
-        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
-
-    }
-    else {
-        g_cursorValid = false;
-
-        if (camera.IsPanning || rightMousePressed) return;
-        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-
-    }
-}
-
+// ---- Ray Casting ----
+#pragma region Ray Casting
 void calculateMouseRay(float mouseX, float mouseY, glm::vec3& rayOrigin, glm::vec3& rayDirection, glm::vec3& rayNear, glm::vec3& rayFar, float aspect) {
     // Convert mouse position to normalized device coordinates
     float x = (2.0f * mouseX) / windowWidth - 1.0f;
@@ -2234,7 +1882,6 @@ void calculateMouseRay(float mouseX, float mouseY, glm::vec3& rayOrigin, glm::ve
 bool rayIntersectsModel(const glm::vec3& rayOrigin, const glm::vec3& rayDirection, const Engine::Model& model, float& distance) {
     float closestDistance = std::numeric_limits<float>::max();
     bool intersected = false;
-
     // Calculate model matrix
     glm::mat4 modelMatrix = glm::translate(glm::mat4(1.0f), model.position);
     modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.x), glm::vec3(1, 0, 0));
@@ -2309,7 +1956,12 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height)
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
     if (!ImGui::GetIO().WantCaptureMouse) {
         // Update cursor info before processing scroll
-        camera.UpdateCursorInfo(g_cursorPos, g_cursorValid);
+        if (cursorManager.isCursorPositionValid()) {
+            camera.UpdateCursorInfo(cursorManager.getCursorPosition(), true);
+        }
+        else {
+            camera.UpdateCursorInfo(glm::vec3(0.0f), false);
+        }
         camera.ProcessMouseScroll(yoffset);
     }
 }
@@ -2390,8 +2042,8 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
             if (!selectionMode) {
                 double currentTime = glfwGetTime();
                 if (currentTime - lastClickTime < doubleClickTime) {
-                    if (g_cursorValid) {
-                        camera.StartCenteringAnimation(g_cursorPos);
+                    if (cursorManager.isCursorPositionValid()) {
+                        camera.StartCenteringAnimation(cursorManager.getCursorPosition());
                         glfwSetCursorPos(window, windowWidth / 2, windowHeight / 2);
                     }
                 }
@@ -2401,12 +2053,12 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
             if (!camera.IsAnimating && !camera.IsOrbiting && !selectionMode) {
                 leftMousePressed = true;
 
-                if (g_cursorValid) {
+                if (cursorManager.isCursorPositionValid()) {
                     // Different orbiting behaviors based on settings
                     if (camera.orbitAroundCursor) {
-                        camera.UpdateCursorInfo(g_cursorPos, g_cursorValid);
+                        camera.UpdateCursorInfo(cursorManager.getCursorPosition(), true);
                         camera.StartOrbiting(true); // Pass true to use current cursor position
-                        capturedCursorPos = g_cursorPos;
+                        capturedCursorPos = cursorManager.getCursorPosition();
                         // Enable mouse capture when orbiting starts
                         isMouseCaptured = true;
                         firstMouse = true; // Reset the first mouse flag
@@ -2415,8 +2067,8 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                         glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
                     }
                     else if (orbitFollowsCursor) {
-                        camera.StartCenteringAnimation(g_cursorPos);
-                        capturedCursorPos = g_cursorPos;
+                        camera.StartCenteringAnimation(cursorManager.getCursorPosition());
+                        capturedCursorPos = cursorManager.getCursorPosition();
 
                         isMouseCaptured = true;
                         firstMouse = true;
@@ -2424,7 +2076,7 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                         glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
                     }
                     else {
-                        float cursorDepth = glm::length(g_cursorPos - camera.Position);
+                        float cursorDepth = glm::length(cursorManager.getCursorPosition() - camera.Position);
                         glm::vec3 viewportCenter = camera.Position + camera.Front * cursorDepth;
                         capturedCursorPos = viewportCenter;
                         camera.SetOrbitPointDirectly(capturedCursorPos);
@@ -2596,9 +2248,9 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
         int objectCount = 0;
 
         // First, try to use the current cursor position if valid
-        if (g_cursorValid) {
+        if (cursorManager.isCursorPositionValid()) {
             glfwSetCursorPos(window, windowWidth / 2, windowHeight / 2);
-            camera.StartCenteringAnimation(g_cursorPos);
+            camera.StartCenteringAnimation(cursorManager.getCursorPosition());
             std::cout << "Centering on cursor position" << std::endl;
             return;
         }

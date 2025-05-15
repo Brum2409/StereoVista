@@ -1,17 +1,16 @@
-// Fixed fragment shader for voxelization
 #version 450 core
 
-// Lighting settings.
+// Lighting settings
 #define POINT_LIGHT_INTENSITY 1
 #define MAX_LIGHTS 180
 
-// Lighting attenuation factors.
-#define DIST_FACTOR 1.1f /* Distance is multiplied by this when calculating attenuation. */
+// Lighting attenuation factors
+#define DIST_FACTOR 1.1f
 #define CONSTANT 1
 #define LINEAR 0
 #define QUADRATIC 1
 
-// Returns an attenuation factor given a distance.
+// Returns an attenuation factor given a distance
 float attenuate(float dist){ dist *= DIST_FACTOR; return 1.0f / (CONSTANT + LINEAR * dist + QUADRATIC * dist * dist); }
 
 struct PointLight {
@@ -32,6 +31,9 @@ uniform Material material;
 uniform PointLight pointLights[MAX_LIGHTS];
 uniform int numberOfLights;
 uniform vec3 cameraPosition;
+uniform int mipmapLevel; // Current mipmap level
+uniform float gridSize; // Actual voxel grid size
+
 layout(rgba8, binding = 0) uniform image3D texture3D;
 
 in vec3 worldPositionFrag;
@@ -45,18 +47,20 @@ vec3 calculatePointLight(const PointLight light) {
     return diff * POINT_LIGHT_INTENSITY * attenuation * light.color;
 }
 
-vec3 scaleAndBias(vec3 p) {
-    return 0.5 * p + vec3(0.5f);
+bool isInsideCube(const vec3 p, float e) { 
+    // Scale the boundary check based on the actual grid size
+    float scaleFactor = 2.0 / gridSize;
+    return abs(p.x * scaleFactor) < 1 + e && 
+           abs(p.y * scaleFactor) < 1 + e && 
+           abs(p.z * scaleFactor) < 1 + e; 
 }
 
-bool isInsideCube(const vec3 p, float e) { return abs(p.x) < 1 + e && abs(p.y) < 1 + e && abs(p.z) < 1 + e; }
-
 void main() {
-    vec3 color = vec3(0.0f);
-    
+    // Skip voxels outside the grid boundary using scaled check
     if(!isInsideCube(worldPositionFrag, 0.0)) return;
 
     // Calculate diffuse lighting contribution
+    vec3 color = vec3(0.0f);
     const uint maxLights = min(numberOfLights, MAX_LIGHTS);
     for(uint i = 0; i < maxLights; ++i) {
         color += calculatePointLight(pointLights[i]);
@@ -66,17 +70,56 @@ void main() {
     vec3 diff = material.diffuseReflectivity * material.diffuseColor;
     color = (diff + spec) * color + clamp(material.emissivity, 0.0, 1.0) * material.diffuseColor;
 
-    // Output lighting to 3D texture
-    vec3 voxel = scaleAndBias(worldPositionFrag);
-    ivec3 dim = imageSize(texture3D);
-    float alpha = pow(1.0 - material.transparency, 4.0); // For soft shadows with transparency
-    vec4 res = alpha * vec4(color, 1.0);
+    // Get texture dimensions
+    ivec3 texDim = imageSize(texture3D);
     
-    // Check that coordinates are valid
-    ivec3 voxelCoord = ivec3(dim * voxel);
-    if (voxelCoord.x >= 0 && voxelCoord.x < dim.x && 
-        voxelCoord.y >= 0 && voxelCoord.y < dim.y && 
-        voxelCoord.z >= 0 && voxelCoord.z < dim.z) {
-        imageStore(texture3D, voxelCoord, res);
+    // CRITICAL: Scale world position to normalized coordinates based on grid size
+    // This accounts for the fact that world coordinates are always in a fixed range 
+    // but the grid size can change
+    vec3 scaledPos = worldPositionFrag * (2.0 / gridSize);
+    
+    // Map from [-1,1] to [0,1] range
+    vec3 normalizedPos = scaledPos * 0.5 + 0.5;
+    
+    // Account for mipmap level - compute the effective resolution
+    int effectiveRes = texDim.x >> mipmapLevel;
+    if (effectiveRes < 1) effectiveRes = 1;
+    
+    // Scale from [0,1] to [0, effectiveRes-1]
+    vec3 voxelPos = normalizedPos * float(effectiveRes);
+    
+    // Convert to integer coordinates with rounding
+    ivec3 baseVoxelCoord = ivec3(floor(voxelPos));
+    
+    // Calculate the stride for this mipmap level
+    int stride = 1 << mipmapLevel;
+    
+    // Calculate the final storage coordinates
+    ivec3 storageCoord = baseVoxelCoord * stride;
+    
+    // Check bounds before writing
+    if (storageCoord.x >= 0 && storageCoord.x < texDim.x &&
+        storageCoord.y >= 0 && storageCoord.y < texDim.y &&
+        storageCoord.z >= 0 && storageCoord.z < texDim.z) {
+        
+        // Set alpha based on transparency
+        float alpha = pow(1.0 - material.transparency, 4.0);
+        vec4 voxelColor = vec4(color, alpha);
+        
+        // Write to the voxel grid
+        imageStore(texture3D, storageCoord, voxelColor);
+        
+        // Fill in adjacent voxels at higher mipmap levels for better coverage
+        if (mipmapLevel > 0) {
+            for (int x = 0; x < stride && storageCoord.x + x < texDim.x; x++) {
+                for (int y = 0; y < stride && storageCoord.y + y < texDim.y; y++) {
+                    for (int z = 0; z < stride && storageCoord.z + z < texDim.z; z++) {
+                        if (x == 0 && y == 0 && z == 0) continue; // Skip the center voxel
+                        ivec3 neighborCoord = storageCoord + ivec3(x, y, z);
+                        imageStore(texture3D, neighborCoord, voxelColor);
+                    }
+                }
+            }
+        }
     }
 }

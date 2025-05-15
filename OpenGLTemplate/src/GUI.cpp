@@ -1,4 +1,3 @@
-
 #include "GUI.h"
 #include "GUI_Types.h"
 #include "core.h"
@@ -9,6 +8,7 @@
 #include <filesystem>
 #include "Camera.h"
 #include "voxalizer.h"
+#include "CursorManager.h" // New include for cursor manager
 
 // Import the namespace to simplify code
 using namespace GUI;
@@ -25,13 +25,13 @@ extern bool showInfoWindow;
 extern bool showSettingsWindow;
 extern bool show3DCursor;
 extern bool showCursorSettingsWindow;
-extern bool showSphereCursor;
-extern bool showFragmentCursor;
+extern Cursor::CursorManager cursorManager; // New cursor manager reference
 extern Engine::Voxelizer* voxelizer;
 extern float ambientStrengthFromSkybox;
 extern float mouseSmoothingFactor;
-extern glm::vec3 g_cursorPos;
-extern bool g_cursorValid;
+extern bool orbitFollowsCursor;
+
+
 
 // Selection state
 extern enum class SelectedType {
@@ -43,30 +43,7 @@ extern enum class SelectedType {
 extern int currentSelectedIndex;
 extern int currentSelectedMeshIndex;
 
-// Cursor appearance settings
-extern GUI::CursorScalingMode currentCursorScalingMode;
-extern float fixedSphereRadius;
-extern float minDiff;
-extern float maxDiff;
-extern float oldSphereRadius;
-extern glm::vec4 cursorColor;
-extern float cursorTransparency;
-extern float cursorEdgeSoftness;
-extern float cursorCenterTransparency;
-extern bool showInnerSphere;
-extern glm::vec4 innerSphereColor;
-extern float innerSphereFactor;
-extern GUI::FragmentShaderCursorSettings fragmentCursorSettings;
-extern GUI::PlaneCursor planeCursor;
-
-// Orbit settings
-extern bool orbitFollowsCursor;
-extern bool showOrbitCenter;
-extern glm::vec4 orbitCenterColor;
-extern float orbitCenterSphereRadius;
-
-// Sun settings
-extern struct Sun sun;
+extern Sun sun;
 
 // Skybox settings
 extern GUI::SkyboxConfig skyboxConfig;
@@ -245,9 +222,27 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
         }
 
         if (ImGui::BeginMenu("Cursor")) {
-            ImGui::MenuItem("Show Sphere Cursor", nullptr, &showSphereCursor);
-            ImGui::MenuItem("Show Fragment Cursor", nullptr, &showFragmentCursor);
-            ImGui::MenuItem("Show Plane Cursor", nullptr, &planeCursor.show);
+            // Get cursor pointers for more readable code
+            auto* sphereCursor = cursorManager.getSphereCursor();
+            auto* fragmentCursor = cursorManager.getFragmentCursor();
+            auto* planeCursor = cursorManager.getPlaneCursor();
+
+            // Cursor visibility toggles
+            bool showSphereCursor = sphereCursor->isVisible();
+            if (ImGui::MenuItem("Show Sphere Cursor", nullptr, &showSphereCursor)) {
+                sphereCursor->setVisible(showSphereCursor);
+            }
+
+            bool showFragmentCursor = fragmentCursor->isVisible();
+            if (ImGui::MenuItem("Show Fragment Cursor", nullptr, &showFragmentCursor)) {
+                fragmentCursor->setVisible(showFragmentCursor);
+            }
+
+            bool showPlaneCursor = planeCursor->isVisible();
+            if (ImGui::MenuItem("Show Plane Cursor", nullptr, &showPlaneCursor)) {
+                planeCursor->setVisible(showPlaneCursor);
+            }
+
             ImGui::Separator();
 
             bool standardOrbit = !camera.orbitAroundCursor && !orbitFollowsCursor;
@@ -288,7 +283,30 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                     if (ImGui::MenuItem(name.c_str(), nullptr, currentPresetName == name)) {
                         currentPresetName = name;
                         Engine::CursorPreset loadedPreset = Engine::CursorPresetManager::applyCursorPreset(name);
-                        applyPresetToGlobalSettings(loadedPreset);
+
+                        // Apply to cursor manager
+                        sphereCursor->setVisible(loadedPreset.showSphereCursor);
+                        sphereCursor->setScalingMode(static_cast<GUI::CursorScalingMode>(loadedPreset.sphereScalingMode));
+                        sphereCursor->setFixedRadius(loadedPreset.sphereFixedRadius);
+                        sphereCursor->setTransparency(loadedPreset.sphereTransparency);
+                        sphereCursor->setShowInnerSphere(loadedPreset.showInnerSphere);
+                        sphereCursor->setColor(loadedPreset.cursorColor);
+                        sphereCursor->setInnerSphereColor(loadedPreset.innerSphereColor);
+                        sphereCursor->setInnerSphereFactor(loadedPreset.innerSphereFactor);
+                        sphereCursor->setEdgeSoftness(loadedPreset.cursorEdgeSoftness);
+                        sphereCursor->setCenterTransparency(loadedPreset.cursorCenterTransparency);
+
+                        fragmentCursor->setVisible(loadedPreset.showFragmentCursor);
+                        fragmentCursor->setBaseInnerRadius(loadedPreset.fragmentBaseInnerRadius);
+
+                        planeCursor->setVisible(loadedPreset.showPlaneCursor);
+                        planeCursor->setDiameter(loadedPreset.planeDiameter);
+                        planeCursor->setColor(loadedPreset.planeColor);
+
+                        // Update orbit center settings if needed
+                        bool showOrbitCenter = cursorManager.isShowOrbitCenter();
+                        cursorManager.setShowOrbitCenter(showOrbitCenter);
+
                         preferences.currentPresetName = currentPresetName;
                         savePreferences();
                     }
@@ -917,6 +935,11 @@ void renderSettingsWindow() {
 }
 
 void renderCursorSettingsWindow() {
+    // Get cursor instances from manager for easier access
+    auto* sphereCursor = cursorManager.getSphereCursor();
+    auto* fragmentCursor = cursorManager.getFragmentCursor();
+    auto* planeCursor = cursorManager.getPlaneCursor();
+
     ImGui::SetNextWindowSize(ImVec2(500, 600), ImGuiCond_FirstUseEver);
     ImGui::Begin("3D Cursor Settings", &showCursorSettingsWindow);
 
@@ -936,7 +959,30 @@ void renderCursorSettingsWindow() {
                 currentPresetName = name;
                 try {
                     Engine::CursorPreset loadedPreset = Engine::CursorPresetManager::applyCursorPreset(name);
-                    applyPresetToGlobalSettings(loadedPreset);
+
+                    // Apply to cursor manager
+                    sphereCursor->setVisible(loadedPreset.showSphereCursor);
+                    sphereCursor->setScalingMode(static_cast<GUI::CursorScalingMode>(loadedPreset.sphereScalingMode));
+                    sphereCursor->setFixedRadius(loadedPreset.sphereFixedRadius);
+                    sphereCursor->setTransparency(loadedPreset.sphereTransparency);
+                    sphereCursor->setShowInnerSphere(loadedPreset.showInnerSphere);
+                    sphereCursor->setColor(loadedPreset.cursorColor);
+                    sphereCursor->setInnerSphereColor(loadedPreset.innerSphereColor);
+                    sphereCursor->setInnerSphereFactor(loadedPreset.innerSphereFactor);
+                    sphereCursor->setEdgeSoftness(loadedPreset.cursorEdgeSoftness);
+                    sphereCursor->setCenterTransparency(loadedPreset.cursorCenterTransparency);
+
+                    fragmentCursor->setVisible(loadedPreset.showFragmentCursor);
+                    fragmentCursor->setBaseInnerRadius(loadedPreset.fragmentBaseInnerRadius);
+
+                    planeCursor->setVisible(loadedPreset.showPlaneCursor);
+                    planeCursor->setDiameter(loadedPreset.planeDiameter);
+                    planeCursor->setColor(loadedPreset.planeColor);
+
+                    // Update orbit center settings if needed
+                    bool showOrbitCenter = cursorManager.isShowOrbitCenter();
+                    cursorManager.setShowOrbitCenter(showOrbitCenter);
+
                     preferences.currentPresetName = currentPresetName;
                     savePreferences();
                 }
@@ -959,8 +1005,27 @@ void renderCursorSettingsWindow() {
             std::string newName = editPresetNameBuffer;
             if (!newName.empty()) {
                 if (newName != currentPresetName) {
-                    // Rename existing preset or save new preset
-                    Engine::CursorPreset newPreset = createPresetFromCurrentSettings(newName);
+                    // Create new preset from current settings
+                    Engine::CursorPreset newPreset;
+                    newPreset.name = newName;
+
+                    // Get settings from cursor manager
+                    newPreset.showSphereCursor = sphereCursor->isVisible();
+                    newPreset.showFragmentCursor = fragmentCursor->isVisible();
+                    newPreset.fragmentBaseInnerRadius = fragmentCursor->getBaseInnerRadius();
+                    newPreset.sphereScalingMode = static_cast<int>(sphereCursor->getScalingMode());
+                    newPreset.sphereFixedRadius = sphereCursor->getFixedRadius();
+                    newPreset.sphereTransparency = sphereCursor->getTransparency();
+                    newPreset.showInnerSphere = sphereCursor->getShowInnerSphere();
+                    newPreset.cursorColor = sphereCursor->getColor();
+                    newPreset.innerSphereColor = sphereCursor->getInnerSphereColor();
+                    newPreset.innerSphereFactor = sphereCursor->getInnerSphereFactor();
+                    newPreset.cursorEdgeSoftness = sphereCursor->getEdgeSoftness();
+                    newPreset.cursorCenterTransparency = sphereCursor->getCenterTransparency();
+                    newPreset.showPlaneCursor = planeCursor->isVisible();
+                    newPreset.planeDiameter = planeCursor->getDiameter();
+                    newPreset.planeColor = planeCursor->getColor();
+
                     Engine::CursorPresetManager::savePreset(newName, newPreset);
                     if (currentPresetName != "New Preset") {
                         Engine::CursorPresetManager::deletePreset(currentPresetName);
@@ -987,7 +1052,27 @@ void renderCursorSettingsWindow() {
 
     ImGui::SameLine();
     if (ImGui::Button("Update Preset")) {
-        Engine::CursorPreset updatedPreset = createPresetFromCurrentSettings(currentPresetName);
+        // Create preset from current cursor manager settings
+        Engine::CursorPreset updatedPreset;
+        updatedPreset.name = currentPresetName;
+
+        // Get settings from cursor manager
+        updatedPreset.showSphereCursor = sphereCursor->isVisible();
+        updatedPreset.showFragmentCursor = fragmentCursor->isVisible();
+        updatedPreset.fragmentBaseInnerRadius = fragmentCursor->getBaseInnerRadius();
+        updatedPreset.sphereScalingMode = static_cast<int>(sphereCursor->getScalingMode());
+        updatedPreset.sphereFixedRadius = sphereCursor->getFixedRadius();
+        updatedPreset.sphereTransparency = sphereCursor->getTransparency();
+        updatedPreset.showInnerSphere = sphereCursor->getShowInnerSphere();
+        updatedPreset.cursorColor = sphereCursor->getColor();
+        updatedPreset.innerSphereColor = sphereCursor->getInnerSphereColor();
+        updatedPreset.innerSphereFactor = sphereCursor->getInnerSphereFactor();
+        updatedPreset.cursorEdgeSoftness = sphereCursor->getEdgeSoftness();
+        updatedPreset.cursorCenterTransparency = sphereCursor->getCenterTransparency();
+        updatedPreset.showPlaneCursor = planeCursor->isVisible();
+        updatedPreset.planeDiameter = planeCursor->getDiameter();
+        updatedPreset.planeColor = planeCursor->getColor();
+
         Engine::CursorPresetManager::savePreset(currentPresetName, updatedPreset);
     }
 
@@ -999,12 +1084,52 @@ void renderCursorSettingsWindow() {
             if (!remainingPresets.empty()) {
                 currentPresetName = remainingPresets.front();
                 Engine::CursorPreset loadedPreset = Engine::CursorPresetManager::applyCursorPreset(currentPresetName);
-                applyPresetToGlobalSettings(loadedPreset);
+
+                // Apply to cursor manager
+                sphereCursor->setVisible(loadedPreset.showSphereCursor);
+                sphereCursor->setScalingMode(static_cast<GUI::CursorScalingMode>(loadedPreset.sphereScalingMode));
+                sphereCursor->setFixedRadius(loadedPreset.sphereFixedRadius);
+                sphereCursor->setTransparency(loadedPreset.sphereTransparency);
+                sphereCursor->setShowInnerSphere(loadedPreset.showInnerSphere);
+                sphereCursor->setColor(loadedPreset.cursorColor);
+                sphereCursor->setInnerSphereColor(loadedPreset.innerSphereColor);
+                sphereCursor->setInnerSphereFactor(loadedPreset.innerSphereFactor);
+                sphereCursor->setEdgeSoftness(loadedPreset.cursorEdgeSoftness);
+                sphereCursor->setCenterTransparency(loadedPreset.cursorCenterTransparency);
+
+                fragmentCursor->setVisible(loadedPreset.showFragmentCursor);
+                fragmentCursor->setBaseInnerRadius(loadedPreset.fragmentBaseInnerRadius);
+
+                planeCursor->setVisible(loadedPreset.showPlaneCursor);
+                planeCursor->setDiameter(loadedPreset.planeDiameter);
+                planeCursor->setColor(loadedPreset.planeColor);
             }
             else {
                 currentPresetName = "Default";
                 // Reset to default settings
-                setDefaultCursorSettings();
+                // Setup default cursor settings
+                sphereCursor->setVisible(true);
+                sphereCursor->setScalingMode(GUI::CURSOR_CONSTRAINED_DYNAMIC);
+                sphereCursor->setFixedRadius(0.05f);
+                sphereCursor->setTransparency(0.7f);
+                sphereCursor->setShowInnerSphere(false);
+                sphereCursor->setColor(glm::vec4(1.0f, 0.0f, 0.0f, 0.7f));
+                sphereCursor->setInnerSphereColor(glm::vec4(0.0f, 1.0f, 0.0f, 1.0f));
+                sphereCursor->setInnerSphereFactor(0.1f);
+                sphereCursor->setEdgeSoftness(0.8f);
+                sphereCursor->setCenterTransparency(0.2f);
+
+                fragmentCursor->setVisible(true);
+                GUI::FragmentShaderCursorSettings fragSettings;
+                fragmentCursor->setSettings(fragSettings);
+
+                planeCursor->setVisible(false);
+                planeCursor->setDiameter(0.5f);
+                planeCursor->setColor(glm::vec4(0.0f, 1.0f, 0.0f, 0.7f));
+
+                cursorManager.setShowOrbitCenter(false);
+                cursorManager.setOrbitCenterColor(glm::vec4(0.0f, 1.0f, 0.0f, 0.7f));
+                cursorManager.setOrbitCenterSphereRadius(0.2f);
             }
         }
     }
@@ -1049,11 +1174,22 @@ void renderCursorSettingsWindow() {
         ImGui::SetItemTooltip("Centers the view on cursor position before orbiting");
 
         ImGui::Separator();
-        ImGui::Checkbox("Show Orbit Center", &showOrbitCenter);
+
+        bool showOrbitCenter = cursorManager.isShowOrbitCenter();
+        if (ImGui::Checkbox("Show Orbit Center", &showOrbitCenter)) {
+            cursorManager.setShowOrbitCenter(showOrbitCenter);
+        }
 
         if (showOrbitCenter) {
-            ImGui::ColorEdit4("Orbit Center Color", glm::value_ptr(orbitCenterColor));
-            ImGui::SliderFloat("Orbit Center Size", &orbitCenterSphereRadius, 0.01f, 1.0f);
+            glm::vec4 orbitCenterColor = cursorManager.getOrbitCenterColor();
+            if (ImGui::ColorEdit4("Orbit Center Color", glm::value_ptr(orbitCenterColor))) {
+                cursorManager.setOrbitCenterColor(orbitCenterColor);
+            }
+
+            float orbitCenterSphereRadius = cursorManager.getOrbitCenterSphereRadius();
+            if (ImGui::SliderFloat("Orbit Center Size", &orbitCenterSphereRadius, 0.01f, 1.0f)) {
+                cursorManager.setOrbitCenterSphereRadius(orbitCenterSphereRadius);
+            }
         }
     }
 
@@ -1061,62 +1197,132 @@ void renderCursorSettingsWindow() {
 
     // 3D Sphere Cursor Settings
     if (ImGui::CollapsingHeader("3D Sphere Cursor", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Checkbox("Show 3D Sphere Cursor", &showSphereCursor);
+        bool showSphereCursor = sphereCursor->isVisible();
+        if (ImGui::Checkbox("Show 3D Sphere Cursor", &showSphereCursor)) {
+            sphereCursor->setVisible(showSphereCursor);
+        }
 
         if (showSphereCursor) {
-            if (!orbitFollowsCursor) {
-                ImGui::Checkbox("Show Orbit Center", &showOrbitCenter);
-                if (showOrbitCenter) {
-                    ImGui::ColorEdit4("Orbit Center Color", glm::value_ptr(orbitCenterColor));
-                    ImGui::SliderFloat("Orbit Center Size", &orbitCenterSphereRadius, 0.01f, 1.0f);
+            // Get cursor scaling mode
+            GUI::CursorScalingMode scalingMode = sphereCursor->getScalingMode();
+            const char* scalingModes[] = { "Normal", "Fixed", "Constrained Dynamic", "Logarithmic" };
+            int currentMode = static_cast<int>(scalingMode);
+            if (ImGui::Combo("Cursor Scaling Mode", &currentMode, scalingModes, IM_ARRAYSIZE(scalingModes))) {
+                sphereCursor->setScalingMode(static_cast<GUI::CursorScalingMode>(currentMode));
+            }
+
+            float fixedRadius = sphereCursor->getFixedRadius();
+            if (ImGui::SliderFloat("Fixed Sphere Radius", &fixedRadius, 0.01f, 3.0f)) {
+                sphereCursor->setFixedRadius(fixedRadius);
+            }
+
+            if (sphereCursor->getScalingMode() == GUI::CURSOR_CONSTRAINED_DYNAMIC) {
+                float minDiff = sphereCursor->getMinDiff();
+                if (ImGui::SliderFloat("Min Difference", &minDiff, 0.001f, 0.1f)) {
+                    sphereCursor->setMinDiff(minDiff);
+                }
+
+                float maxDiff = sphereCursor->getMaxDiff();
+                if (ImGui::SliderFloat("Max Difference", &maxDiff, 0.01f, 1.0f)) {
+                    sphereCursor->setMaxDiff(maxDiff);
                 }
             }
 
-            const char* scalingModes[] = { "Normal", "Fixed", "Constrained Dynamic", "Logarithmic" };
-            int currentMode = static_cast<int>(currentCursorScalingMode);
-            if (ImGui::Combo("Cursor Scaling Mode", &currentMode, scalingModes, IM_ARRAYSIZE(scalingModes))) {
-                currentCursorScalingMode = static_cast<GUI::CursorScalingMode>(currentMode);
+            glm::vec4 cursorColor = sphereCursor->getColor();
+            if (ImGui::ColorEdit4("Cursor Color", glm::value_ptr(cursorColor))) {
+                sphereCursor->setColor(cursorColor);
             }
 
-            ImGui::SliderFloat("Fixed Sphere Radius", &fixedSphereRadius, 0.01f, 3.0f);
-
-            if (currentCursorScalingMode == GUI::CURSOR_CONSTRAINED_DYNAMIC) {
-                ImGui::SliderFloat("Min Difference", &minDiff, 0.001f, 0.1f);
-                ImGui::SliderFloat("Max Difference", &maxDiff, 0.01f, 1.0f);
+            float transparency = sphereCursor->getTransparency();
+            if (ImGui::SliderFloat("Cursor Transparency", &transparency, 0.0f, 1.0f)) {
+                sphereCursor->setTransparency(transparency);
             }
 
-            ImGui::ColorEdit4("Cursor Color", glm::value_ptr(cursorColor));
-            ImGui::SliderFloat("Cursor Transparency", &cursorTransparency, 0.0f, 1.0f);
-            ImGui::SliderFloat("Edge Softness", &cursorEdgeSoftness, 0.0f, 1.0f);
-            ImGui::SliderFloat("Center Transparency", &cursorCenterTransparency, 0.0f, 1.0f);
+            float edgeSoftness = sphereCursor->getEdgeSoftness();
+            if (ImGui::SliderFloat("Edge Softness", &edgeSoftness, 0.0f, 1.0f)) {
+                sphereCursor->setEdgeSoftness(edgeSoftness);
+            }
 
-            ImGui::Checkbox("Show Inner Sphere", &showInnerSphere);
+            float centerTransparency = sphereCursor->getCenterTransparency();
+            if (ImGui::SliderFloat("Center Transparency", &centerTransparency, 0.0f, 1.0f)) {
+                sphereCursor->setCenterTransparency(centerTransparency);
+            }
+
+            bool showInnerSphere = sphereCursor->getShowInnerSphere();
+            if (ImGui::Checkbox("Show Inner Sphere", &showInnerSphere)) {
+                sphereCursor->setShowInnerSphere(showInnerSphere);
+            }
+
             if (showInnerSphere) {
-                ImGui::ColorEdit4("Inner Sphere Color", glm::value_ptr(innerSphereColor));
-                ImGui::SliderFloat("Inner Sphere Factor", &innerSphereFactor, 0.1f, 0.9f);
+                glm::vec4 innerSphereColor = sphereCursor->getInnerSphereColor();
+                if (ImGui::ColorEdit4("Inner Sphere Color", glm::value_ptr(innerSphereColor))) {
+                    sphereCursor->setInnerSphereColor(innerSphereColor);
+                }
+
+                float innerSphereFactor = sphereCursor->getInnerSphereFactor();
+                if (ImGui::SliderFloat("Inner Sphere Factor", &innerSphereFactor, 0.1f, 0.9f)) {
+                    sphereCursor->setInnerSphereFactor(innerSphereFactor);
+                }
             }
         }
     }
 
     // Fragment Shader Cursor Settings
     if (ImGui::CollapsingHeader("Fragment Shader Cursor", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Checkbox("Show Fragment Shader Cursor", &showFragmentCursor);
+        bool showFragmentCursor = fragmentCursor->isVisible();
+        if (ImGui::Checkbox("Show Fragment Shader Cursor", &showFragmentCursor)) {
+            fragmentCursor->setVisible(showFragmentCursor);
+        }
 
         if (showFragmentCursor) {
-            ImGui::SliderFloat("Outer Radius", &fragmentCursorSettings.baseOuterRadius, 0.0f, 0.3f);
-            ImGui::SliderFloat("Outer Border Thickness", &fragmentCursorSettings.baseOuterBorderThickness, 0.0f, 0.08f);
-            ImGui::SliderFloat("Inner Radius", &fragmentCursorSettings.baseInnerRadius, 0.0f, 0.2f);
-            ImGui::SliderFloat("Inner Border Thickness", &fragmentCursorSettings.baseInnerBorderThickness, 0.0f, 0.08f);
-            ImGui::ColorEdit4("Outer Color", glm::value_ptr(fragmentCursorSettings.outerColor));
-            ImGui::ColorEdit4("Inner Color", glm::value_ptr(fragmentCursorSettings.innerColor));
+            float baseOuterRadius = fragmentCursor->getBaseOuterRadius();
+            if (ImGui::SliderFloat("Outer Radius", &baseOuterRadius, 0.0f, 0.3f)) {
+                fragmentCursor->setBaseOuterRadius(baseOuterRadius);
+            }
+
+            float baseOuterBorderThickness = fragmentCursor->getBaseOuterBorderThickness();
+            if (ImGui::SliderFloat("Outer Border Thickness", &baseOuterBorderThickness, 0.0f, 0.08f)) {
+                fragmentCursor->setBaseOuterBorderThickness(baseOuterBorderThickness);
+            }
+
+            float baseInnerRadius = fragmentCursor->getBaseInnerRadius();
+            if (ImGui::SliderFloat("Inner Radius", &baseInnerRadius, 0.0f, 0.2f)) {
+                fragmentCursor->setBaseInnerRadius(baseInnerRadius);
+            }
+
+            float baseInnerBorderThickness = fragmentCursor->getBaseInnerBorderThickness();
+            if (ImGui::SliderFloat("Inner Border Thickness", &baseInnerBorderThickness, 0.0f, 0.08f)) {
+                fragmentCursor->setBaseInnerBorderThickness(baseInnerBorderThickness);
+            }
+
+            glm::vec4 outerColor = fragmentCursor->getOuterColor();
+            if (ImGui::ColorEdit4("Outer Color", glm::value_ptr(outerColor))) {
+                fragmentCursor->setOuterColor(outerColor);
+            }
+
+            glm::vec4 innerColor = fragmentCursor->getInnerColor();
+            if (ImGui::ColorEdit4("Inner Color", glm::value_ptr(innerColor))) {
+                fragmentCursor->setInnerColor(innerColor);
+            }
         }
     }
 
     if (ImGui::CollapsingHeader("Plane Cursor", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Checkbox("Show Plane Cursor", &planeCursor.show);
-        if (planeCursor.show) {
-            ImGui::ColorEdit4("Plane Color", glm::value_ptr(planeCursor.color));
-            ImGui::SliderFloat("Plane Diameter", &planeCursor.diameter, 0.1f, 5.0f);
+        bool showPlaneCursor = planeCursor->isVisible();
+        if (ImGui::Checkbox("Show Plane Cursor", &showPlaneCursor)) {
+            planeCursor->setVisible(showPlaneCursor);
+        }
+
+        if (showPlaneCursor) {
+            glm::vec4 planeColor = planeCursor->getColor();
+            if (ImGui::ColorEdit4("Plane Color", glm::value_ptr(planeColor))) {
+                planeCursor->setColor(planeColor);
+            }
+
+            float diameter = planeCursor->getDiameter();
+            if (ImGui::SliderFloat("Plane Diameter", &diameter, 0.1f, 5.0f)) {
+                planeCursor->setDiameter(diameter);
+            }
         }
     }
 
@@ -1446,64 +1652,6 @@ void deleteSelectedPointCloud() {
         currentSelectedIndex = -1;
         currentSelectedType = SelectedType::None;
     }
-}
-
-Engine::CursorPreset createPresetFromCurrentSettings(const std::string& name) {
-    Engine::CursorPreset preset;
-    preset.name = name;
-    preset.showSphereCursor = showSphereCursor;
-    preset.showFragmentCursor = showFragmentCursor;
-    preset.fragmentBaseInnerRadius = fragmentCursorSettings.baseInnerRadius;
-    preset.sphereScalingMode = static_cast<int>(currentCursorScalingMode);
-    preset.sphereFixedRadius = fixedSphereRadius;
-    preset.sphereTransparency = cursorTransparency;
-    preset.showInnerSphere = showInnerSphere;
-    preset.cursorColor = cursorColor;
-    preset.innerSphereColor = innerSphereColor;
-    preset.innerSphereFactor = innerSphereFactor;
-    preset.cursorEdgeSoftness = cursorEdgeSoftness;
-    preset.cursorCenterTransparency = cursorCenterTransparency;
-    preset.showPlaneCursor = planeCursor.show;
-    preset.planeDiameter = planeCursor.diameter;
-    preset.planeColor = planeCursor.color;
-    return preset;
-}
-
-void applyPresetToGlobalSettings(const Engine::CursorPreset& preset) {
-    showSphereCursor = preset.showSphereCursor;
-    showFragmentCursor = preset.showFragmentCursor;
-    fragmentCursorSettings.baseInnerRadius = preset.fragmentBaseInnerRadius;
-    currentCursorScalingMode = static_cast<GUI::CursorScalingMode>(preset.sphereScalingMode);
-    fixedSphereRadius = preset.sphereFixedRadius;
-    cursorTransparency = preset.sphereTransparency;
-    showInnerSphere = preset.showInnerSphere;
-    cursorColor = preset.cursorColor;
-    innerSphereColor = preset.innerSphereColor;
-    innerSphereFactor = preset.innerSphereFactor;
-    cursorEdgeSoftness = preset.cursorEdgeSoftness;
-    cursorCenterTransparency = preset.cursorCenterTransparency;
-    planeCursor.show = preset.showPlaneCursor;
-    planeCursor.diameter = preset.planeDiameter;
-    planeCursor.color = preset.planeColor;
-}
-
-void setDefaultCursorSettings() {
-    showSphereCursor = true;
-    showFragmentCursor = true;
-    currentCursorScalingMode = GUI::CURSOR_CONSTRAINED_DYNAMIC;
-    fixedSphereRadius = 0.05f;
-    cursorColor = glm::vec4(1.0f, 0.0f, 0.0f, 0.7f);
-    cursorTransparency = 0.7f;
-    cursorEdgeSoftness = 0.8f;
-    cursorCenterTransparency = 0.2f;
-    showInnerSphere = false;
-    innerSphereColor = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
-    innerSphereFactor = 0.1f;
-    orbitFollowsCursor = true;
-    showOrbitCenter = false;
-    orbitCenterColor = glm::vec4(0.0f, 1.0f, 0.0f, 0.7f);
-    orbitCenterSphereRadius = 0.2f;
-    fragmentCursorSettings = FragmentShaderCursorSettings();
 }
 
 void renderStereoCameraVisualization(const Camera& camera, const Engine::SceneSettings& settings) {
