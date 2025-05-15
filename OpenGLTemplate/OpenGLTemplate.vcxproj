@@ -163,6 +163,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="headers\libs\glad.c" />
+    <ClCompile Include="headers\libs\imgui\imgui_style.cpp" />
     <ClCompile Include="src\cursor_presets.cpp" />
     <ClCompile Include="src\engine\buffers.cpp" />
     <ClCompile Include="src\engine\input.cpp" />
@@ -174,6 +175,7 @@
     <ClCompile Include="headers\libs\imgui\imgui_draw.cpp" />
     <ClCompile Include="headers\libs\imgui\imgui_tables.cpp" />
     <ClCompile Include="headers\libs\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="src\GUI.cpp" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\model_loader.cpp" />
     <ClCompile Include="headers\libs\portable-file-dialogs.h" />
@@ -191,6 +193,8 @@
     <ClInclude Include="headers\engine\shader.h" />
     <ClInclude Include="headers\engine\window.h" />
     <ClInclude Include="headers\Camera.h" />
+    <ClInclude Include="headers\GUI.h" />
+    <ClInclude Include="headers\GUI_Types.h" />
     <ClInclude Include="headers\libs\assimp\aabb.h" />
     <ClInclude Include="headers\libs\assimp\ai_assert.h" />
     <ClInclude Include="headers\libs\assimp\anim.h" />

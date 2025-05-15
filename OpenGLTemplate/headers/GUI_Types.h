@@ -1,0 +1,91 @@
+#pragma once
+
+#include <glad/glad.h>
+#include <glm/glm.hpp>
+#include <string>
+#include <vector>
+
+// Forward declarations
+namespace Engine {
+    class Shader;
+    class CursorPreset;
+}
+
+// Define all types in a namespace to avoid conflicts
+namespace GUI {
+    enum SkyboxType {
+        SKYBOX_CUBEMAP,     // Standard cubemap texture
+        SKYBOX_SOLID_COLOR, // Solid color
+        SKYBOX_GRADIENT     // Gradient color
+    };
+
+    enum CursorScalingMode {
+        CURSOR_NORMAL,
+        CURSOR_FIXED,
+        CURSOR_CONSTRAINED_DYNAMIC,
+        CURSOR_LOGARITHMIC
+    };
+
+    // Structure definitions
+    struct SkyboxConfig {
+        SkyboxType type = SKYBOX_CUBEMAP;
+        glm::vec3 solidColor = glm::vec3(0.2f, 0.3f, 0.4f);
+        glm::vec3 gradientTopColor = glm::vec3(0.1f, 0.1f, 0.3f);
+        glm::vec3 gradientBottomColor = glm::vec3(0.7f, 0.7f, 1.0f);
+        int selectedCubemap = 0;  // Index of the selected predefined cubemap
+    };
+
+    struct CubemapPreset {
+        std::string name;
+        std::string path;
+        std::string description;
+    };
+
+    struct FragmentShaderCursorSettings {
+        float baseOuterRadius = 0.04f;
+        float baseOuterBorderThickness = 0.005f;
+        float baseInnerRadius = 0.004f;
+        float baseInnerBorderThickness = 0.005f;
+        glm::vec4 outerColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
+        glm::vec4 innerColor = glm::vec4(1.0f, 1.0f, 1.0f, 0.5f);
+    };
+
+    struct PlaneCursor {
+        GLuint VAO, VBO, EBO;
+        glm::vec4 color = glm::vec4(0.0f, 1.0f, 0.0f, 0.7f);
+        float diameter = 0.5f;
+        bool show = false;
+        Engine::Shader* shader = nullptr;
+    };
+
+    struct ApplicationPreferences {
+        bool isDarkTheme = true;
+        float separation = 10.0f;
+        float convergence = 50.0f;
+        float nearPlane = 0.1f;
+        float farPlane = 200.0f;
+        std::string currentPresetName = "Sphere";
+        float cameraSpeedFactor = 1.0f;
+        bool showFPS = true;
+        bool show3DCursor = true;
+        bool useNewStereoMethod = true;
+        float fov = 45.0f;
+        float scrollMomentum = 0.5f;
+        float maxScrollVelocity = 3.0f;
+        float scrollDeceleration = 10.0f;
+        bool useSmoothScrolling = true;
+        bool zoomToCursor = true;
+        bool orbitAroundCursor = true;
+        bool orbitFollowsCursor = false;
+        float mouseSmoothingFactor = 1.0f;
+        float mouseSensitivity = 0.17f;
+
+        bool showStereoVisualization = true;
+
+        int skyboxType = SKYBOX_CUBEMAP;
+        glm::vec3 skyboxSolidColor = glm::vec3(0.2f, 0.3f, 0.4f);
+        glm::vec3 skyboxGradientTop = glm::vec3(0.1f, 0.1f, 0.3f);
+        glm::vec3 skyboxGradientBottom = glm::vec3(0.7f, 0.7f, 1.0f);
+        int selectedCubemap = 0;
+    };
+}

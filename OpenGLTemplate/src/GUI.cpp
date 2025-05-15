@@ -1,0 +1,1667 @@
+
+#include "GUI.h"
+#include "GUI_Types.h"
+#include "core.h"
+#include <json.h>
+#include <fstream>
+#include <sstream>
+#include <iostream>
+#include <filesystem>
+#include "Camera.h"
+#include "voxalizer.h"
+
+// Import the namespace to simplify code
+using namespace GUI;
+
+// External globals that GUI needs access to
+extern int windowWidth;
+extern int windowHeight;
+extern Engine::Scene currentScene;
+extern Camera camera;
+extern bool showGui;
+extern bool showFPS;
+extern bool isDarkTheme;
+extern bool showInfoWindow;
+extern bool showSettingsWindow;
+extern bool show3DCursor;
+extern bool showCursorSettingsWindow;
+extern bool showSphereCursor;
+extern bool showFragmentCursor;
+extern Engine::Voxelizer* voxelizer;
+extern float ambientStrengthFromSkybox;
+extern float mouseSmoothingFactor;
+extern glm::vec3 g_cursorPos;
+extern bool g_cursorValid;
+
+// Selection state
+extern enum class SelectedType {
+    None,
+    Model,
+    PointCloud,
+    Sun
+} currentSelectedType;
+extern int currentSelectedIndex;
+extern int currentSelectedMeshIndex;
+
+// Cursor appearance settings
+extern GUI::CursorScalingMode currentCursorScalingMode;
+extern float fixedSphereRadius;
+extern float minDiff;
+extern float maxDiff;
+extern float oldSphereRadius;
+extern glm::vec4 cursorColor;
+extern float cursorTransparency;
+extern float cursorEdgeSoftness;
+extern float cursorCenterTransparency;
+extern bool showInnerSphere;
+extern glm::vec4 innerSphereColor;
+extern float innerSphereFactor;
+extern GUI::FragmentShaderCursorSettings fragmentCursorSettings;
+extern GUI::PlaneCursor planeCursor;
+
+// Orbit settings
+extern bool orbitFollowsCursor;
+extern bool showOrbitCenter;
+extern glm::vec4 orbitCenterColor;
+extern float orbitCenterSphereRadius;
+
+// Sun settings
+extern struct Sun sun;
+
+// Skybox settings
+extern GUI::SkyboxConfig skyboxConfig;
+extern std::vector<GUI::CubemapPreset> cubemapPresets;
+
+// Preferences
+extern GUI::ApplicationPreferences preferences;
+extern std::string currentPresetName;
+extern bool isEditingPresetName;
+extern char editPresetNameBuffer[256];
+
+// Function to handle saving preferences
+extern void savePreferences();
+extern void updateSkybox();
+
+// Constants
+extern const int MAX_LIGHTS;
+
+bool InitializeGUI(GLFWwindow* window, bool isDarkTheme) {
+    return InitializeImGuiWithFonts(window, isDarkTheme);
+}
+
+void CleanupGUI() {
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+}
+
+void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags windowFlags, Engine::Shader* shader) {
+    if (!isLeftEye) {
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        return;
+    }
+
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+
+    if (!showGui) {
+        if (showFPS) {
+            ImGui::SetNextWindowPos(ImVec2(windowWidth - 120, windowHeight - 60));
+            ImGui::Begin("FPS Counter", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoBackground);
+            ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+            ImGui::End();
+        }
+        ImGui::Render();
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        return;
+    }
+
+    // Main Menu Bar
+    if (ImGui::BeginMainMenuBar()) {
+        if (ImGui::BeginMenu("File")) {
+            if (ImGui::MenuItem("Open")) {
+                auto selection = pfd::open_file("Select a file to open", ".",
+                    { "All Supported Files", "*.obj *.fbx *.3ds *.gltf *.glb *.txt *.xyz *.ply *.pcb",
+                      "3D Models", "*.obj *.fbx *.3ds *.gltf *.glb",
+                      "Point Cloud Files", "*.txt *.xyz *.ply *.pcb",
+                      "All Files", "*" }).result();
+
+                if (!selection.empty()) {
+                    std::string filePath = selection[0];
+                    std::string extension = std::filesystem::path(filePath).extension().string();
+
+                    if (extension == ".obj" || extension == ".fbx" || extension == ".3ds" ||
+                        extension == ".gltf" || extension == ".glb") {
+                        try {
+                            Engine::Model newModel = *Engine::loadModel(filePath);
+                            currentScene.models.push_back(newModel);
+                            currentSelectedIndex = currentScene.models.size() - 1;
+                        }
+                        catch (const std::exception& e) {
+                            std::cerr << "Failed to load model: " << e.what() << std::endl;
+                        }
+                    }
+                    else if (extension == ".txt" || extension == ".xyz" || extension == ".ply") {
+                        Engine::PointCloud newPointCloud = Engine::PointCloudLoader::loadPointCloudFile(filePath);
+                        newPointCloud.filePath = filePath;
+                        currentScene.pointClouds.push_back(newPointCloud);
+                    }
+                    else if (extension == ".pcb") {
+                        Engine::PointCloud newPointCloud = Engine::PointCloudLoader::loadFromBinary(filePath);
+                        if (!newPointCloud.points.empty()) {
+                            newPointCloud.filePath = filePath;
+                            newPointCloud.name = std::filesystem::path(filePath).stem().string();
+                            currentScene.pointClouds.push_back(newPointCloud);
+                        }
+                        else {
+                            std::cerr << "Failed to load point cloud from: " << filePath << std::endl;
+                        }
+                    }
+                }
+            }
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Scene")) {
+            if (ImGui::MenuItem("Load")) {
+                auto selection = pfd::open_file("Select a scene file to load", ".",
+                    { "Scene Files", "*.scene", "All Files", "*" }).result();
+                if (!selection.empty()) {
+                    try {
+                        currentScene = Engine::loadScene(selection[0]);
+                        currentSelectedIndex = currentScene.models.empty() ? -1 : 0;
+                    }
+                    catch (const std::exception& e) {
+                        std::cerr << "Failed to load scene: " << e.what() << std::endl;
+                    }
+                }
+            }
+            if (ImGui::MenuItem("Save")) {
+                auto destination = pfd::save_file("Select a file to save scene", ".",
+                    { "Scene Files", "*.scene", "All Files", "*" }).result();
+                if (!destination.empty()) {
+                    try {
+                        Engine::saveScene(destination, currentScene);
+                    }
+                    catch (const std::exception& e) {
+                        std::cerr << "Failed to save scene: " << e.what() << std::endl;
+                    }
+                }
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Create Cube")) {
+                Engine::Model newCube = Engine::createCube(glm::vec3(1.0f, 1.0f, 1.0f), 1.0f, 0.0f);
+                newCube.scale = glm::vec3(0.5f);
+                newCube.position = glm::vec3(0.0f, 0.0f, 0.0f);
+                currentScene.models.push_back(newCube);
+                currentSelectedIndex = currentScene.models.size() - 1;
+                currentSelectedType = SelectedType::Model;
+            }
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("View")) {
+            ImGui::MenuItem("Show FPS", nullptr, &showFPS);
+            ImGui::MenuItem("Wireframe Mode", nullptr, &camera.wireframe);
+            ImGui::MenuItem("Show GUI", nullptr, &showGui);
+            if (ImGui::BeginMenu("Theme")) {
+                if (ImGui::MenuItem("Light Theme", nullptr, !isDarkTheme)) {
+                    isDarkTheme = false;
+                    SetupImGuiStyle(isDarkTheme, 1.0f);
+                    preferences.isDarkTheme = isDarkTheme;
+                    savePreferences();
+                }
+                if (ImGui::MenuItem("Dark Theme", nullptr, isDarkTheme)) {
+                    isDarkTheme = true;
+                    SetupImGuiStyle(isDarkTheme, 1.0f);
+                    preferences.isDarkTheme = isDarkTheme;
+                    savePreferences();
+                }
+                ImGui::EndMenu();
+            }
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Camera")) {
+            if (ImGui::BeginCombo("Stereo Method", camera.useNewMethod ? "New Method" : "Legacy")) {
+                if (ImGui::Selectable("Legacy", !camera.useNewMethod)) {
+                    camera.useNewMethod = false;
+                    currentScene.settings.separation = 0.02f;
+                    preferences.useNewStereoMethod = false;
+                    savePreferences();
+                }
+                if (ImGui::Selectable("New Method", camera.useNewMethod)) {
+                    camera.useNewMethod = true;
+                    currentScene.settings.separation = 0.005f;
+                    preferences.useNewStereoMethod = true;
+                    savePreferences();
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::MenuItem("Smooth Scrolling", nullptr, &camera.useSmoothScrolling);
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Cursor")) {
+            ImGui::MenuItem("Show Sphere Cursor", nullptr, &showSphereCursor);
+            ImGui::MenuItem("Show Fragment Cursor", nullptr, &showFragmentCursor);
+            ImGui::MenuItem("Show Plane Cursor", nullptr, &planeCursor.show);
+            ImGui::Separator();
+
+            bool standardOrbit = !camera.orbitAroundCursor && !orbitFollowsCursor;
+            bool orbitAroundCursorOption = camera.orbitAroundCursor;
+            bool orbitFollowsCursorOption = orbitFollowsCursor;
+
+            if (ImGui::RadioButton("Standard Orbit", standardOrbit)) {
+                camera.orbitAroundCursor = false;
+                orbitFollowsCursor = false;
+                preferences.orbitAroundCursor = false;
+                preferences.orbitFollowsCursor = false;
+                savePreferences();
+            }
+            ImGui::SetItemTooltip("Orbits around the viewport center at cursor depth");
+
+            if (ImGui::RadioButton("Orbit Around Cursor", orbitAroundCursorOption)) {
+                camera.orbitAroundCursor = true;
+                orbitFollowsCursor = false;
+                preferences.orbitAroundCursor = true;
+                preferences.orbitFollowsCursor = false;
+                savePreferences();
+            }
+            ImGui::SetItemTooltip("Orbits around the 3D position of the cursor without centering the view");
+
+            if (ImGui::RadioButton("Orbit Follows Cursor (Center)", orbitFollowsCursorOption)) {
+                camera.orbitAroundCursor = false;
+                orbitFollowsCursor = true;
+                preferences.orbitAroundCursor = false;
+                preferences.orbitFollowsCursor = true;
+                savePreferences();
+            }
+            ImGui::SetItemTooltip("Centers the view on cursor position before orbiting");
+            ImGui::Separator();
+
+            if (ImGui::BeginMenu("Presets")) {
+                std::vector<std::string> presetNames = Engine::CursorPresetManager::getPresetNames();
+                for (const auto& name : presetNames) {
+                    if (ImGui::MenuItem(name.c_str(), nullptr, currentPresetName == name)) {
+                        currentPresetName = name;
+                        Engine::CursorPreset loadedPreset = Engine::CursorPresetManager::applyCursorPreset(name);
+                        applyPresetToGlobalSettings(loadedPreset);
+                        preferences.currentPresetName = currentPresetName;
+                        savePreferences();
+                    }
+                }
+                ImGui::EndMenu();
+            }
+            if (ImGui::MenuItem("Cursor Settings")) {
+                showCursorSettingsWindow = true;
+            }
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::MenuItem("Settings")) {
+            showSettingsWindow = true;
+        }
+        ImGui::EndMainMenuBar();
+    }
+
+    // Scene Objects Window
+    ImGui::SetNextWindowPos(ImVec2(0, ImGui::GetFrameHeight()));
+    ImGui::SetNextWindowSize(ImVec2(300, viewport->Size.y - ImGui::GetFrameHeight()));
+    ImGui::Begin("Scene Objects", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoCollapse);
+
+    if (ImGui::BeginChild("ObjectList", ImVec2(0, 268), true)) {
+        ImGui::Columns(2, "ObjectColumns", false);
+        ImGui::SetColumnWidth(0, 60);
+
+        // Sun Object
+        ImGui::PushID("sun");
+        bool sunVisible = sun.enabled;
+        if (ImGui::Checkbox("##visible", &sunVisible)) sun.enabled = sunVisible;
+        ImGui::NextColumn();
+
+        bool isSunSelected = (currentSelectedType == SelectedType::Sun);
+        ImGui::AlignTextToFramePadding();
+        if (ImGui::Selectable("Sun", isSunSelected, ImGuiSelectableFlags_SpanAllColumns)) {
+            currentSelectedType = SelectedType::Sun;
+            currentSelectedIndex = -1;
+            currentSelectedMeshIndex = -1;  // Reset mesh selection
+        }
+        ImGui::NextColumn();
+        ImGui::PopID();
+
+        // Models List
+        for (int i = 0; i < currentScene.models.size(); i++) {
+            ImGui::PushID(i);
+            ImGui::AlignTextToFramePadding();
+
+            bool visible = currentScene.models[i].visible;
+            if (ImGui::Checkbox("##visible", &visible)) {
+                currentScene.models[i].visible = visible;
+            }
+            ImGui::NextColumn();
+
+            bool isModelSelected = (currentSelectedIndex == i && currentSelectedType == SelectedType::Model);
+            bool hasMeshes = currentScene.models[i].getMeshes().size() > 0;
+
+            ImGui::AlignTextToFramePadding();
+            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+
+            // Only make it a leaf if there are no meshes
+            if (!hasMeshes) flags |= ImGuiTreeNodeFlags_Leaf;
+
+            // Select the model node if it's selected and no mesh is selected
+            if (isModelSelected && currentSelectedMeshIndex == -1) flags |= ImGuiTreeNodeFlags_Selected;
+
+            bool nodeOpen = ImGui::TreeNodeEx(currentScene.models[i].name.c_str(), flags);
+
+            // Handle model selection
+            if (ImGui::IsItemClicked()) {
+                currentSelectedType = SelectedType::Model;
+                currentSelectedIndex = i;
+                currentSelectedMeshIndex = -1;  // Reset mesh selection when selecting model
+            }
+
+            ImGui::NextColumn();
+
+            if (nodeOpen && hasMeshes) {
+                // Display individual meshes
+                for (size_t meshIndex = 0; meshIndex < currentScene.models[i].getMeshes().size(); meshIndex++) {
+                    ImGui::Columns(2, "MeshColumns", false);
+                    ImGui::SetColumnWidth(0, 60);
+
+                    ImGui::PushID(static_cast<int>(meshIndex));
+                    bool meshVisible = currentScene.models[i].getMeshes()[meshIndex].visible;
+                    if (ImGui::Checkbox("##meshvisible", &meshVisible)) {
+                        currentScene.models[i].getMeshes()[meshIndex].visible = meshVisible;
+                    }
+                    ImGui::PopID();
+                    ImGui::NextColumn();
+
+                    // Mesh selection flags
+                    ImGuiTreeNodeFlags meshFlags = ImGuiTreeNodeFlags_Leaf |
+                        ImGuiTreeNodeFlags_NoTreePushOnOpen |
+                        ImGuiTreeNodeFlags_SpanAvailWidth;
+
+                    // Highlight selected mesh
+                    if (isModelSelected && currentSelectedMeshIndex == static_cast<int>(meshIndex)) {
+                        meshFlags |= ImGuiTreeNodeFlags_Selected;
+                    }
+
+                    ImGui::Indent(20.0f);
+                    ImGui::TreeNodeEx(("Mesh " + std::to_string(meshIndex + 1)).c_str(), meshFlags);
+
+                    // Handle mesh selection
+                    if (ImGui::IsItemClicked()) {
+                        currentSelectedType = SelectedType::Model;
+                        currentSelectedIndex = i;
+                        currentSelectedMeshIndex = static_cast<int>(meshIndex);
+                    }
+
+                    ImGui::Unindent(20.0f);
+                    ImGui::NextColumn();
+                }
+                ImGui::Columns(2, "ObjectColumns", false);
+                ImGui::SetColumnWidth(0, 60);
+                ImGui::TreePop();
+            }
+            ImGui::PopID();
+        }
+
+        // Point Clouds List
+        for (int i = 0; i < currentScene.pointClouds.size(); i++) {
+            ImGui::PushID(i + currentScene.models.size());
+            bool isSelected = (currentSelectedIndex == i && currentSelectedType == SelectedType::PointCloud);
+
+            bool visible = currentScene.pointClouds[i].visible;
+            if (ImGui::Checkbox("##visible", &visible)) {
+                currentScene.pointClouds[i].visible = visible;
+            }
+            ImGui::NextColumn();
+
+            ImGui::AlignTextToFramePadding();
+            if (ImGui::Selectable(currentScene.pointClouds[i].name.c_str(), isSelected, ImGuiSelectableFlags_SpanAllColumns)) {
+                currentSelectedType = SelectedType::PointCloud;
+                currentSelectedIndex = i;
+                currentSelectedMeshIndex = -1;  // Reset mesh selection
+            }
+            ImGui::NextColumn();
+            ImGui::PopID();
+        }
+
+        ImGui::Columns(1);
+        ImGui::EndChild();
+    }
+
+    ImGui::Separator();
+
+    // Object Manipulation Panels
+    if (currentSelectedType == SelectedType::Model && currentSelectedIndex >= 0 &&
+        currentSelectedIndex < currentScene.models.size()) {
+
+        auto& model = currentScene.models[currentSelectedIndex];
+
+        // If a specific mesh is selected, render mesh manipulation panel
+        if (currentSelectedMeshIndex >= 0 &&
+            currentSelectedMeshIndex < static_cast<int>(model.getMeshes().size())) {
+            renderMeshManipulationPanel(model, currentSelectedMeshIndex, shader);
+        }
+        else {
+            // Otherwise render the model manipulation panel
+            renderModelManipulationPanel(model, shader);
+        }
+    }
+    else if (currentSelectedType == SelectedType::PointCloud && currentSelectedIndex >= 0 &&
+        currentSelectedIndex < currentScene.pointClouds.size()) {
+        renderPointCloudManipulationPanel(currentScene.pointClouds[currentSelectedIndex]);
+    }
+    else if (currentSelectedType == SelectedType::Sun) {
+        renderSunManipulationPanel();
+    }
+
+    ImGui::End();
+
+    // Settings Windows
+    if (showSettingsWindow) {
+        renderSettingsWindow();
+    }
+
+    // Cursor Settings Window
+    if (showCursorSettingsWindow) {
+        renderCursorSettingsWindow();
+    }
+
+    // FPS Counter
+    if (showFPS) {
+        ImGui::SetNextWindowPos(ImVec2(windowWidth - 120, windowHeight - 60));
+        ImGui::Begin("FPS Counter", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoBackground);
+        ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+        ImGui::End();
+    }
+
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+}
+
+void renderSettingsWindow() {
+    ImGui::SetNextWindowSize(ImVec2(400, 500), ImGuiCond_FirstUseEver);
+    ImGui::Begin("Settings", &showSettingsWindow);
+    bool settingsChanged = false;
+
+    if (ImGui::BeginTabBar("SettingsTabs")) {
+        if (ImGui::BeginTabItem("Voxelization")) {
+            ImGui::Text("CURRENTLY DISABLED!!!");
+            ImGui::Separator();
+            ImGui::Text("Voxelization Settings");
+            ImGui::Separator();
+
+            ImGui::Checkbox("Show Voxel Visualization", &voxelizer->showDebugVisualization);
+
+            static int currentState = 0;
+            ImGui::Text("Visualization Mipmap Level:");
+            if (ImGui::SliderInt("Level", &currentState, 0, 7)) {
+                // Adjust the visualization state
+                while (currentState > 0) {
+                    voxelizer->increaseState();
+                    currentState--;
+                }
+                while (currentState < 0) {
+                    voxelizer->decreaseState();
+                    currentState++;
+                }
+            }
+
+            ImGui::Text("Controls:");
+            ImGui::BulletText("V: Toggle visualization");
+            ImGui::BulletText("Page Up/Down: Change mipmap level");
+
+            float gridSize = voxelizer->getVoxelGridSize();
+            if (ImGui::SliderFloat("Grid Size", &gridSize, 1.0f, 50.0f)) {
+                voxelizer->setVoxelGridSize(gridSize);
+            }
+
+            ImGui::EndTabItem();
+        }
+
+        // Camera Tab
+        if (ImGui::BeginTabItem("Camera")) {
+            ImGui::Text("Stereo Settings");
+            ImGui::Separator();
+
+            if (ImGui::Checkbox("Show Stereo Visualization", &preferences.showStereoVisualization)) {
+                savePreferences(); // Save when changed
+            }
+            ImGui::SetItemTooltip("Show a visualization of the stereo camera setup");
+
+            if (preferences.showStereoVisualization) {
+                renderStereoCameraVisualization(camera, currentScene.settings);
+            }
+
+            if (ImGui::BeginCombo("Stereo Method", camera.useNewMethod ? "New Method" : "Legacy")) {
+                if (ImGui::Selectable("Legacy", !camera.useNewMethod)) {
+                    camera.useNewMethod = false;
+                    currentScene.settings.separation = 0.02f;
+                    preferences.useNewStereoMethod = false;
+                    savePreferences();
+                }
+                if (ImGui::Selectable("New Method", camera.useNewMethod)) {
+                    camera.useNewMethod = true;
+                    currentScene.settings.separation = 0.005f;
+                    preferences.useNewStereoMethod = true;
+                    savePreferences();
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SetItemTooltip("Switch between legacy and new stereo rendering methods. New method provides better depth perception");
+
+            float minSep = 0.0f;
+            float maxSep = camera.useNewMethod ? 20.0f : 0.05f;
+            if (ImGui::SliderFloat("Separation", &currentScene.settings.separation, minSep, maxSep)) {
+                preferences.separation = currentScene.settings.separation;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Adjusts the distance between stereo views. Higher values increase 3D effect");
+
+            if (ImGui::SliderFloat("Convergence", &currentScene.settings.convergence, 0.0f, 200.0f)) {
+                preferences.convergence = currentScene.settings.convergence;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Sets the focal point distance where left and right views converge");
+
+            ImGui::Spacing();
+            ImGui::Text("Camera Properties");
+            ImGui::Separator();
+
+            if (ImGui::SliderFloat("Field of View", &camera.Zoom, 1.0f, 120.0f)) {
+                preferences.fov = camera.Zoom;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Controls the camera's field of view. Higher values show more of the scene");
+
+            if (ImGui::SliderFloat("Near Plane", &currentScene.settings.nearPlane, 0.01f, 10.0f)) {
+                preferences.nearPlane = currentScene.settings.nearPlane;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Minimum visible distance from camera. Smaller values can cause visual artifacts");
+
+            if (ImGui::SliderFloat("Far Plane", &currentScene.settings.farPlane, 10.0f, 1000.0f)) {
+                preferences.farPlane = currentScene.settings.farPlane;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Maximum visible distance from camera. Higher values may impact performance");
+
+            ImGui::EndTabItem();
+        }
+
+        // Movement Tab
+        if (ImGui::BeginTabItem("Movement")) {
+            ImGui::Text("Mouse Settings");
+            ImGui::Separator();
+            if (ImGui::SliderFloat("Mouse Sensitivity", &camera.MouseSensitivity, 0.01f, 0.08f)) {
+                preferences.mouseSensitivity = camera.MouseSensitivity;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Adjusts how quickly the camera rotates in response to mouse movement");
+
+            if (ImGui::SliderFloat("Mouse Smoothing", &mouseSmoothingFactor, 0.1f, 1.0f)) {
+                preferences.mouseSmoothingFactor = mouseSmoothingFactor;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Controls smoothness of mouse movement. Lower values = smoother, higher values = more responsive");
+
+            if (ImGui::SliderFloat("Speed Multiplier", &camera.speedFactor, 0.1f, 5.0f)) {
+                preferences.cameraSpeedFactor = camera.speedFactor;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Multiplies base movement speed. Useful for navigating larger scenes");
+
+            if (ImGui::Checkbox("Zoom to Cursor", &camera.zoomToCursor)) {
+                preferences.zoomToCursor = camera.zoomToCursor;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("When enabled, scrolling zooms toward or away from the 3D cursor position");
+
+            ImGui::Spacing();
+            ImGui::Text("Smooth Scrolling");
+            ImGui::Separator();
+
+            if (ImGui::Checkbox("Enable Smooth Scrolling", &camera.useSmoothScrolling)) {
+                preferences.useSmoothScrolling = camera.useSmoothScrolling;
+                if (!camera.useSmoothScrolling) {
+                    camera.scrollVelocity = 0.0f;
+                }
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Enables physics-based smooth scrolling instead of instant movement");
+
+            if (camera.useSmoothScrolling) {
+                ImGui::BeginGroup();
+                ImGui::Text("Scroll Properties");
+                if (ImGui::SliderFloat("Momentum", &camera.scrollMomentum, 0.1f, 5.0f)) {
+                    preferences.scrollMomentum = camera.scrollMomentum;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Controls how quickly scroll speed builds up. Higher values feel more responsive");
+
+                if (ImGui::SliderFloat("Max Speed", &camera.maxScrollVelocity, 0.1f, 10.0f)) {
+                    preferences.maxScrollVelocity = camera.maxScrollVelocity;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Limits maximum scrolling speed for more controlled movement");
+
+                if (ImGui::SliderFloat("Deceleration", &camera.scrollDeceleration, 0.1f, 10.0f)) {
+                    preferences.scrollDeceleration = camera.scrollDeceleration;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Determines how quickly scrolling comes to a stop");
+                ImGui::EndGroup();
+            }
+
+            ImGui::Spacing();
+            ImGui::Text("Orbiting Behavior");
+            ImGui::Separator();
+
+            bool standardOrbit = !camera.orbitAroundCursor && !orbitFollowsCursor;
+            bool orbitAroundCursorOption = camera.orbitAroundCursor;
+            bool orbitFollowsCursorOption = orbitFollowsCursor;
+
+            if (ImGui::RadioButton("Standard Orbit", standardOrbit)) {
+                camera.orbitAroundCursor = false;
+                orbitFollowsCursor = false;
+                preferences.orbitAroundCursor = false;
+                preferences.orbitFollowsCursor = false;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Orbits around the viewport center at cursor depth");
+
+            if (ImGui::RadioButton("Orbit Around Cursor", orbitAroundCursorOption)) {
+                camera.orbitAroundCursor = true;
+                orbitFollowsCursor = false;
+                preferences.orbitAroundCursor = true;
+                preferences.orbitFollowsCursor = false;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Orbits around the 3D position of the cursor without centering the view");
+
+            if (ImGui::RadioButton("Orbit Follows Cursor (Center)", orbitFollowsCursorOption)) {
+                camera.orbitAroundCursor = false;
+                orbitFollowsCursor = true;
+                preferences.orbitAroundCursor = false;
+                preferences.orbitFollowsCursor = true;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Centers the view on cursor position before orbiting");
+            ImGui::EndTabItem();
+        }
+
+        // Environment Tab
+        if (ImGui::BeginTabItem("Environment")) {
+            bool settingsChanged = false;
+            ImGui::Text("Skybox Settings");
+            ImGui::Separator();
+
+            // Skybox type dropdown
+            const char* skyboxTypes[] = { "Cubemap Texture", "Solid Color", "Gradient" };
+            int currentType = static_cast<int>(skyboxConfig.type);
+            if (ImGui::Combo("Skybox Type", &currentType, skyboxTypes, IM_ARRAYSIZE(skyboxTypes))) {
+                skyboxConfig.type = static_cast<GUI::SkyboxType>(currentType);
+                updateSkybox();
+
+                // Save the preferences
+                preferences.skyboxType = static_cast<int>(skyboxConfig.type);
+                savePreferences();
+            }
+            ImGui::SetItemTooltip("Change the type of skybox used in the scene");
+
+            // Type-specific controls
+            if (skyboxConfig.type == GUI::SKYBOX_CUBEMAP) {
+                // Create a vector of preset names for the combo box
+                std::vector<const char*> presetNames;
+                for (const auto& preset : cubemapPresets) {
+                    presetNames.push_back(preset.name.c_str());
+                }
+
+                if (ImGui::Combo("Cubemap Theme", &skyboxConfig.selectedCubemap,
+                    presetNames.data(), static_cast<int>(presetNames.size()))) {
+                    updateSkybox();
+
+                    // Save the preferences
+                    preferences.selectedCubemap = skyboxConfig.selectedCubemap;
+                    savePreferences();
+                }
+
+                // Display description as tooltip
+                if (skyboxConfig.selectedCubemap >= 0 && skyboxConfig.selectedCubemap < cubemapPresets.size()) {
+                    ImGui::SetItemTooltip("%s", cubemapPresets[skyboxConfig.selectedCubemap].description.c_str());
+                }
+
+                if (ImGui::Button("Browse Custom Skybox")) {
+                    auto selection = pfd::select_folder("Select skybox directory").result();
+                    if (!selection.empty()) {
+                        std::string path = selection + "/";
+
+                        // Create a name from the directory name
+                        std::string dirName = std::filesystem::path(selection).filename().string();
+                        std::string name = "Custom: " + dirName;
+
+                        // Add to presets
+                        GUI::CubemapPreset newPreset;
+                        newPreset.name = name;
+                        newPreset.path = path;
+                        newPreset.description = "Custom skybox from: " + path;
+                        cubemapPresets.push_back(newPreset);
+
+                        skyboxConfig.selectedCubemap = static_cast<int>(cubemapPresets.size()) - 1;
+                        updateSkybox();
+
+                        // Save the preferences (including new cubemap preset in preferences.json)
+                        preferences.selectedCubemap = skyboxConfig.selectedCubemap;
+                        savePreferences();
+                    }
+                }
+                ImGui::SetItemTooltip("Select a directory containing skybox textures (right.jpg, left.jpg, etc. OR posx.jpg, negx.jpg, etc.)");
+            }
+            else if (skyboxConfig.type == GUI::SKYBOX_SOLID_COLOR) {
+                if (ImGui::ColorEdit3("Skybox Color", glm::value_ptr(skyboxConfig.solidColor))) {
+                    updateSkybox();
+
+                    // Save the preferences
+                    preferences.skyboxSolidColor = skyboxConfig.solidColor;
+                    savePreferences();
+                }
+                ImGui::SetItemTooltip("Set a single color for the entire skybox");
+            }
+            else if (skyboxConfig.type == GUI::SKYBOX_GRADIENT) {
+                bool colorChanged = false;
+                colorChanged |= ImGui::ColorEdit3("Top Color", glm::value_ptr(skyboxConfig.gradientTopColor));
+                ImGui::SetItemTooltip("Color of the top portion of the skybox");
+
+                colorChanged |= ImGui::ColorEdit3("Bottom Color", glm::value_ptr(skyboxConfig.gradientBottomColor));
+                ImGui::SetItemTooltip("Color of the bottom portion of the skybox");
+
+                if (colorChanged) {
+                    updateSkybox();
+
+                    // Save the preferences
+                    preferences.skyboxGradientTop = skyboxConfig.gradientTopColor;
+                    preferences.skyboxGradientBottom = skyboxConfig.gradientBottomColor;
+                    savePreferences();
+                }
+            }
+
+            ImGui::Spacing();
+            if (ImGui::SliderFloat("Ambient Strength", &ambientStrengthFromSkybox, 0.0f, 1.0f)) {
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Controls how much the skybox illuminates the scene. Higher values create brighter ambient lighting");
+
+            ImGui::Spacing();
+            ImGui::Text("Sun Settings");
+            ImGui::Separator();
+            settingsChanged |= ImGui::ColorEdit3("Sun Color", glm::value_ptr(sun.color));
+            ImGui::SetItemTooltip("Sets the color of sunlight in the scene");
+
+            settingsChanged |= ImGui::SliderFloat("Sun Intensity", &sun.intensity, 0.0f, 1.0f);
+            ImGui::SetItemTooltip("Controls the brightness of sunlight");
+
+            settingsChanged |= ImGui::DragFloat3("Sun Direction", glm::value_ptr(sun.direction), 0.01f, -1.0f, 1.0f);
+            ImGui::SetItemTooltip("Sets the direction of sunlight. Affects shadows and lighting");
+
+            settingsChanged |= ImGui::Checkbox("Enable Sun", &sun.enabled);
+            ImGui::SetItemTooltip("Toggles sun lighting on/off");
+
+            if (settingsChanged) {
+                savePreferences();
+            }
+
+            ImGui::EndTabItem();
+        }
+
+        // Display Tab
+        if (ImGui::BeginTabItem("Display")) {
+            ImGui::Text("Interface Settings");
+            ImGui::Separator();
+
+            if (ImGui::Checkbox("Show FPS Counter", &showFPS)) {
+                preferences.showFPS = showFPS;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Shows/hides the FPS counter in the top-right corner");
+
+            if (ImGui::Checkbox("Dark Theme", &isDarkTheme)) {
+                SetupImGuiStyle(isDarkTheme, 1.0f);
+                preferences.isDarkTheme = isDarkTheme;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Switches between light and dark color themes for the interface");
+
+            ImGui::Spacing();
+            ImGui::Text("Rendering Settings");
+            ImGui::Separator();
+            ImGui::Checkbox("Wireframe Mode", &camera.wireframe);
+            ImGui::SetItemTooltip("Renders objects as wireframes instead of solid surfaces");
+
+            ImGui::EndTabItem();
+        }
+
+        // Keybinds Tab
+        if (ImGui::BeginTabItem("Keybinds")) {
+            ImGui::Text("Camera Controls");
+            ImGui::Separator();
+            ImGui::Columns(2, "keybinds");
+            ImGui::SetColumnWidth(0, 150);
+
+            ImGui::Text("W/S"); ImGui::NextColumn();
+            ImGui::Text("Move forward/backward"); ImGui::NextColumn();
+
+            ImGui::Text("A/D"); ImGui::NextColumn();
+            ImGui::Text("Move left/right"); ImGui::NextColumn();
+
+            ImGui::Text("Space/Shift"); ImGui::NextColumn();
+            ImGui::Text("Move up/down"); ImGui::NextColumn();
+
+            ImGui::Text("Left Mouse + Drag"); ImGui::NextColumn();
+            ImGui::Text("Orbit around the viewport center at cursor depth"); ImGui::NextColumn();
+
+            ImGui::Text("Right Mouse + Drag"); ImGui::NextColumn();
+            ImGui::Text("Rotate the camera"); ImGui::NextColumn();
+
+            ImGui::Text("Middle Mouse + Drag"); ImGui::NextColumn();
+            ImGui::Text("Pan camera"); ImGui::NextColumn();
+
+            ImGui::Text("Mouse Wheel"); ImGui::NextColumn();
+            ImGui::Text("Zoom in/out"); ImGui::NextColumn();
+
+            ImGui::Text("Double Click"); ImGui::NextColumn();
+            ImGui::Text("Center on cursor"); ImGui::NextColumn();
+
+            ImGui::Spacing(); ImGui::NextColumn(); ImGui::Spacing(); ImGui::NextColumn();
+
+            ImGui::Text("Other Controls");
+            ImGui::Separator();
+
+            ImGui::Text("G"); ImGui::NextColumn();
+            ImGui::Text("Toggle GUI"); ImGui::NextColumn();
+
+            ImGui::Text("Ctrl + Click"); ImGui::NextColumn();
+            ImGui::Text("Select object"); ImGui::NextColumn();
+
+            ImGui::Text("Ctrl + Click + Drag"); ImGui::NextColumn();
+            ImGui::Text("Move Objects around"); ImGui::NextColumn();
+
+            ImGui::Text("Delete"); ImGui::NextColumn();
+            ImGui::Text("Delete selected object"); ImGui::NextColumn();
+
+            ImGui::Text("C"); ImGui::NextColumn();
+            ImGui::Text("Center the Scene to the Cursor/Selected Model/Scene Center"); ImGui::NextColumn();
+
+            ImGui::Text("Esc"); ImGui::NextColumn();
+            ImGui::Text("Exit application"); ImGui::NextColumn();
+
+            ImGui::Columns(1);
+            ImGui::EndTabItem();
+        }
+
+        ImGui::EndTabBar();
+    }
+
+    if (settingsChanged) {
+        savePreferences();
+    }
+
+    ImGui::End();
+}
+
+void renderCursorSettingsWindow() {
+    ImGui::SetNextWindowSize(ImVec2(500, 600), ImGuiCond_FirstUseEver);
+    ImGui::Begin("3D Cursor Settings", &showCursorSettingsWindow);
+
+    // Preset management
+    if (ImGui::BeginCombo("Cursor Preset", currentPresetName.c_str())) {
+        std::vector<std::string> presetNames = Engine::CursorPresetManager::getPresetNames();
+
+        if (ImGui::Selectable("New Preset")) {
+            currentPresetName = "New Preset";
+            isEditingPresetName = true;
+            strcpy_s(editPresetNameBuffer, currentPresetName.c_str());
+        }
+
+        for (const auto& name : presetNames) {
+            bool isSelected = (currentPresetName == name);
+            if (ImGui::Selectable(name.c_str(), isSelected)) {
+                currentPresetName = name;
+                try {
+                    Engine::CursorPreset loadedPreset = Engine::CursorPresetManager::applyCursorPreset(name);
+                    applyPresetToGlobalSettings(loadedPreset);
+                    preferences.currentPresetName = currentPresetName;
+                    savePreferences();
+                }
+                catch (const std::exception& e) {
+                    std::cerr << "Error loading preset: " << e.what() << std::endl;
+                }
+            }
+            if (isSelected) {
+                ImGui::SetItemDefaultFocus();
+            }
+        }
+        ImGui::EndCombo();
+    }
+
+    // Preset name editing
+    if (isEditingPresetName) {
+        ImGui::InputText("##EditPresetName", editPresetNameBuffer, IM_ARRAYSIZE(editPresetNameBuffer));
+
+        if (ImGui::Button("Save")) {
+            std::string newName = editPresetNameBuffer;
+            if (!newName.empty()) {
+                if (newName != currentPresetName) {
+                    // Rename existing preset or save new preset
+                    Engine::CursorPreset newPreset = createPresetFromCurrentSettings(newName);
+                    Engine::CursorPresetManager::savePreset(newName, newPreset);
+                    if (currentPresetName != "New Preset") {
+                        Engine::CursorPresetManager::deletePreset(currentPresetName);
+                    }
+                    currentPresetName = newName;
+                }
+                isEditingPresetName = false;
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            isEditingPresetName = false;
+            if (currentPresetName == "New Preset") {
+                currentPresetName = Engine::CursorPresetManager::getPresetNames().front();
+            }
+        }
+    }
+    else {
+        if (ImGui::Button("Rename Preset")) {
+            isEditingPresetName = true;
+            strcpy_s(editPresetNameBuffer, currentPresetName.c_str());
+        }
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Update Preset")) {
+        Engine::CursorPreset updatedPreset = createPresetFromCurrentSettings(currentPresetName);
+        Engine::CursorPresetManager::savePreset(currentPresetName, updatedPreset);
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Delete Preset")) {
+        if (currentPresetName != "Default") {
+            Engine::CursorPresetManager::deletePreset(currentPresetName);
+            std::vector<std::string> remainingPresets = Engine::CursorPresetManager::getPresetNames();
+            if (!remainingPresets.empty()) {
+                currentPresetName = remainingPresets.front();
+                Engine::CursorPreset loadedPreset = Engine::CursorPresetManager::applyCursorPreset(currentPresetName);
+                applyPresetToGlobalSettings(loadedPreset);
+            }
+            else {
+                currentPresetName = "Default";
+                // Reset to default settings
+                setDefaultCursorSettings();
+            }
+        }
+    }
+
+    ImGui::Separator();
+
+    if (ImGui::CollapsingHeader("Orbit Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Text("Camera Orbit Behavior:");
+
+        bool standardOrbit = !orbitFollowsCursor && !camera.orbitAroundCursor;
+        bool orbitAroundCursorOption = camera.orbitAroundCursor;
+        bool orbitFollowsCursorOption = orbitFollowsCursor;
+
+        if (ImGui::RadioButton("Standard Orbit", standardOrbit)) {
+            // Enable standard orbit - disable the other two
+            camera.orbitAroundCursor = false;
+            orbitFollowsCursor = false;
+            preferences.orbitAroundCursor = false;
+            preferences.orbitFollowsCursor = false;
+            savePreferences();
+        }
+        ImGui::SetItemTooltip("Orbits around the viewport center at cursor depth");
+
+        if (ImGui::RadioButton("Orbit Around Cursor", orbitAroundCursorOption)) {
+            // Enable orbit around cursor - disable the other one
+            camera.orbitAroundCursor = true;
+            orbitFollowsCursor = false;
+            preferences.orbitAroundCursor = true;
+            preferences.orbitFollowsCursor = false;
+            savePreferences();
+        }
+        ImGui::SetItemTooltip("Orbits around the 3D cursor position without centering the view");
+
+        if (ImGui::RadioButton("Orbit Follows Cursor (Center)", orbitFollowsCursorOption)) {
+            // Enable orbit follows cursor - disable the other one
+            camera.orbitAroundCursor = false;
+            orbitFollowsCursor = true;
+            preferences.orbitAroundCursor = false;
+            preferences.orbitFollowsCursor = true;
+            savePreferences();
+        }
+        ImGui::SetItemTooltip("Centers the view on cursor position before orbiting");
+
+        ImGui::Separator();
+        ImGui::Checkbox("Show Orbit Center", &showOrbitCenter);
+
+        if (showOrbitCenter) {
+            ImGui::ColorEdit4("Orbit Center Color", glm::value_ptr(orbitCenterColor));
+            ImGui::SliderFloat("Orbit Center Size", &orbitCenterSphereRadius, 0.01f, 1.0f);
+        }
+    }
+
+    ImGui::Separator();
+
+    // 3D Sphere Cursor Settings
+    if (ImGui::CollapsingHeader("3D Sphere Cursor", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Checkbox("Show 3D Sphere Cursor", &showSphereCursor);
+
+        if (showSphereCursor) {
+            if (!orbitFollowsCursor) {
+                ImGui::Checkbox("Show Orbit Center", &showOrbitCenter);
+                if (showOrbitCenter) {
+                    ImGui::ColorEdit4("Orbit Center Color", glm::value_ptr(orbitCenterColor));
+                    ImGui::SliderFloat("Orbit Center Size", &orbitCenterSphereRadius, 0.01f, 1.0f);
+                }
+            }
+
+            const char* scalingModes[] = { "Normal", "Fixed", "Constrained Dynamic", "Logarithmic" };
+            int currentMode = static_cast<int>(currentCursorScalingMode);
+            if (ImGui::Combo("Cursor Scaling Mode", &currentMode, scalingModes, IM_ARRAYSIZE(scalingModes))) {
+                currentCursorScalingMode = static_cast<GUI::CursorScalingMode>(currentMode);
+            }
+
+            ImGui::SliderFloat("Fixed Sphere Radius", &fixedSphereRadius, 0.01f, 3.0f);
+
+            if (currentCursorScalingMode == GUI::CURSOR_CONSTRAINED_DYNAMIC) {
+                ImGui::SliderFloat("Min Difference", &minDiff, 0.001f, 0.1f);
+                ImGui::SliderFloat("Max Difference", &maxDiff, 0.01f, 1.0f);
+            }
+
+            ImGui::ColorEdit4("Cursor Color", glm::value_ptr(cursorColor));
+            ImGui::SliderFloat("Cursor Transparency", &cursorTransparency, 0.0f, 1.0f);
+            ImGui::SliderFloat("Edge Softness", &cursorEdgeSoftness, 0.0f, 1.0f);
+            ImGui::SliderFloat("Center Transparency", &cursorCenterTransparency, 0.0f, 1.0f);
+
+            ImGui::Checkbox("Show Inner Sphere", &showInnerSphere);
+            if (showInnerSphere) {
+                ImGui::ColorEdit4("Inner Sphere Color", glm::value_ptr(innerSphereColor));
+                ImGui::SliderFloat("Inner Sphere Factor", &innerSphereFactor, 0.1f, 0.9f);
+            }
+        }
+    }
+
+    // Fragment Shader Cursor Settings
+    if (ImGui::CollapsingHeader("Fragment Shader Cursor", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Checkbox("Show Fragment Shader Cursor", &showFragmentCursor);
+
+        if (showFragmentCursor) {
+            ImGui::SliderFloat("Outer Radius", &fragmentCursorSettings.baseOuterRadius, 0.0f, 0.3f);
+            ImGui::SliderFloat("Outer Border Thickness", &fragmentCursorSettings.baseOuterBorderThickness, 0.0f, 0.08f);
+            ImGui::SliderFloat("Inner Radius", &fragmentCursorSettings.baseInnerRadius, 0.0f, 0.2f);
+            ImGui::SliderFloat("Inner Border Thickness", &fragmentCursorSettings.baseInnerBorderThickness, 0.0f, 0.08f);
+            ImGui::ColorEdit4("Outer Color", glm::value_ptr(fragmentCursorSettings.outerColor));
+            ImGui::ColorEdit4("Inner Color", glm::value_ptr(fragmentCursorSettings.innerColor));
+        }
+    }
+
+    if (ImGui::CollapsingHeader("Plane Cursor", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Checkbox("Show Plane Cursor", &planeCursor.show);
+        if (planeCursor.show) {
+            ImGui::ColorEdit4("Plane Color", glm::value_ptr(planeCursor.color));
+            ImGui::SliderFloat("Plane Diameter", &planeCursor.diameter, 0.1f, 5.0f);
+        }
+    }
+
+    ImGui::End();
+}
+
+void renderSunManipulationPanel() {
+    ImGui::Text("Sun Settings");
+    ImGui::Separator();
+
+    // Direction control using angles
+    static glm::vec3 angles = glm::vec3(-45.0f, -45.0f, 0.0f);
+    if (ImGui::DragFloat3("Direction (Angles)", glm::value_ptr(angles), 1.0f, -180.0f, 180.0f)) {
+        // Convert angles to direction vector
+        glm::mat4 rotationMatrix = glm::mat4(1.0f);
+        rotationMatrix = glm::rotate(rotationMatrix, glm::radians(angles.x), glm::vec3(1, 0, 0));
+        rotationMatrix = glm::rotate(rotationMatrix, glm::radians(angles.y), glm::vec3(0, 1, 0));
+        rotationMatrix = glm::rotate(rotationMatrix, glm::radians(angles.z), glm::vec3(0, 0, 1));
+
+        sun.direction = glm::normalize(glm::vec3(rotationMatrix * glm::vec4(0, -1, 0, 0)));
+    }
+
+    ImGui::ColorEdit3("Color", glm::value_ptr(sun.color));
+    ImGui::DragFloat("Intensity", &sun.intensity, 0.01f, 0.0f, 10.0f);
+
+    ImGui::Text("Direction Vector: (%.2f, %.2f, %.2f)",
+        sun.direction.x, sun.direction.y, sun.direction.z);
+}
+
+void renderModelManipulationPanel(Engine::Model& model, Engine::Shader* shader) {
+    ImGui::Text("Model Manipulation: %s", model.name.c_str());
+    ImGui::Separator();
+
+    // Transform
+    if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::DragFloat3("Position", glm::value_ptr(model.position), 0.1f);
+        ImGui::DragFloat3("Scale", glm::value_ptr(model.scale), 0.01f, 0.01f, 100.0f);
+        ImGui::DragFloat3("Rotation", glm::value_ptr(model.rotation), 1.0f, -360.0f, 360.0f);
+    }
+
+    // Material
+    if (ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::ColorEdit3("Color", glm::value_ptr(model.color));
+        ImGui::SliderFloat("Shininess", &model.shininess, 1.0f, 90.0f);
+        ImGui::SliderFloat("Emissive", &model.emissive, 0.0f, 1.0f);
+    }
+
+    // Textures
+    if (ImGui::CollapsingHeader("Textures")) {
+        // Display a list of loaded textures
+        if (!model.getMeshes().empty()) {
+            const auto& mesh = model.getMeshes()[0];
+            ImGui::Text("Loaded Textures:");
+            for (const auto& texture : mesh.textures) {
+                ImGui::BulletText("%s: %s", texture.type.c_str(), texture.path.c_str());
+            }
+        }
+
+        // Texture loading interface
+        auto textureLoadingGUI = [&](const char* label, const char* type) {
+            if (ImGui::Button(("Load " + std::string(label)).c_str())) {
+                auto selection = pfd::open_file("Select a texture file", ".",
+                    { "Image Files", "*.png *.jpg *.jpeg *.bmp", "All Files", "*" }).result();
+                if (!selection.empty()) {
+                    // Create and load new texture
+                    Texture texture;
+                    texture.id = model.TextureFromFile(selection[0].c_str(), selection[0], selection[0]);
+                    texture.type = type;
+                    texture.path = selection[0];
+
+                    // Add to all meshes
+                    for (auto& mesh : model.getMeshes()) {
+                        mesh.textures.push_back(texture);
+                    }
+                }
+            }
+            };
+
+        textureLoadingGUI("Diffuse Texture", "texture_diffuse");
+        textureLoadingGUI("Normal Map", "texture_normal");
+        textureLoadingGUI("Specular Map", "texture_specular");
+        textureLoadingGUI("AO Map", "texture_ao");
+    }
+
+    ImGui::Separator();
+
+    // Delete button
+    if (ImGui::Button("Delete Model", ImVec2(-1, 0))) {
+        ImGui::OpenPopup("Delete Model?");
+    }
+
+    // Confirmation popup
+    if (ImGui::BeginPopupModal("Delete Model?", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Are you sure you want to delete this model?\nThis operation cannot be undone!\n\n");
+        ImGui::Separator();
+
+        if (ImGui::Button("Yes", ImVec2(120, 0))) {
+            deleteSelectedModel();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SetItemDefaultFocus();
+        ImGui::SameLine();
+        if (ImGui::Button("No", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+void renderMeshManipulationPanel(Engine::Model& model, int meshIndex, Engine::Shader* shader) {
+    auto& mesh = model.getMeshes()[meshIndex];
+
+    ImGui::Text("Mesh Manipulation: %s - Mesh %d", model.name.c_str(), meshIndex + 1);
+    ImGui::Separator();
+
+    ImGui::Checkbox("Visible", &mesh.visible);
+
+    // Material properties specific to this mesh
+    if (ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::ColorEdit3("Color", glm::value_ptr(mesh.color));
+        ImGui::SliderFloat("Shininess", &mesh.shininess, 1.0f, 90.0f);
+        ImGui::SliderFloat("Emissive", &mesh.emissive, 0.0f, 1.0f);
+    }
+
+    // Texture management for this specific mesh
+    if (ImGui::CollapsingHeader("Textures")) {
+        ImGui::Text("Loaded Textures:");
+        for (const auto& texture : mesh.textures) {
+            ImGui::BulletText("%s: %s", texture.type.c_str(), texture.path.c_str());
+        }
+
+        // Texture loading buttons
+        auto textureLoadingGUI = [&](const char* label, const char* type) {
+            if (ImGui::Button(("Load " + std::string(label)).c_str())) {
+                auto selection = pfd::open_file("Select a texture file", ".",
+                    { "Image Files", "*.png *.jpg *.jpeg *.bmp", "All Files", "*" }).result();
+                if (!selection.empty()) {
+                    // Create and load new texture
+                    Texture texture;
+                    texture.id = model.TextureFromFile(selection[0].c_str(), selection[0], selection[0]);
+                    texture.type = type;
+                    texture.path = selection[0];
+
+                    // Add to this specific mesh
+                    mesh.textures.push_back(texture);
+                }
+            }
+            };
+
+        textureLoadingGUI("Diffuse Texture", "texture_diffuse");
+        textureLoadingGUI("Normal Map", "texture_normal");
+        textureLoadingGUI("Specular Map", "texture_specular");
+        textureLoadingGUI("AO Map", "texture_ao");
+    }
+
+    // Transform for individual mesh (if needed)
+    if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Text("Transform controls could be added here");
+        // Note: Implementing individual mesh transforms would require
+        // additional modifications to the mesh rendering system
+    }
+
+    ImGui::Separator();
+
+    // Delete mesh button
+    if (ImGui::Button("Delete Mesh", ImVec2(-1, 0))) {
+        ImGui::OpenPopup("Delete Mesh?");
+    }
+
+    if (ImGui::BeginPopupModal("Delete Mesh?", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Are you sure you want to delete this mesh?\nThis operation cannot be undone!\n\n");
+        ImGui::Separator();
+
+        if (ImGui::Button("Yes", ImVec2(120, 0))) {
+            // Only delete if there's more than one mesh (to avoid empty models)
+            if (model.getMeshes().size() > 1) {
+                model.getMeshes().erase(model.getMeshes().begin() + meshIndex);
+                currentSelectedMeshIndex = -1;  // Reset mesh selection
+            }
+            else {
+                // If this is the last mesh, maybe delete the whole model
+                std::cout << "Cannot delete last mesh. Delete the entire model instead." << std::endl;
+            }
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SetItemDefaultFocus();
+        ImGui::SameLine();
+        if (ImGui::Button("No", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+void renderPointCloudManipulationPanel(Engine::PointCloud& pointCloud) {
+    ImGui::Text("Point Cloud Manipulation: %s", pointCloud.name.c_str());
+    if (pointCloud.points.empty()) {
+        ImGui::Text("Point cloud is empty");
+        return;
+    }
+    ImGui::Separator();
+
+    // Transform
+    if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::DragFloat3("Position", glm::value_ptr(pointCloud.position), 0.1f);
+        ImGui::DragFloat3("Rotation", glm::value_ptr(pointCloud.rotation), 1.0f, -360.0f, 360.0f);
+        ImGui::DragFloat3("Scale", glm::value_ptr(pointCloud.scale), 0.01f, 0.01f, 100.0f);
+    }
+
+    // Point Cloud specific settings
+    if (ImGui::CollapsingHeader("Point Cloud Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::SliderFloat("Base Point Size", &pointCloud.basePointSize, 1.0f, 10.0f);
+    }
+
+    if (ImGui::CollapsingHeader("LOD Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::SliderFloat("LOD Distance 1", &pointCloud.lodDistances[0], 1.0f, 15.0f);
+        ImGui::SliderFloat("LOD Distance 2", &pointCloud.lodDistances[1], 10.0f, 30.0f);
+        ImGui::SliderFloat("LOD Distance 3", &pointCloud.lodDistances[2], 15.0f, 40.0f);
+        ImGui::SliderFloat("LOD Distance 4", &pointCloud.lodDistances[3], 20.0f, 50.0f);
+        ImGui::SliderFloat("LOD Distance 5", &pointCloud.lodDistances[4], 25.0f, 60.0f);
+
+        ImGui::SliderFloat("Chunk Size", &pointCloud.newChunkSize, 1.0f, 50.0f);
+
+        if (ImGui::Button("Recalculate Chunks")) {
+            if (pointCloud.newChunkSize != pointCloud.chunkSize) {
+                pointCloud.chunkSize = pointCloud.newChunkSize;
+
+                Engine::generateChunks(pointCloud, pointCloud.chunkSize);
+            }
+        }
+
+        extern std::atomic<bool> isRecalculatingChunks;
+        if (isRecalculatingChunks.load()) {
+            ImGui::SameLine();
+            ImGui::Text("Recalculating chunks...");
+        }
+
+        ImGui::Checkbox("Visualize Chunks", &pointCloud.visualizeChunks);
+    }
+
+    ImGui::Separator();
+
+    if (ImGui::CollapsingHeader("Export", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::Button("Export Point Cloud")) {
+            ImGui::OpenPopup("Export Point Cloud");
+        }
+
+        if (ImGui::BeginPopupModal("Export Point Cloud", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+            static int exportFormat = 0;
+            ImGui::RadioButton("XYZ", &exportFormat, 0);
+            ImGui::RadioButton("Optimized Binary", &exportFormat, 1);
+
+            if (ImGui::Button("Export")) {
+                std::string defaultExt = (exportFormat == 0) ? ".xyz" : ".pcb";
+                auto destination = pfd::save_file("Select a file to export point cloud", ".",
+                    { "Point Cloud Files", "*" + defaultExt, "All Files", "*" }).result();
+
+                if (!destination.empty()) {
+                    bool success = false;
+                    if (exportFormat == 0) {
+                        success = Engine::PointCloudLoader::exportToXYZ(pointCloud, destination);
+                    }
+                    else {
+                        success = Engine::PointCloudLoader::exportToBinary(pointCloud, destination);
+                    }
+
+                    if (success) {
+                        std::cout << "Point cloud exported successfully to " << destination << std::endl;
+                    }
+                    else {
+                        std::cerr << "Failed to export point cloud to " << destination << std::endl;
+                    }
+                }
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) {
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::EndPopup();
+        }
+    }
+
+    ImGui::Separator();
+
+    // Delete button
+    if (ImGui::Button("Delete Point Cloud", ImVec2(-1, 0))) {
+        ImGui::OpenPopup("Delete Point Cloud?");
+    }
+
+    // Confirmation popup
+    if (ImGui::BeginPopupModal("Delete Point Cloud?", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Are you sure you want to delete this point cloud?\nThis operation cannot be undone!\n\n");
+        ImGui::Separator();
+
+        if (ImGui::Button("Yes", ImVec2(120, 0))) {
+            deleteSelectedPointCloud();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SetItemDefaultFocus();
+        ImGui::SameLine();
+        if (ImGui::Button("No", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+void deleteSelectedModel() {
+    if (currentSelectedType == SelectedType::Model && currentSelectedIndex >= 0 && currentSelectedIndex < currentScene.models.size()) {
+        currentScene.models.erase(currentScene.models.begin() + currentSelectedIndex);
+        currentSelectedIndex = -1;
+        currentSelectedType = SelectedType::None;
+    }
+}
+
+void deleteSelectedPointCloud() {
+    if (currentSelectedType == SelectedType::PointCloud && currentSelectedIndex >= 0 && currentSelectedIndex < currentScene.pointClouds.size()) {
+        // Clean up OpenGL resources
+        glDeleteVertexArrays(1, &currentScene.pointClouds[currentSelectedIndex].vao);
+        glDeleteBuffers(1, &currentScene.pointClouds[currentSelectedIndex].vbo);
+
+        // Remove from the vector
+        currentScene.pointClouds.erase(currentScene.pointClouds.begin() + currentSelectedIndex);
+        currentSelectedIndex = -1;
+        currentSelectedType = SelectedType::None;
+    }
+}
+
+Engine::CursorPreset createPresetFromCurrentSettings(const std::string& name) {
+    Engine::CursorPreset preset;
+    preset.name = name;
+    preset.showSphereCursor = showSphereCursor;
+    preset.showFragmentCursor = showFragmentCursor;
+    preset.fragmentBaseInnerRadius = fragmentCursorSettings.baseInnerRadius;
+    preset.sphereScalingMode = static_cast<int>(currentCursorScalingMode);
+    preset.sphereFixedRadius = fixedSphereRadius;
+    preset.sphereTransparency = cursorTransparency;
+    preset.showInnerSphere = showInnerSphere;
+    preset.cursorColor = cursorColor;
+    preset.innerSphereColor = innerSphereColor;
+    preset.innerSphereFactor = innerSphereFactor;
+    preset.cursorEdgeSoftness = cursorEdgeSoftness;
+    preset.cursorCenterTransparency = cursorCenterTransparency;
+    preset.showPlaneCursor = planeCursor.show;
+    preset.planeDiameter = planeCursor.diameter;
+    preset.planeColor = planeCursor.color;
+    return preset;
+}
+
+void applyPresetToGlobalSettings(const Engine::CursorPreset& preset) {
+    showSphereCursor = preset.showSphereCursor;
+    showFragmentCursor = preset.showFragmentCursor;
+    fragmentCursorSettings.baseInnerRadius = preset.fragmentBaseInnerRadius;
+    currentCursorScalingMode = static_cast<GUI::CursorScalingMode>(preset.sphereScalingMode);
+    fixedSphereRadius = preset.sphereFixedRadius;
+    cursorTransparency = preset.sphereTransparency;
+    showInnerSphere = preset.showInnerSphere;
+    cursorColor = preset.cursorColor;
+    innerSphereColor = preset.innerSphereColor;
+    innerSphereFactor = preset.innerSphereFactor;
+    cursorEdgeSoftness = preset.cursorEdgeSoftness;
+    cursorCenterTransparency = preset.cursorCenterTransparency;
+    planeCursor.show = preset.showPlaneCursor;
+    planeCursor.diameter = preset.planeDiameter;
+    planeCursor.color = preset.planeColor;
+}
+
+void setDefaultCursorSettings() {
+    showSphereCursor = true;
+    showFragmentCursor = true;
+    currentCursorScalingMode = GUI::CURSOR_CONSTRAINED_DYNAMIC;
+    fixedSphereRadius = 0.05f;
+    cursorColor = glm::vec4(1.0f, 0.0f, 0.0f, 0.7f);
+    cursorTransparency = 0.7f;
+    cursorEdgeSoftness = 0.8f;
+    cursorCenterTransparency = 0.2f;
+    showInnerSphere = false;
+    innerSphereColor = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
+    innerSphereFactor = 0.1f;
+    orbitFollowsCursor = true;
+    showOrbitCenter = false;
+    orbitCenterColor = glm::vec4(0.0f, 1.0f, 0.0f, 0.7f);
+    orbitCenterSphereRadius = 0.2f;
+    fragmentCursorSettings = FragmentShaderCursorSettings();
+}
+
+void renderStereoCameraVisualization(const Camera& camera, const Engine::SceneSettings& settings) {
+    // --- Setup Canvas ---
+    ImVec2 canvasPos = ImGui::GetCursorScreenPos();
+    ImVec2 contentSize = ImGui::GetContentRegionAvail();
+    float canvasSize = std::min(contentSize.x, 300.0f); // Limit max size, increased slightly
+    // Ensure minimum size to avoid division by zero or extreme scales
+    canvasSize = std::max(canvasSize, 50.0f);
+    ImVec2 squareSize(canvasSize, canvasSize);
+    ImVec2 canvasBottomRight = ImVec2(canvasPos.x + squareSize.x, canvasPos.y + squareSize.y);
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+    // Background
+    drawList->AddRectFilled(canvasPos, canvasBottomRight, IM_COL32(20, 20, 25, 255)); // Darker background
+    drawList->AddRect(canvasPos, canvasBottomRight, IM_COL32(100, 100, 100, 255));
+
+    // --- Coordinate System ---
+    float margin = canvasSize * 0.05f; // Smaller margin
+    float drawingWidth = squareSize.x - 2 * margin;
+    float drawingHeight = squareSize.y - 2 * margin;
+    ImVec2 drawingTopLeft = ImVec2(canvasPos.x + margin, canvasPos.y + margin);
+
+    // World parameters
+    float separation = settings.separation;
+    float convergence = settings.convergence;
+    // Ensure convergence is positive to avoid math errors
+    convergence = std::max(0.01f, convergence);
+    float fovDeg = camera.Zoom;
+    float fovRad = glm::radians(fovDeg);
+    float halfFovRad = fovRad / 2.0f;
+    float halfSeparation = separation / 2.0f;
+
+    // Determine world bounds for scaling
+    // Calculate max extent of frustums to set scale appropriately
+    float maxReach = convergence * 1.2f; // Extend slightly beyond convergence
+    float worldViewHeight = separation * 1.5f; // Initial estimate based on separation
+    // Consider frustum width at maxReach for height calculation
+    if (convergence > 0.01f) {
+        // Angle of the center ray for one camera
+        float centerAngle = atan2(halfSeparation, convergence);
+        // Angle of the outer edge
+        float outerAngle = centerAngle + halfFovRad;
+        // Y position of the outer edge at maxReach distance (approximation using tan)
+        float maxYEdge = halfSeparation + tan(outerAngle) * maxReach;
+        // Consider the max Y extent based on frustum spread
+        worldViewHeight = std::max(worldViewHeight, std::abs(maxYEdge) * 2.5f); // Include buffer
+    }
+    worldViewHeight = std::max(worldViewHeight, separation * 1.5f); // Ensure separation is visible
+    worldViewHeight = std::max(worldViewHeight, 0.1f); // Minimum height
+
+
+    // Scaling: Fit maxReach horizontally and worldViewHeight vertically
+    float scaleX = drawingWidth / maxReach;
+    float scaleY = drawingHeight / worldViewHeight;
+    float scale = std::min(scaleX, scaleY); // Use uniform scaling
+
+    // Origin: Cameras start at x=0, centered vertically in the world space view
+    float originX = drawingTopLeft.x;
+    float originY = drawingTopLeft.y + drawingHeight / 2.0f;
+
+    // Lambda to convert world coords (x=depth, y=horizontal) to screen coords
+    auto worldToScreen = [&](float worldX, float worldY) -> ImVec2 {
+        return ImVec2(originX + worldX * scale, originY - worldY * scale); // y flips
+        };
+
+    // --- Calculations for Asymmetric Frustums ---
+
+    // Camera world positions (Top-down view: Y represents horizontal separation)
+    // LEFT Camera is typically drawn on TOP in these diagrams
+    float leftCamY = halfSeparation;
+    float rightCamY = -halfSeparation;
+
+    // Screen positions of cameras
+    ImVec2 leftCameraPosScreen = worldToScreen(0.0f, leftCamY);
+    ImVec2 rightCameraPosScreen = worldToScreen(0.0f, rightCamY);
+
+    // Calculate the angles of the cameras' center lines aiming at convergence point (convergence, 0)
+    float angleLeftCenter = atan2(-leftCamY, convergence); // Points from (0, leftCamY) to (convergence, 0)
+    float angleRightCenter = atan2(-rightCamY, convergence); // Points from (0, rightCamY) to (convergence, 0)
+
+    // Calculate the angles of the frustum edges relative to the world's X-axis
+    float angleLeftOuter = angleLeftCenter + halfFovRad;
+    float angleLeftInner = angleLeftCenter - halfFovRad;
+    float angleRightInner = angleRightCenter + halfFovRad; // Inner for right is wider angle
+    float angleRightOuter = angleRightCenter - halfFovRad;
+
+    // Calculate the Y coordinates where the frustum edges intersect the convergence plane (x = convergence)
+    // Formula: y = cameraY + tan(angle) * (targetX - cameraX)
+    // Here cameraX = 0, targetX = convergence
+    float yLeftOuterConv = leftCamY + tan(angleLeftOuter) * convergence;
+    float yLeftInnerConv = leftCamY + tan(angleLeftInner) * convergence;
+    float yRightInnerConv = rightCamY + tan(angleRightInner) * convergence;
+    float yRightOuterConv = rightCamY + tan(angleRightOuter) * convergence;
+
+    // Calculate far points for drawing (extend beyond convergence for visualization)
+    float farDist = maxReach * 0.98f; // Draw almost to the edge of the view
+    float yLeftOuterFar = leftCamY + tan(angleLeftOuter) * farDist;
+    float yLeftInnerFar = leftCamY + tan(angleLeftInner) * farDist;
+    float yRightInnerFar = rightCamY + tan(angleRightInner) * farDist;
+    float yRightOuterFar = rightCamY + tan(angleRightOuter) * farDist;
+
+
+    // Convert world frustum points to screen coordinates
+    ImVec2 leftFarOuter = worldToScreen(farDist, yLeftOuterFar);
+    ImVec2 leftFarInner = worldToScreen(farDist, yLeftInnerFar);
+    ImVec2 rightFarInner = worldToScreen(farDist, yRightInnerFar);
+    ImVec2 rightFarOuter = worldToScreen(farDist, yRightOuterFar);
+
+    // Points on the convergence plane (for focus line and overlap)
+    ImVec2 leftConvInner = worldToScreen(convergence, yLeftInnerConv);
+    ImVec2 rightConvInner = worldToScreen(convergence, yRightInnerConv);
+
+
+    // --- Drawing ---
+
+    // Draw Frustums (Draw overlap last)
+    // Use colors similar to user example: Left=Blue, Right=Reddish, Overlap=Purple
+    ImU32 colorLeftFill = IM_COL32(0, 100, 255, 50);    // Blueish transparent
+    ImU32 colorLeftLine = IM_COL32(100, 150, 255, 180); // Lighter Blue line
+    ImU32 colorRightFill = IM_COL32(210, 80, 80, 50);   // Reddish transparent
+    ImU32 colorRightLine = IM_COL32(255, 130, 130, 180);// Lighter Red line
+    ImU32 colorOverlapFill = IM_COL32(150, 100, 255, 60); // Purpleish transparent
+    ImU32 colorFocus = IM_COL32(255, 50, 50, 255);      // Bright Red for focus
+
+    // Left Camera Frustum (Blue)
+    drawList->AddTriangleFilled(leftCameraPosScreen, leftFarOuter, leftFarInner, colorLeftFill);
+    drawList->AddLine(leftCameraPosScreen, leftFarOuter, colorLeftLine, 1.0f);
+    drawList->AddLine(leftCameraPosScreen, leftFarInner, colorLeftLine, 1.0f);
+
+    // Right Camera Frustum (Red)
+    // Note: Order for triangle fill is Camera, Inner, Outer for consistency with Blue
+    drawList->AddTriangleFilled(rightCameraPosScreen, rightFarInner, rightFarOuter, colorRightFill);
+    drawList->AddLine(rightCameraPosScreen, rightFarInner, colorRightLine, 1.0f);
+    drawList->AddLine(rightCameraPosScreen, rightFarOuter, colorRightLine, 1.0f);
+
+    // Draw Overlap Area (Purple) - Quadrilateral
+    // Defined by the two camera positions and the *inner* frustum edges out to the far distance
+    if (yLeftInnerFar < yRightInnerFar) // Check if inner edges actually cross
+    {
+        ImVec2 overlapPoints[] = {
+            leftCameraPosScreen,
+            rightCameraPosScreen,
+            rightFarInner,
+            leftFarInner
+        };
+        drawList->AddConvexPolyFilled(overlapPoints, 4, colorOverlapFill);
+    }
+
+    // Draw Convergence Segment (Focus Plane Intersection) - Thick Red Line
+    // This line goes between the points where the inner frustum edges hit the convergence plane
+    drawList->AddLine(leftConvInner, rightConvInner, colorFocus, 2.5f);
+
+    // Draw Cameras Markers
+    float cameraMarkerRadius = 4.0f;
+    drawList->AddCircleFilled(leftCameraPosScreen, cameraMarkerRadius, colorLeftLine);
+    drawList->AddCircleFilled(rightCameraPosScreen, cameraMarkerRadius, colorRightLine);
+
+    // --- Reserve space ---
+    ImGui::Dummy(squareSize); // Reserve the space used by the drawing
+}
