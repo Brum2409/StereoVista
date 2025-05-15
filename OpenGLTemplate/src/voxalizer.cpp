@@ -280,7 +280,7 @@ namespace Engine {
             modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.z), glm::vec3(0, 0, 1));
             modelMatrix = glm::scale(modelMatrix, model.scale);
 
-            // CRITICAL: Always use a fixed scaling factor of 2.0
+            // CRITICAL: Always use a fixed scaling factor
             // This ensures objects are voxelized at the correct scale regardless of grid size
             glm::mat4 scaledModel = glm::scale(modelMatrix, glm::vec3(1.0f));
 
@@ -302,6 +302,31 @@ namespace Engine {
                 // Skip invisible meshes
                 if (!mesh.visible) continue;
 
+                // Set texture information
+                bool hasTexture = !mesh.textures.empty();
+                m_voxelShader->setBool("material.hasTexture", hasTexture);
+
+                // Bind textures
+                if (hasTexture) {
+                    unsigned int diffuseNr = 0;
+
+                    for (unsigned int i = 0; i < mesh.textures.size(); i++) {
+                        // Get texture number (diffuse_0, diffuse_1, etc.)
+                        std::string number;
+                        std::string name = mesh.textures[i].type;
+
+                        if (name == "texture_diffuse")
+                            number = std::to_string(diffuseNr++);
+
+                        // Use only the first diffuse texture for voxelization
+                        if (i == 0) {
+                            glActiveTexture(GL_TEXTURE0);
+                            glBindTexture(GL_TEXTURE_2D, mesh.textures[i].id);
+                            m_voxelShader->setInt("material.textures[0]", 0);
+                        }
+                    }
+                }
+
                 // Draw mesh
                 glBindVertexArray(mesh.VAO);
                 glDrawElements(GL_TRIANGLES, mesh.indices.size(), GL_UNSIGNED_INT, 0);
@@ -319,6 +344,7 @@ namespace Engine {
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_CULL_FACE);
     }
+
 
     void Voxelizer::renderCubeFaces(const glm::vec3& cameraPos, const glm::mat4& projection, const glm::mat4& view) {
         // Calculate effective grid size based on mipmap level

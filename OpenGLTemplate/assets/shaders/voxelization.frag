@@ -1,8 +1,9 @@
 #version 450 core
 
 // Lighting settings
-#define POINT_LIGHT_INTENSITY 1
+#define POINT_LIGHT_INTENSITY 1.0
 #define MAX_LIGHTS 180
+#define AMBIENT_STRENGTH 0.3
 
 // Lighting attenuation factors
 #define DIST_FACTOR 1.1f
@@ -25,19 +26,22 @@ struct Material {
     float specularReflectivity;
     float emissivity;
     float transparency;
+    sampler2D textures[16];  // Array of textures
+    bool hasTexture;
 };
 
 uniform Material material;
 uniform PointLight pointLights[MAX_LIGHTS];
 uniform int numberOfLights;
 uniform vec3 cameraPosition;
-uniform int mipmapLevel; // Current mipmap level
-uniform float gridSize; // Actual voxel grid size
+uniform int mipmapLevel;  // Current mipmap level
+uniform float gridSize;   // Actual voxel grid size
 
 layout(rgba8, binding = 0) uniform image3D texture3D;
 
 in vec3 worldPositionFrag;
 in vec3 normalFrag;
+in vec2 texCoordFrag;     // Added texture coordinates
 
 vec3 calculatePointLight(const PointLight light) {
     vec3 lightDir = normalize(light.position - worldPositionFrag);
@@ -56,30 +60,45 @@ bool isInsideCube(const vec3 p, float e) {
 }
 
 void main() {
-    // Skip voxels outside the grid boundary using scaled check
+    // Skip voxels outside the grid boundary
     if(!isInsideCube(worldPositionFrag, 0.0)) return;
 
+    // Get the base color (from texture or material)
+    vec3 baseColor;
+    if (material.hasTexture && texCoordFrag.x >= 0.0) {
+        baseColor = texture(material.textures[0], texCoordFrag).rgb;
+    } else {
+        baseColor = material.diffuseColor;
+    }
+
+    // Calculate ambient lighting (always present)
+    vec3 ambient = AMBIENT_STRENGTH * baseColor;
+    
     // Calculate diffuse lighting contribution
-    vec3 color = vec3(0.0f);
+    vec3 diffuse = vec3(0.0f);
     const uint maxLights = min(numberOfLights, MAX_LIGHTS);
     for(uint i = 0; i < maxLights; ++i) {
-        color += calculatePointLight(pointLights[i]);
+        diffuse += calculatePointLight(pointLights[i]);
     }
+    diffuse *= baseColor;
     
-    vec3 spec = material.specularReflectivity * material.specularColor;
-    vec3 diff = material.diffuseReflectivity * material.diffuseColor;
-    color = (diff + spec) * color + clamp(material.emissivity, 0.0, 1.0) * material.diffuseColor;
+    // Add emissive component
+    vec3 emissive = material.emissivity * baseColor;
+    
+    // Combine all lighting components
+    vec3 finalColor = ambient + diffuse + emissive;
+    
+    // Ensure colors are in a reasonable range
+    finalColor = clamp(finalColor, vec3(0.0), vec3(1.0));
 
-    // Get texture dimensions
-    ivec3 texDim = imageSize(texture3D);
-    
-    // CRITICAL: Scale world position to normalized coordinates based on grid size
-    // This accounts for the fact that world coordinates are always in a fixed range 
-    // but the grid size can change
+    // Scale world position to normalized coordinates based on grid size
     vec3 scaledPos = worldPositionFrag * (2.0 / gridSize);
     
     // Map from [-1,1] to [0,1] range
     vec3 normalizedPos = scaledPos * 0.5 + 0.5;
+    
+    // Get texture dimensions
+    ivec3 texDim = imageSize(texture3D);
     
     // Account for mipmap level - compute the effective resolution
     int effectiveRes = texDim.x >> mipmapLevel;
@@ -103,8 +122,8 @@ void main() {
         storageCoord.z >= 0 && storageCoord.z < texDim.z) {
         
         // Set alpha based on transparency
-        float alpha = pow(1.0 - material.transparency, 4.0);
-        vec4 voxelColor = vec4(color, alpha);
+        float alpha = 1.0 - material.transparency;
+        vec4 voxelColor = vec4(finalColor, alpha);
         
         // Write to the voxel grid
         imageStore(texture3D, storageCoord, voxelColor);
