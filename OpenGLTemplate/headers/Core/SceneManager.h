@@ -2,7 +2,7 @@
 
 #include <vector>
 #include <string>
-#include "model_loader.h"
+#include "Loaders/ModelLoader.h"
 
 namespace Engine {
 

@@ -1,7 +1,7 @@
 #pragma once
-#include "core.h"
-#include "engine/shader.h"
-#include "model_loader.h"
+#include "Engine/Core.h"
+#include "Engine/Shader.h"
+#include "Loaders/ModelLoader.h"
 
 namespace Engine {
 

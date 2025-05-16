@@ -1,14 +1,14 @@
-#include "GUI.h"
-#include "GUI_Types.h"
-#include "core.h"
+#include "Gui/Gui.h"
+#include "Gui/GUITypes.h"
+#include "Engine/Core.h"
 #include <json.h>
 #include <fstream>
 #include <sstream>
 #include <iostream>
 #include <filesystem>
-#include "Camera.h"
-#include "voxalizer.h"
-#include "CursorManager.h"
+#include "Core/Camera.h"
+#include "Core/Voxalizer.h"
+#include "Cursors/Base/CursorManager.h"
 
 using namespace GUI;
 

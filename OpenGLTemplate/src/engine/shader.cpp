@@ -1,4 +1,4 @@
-#include "core.h"
+#include "Engine/Core.h"
 
 namespace Engine {
     Shader::Shader(const std::string& vertexPath, const std::string& fragmentPath, const std::string& geometryPath) {

@@ -4,7 +4,7 @@
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
-#include "core.h"
+#include "../Engine/Core.h"
 
 namespace Engine {
 

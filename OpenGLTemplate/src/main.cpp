@@ -1,16 +1,19 @@
-﻿// ---- Core Definitions ----
+// ---- Core Definitions ----
 #define NOMINMAX
-#include "core.h"
+#include "Engine/Core.h"
 #include <thread>
 #include <atomic>
 
 // ---- Project-Specific Includes ----
-#include "model_loader.h"
-#include "Camera.h"
-#include "scene_manager.h"
-#include "cursor_presets.h"
-#include "point_cloud_loader.h"
-#include "CursorManager.h"  // New include for cursor management
+#include "Loaders/ModelLoader.h"
+#include "Core/Camera.h"
+#include "Core/SceneManager.h"
+#include "Cursors/CursorPresets.h"
+#include "Loaders/PointCloudLoader.h"
+#include "Cursors/Base/CursorManager.h"
+#include "Core/Voxalizer.h"
+#include "Gui/Gui.h"
+#include "Gui/GuiTypes.h"
 
 // ---- GUI and Dialog ----
 #include "imgui/imgui_incl.h"
@@ -22,9 +25,7 @@
 #include <openLinks.h>
 #include <glm/gtx/component_wise.hpp>
 #include <stb_image.h>
-#include <voxalizer.h>
-#include "GUI.h"
-#include "GUI_Types.h"
+
 
 using namespace Engine;
 using json = nlohmann::json;

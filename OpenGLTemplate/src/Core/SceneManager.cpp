@@ -1,8 +1,8 @@
-#include "scene_manager.h"
+#include "Core/SceneManager.h"
 #include <fstream>
 #include <iostream>
 #include <json.h>
-#include "point_cloud_loader.h"
+#include "Loaders/PointCloudLoader.h"
 #include <filesystem>
 #include <unordered_set>
 

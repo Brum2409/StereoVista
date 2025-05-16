@@ -1,15 +1,15 @@
 #pragma once
 
-#include "core.h"
-#include "GUI_Types.h"
+#include "Engine/Core.h"
+#include "GuiTypes.h"
 #include "imgui/imgui_incl.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#include "Camera.h"
-#include "scene_manager.h"
-#include "model_loader.h"
-#include "cursor_presets.h"
-#include "point_cloud_loader.h"
+#include "Core/Camera.h"
+#include "Core/SceneManager.h"
+#include "Loaders/ModelLoader.h"
+#include "Cursors/CursorPresets.h"
+#include "Loaders/PointCloudLoader.h"
 #include <portable-file-dialogs.h>
 
 // Forward declarations

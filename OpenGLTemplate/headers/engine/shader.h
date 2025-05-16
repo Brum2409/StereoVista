@@ -1,6 +1,6 @@
 // shader.h
 #pragma once
-#include "core.h"
+#include "Core.h"
 #include <glm/gtc/type_ptr.hpp>
 
 namespace Engine {

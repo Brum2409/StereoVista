@@ -1,5 +1,5 @@
-#include "PlaneCursor.h"
-#include "engine/shader.h"
+#include "Cursors/Types/PlaneCursor.h"
+#include "Engine/Shader.h"
 #include <corecrt_math_defines.h>
 #include <vector>
 

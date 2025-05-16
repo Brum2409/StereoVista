@@ -1,10 +1,10 @@
 #pragma once
 
 #include "Cursor.h"
-#include "SphereCursor.h"
-#include "FragmentCursor.h"
-#include "PlaneCursor.h"
-#include "Camera.h"
+#include "Cursors/Types/SphereCursor.h"
+#include "Cursors/Types/FragmentCursor.h"
+#include "Cursors/Types/PlaneCursor.h"
+#include "Core/Camera.h"
 #include <memory>
 
 namespace Cursor {

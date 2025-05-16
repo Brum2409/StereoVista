@@ -17,11 +17,11 @@
 #include <iostream> 
 #include <array>
 
-#include "engine/window.h"
-#include "engine/input.h"
-#include "engine/shader.h"
-#include "engine/buffers.h"
-#include "engine/data.h"
+#include "Window.h"
+#include "Input.h"
+#include "Shader.h"
+#include "Buffers.h"
+#include "Data.h"
 
 namespace Engine {
     // Texture unit assignments for different texture types

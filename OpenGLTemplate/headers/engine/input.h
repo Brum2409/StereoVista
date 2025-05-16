@@ -1,6 +1,6 @@
 #pragma once
-#include "core.h"
-#include "Camera.h"
+#include "Core.h"
+#include "Core/Camera.h"
 
 namespace Engine {
     namespace Input {

@@ -1,5 +1,5 @@
 // point_cloud_loader.cpp
-#include "point_cloud_loader.h"
+#include "Loaders/PointCloudLoader.h"
 #include <fstream>
 #include <sstream>
 #include <iostream>
@@ -17,7 +17,7 @@
 #include <execution>
 #include <algorithm>
 
-#include <octree.h>
+#include <Utils/octree.h>
 
 
 namespace Engine {

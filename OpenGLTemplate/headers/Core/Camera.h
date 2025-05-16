@@ -1,7 +1,7 @@
 #ifndef CAMERA_H
 #define CAMERA_H
 
-#include <core.h>
+#include "Engine/Core.h"
 #include <functional>
 
 #include <glm/glm.hpp>

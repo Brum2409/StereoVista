@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Cursor.h"
+#include "Cursors/Base/Cursor.h"
 #include <glm/glm.hpp>
 
 namespace Cursor {

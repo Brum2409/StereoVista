@@ -1,4 +1,4 @@
-#include "Cursor.h"
+#include "Cursors/Base/Cursor.h"
 
 namespace Cursor {
     BaseCursor::BaseCursor() :

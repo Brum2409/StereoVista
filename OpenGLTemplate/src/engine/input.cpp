@@ -1,6 +1,5 @@
-// File: input.cpp
-#include "engine/input.h"
-#include "engine/window.h"
+#include "Engine/Input.h"
+#include "Engine/Window.h"
 
 namespace Engine {
     namespace Input {

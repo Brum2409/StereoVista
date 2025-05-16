@@ -1,5 +1,5 @@
-#include "SphereCursor.h"
-#include "engine/shader.h"
+#include "Cursors/Types/SphereCursor.h"
+#include "Engine/Shader.h"
 #include <corecrt_math_defines.h>
 
 namespace Cursor {

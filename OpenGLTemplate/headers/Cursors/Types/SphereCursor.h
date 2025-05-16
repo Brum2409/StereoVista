@@ -1,7 +1,7 @@
 #pragma once
 
-#include "Cursor.h"
-#include "GUI_Types.h"
+#include "Cursors/Base/Cursor.h"
+#include "Gui/GuiTypes.h"
 #include <vector>
 
 namespace Cursor {

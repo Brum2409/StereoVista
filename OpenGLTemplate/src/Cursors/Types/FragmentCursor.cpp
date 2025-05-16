@@ -1,5 +1,5 @@
-#include "FragmentCursor.h"
-#include "engine/shader.h"
+#include "Cursors/Types/FragmentCursor.h"
+#include "Engine/Shader.h"
 
 namespace Cursor {
     FragmentCursor::FragmentCursor() : BaseCursor() {

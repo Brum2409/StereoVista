@@ -1,4 +1,4 @@
-#include "voxalizer.h"
+#include "Core/Voxalizer.h"
 #include <iostream>
 #include <random>
 
