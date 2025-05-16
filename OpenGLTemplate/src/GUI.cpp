@@ -8,12 +8,11 @@
 #include <filesystem>
 #include "Camera.h"
 #include "voxalizer.h"
-#include "CursorManager.h" // New include for cursor manager
+#include "CursorManager.h"
 
-// Import the namespace to simplify code
 using namespace GUI;
 
-// External globals that GUI needs access to
+// Application globals used throughout the GUI system
 extern int windowWidth;
 extern int windowHeight;
 extern Engine::Scene currentScene;
@@ -25,15 +24,17 @@ extern bool showInfoWindow;
 extern bool showSettingsWindow;
 extern bool show3DCursor;
 extern bool showCursorSettingsWindow;
-extern Cursor::CursorManager cursorManager; // New cursor manager reference
+extern Cursor::CursorManager cursorManager;
 extern Engine::Voxelizer* voxelizer;
 extern float ambientStrengthFromSkybox;
 extern float mouseSmoothingFactor;
 extern bool orbitFollowsCursor;
 
+extern GUI::LightingMode currentLightingMode;
+extern bool enableShadows;
+extern GUI::VCTSettings vctSettings;
 
-
-// Selection state
+// Selection state for object interaction
 extern enum class SelectedType {
     None,
     Model,
@@ -45,17 +46,17 @@ extern int currentSelectedMeshIndex;
 
 extern Sun sun;
 
-// Skybox settings
+// Skybox configuration
 extern GUI::SkyboxConfig skyboxConfig;
 extern std::vector<GUI::CubemapPreset> cubemapPresets;
 
-// Preferences
+// User preferences and presets
 extern GUI::ApplicationPreferences preferences;
 extern std::string currentPresetName;
 extern bool isEditingPresetName;
 extern char editPresetNameBuffer[256];
 
-// Function to handle saving preferences
+// External function declarations
 extern void savePreferences();
 extern void updateSkybox();
 
@@ -511,40 +512,6 @@ void renderSettingsWindow() {
     bool settingsChanged = false;
 
     if (ImGui::BeginTabBar("SettingsTabs")) {
-        if (ImGui::BeginTabItem("Voxelization")) {
-            ImGui::Text("CURRENTLY DISABLED!!!");
-            ImGui::Separator();
-            ImGui::Text("Voxelization Settings");
-            ImGui::Separator();
-
-            ImGui::Checkbox("Show Voxel Visualization", &voxelizer->showDebugVisualization);
-
-            static int currentState = 0;
-            ImGui::Text("Visualization Mipmap Level:");
-            if (ImGui::SliderInt("Level", &currentState, 0, 7)) {
-                // Adjust the visualization state
-                while (currentState > 0) {
-                    voxelizer->increaseState();
-                    currentState--;
-                }
-                while (currentState < 0) {
-                    voxelizer->decreaseState();
-                    currentState++;
-                }
-            }
-
-            ImGui::Text("Controls:");
-            ImGui::BulletText("V: Toggle visualization");
-            ImGui::BulletText("Page Up/Down: Change mipmap level");
-
-            float gridSize = voxelizer->getVoxelGridSize();
-            if (ImGui::SliderFloat("Grid Size", &gridSize, 1.0f, 50.0f)) {
-                voxelizer->setVoxelGridSize(gridSize);
-            }
-
-            ImGui::EndTabItem();
-        }
-
         // Camera Tab
         if (ImGui::BeginTabItem("Camera")) {
             ImGui::Text("Stereo Settings");
@@ -816,6 +783,136 @@ void renderSettingsWindow() {
                 settingsChanged = true;
             }
             ImGui::SetItemTooltip("Controls how much the skybox illuminates the scene. Higher values create brighter ambient lighting");
+
+            ImGui::Spacing();
+            ImGui::Text("Lighting System");
+            ImGui::Separator();
+
+            const char* lightingModes[] = { "Shadow Mapping", "Voxel Cone Tracing" };
+            int currentLightingMode = static_cast<int>(preferences.lightingMode);
+            if (ImGui::Combo("Lighting Mode", &currentLightingMode, lightingModes, IM_ARRAYSIZE(lightingModes))) {
+                preferences.lightingMode = static_cast<GUI::LightingMode>(currentLightingMode);
+                ::currentLightingMode = preferences.lightingMode; // Update the global variable
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Switch between traditional shadow mapping and voxel cone tracing for global illumination");
+
+            // Shadow mapping options
+            if (preferences.lightingMode == GUI::LIGHTING_SHADOW_MAPPING) {
+                ImGui::Text("Shadow Mapping Settings");
+                if (ImGui::Checkbox("Enable Shadows", &preferences.enableShadows)) {
+                    ::enableShadows = preferences.enableShadows; // Update the global variable
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Toggle shadow mapping on/off");
+            }
+
+            // Voxel Cone Tracing options
+            if (preferences.lightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
+                ImGui::Text("Voxel Cone Tracing Settings");
+
+                ImGui::Checkbox("Show Voxel Visualization", &voxelizer->showDebugVisualization);
+                ImGui::SetItemTooltip("Show the voxel representation for debugging");
+
+                // VCT Components
+                if (ImGui::TreeNode("VCT Components")) {
+                    if (ImGui::Checkbox("Indirect Diffuse Light", &preferences.vctSettings.indirectDiffuseLight)) {
+                        vctSettings.indirectDiffuseLight = preferences.vctSettings.indirectDiffuseLight;
+                        settingsChanged = true;
+                    }
+                    ImGui::SetItemTooltip("Enable indirect diffuse lighting (global illumination effects)");
+
+                    if (ImGui::Checkbox("Indirect Specular Light", &preferences.vctSettings.indirectSpecularLight)) {
+                        vctSettings.indirectSpecularLight = preferences.vctSettings.indirectSpecularLight;
+                        settingsChanged = true;
+                    }
+                    ImGui::SetItemTooltip("Enable indirect specular reflections (glossy reflections)");
+
+                    if (ImGui::Checkbox("Direct Light", &preferences.vctSettings.directLight)) {
+                        vctSettings.directLight = preferences.vctSettings.directLight;
+                        settingsChanged = true;
+                    }
+                    ImGui::SetItemTooltip("Enable direct lighting from light sources");
+
+                    if (ImGui::Checkbox("Shadows", &preferences.vctSettings.shadows)) {
+                        vctSettings.shadows = preferences.vctSettings.shadows;
+                        settingsChanged = true;
+                    }
+                    ImGui::SetItemTooltip("Enable soft shadows through voxel cone tracing");
+
+                    ImGui::TreePop();
+                }
+
+                // Voxel Grid Settings
+                if (ImGui::TreeNode("Voxel Grid Settings")) {
+                    float gridSize = voxelizer->getVoxelGridSize();
+                    if (ImGui::SliderFloat("Grid Size", &gridSize, 1.0f, 50.0f)) {
+                        voxelizer->setVoxelGridSize(gridSize);
+                    }
+                    ImGui::SetItemTooltip("Size of the voxel grid in world units");
+
+                    float voxelSize = preferences.vctSettings.voxelSize;
+                    if (ImGui::SliderFloat("Voxel Size", &voxelSize, 1.0f / 256.0f, 1.0f / 32.0f, "%.5f")) {
+                        preferences.vctSettings.voxelSize = voxelSize;
+                        vctSettings.voxelSize = voxelSize;
+                        settingsChanged = true;
+                    }
+                    ImGui::SetItemTooltip("Size of individual voxels (smaller = more detail but slower)");
+
+                    static int mipmapLevel = 0;
+                    if (ImGui::SliderInt("Mipmap Level", &mipmapLevel, 0, 7)) {
+                        // Optionally update mipmap level used for rendering
+                    }
+                    ImGui::SetItemTooltip("Mipmap level used for voxel cone tracing (higher = blurrier but faster)");
+
+                    ImGui::TreePop();
+                }
+
+                // Visualization settings
+                if (ImGui::TreeNode("Visualization Settings")) {
+                    bool useRayCast = voxelizer->useRayCastVisualization;
+                    if (ImGui::Checkbox("Use Ray-Cast Visualization", &useRayCast)) {
+                        voxelizer->useRayCastVisualization = useRayCast;
+                    }
+                    ImGui::SetItemTooltip("Ray-cast rendering provides smoother visualization");
+
+                    float opacity = voxelizer->voxelOpacity;
+                    if (ImGui::SliderFloat("Voxel Opacity", &opacity, 0.0f, 1.0f)) {
+                        voxelizer->voxelOpacity = opacity;
+                    }
+
+                    float colorIntensity = voxelizer->voxelColorIntensity;
+                    if (ImGui::SliderFloat("Color Intensity", &colorIntensity, 0.0f, 5.0f)) {
+                        voxelizer->voxelColorIntensity = colorIntensity;
+                    }
+
+                    ImGui::TreePop();
+                }
+
+                // Material defaults for cone tracing
+                if (ImGui::TreeNode("Default Material Properties")) {
+                    static float diffuseReflectivity = 0.8f;
+                    if (ImGui::SliderFloat("Diffuse Reflectivity", &diffuseReflectivity, 0.0f, 1.0f)) {
+                        // Update default material property
+                    }
+
+                    static float specularReflectivity = 0.2f;
+                    if (ImGui::SliderFloat("Specular Reflectivity", &specularReflectivity, 0.0f, 1.0f)) {
+                        // Update default material property
+                    }
+
+                    static float specularDiffusion = 0.5f;
+                    if (ImGui::SliderFloat("Specular Diffusion", &specularDiffusion, 0.0f, 1.0f)) {
+                        // Update default material property
+                    }
+
+                    ImGui::TreePop();
+                }
+            }
+
+            ImGui::Spacing();
+            ImGui::Text("Ambient Settings");
+            ImGui::Separator();
 
             ImGui::Spacing();
             ImGui::Text("Sun Settings");
@@ -1655,22 +1752,21 @@ void deleteSelectedPointCloud() {
 }
 
 void renderStereoCameraVisualization(const Camera& camera, const Engine::SceneSettings& settings) {
-    // --- Setup Canvas ---
+    // Canvas setup
     ImVec2 canvasPos = ImGui::GetCursorScreenPos();
     ImVec2 contentSize = ImGui::GetContentRegionAvail();
-    float canvasSize = std::min(contentSize.x, 300.0f); // Limit max size, increased slightly
-    // Ensure minimum size to avoid division by zero or extreme scales
+    float canvasSize = std::min(contentSize.x, 300.0f);
     canvasSize = std::max(canvasSize, 50.0f);
     ImVec2 squareSize(canvasSize, canvasSize);
     ImVec2 canvasBottomRight = ImVec2(canvasPos.x + squareSize.x, canvasPos.y + squareSize.y);
     ImDrawList* drawList = ImGui::GetWindowDrawList();
 
     // Background
-    drawList->AddRectFilled(canvasPos, canvasBottomRight, IM_COL32(20, 20, 25, 255)); // Darker background
+    drawList->AddRectFilled(canvasPos, canvasBottomRight, IM_COL32(20, 20, 25, 255));
     drawList->AddRect(canvasPos, canvasBottomRight, IM_COL32(100, 100, 100, 255));
 
-    // --- Coordinate System ---
-    float margin = canvasSize * 0.05f; // Smaller margin
+    // Coordinate system
+    float margin = canvasSize * 0.05f;
     float drawingWidth = squareSize.x - 2 * margin;
     float drawingHeight = squareSize.y - 2 * margin;
     ImVec2 drawingTopLeft = ImVec2(canvasPos.x + margin, canvasPos.y + margin);
@@ -1678,7 +1774,6 @@ void renderStereoCameraVisualization(const Camera& camera, const Engine::SceneSe
     // World parameters
     float separation = settings.separation;
     float convergence = settings.convergence;
-    // Ensure convergence is positive to avoid math errors
     convergence = std::max(0.01f, convergence);
     float fovDeg = camera.Zoom;
     float fovRad = glm::radians(fovDeg);
@@ -1686,130 +1781,99 @@ void renderStereoCameraVisualization(const Camera& camera, const Engine::SceneSe
     float halfSeparation = separation / 2.0f;
 
     // Determine world bounds for scaling
-    // Calculate max extent of frustums to set scale appropriately
-    float maxReach = convergence * 1.2f; // Extend slightly beyond convergence
-    float worldViewHeight = separation * 1.5f; // Initial estimate based on separation
-    // Consider frustum width at maxReach for height calculation
+    float maxReach = convergence * 1.2f;
+    float worldViewHeight = separation * 1.5f;
     if (convergence > 0.01f) {
-        // Angle of the center ray for one camera
         float centerAngle = atan2(halfSeparation, convergence);
-        // Angle of the outer edge
         float outerAngle = centerAngle + halfFovRad;
-        // Y position of the outer edge at maxReach distance (approximation using tan)
         float maxYEdge = halfSeparation + tan(outerAngle) * maxReach;
-        // Consider the max Y extent based on frustum spread
-        worldViewHeight = std::max(worldViewHeight, std::abs(maxYEdge) * 2.5f); // Include buffer
+        worldViewHeight = std::max(worldViewHeight, std::abs(maxYEdge) * 2.5f);
     }
-    worldViewHeight = std::max(worldViewHeight, separation * 1.5f); // Ensure separation is visible
-    worldViewHeight = std::max(worldViewHeight, 0.1f); // Minimum height
+    worldViewHeight = std::max(worldViewHeight, separation * 1.5f);
+    worldViewHeight = std::max(worldViewHeight, 0.1f);
 
-
-    // Scaling: Fit maxReach horizontally and worldViewHeight vertically
+    // Scaling
     float scaleX = drawingWidth / maxReach;
     float scaleY = drawingHeight / worldViewHeight;
-    float scale = std::min(scaleX, scaleY); // Use uniform scaling
+    float scale = std::min(scaleX, scaleY);
 
-    // Origin: Cameras start at x=0, centered vertically in the world space view
+    // Origin
     float originX = drawingTopLeft.x;
     float originY = drawingTopLeft.y + drawingHeight / 2.0f;
 
-    // Lambda to convert world coords (x=depth, y=horizontal) to screen coords
+    // World to screen coordinate conversion
     auto worldToScreen = [&](float worldX, float worldY) -> ImVec2 {
-        return ImVec2(originX + worldX * scale, originY - worldY * scale); // y flips
+        return ImVec2(originX + worldX * scale, originY - worldY * scale);
         };
 
-    // --- Calculations for Asymmetric Frustums ---
-
-    // Camera world positions (Top-down view: Y represents horizontal separation)
-    // LEFT Camera is typically drawn on TOP in these diagrams
+    // Camera positions
     float leftCamY = halfSeparation;
     float rightCamY = -halfSeparation;
 
-    // Screen positions of cameras
+    // Screen positions
     ImVec2 leftCameraPosScreen = worldToScreen(0.0f, leftCamY);
     ImVec2 rightCameraPosScreen = worldToScreen(0.0f, rightCamY);
 
-    // Calculate the angles of the cameras' center lines aiming at convergence point (convergence, 0)
-    float angleLeftCenter = atan2(-leftCamY, convergence); // Points from (0, leftCamY) to (convergence, 0)
-    float angleRightCenter = atan2(-rightCamY, convergence); // Points from (0, rightCamY) to (convergence, 0)
+    // Calculate frustum angles
+    float angleLeftCenter = atan2(-leftCamY, convergence);
+    float angleRightCenter = atan2(-rightCamY, convergence);
 
-    // Calculate the angles of the frustum edges relative to the world's X-axis
     float angleLeftOuter = angleLeftCenter + halfFovRad;
     float angleLeftInner = angleLeftCenter - halfFovRad;
-    float angleRightInner = angleRightCenter + halfFovRad; // Inner for right is wider angle
+    float angleRightInner = angleRightCenter + halfFovRad;
     float angleRightOuter = angleRightCenter - halfFovRad;
 
-    // Calculate the Y coordinates where the frustum edges intersect the convergence plane (x = convergence)
-    // Formula: y = cameraY + tan(angle) * (targetX - cameraX)
-    // Here cameraX = 0, targetX = convergence
+    // Calculate intersection points at convergence plane
     float yLeftOuterConv = leftCamY + tan(angleLeftOuter) * convergence;
     float yLeftInnerConv = leftCamY + tan(angleLeftInner) * convergence;
     float yRightInnerConv = rightCamY + tan(angleRightInner) * convergence;
     float yRightOuterConv = rightCamY + tan(angleRightOuter) * convergence;
 
-    // Calculate far points for drawing (extend beyond convergence for visualization)
-    float farDist = maxReach * 0.98f; // Draw almost to the edge of the view
+    // Calculate far points for drawing
+    float farDist = maxReach * 0.98f;
     float yLeftOuterFar = leftCamY + tan(angleLeftOuter) * farDist;
     float yLeftInnerFar = leftCamY + tan(angleLeftInner) * farDist;
     float yRightInnerFar = rightCamY + tan(angleRightInner) * farDist;
     float yRightOuterFar = rightCamY + tan(angleRightOuter) * farDist;
 
-
-    // Convert world frustum points to screen coordinates
+    // Convert to screen coordinates
     ImVec2 leftFarOuter = worldToScreen(farDist, yLeftOuterFar);
     ImVec2 leftFarInner = worldToScreen(farDist, yLeftInnerFar);
     ImVec2 rightFarInner = worldToScreen(farDist, yRightInnerFar);
     ImVec2 rightFarOuter = worldToScreen(farDist, yRightOuterFar);
 
-    // Points on the convergence plane (for focus line and overlap)
-    ImVec2 leftConvInner = worldToScreen(convergence, yLeftInnerConv);
-    ImVec2 rightConvInner = worldToScreen(convergence, yRightInnerConv);
+    // Points on convergence plane - UPDATED
+    ImVec2 leftConvOuter = worldToScreen(convergence, yLeftOuterConv);
+    ImVec2 rightConvOuter = worldToScreen(convergence, yRightOuterConv);
 
+    // Define colors for visualization
+    ImU32 colorLeftFill = IM_COL32(0, 100, 255, 50);
+    ImU32 colorLeftLine = IM_COL32(100, 150, 255, 180);
+    ImU32 colorRightFill = IM_COL32(210, 80, 80, 50);
+    ImU32 colorRightLine = IM_COL32(255, 130, 130, 180);
+    ImU32 colorOverlapFill = IM_COL32(150, 100, 255, 60);
+    ImU32 colorFocus = IM_COL32(255, 50, 50, 255);
 
-    // --- Drawing ---
-
-    // Draw Frustums (Draw overlap last)
-    // Use colors similar to user example: Left=Blue, Right=Reddish, Overlap=Purple
-    ImU32 colorLeftFill = IM_COL32(0, 100, 255, 50);    // Blueish transparent
-    ImU32 colorLeftLine = IM_COL32(100, 150, 255, 180); // Lighter Blue line
-    ImU32 colorRightFill = IM_COL32(210, 80, 80, 50);   // Reddish transparent
-    ImU32 colorRightLine = IM_COL32(255, 130, 130, 180);// Lighter Red line
-    ImU32 colorOverlapFill = IM_COL32(150, 100, 255, 60); // Purpleish transparent
-    ImU32 colorFocus = IM_COL32(255, 50, 50, 255);      // Bright Red for focus
-
-    // Left Camera Frustum (Blue)
+    // Left Camera Frustum
     drawList->AddTriangleFilled(leftCameraPosScreen, leftFarOuter, leftFarInner, colorLeftFill);
     drawList->AddLine(leftCameraPosScreen, leftFarOuter, colorLeftLine, 1.0f);
     drawList->AddLine(leftCameraPosScreen, leftFarInner, colorLeftLine, 1.0f);
 
-    // Right Camera Frustum (Red)
-    // Note: Order for triangle fill is Camera, Inner, Outer for consistency with Blue
+    // Right Camera Frustum
     drawList->AddTriangleFilled(rightCameraPosScreen, rightFarInner, rightFarOuter, colorRightFill);
     drawList->AddLine(rightCameraPosScreen, rightFarInner, colorRightLine, 1.0f);
     drawList->AddLine(rightCameraPosScreen, rightFarOuter, colorRightLine, 1.0f);
 
-    // Draw Overlap Area (Purple) - Quadrilateral
-    // Defined by the two camera positions and the *inner* frustum edges out to the far distance
-    if (yLeftInnerFar < yRightInnerFar) // Check if inner edges actually cross
-    {
-        ImVec2 overlapPoints[] = {
-            leftCameraPosScreen,
-            rightCameraPosScreen,
-            rightFarInner,
-            leftFarInner
-        };
-        drawList->AddConvexPolyFilled(overlapPoints, 4, colorOverlapFill);
-    }
+    // Overlap Area - REMOVED
 
-    // Draw Convergence Segment (Focus Plane Intersection) - Thick Red Line
-    // This line goes between the points where the inner frustum edges hit the convergence plane
-    drawList->AddLine(leftConvInner, rightConvInner, colorFocus, 2.5f);
+    // Convergence line - UPDATED
+    drawList->AddLine(leftConvOuter, rightConvOuter, colorFocus, 2.5f);
 
-    // Draw Cameras Markers
+    // Camera markers
     float cameraMarkerRadius = 4.0f;
     drawList->AddCircleFilled(leftCameraPosScreen, cameraMarkerRadius, colorLeftLine);
     drawList->AddCircleFilled(rightCameraPosScreen, cameraMarkerRadius, colorRightLine);
 
-    // --- Reserve space ---
-    ImGui::Dummy(squareSize); // Reserve the space used by the drawing
+    // Reserve space for drawing
+    ImGui::Dummy(squareSize);
 }

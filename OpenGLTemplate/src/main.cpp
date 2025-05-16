@@ -185,6 +185,11 @@ unsigned int depthMap;
 const unsigned int SHADOW_WIDTH = 4096, SHADOW_HEIGHT = 4096;
 Engine::Shader* simpleDepthShader = nullptr;
 
+GUI::LightingMode currentLightingMode = GUI::LIGHTING_SHADOW_MAPPING;
+bool enableShadows = true;
+
+GUI::VCTSettings vctSettings;
+
 // Predefined cubemap paths
 std::vector<GUI::CubemapPreset> cubemapPresets = {
     {"Default", "skybox/Default/", "Default skybox environment"},
@@ -1296,6 +1301,12 @@ int main() {
     ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNavFocus;
     ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
 
+    vctSettings.indirectSpecularLight = true;
+    vctSettings.indirectDiffuseLight = true;
+    vctSettings.directLight = true;
+    vctSettings.shadows = true;
+    vctSettings.voxelSize = 1.0f / 64.0f;
+
     InitializeDefaults();
 
     loadPreferences();
@@ -1550,44 +1561,47 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     glBindVertexArray(0);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, 0);
+    glBindTexture(GL_TEXTURE_3D, 0);
 
-    // 1. First render pass: Shadow map generation
-    // 1. IMPORTANT: Update the voxel grid FIRST - this is crucial 
-    // so visualization can use the latest voxel data
-    voxelizer->update(camera.Position, currentScene.models);
+    // 1. Update the voxel grid if voxel visualization is enabled or we're using voxel cone tracing
+    if (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING || voxelizer->showDebugVisualization) {
+        voxelizer->update(camera.Position, currentScene.models);
+    }
 
-    // 2. First render pass: Shadow map generation
-    glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
-    glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
-    glClear(GL_DEPTH_BUFFER_BIT);
+    // 2. Shadow mapping pass (only if using shadow mapping AND shadows are enabled)
+    if (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING && enableShadows) {
+        glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
+        glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+        glClear(GL_DEPTH_BUFFER_BIT);
 
-    // Calculate light's view and projection matrices
-    float sceneRadius = 10.0f;  // Adjust based on your scene size
-    glm::vec3 sceneCenter = glm::vec3(0.0f);
-    glm::vec3 lightDir = glm::normalize(sun.direction);
-    glm::vec3 lightPos = sceneCenter - lightDir * (sceneRadius * 2.0f);
+        // Calculate light's view and projection matrices
+        float sceneRadius = 10.0f;  // Adjust based on your scene size
+        glm::vec3 sceneCenter = glm::vec3(0.0f);
+        glm::vec3 lightDir = glm::normalize(sun.direction);
+        glm::vec3 lightPos = sceneCenter - lightDir * (sceneRadius * 2.0f);
 
-    glm::mat4 lightProjection = glm::ortho(
-        -sceneRadius, sceneRadius,
-        -sceneRadius, sceneRadius,
-        0.0f, sceneRadius * 4.0f);
+        glm::mat4 lightProjection = glm::ortho(
+            -sceneRadius, sceneRadius,
+            -sceneRadius, sceneRadius,
+            0.0f, sceneRadius * 4.0f);
 
-    glm::mat4 lightView = glm::lookAt(
-        lightPos,
-        sceneCenter,
-        glm::vec3(0.0f, 1.0f, 0.0f));
-    glm::mat4 lightSpaceMatrix = lightProjection * lightView;
+        glm::mat4 lightView = glm::lookAt(
+            lightPos,
+            sceneCenter,
+            glm::vec3(0.0f, 1.0f, 0.0f));
+        glm::mat4 lightSpaceMatrix = lightProjection * lightView;
 
-    // Use depth shader for shadow map generation
-    simpleDepthShader->use();
-    simpleDepthShader->setMat4("lightSpaceMatrix", lightSpaceMatrix);
+        // Use depth shader for shadow map generation
+        simpleDepthShader->use();
+        simpleDepthShader->setMat4("lightSpaceMatrix", lightSpaceMatrix);
 
-    // Render scene to depth buffer
-    glDisable(GL_CULL_FACE);
-    renderModels(simpleDepthShader);
-    glEnable(GL_CULL_FACE);
+        // Render scene to depth buffer
+        glDisable(GL_CULL_FACE);
+        renderModels(simpleDepthShader);
+        glEnable(GL_CULL_FACE);
+    }
 
-    // 3. Second pass: Regular rendering with shadows
+    // 3. Regular rendering pass
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, windowWidth, windowHeight);
 
@@ -1595,16 +1609,98 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     shader->setMat4("projection", projection);
     shader->setMat4("view", view);
     shader->setVec3("viewPos", camera.Position);
-    shader->setMat4("lightSpaceMatrix", lightSpaceMatrix);
+
+    // Set lighting mode uniforms - this is always needed
+    shader->setInt("lightingMode", static_cast<int>(currentLightingMode));
+    shader->setBool("enableShadows", enableShadows);
+
+    // Set common light properties - these are needed for both modes
     shader->setVec3("sun.direction", sun.direction);
     shader->setVec3("sun.color", sun.color);
     shader->setFloat("sun.intensity", sun.intensity);
     shader->setBool("sun.enabled", sun.enabled);
 
-    // Shadow map binding
-    glActiveTexture(GL_TEXTURE5);
-    glBindTexture(GL_TEXTURE_2D, depthMap);
-    shader->setInt("shadowMap", 5);
+    // Shadow mapping specific setup
+    if (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING) {
+        // Calculate light space matrix for shadow mapping
+        float sceneRadius = 10.0f;
+        glm::vec3 sceneCenter = glm::vec3(0.0f);
+        glm::vec3 lightDir = glm::normalize(sun.direction);
+        glm::vec3 lightPos = sceneCenter - lightDir * (sceneRadius * 2.0f);
+
+        glm::mat4 lightProjection = glm::ortho(
+            -sceneRadius, sceneRadius,
+            -sceneRadius, sceneRadius,
+            0.0f, sceneRadius * 4.0f);
+
+        glm::mat4 lightView = glm::lookAt(
+            lightPos,
+            sceneCenter,
+            glm::vec3(0.0f, 1.0f, 0.0f));
+        glm::mat4 lightSpaceMatrix = lightProjection * lightView;
+
+        shader->setMat4("lightSpaceMatrix", lightSpaceMatrix);
+
+        // Bind shadow map if shadows are enabled
+        if (enableShadows) {
+            glActiveTexture(GL_TEXTURE4);  // Using texture unit 4 for shadow map
+            glBindTexture(GL_TEXTURE_2D, depthMap);
+            shader->setInt("shadowMap", 4);
+        }
+
+        // Update point lights (for shadow mapping mode)
+        updatePointLights();
+
+        // Set point light uniforms
+        for (int i = 0; i < pointLights.size() && i < MAX_LIGHTS; i++) {
+            std::string lightName = "lights[" + std::to_string(i) + "]";
+            shader->setVec3(lightName + ".position", pointLights[i].position);
+            shader->setVec3(lightName + ".color", pointLights[i].color);
+            shader->setFloat(lightName + ".intensity", pointLights[i].intensity);
+        }
+        shader->setInt("numLights", std::min((int)pointLights.size(), MAX_LIGHTS));
+    }
+    // Voxel cone tracing specific setup
+    else if (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
+        // Set voxel grid parameters - only when in VCT mode
+        float halfSize = voxelizer->getVoxelGridSize() * 0.5f;
+        shader->setVec3("gridMin", glm::vec3(-halfSize));
+        shader->setVec3("gridMax", glm::vec3(halfSize));
+        shader->setFloat("voxelSize", vctSettings.voxelSize);
+
+        // Set VCT settings - only when in VCT mode
+        shader->setBool("vctSettings.indirectSpecularLight", vctSettings.indirectSpecularLight);
+        shader->setBool("vctSettings.indirectDiffuseLight", vctSettings.indirectDiffuseLight);
+        shader->setBool("vctSettings.directLight", vctSettings.directLight);
+        shader->setBool("vctSettings.shadows", vctSettings.shadows);
+
+        // Bind voxel 3D texture - using texture unit 5
+        glActiveTexture(GL_TEXTURE5);
+        glBindTexture(GL_TEXTURE_3D, voxelizer->getVoxelTexture());
+        shader->setInt("voxelGrid", 5);
+
+        // Set default material properties for voxel cone tracing
+        shader->setFloat("material.diffuseReflectivity", 0.8f);
+        shader->setFloat("material.specularReflectivity", 0.2f);
+        shader->setFloat("material.specularDiffusion", 0.5f);
+        shader->setFloat("material.refractiveIndex", 1.0f);  // Default to no refraction
+        shader->setFloat("material.transparency", 0.0f);     // Default to opaque
+
+        // Set visualization flag (for debugging)
+        shader->setBool("enableVoxelVisualization", voxelizer->showDebugVisualization);
+
+        // Update point lights (still needed for direct lighting in VCT)
+        updatePointLights();
+
+        // Set point light uniforms
+        for (int i = 0; i < pointLights.size() && i < MAX_LIGHTS; i++) {
+            std::string lightName = "lights[" + std::to_string(i) + "]";
+            shader->setVec3(lightName + ".position", pointLights[i].position);
+            shader->setVec3(lightName + ".color", pointLights[i].color);
+            shader->setFloat(lightName + ".intensity", pointLights[i].intensity);
+        }
+        shader->setInt("numLights", std::min((int)pointLights.size(), MAX_LIGHTS));
+    }
 
     // Render scene
     renderModels(shader);
@@ -1632,8 +1728,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
         cursorManager.renderCursors(projection, view);
     }
 
-    // 4. IMPORTANT: Voxel visualization AFTER main rendering
-    // but don't update voxels again - we already did it at the beginning
+    // 4. Voxel visualization (if enabled) - AFTER main rendering
     if (voxelizer->showDebugVisualization) {
         voxelizer->renderDebugVisualization(camera.Position, projection, view);
     }
@@ -1648,31 +1743,73 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     glBindVertexArray(0);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, 0);
+    glBindTexture(GL_TEXTURE_3D, 0);
 }
 
 void renderModels(Engine::Shader* shader) {
-    // Only update lighting information for the main shader, not the depth shader
+    // Don't do lighting setup for the depth shader
     if (shader != simpleDepthShader) {
-
+        // Bind skybox for reflections
         bindSkyboxUniforms(shader);
 
-        // Update point lights
-        updatePointLights();
+        // Set lighting mode
+        shader->setInt("lightingMode", static_cast<int>(currentLightingMode));
+        shader->setBool("enableShadows", enableShadows);
 
-        // Set point light uniforms
-        for (int i = 0; i < pointLights.size() && i < MAX_LIGHTS; i++) {
-            std::string lightName = "lights[" + std::to_string(i) + "]";
-            shader->setVec3(lightName + ".position", pointLights[i].position);
-            shader->setVec3(lightName + ".color", pointLights[i].color);
-            shader->setFloat(lightName + ".intensity", pointLights[i].intensity);
+        // Set lighting uniforms based on current lighting mode
+        if (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING) {
+            // Update point lights
+            updatePointLights();
+
+            // Set point light uniforms
+            for (int i = 0; i < pointLights.size() && i < MAX_LIGHTS; i++) {
+                std::string lightName = "lights[" + std::to_string(i) + "]";
+                shader->setVec3(lightName + ".position", pointLights[i].position);
+                shader->setVec3(lightName + ".color", pointLights[i].color);
+                shader->setFloat(lightName + ".intensity", pointLights[i].intensity);
+            }
+            shader->setInt("numLights", std::min((int)pointLights.size(), MAX_LIGHTS));
+
+            // Set sun properties
+            shader->setBool("sun.enabled", sun.enabled);
+            shader->setVec3("sun.direction", sun.direction);
+            shader->setVec3("sun.color", sun.color);
+            shader->setFloat("sun.intensity", sun.intensity);
         }
-        shader->setInt("numLights", std::min((int)pointLights.size(), MAX_LIGHTS));
+        else if (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
+            // Update point lights (still needed for direct lighting in VCT)
+            updatePointLights();
 
-        // Set sun properties
-        shader->setBool("sun.enabled", sun.enabled);
-        shader->setVec3("sun.direction", sun.direction);
-        shader->setVec3("sun.color", sun.color);
-        shader->setFloat("sun.intensity", sun.intensity);
+            // Set point light uniforms
+            for (int i = 0; i < pointLights.size() && i < MAX_LIGHTS; i++) {
+                std::string lightName = "lights[" + std::to_string(i) + "]";
+                shader->setVec3(lightName + ".position", pointLights[i].position);
+                shader->setVec3(lightName + ".color", pointLights[i].color);
+                shader->setFloat(lightName + ".intensity", pointLights[i].intensity);
+            }
+            shader->setInt("numLights", std::min((int)pointLights.size(), MAX_LIGHTS));
+
+            // Set sun properties
+            shader->setBool("sun.enabled", sun.enabled);
+            shader->setVec3("sun.direction", sun.direction);
+            shader->setVec3("sun.color", sun.color);
+            shader->setFloat("sun.intensity", sun.intensity);
+
+            // Set VCT settings
+            shader->setBool("vctSettings.indirectSpecularLight", vctSettings.indirectSpecularLight);
+            shader->setBool("vctSettings.indirectDiffuseLight", vctSettings.indirectDiffuseLight);
+            shader->setBool("vctSettings.directLight", vctSettings.directLight);
+            shader->setBool("vctSettings.shadows", vctSettings.shadows);
+
+            // Set voxel grid parameters
+            float halfSize = voxelizer->getVoxelGridSize() * 0.5f;
+            shader->setVec3("gridMin", glm::vec3(-halfSize));
+            shader->setVec3("gridMax", glm::vec3(halfSize));
+            shader->setFloat("voxelSize", vctSettings.voxelSize);
+
+            // Set visualization flag (for debugging)
+            shader->setBool("enableVoxelVisualization", voxelizer->showDebugVisualization);
+        }
     }
 
     // Calculate view projection matrix for frustum culling
@@ -1682,7 +1819,7 @@ void renderModels(Engine::Shader* shader) {
             * camera.GetViewMatrix();
     }
 
-    // Render all models
+    // Render each model
     for (int i = 0; i < currentScene.models.size(); i++) {
         auto& model = currentScene.models[i];
         if (!model.visible) continue;
@@ -1695,10 +1832,11 @@ void renderModels(Engine::Shader* shader) {
         modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.z), glm::vec3(0, 0, 1));
         modelMatrix = glm::scale(modelMatrix, model.scale);
 
+        // Set model matrix in shader
         shader->setMat4("model", modelMatrix);
         shader->setBool("useInstancing", false);
 
-        // Set material properties
+        // Set standard material properties
         shader->setBool("material.hasNormalMap", model.hasNormalMap());
         shader->setBool("material.hasSpecularMap", model.hasSpecularMap());
         shader->setBool("material.hasAOMap", model.hasAOMap());
@@ -1707,12 +1845,27 @@ void renderModels(Engine::Shader* shader) {
         shader->setFloat("material.shininess", model.shininess);
         shader->setFloat("material.emissive", model.emissive);
 
+        // For VCT, set additional material properties
+        if (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
+            // These would normally vary per material, but for simplicity we'll use some defaults
+            shader->setFloat("material.diffuseReflectivity", 0.8f);
+            shader->setFloat("material.specularReflectivity", 0.2f);
+            shader->setFloat("material.specularDiffusion", 0.5f);
+            shader->setFloat("material.refractiveIndex", 1.0f);  // No refraction by default
+            shader->setFloat("material.transparency", 0.0f);     // Opaque by default
+        }
+
         // Set selection state
         shader->setBool("selectionMode", selectionMode);
         shader->setBool("isSelected", selectionMode && (i == currentSelectedIndex) && (currentSelectedType == SelectedType::Model));
+        shader->setInt("selectedMeshIndex", currentSelectedMeshIndex);
+        shader->setBool("isMeshSelected", currentSelectedMeshIndex >= 0);
 
-        // Draw the model
-        model.Draw(*shader);
+        // Set current mesh index for all meshes
+        for (int j = 0; j < model.getMeshes().size(); j++) {
+            shader->setInt("currentMeshIndex", j);
+            model.getMeshes()[j].Draw(*shader);
+        }
     }
 }
 
@@ -2228,17 +2381,50 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
         std::cout << "GUI visibility toggled. showGui = " << (showGui ? "true" : "false") << std::endl;
     }
 
-    if (key == GLFW_KEY_PAGE_UP && action == GLFW_PRESS)
-    {
-        voxelizer->increaseState();
+    if (key == GLFW_KEY_L && action == GLFW_PRESS) {
+        // Toggle between shadow mapping and voxel cone tracing
+        currentLightingMode = (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING) ?
+            GUI::LIGHTING_VOXEL_CONE_TRACING : GUI::LIGHTING_SHADOW_MAPPING;
+
+
+        // Reset OpenGL state when switching modes
+        glEnable(GL_DEPTH_TEST);
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
+
+        // Make sure texture units are reset
+        for (int i = 0; i < 8; i++) {
+            glActiveTexture(GL_TEXTURE0 + i);
+            glBindTexture(GL_TEXTURE_2D, 0);
+            glBindTexture(GL_TEXTURE_3D, 0);
+        }
+        glActiveTexture(GL_TEXTURE0);
+
+        // If switching to VCT, update the voxel grid
+        if (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
+            voxelizer->update(camera.Position, currentScene.models);
+        }
+
+        // Update preferences
+        preferences.lightingMode = currentLightingMode;
+        savePreferences();
     }
-    if (key == GLFW_KEY_PAGE_DOWN && action == GLFW_PRESS)
-    {
-        voxelizer->decreaseState();
+
+    // Toggle shadows
+    if (key == GLFW_KEY_K && action == GLFW_PRESS) {
+        enableShadows = !enableShadows;
+        std::cout << "Shadows " << (enableShadows ? "enabled" : "disabled") << std::endl;
+
+        // Update preferences
+        preferences.enableShadows = enableShadows;
+        savePreferences();
     }
-    if (key == GLFW_KEY_V && action == GLFW_PRESS)
-    {
+
+    // Toggle voxel visualization
+    if (key == GLFW_KEY_V && action == GLFW_PRESS) {
         voxelizer->showDebugVisualization = !voxelizer->showDebugVisualization;
+        std::cout << "Voxel visualization " <<
+            (voxelizer->showDebugVisualization ? "enabled" : "disabled") << std::endl;
     }
 
     if (key == GLFW_KEY_C && action == GLFW_PRESS)

@@ -8,10 +8,13 @@ using json = nlohmann::json;
 
 namespace Engine {
 
+    // Returns the path to the cursor presets configuration file
     std::string CursorPresetManager::getPresetsFilePath() {
         return "cursor_presets.json";
     }
 
+    // Saves a cursor preset to the configuration file
+    // Creates new preset or updates existing one with the same name
     void CursorPresetManager::savePreset(const std::string& name, const CursorPreset& preset) {
         json presets;
         std::string filePath = getPresetsFilePath();
@@ -22,7 +25,7 @@ namespace Engine {
             file >> presets;
         }
 
-        // Add or update the preset
+        // Serialize preset properties to JSON
         json presetJson;
         presetJson["name"] = preset.name;
         presetJson["showSphereCursor"] = preset.showSphereCursor;
@@ -41,14 +44,15 @@ namespace Engine {
         presetJson["planeDiameter"] = preset.planeDiameter;
         presetJson["planeColor"] = { preset.planeColor.r, preset.planeColor.g, preset.planeColor.b, preset.planeColor.a };
 
-
         presets[name] = presetJson;
 
-        // Save to file
+        // Save to file with formatting for readability
         std::ofstream file(filePath);
         file << std::setw(4) << presets << std::endl;
     }
 
+    // Loads a cursor preset from the configuration file by name
+    // Provides sensible defaults for all properties if they're missing
     CursorPreset CursorPresetManager::loadPreset(const std::string& name) {
         std::string filePath = getPresetsFilePath();
         if (!std::filesystem::exists(filePath)) {
@@ -100,6 +104,7 @@ namespace Engine {
         return preset;
     }
 
+    // Returns a list of all saved preset names from the configuration file
     std::vector<std::string> CursorPresetManager::getPresetNames() {
         std::vector<std::string> names;
         std::string filePath = getPresetsFilePath();
@@ -117,6 +122,7 @@ namespace Engine {
         return names;
     }
 
+    // Removes a preset from the configuration file if it exists
     void CursorPresetManager::deletePreset(const std::string& name) {
         std::string filePath = getPresetsFilePath();
         if (!std::filesystem::exists(filePath)) {
@@ -136,8 +142,9 @@ namespace Engine {
         }
     }
 
+    // Convenience method to load and apply a cursor preset by name
     CursorPreset CursorPresetManager::applyCursorPreset(const std::string& name) {
         return loadPreset(name);
     }
 
-} // namespace Engine
+}

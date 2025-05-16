@@ -8,6 +8,7 @@ extern int windowWidth;
 extern int windowHeight;
 
 namespace Cursor {
+    // Initialize cursor manager with default properties
     CursorManager::CursorManager() :
         m_cursorPosition(0.0f),
         m_cursorPositionValid(false),
@@ -28,6 +29,7 @@ namespace Cursor {
         cleanup();
     }
 
+    // Initialize all cursor types and set window dimensions
     void CursorManager::initialize() {
         m_sphereCursor->initialize();
         m_fragmentCursor->initialize();
@@ -37,6 +39,7 @@ namespace Cursor {
         m_windowHeight = windowHeight;
     }
 
+    // Updates 3D cursor position based on mouse position and depth buffer
     void CursorManager::updateCursorPosition(GLFWwindow* window, const glm::mat4& projection, const glm::mat4& view, Engine::Shader* shader) {
         // Skip if ImGui wants mouse input
         if (ImGui::GetIO().WantCaptureMouse) {
@@ -56,7 +59,6 @@ namespace Cursor {
             return;
         }
 
-        // Get cursor position
         double xpos, ypos;
         glfwGetCursorPos(window, &xpos, &ypos);
         m_lastX = static_cast<float>(xpos);
@@ -81,12 +83,11 @@ namespace Cursor {
         auto worldPos = worldPosH / worldPosH.w;
         auto isHit = depth != 1.0;
 
-        // Update cursor state
+        // Update cursor properties based on whether it hit geometry
         if (isHit && (m_sphereCursor->isVisible() || m_fragmentCursor->isVisible() || m_planeCursor->isVisible())) {
             m_cursorPositionValid = true;
             m_cursorPosition = glm::vec3(worldPos);
 
-            // Update all cursor positions
             m_sphereCursor->setPosition(m_cursorPosition);
             m_sphereCursor->setPositionValid(true);
             m_fragmentCursor->setPosition(m_cursorPosition);
@@ -103,7 +104,6 @@ namespace Cursor {
         else {
             m_cursorPositionValid = false;
 
-            // Update all cursor validity
             m_sphereCursor->setPositionValid(false);
             m_fragmentCursor->setPositionValid(false);
             m_planeCursor->setPositionValid(false);
@@ -113,6 +113,7 @@ namespace Cursor {
         }
     }
 
+    // Render visible 3D cursors in the scene
     void CursorManager::renderCursors(const glm::mat4& projection, const glm::mat4& view) {
         if (m_sphereCursor->isVisible()) {
             m_sphereCursor->render(projection, view, camera.Position);
@@ -125,6 +126,7 @@ namespace Cursor {
         // Fragment cursor is rendered in the fragment shader via updateShaderUniforms
     }
 
+    // Update shader uniforms for cursor visualization in fragment shaders
     void CursorManager::updateShaderUniforms(Engine::Shader* shader) {
         if (!shader) return;
 
@@ -150,6 +152,7 @@ namespace Cursor {
         }
     }
 
+    // Renders a sphere at the orbit center point for visual reference
     void CursorManager::renderOrbitCenter(const glm::mat4& projection, const glm::mat4& view, const glm::vec3& orbitPoint) {
         if (!m_showOrbitCenter) return;
 
@@ -163,7 +166,6 @@ namespace Cursor {
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-        // Set up sphere shader for orbit center
         sphereShader->use();
         sphereShader->setMat4("projection", projection);
         sphereShader->setMat4("view", view);
@@ -172,7 +174,6 @@ namespace Cursor {
         glm::mat4 model = glm::translate(glm::mat4(1.0f), orbitPoint);
         model = glm::scale(model, glm::vec3(m_orbitCenterSphereRadius));
 
-        // Set shader uniforms
         sphereShader->setMat4("model", model);
         sphereShader->setVec3("viewPos", camera.Position);
         sphereShader->setVec4("sphereColor", m_orbitCenterColor);
@@ -188,6 +189,7 @@ namespace Cursor {
         glDisable(GL_BLEND);
     }
 
+    // Release resources for all cursor types
     void CursorManager::cleanup() {
         m_sphereCursor->cleanup();
         m_fragmentCursor->cleanup();

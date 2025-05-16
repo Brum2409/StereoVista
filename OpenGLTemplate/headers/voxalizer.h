@@ -7,21 +7,25 @@ namespace Engine {
 
     class Voxelizer {
     public:
+        enum VisualizationMode {
+            VISUALIZATION_NORMAL,
+            VISUALIZATION_LUMINANCE,
+            VISUALIZATION_ALPHA
+        };
+
         bool showDebugVisualization = false;
         float debugVoxelSize = 0.1f;
         float voxelOpacity = 0.5f;   // Controls transparency of visualized voxels
         float voxelColorIntensity = 1.0f; // Controls brightness of voxel colors
-        bool useRayCastVisualization = false; // Toggle between ray casting and individual cubes
+        bool useRayCastVisualization = false; // Toggle between ray casting(currently broken) and individual cubes
+        VisualizationMode visualizationMode = VISUALIZATION_NORMAL;
 
-        // Constructor and destructor
         Voxelizer(int resolution = 128);
         ~Voxelizer();
 
-        // Public methods
         void update(const glm::vec3& cameraPos, const std::vector<Model>& models);
         void renderDebugVisualization(const glm::vec3& cameraPos, const glm::mat4& projection, const glm::mat4& view);
 
-        // Getters and setters
         GLuint getVoxelTexture() const { return m_voxelTexture; }
         float getVoxelGridSize() const { return m_voxelGridSize; }
         void setVoxelGridSize(float size) { m_voxelGridSize = size; }
@@ -29,16 +33,45 @@ namespace Engine {
         // Change visualization state (mipmap level)
         void increaseState();
         void decreaseState();
-        void increaseVoxelOpacity();
-        void decreaseVoxelOpacity();
+
+        void cycleVisualizationMode() {
+            visualizationMode = static_cast<VisualizationMode>((static_cast<int>(visualizationMode) + 1) % 3);
+        }
+
+        void clearVoxelTexture() {
+            glClearTexImage(m_voxelTexture, 0, GL_RGBA, GL_FLOAT, nullptr);
+        }
+
+        void generateMipmaps() {
+            glBindTexture(GL_TEXTURE_3D, m_voxelTexture);
+            glGenerateMipmap(GL_TEXTURE_3D);
+        }
+
+        // Method to re-initialize the voxel texture with a new resolution
+        void resizeVoxelTexture(int newResolution) {
+            glDeleteTextures(1, &m_voxelTexture);
+
+            m_resolution = newResolution;
+
+            initializeVoxelTexture();
+        }
+
+        // Method to set voxel material properties for rendering
+        void setVoxelMaterial(Engine::Shader* shader, const Engine::Model& model) {
+            shader->setVec3("material.diffuseColor", model.color);
+            shader->setVec3("material.specularColor", glm::vec3(1.0f)); // Default specular
+            shader->setFloat("material.diffuseReflectivity", 0.8f);     // Default diffuse reflectivity
+            shader->setFloat("material.specularReflectivity", 0.2f);    // Default specular reflectivity
+            shader->setFloat("material.specularDiffusion", 0.5f);       // Default specular diffusion
+            shader->setFloat("material.emissivity", model.emissive);
+            shader->setFloat("material.transparency", 0.0f);            // Default opaque
+        }
 
     private:
-        // Private member variables
         int m_resolution;
         float m_voxelGridSize;
         GLuint m_voxelTexture;
 
-        // Voxelization shaders
         Shader* m_voxelShader;
 
         // Visualization variables
@@ -74,7 +107,6 @@ namespace Engine {
 
         std::vector<PointLight> m_lights;
 
-        // Private methods
         void initializeVoxelTexture();
         void initializeVisualization();
         void setupScreenQuad();
@@ -84,4 +116,4 @@ namespace Engine {
         void updateVisibleVoxels();
     };
 
-} // namespace Engine
+} 

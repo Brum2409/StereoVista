@@ -5,18 +5,29 @@
 #include <string>
 #include <vector>
 
-// Forward declarations
 namespace Engine {
     class Shader;
     class CursorPreset;
 }
 
-// Define all types in a namespace to avoid conflicts
 namespace GUI {
     enum SkyboxType {
-        SKYBOX_CUBEMAP,     // Standard cubemap texture
-        SKYBOX_SOLID_COLOR, // Solid color
-        SKYBOX_GRADIENT     // Gradient color
+        SKYBOX_CUBEMAP,   
+        SKYBOX_SOLID_COLOR, 
+        SKYBOX_GRADIENT    
+    };
+
+    enum LightingMode {
+        LIGHTING_SHADOW_MAPPING,
+        LIGHTING_VOXEL_CONE_TRACING
+    };
+
+    struct VCTSettings {
+        bool indirectSpecularLight = true;
+        bool indirectDiffuseLight = true;
+        bool directLight = true;
+        bool shadows = true;
+        float voxelSize = 1.0f / 64.0f;
     };
 
     enum CursorScalingMode {
@@ -70,6 +81,13 @@ namespace GUI {
         bool show3DCursor = true;
         bool useNewStereoMethod = true;
         float fov = 45.0f;
+
+        // Lighting settings
+        LightingMode lightingMode = LIGHTING_SHADOW_MAPPING;
+        bool enableShadows = true;
+        VCTSettings vctSettings;
+
+        // Scroll and movement settings
         float scrollMomentum = 0.5f;
         float maxScrollVelocity = 3.0f;
         float scrollDeceleration = 10.0f;
@@ -87,5 +105,6 @@ namespace GUI {
         glm::vec3 skyboxGradientTop = glm::vec3(0.1f, 0.1f, 0.3f);
         glm::vec3 skyboxGradientBottom = glm::vec3(0.7f, 0.7f, 1.0f);
         int selectedCubemap = 0;
+
     };
 }

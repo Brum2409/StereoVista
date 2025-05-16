@@ -8,6 +8,7 @@ uniform sampler2D textureFront; // Unit cube front FBO.
 uniform sampler3D texture3D; // Texture in which voxelization is stored.
 uniform vec3 cameraPosition; // World camera position.
 uniform int state = 0; // Decides mipmap sample level.
+uniform int visualizationMode = 0; // 0 = normal, 1 = luminance, 2 = alpha
 
 in vec2 textureCoordinateFrag; 
 out vec4 color;
@@ -17,6 +18,11 @@ vec3 scaleAndBias(vec3 p) { return 0.5f * p + vec3(0.5f); }
 
 // Returns true if p is inside the unity cube (+ e) centered on (0, 0, 0).
 bool isInsideCube(vec3 p, float e) { return abs(p.x) < 1 + e && abs(p.y) < 1 + e && abs(p.z) < 1 + e; }
+
+// Calculate luminance from RGB using the standard formula
+float calculateLuminance(vec3 color) {
+    return 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b;
+}
 
 void main() {
     const float mipmapLevel = float(state);
@@ -38,7 +44,23 @@ void main() {
         vec3 sampleCoord = scaleAndBias(currentPoint);
         
         vec4 currentSample = textureLod(texture3D, sampleCoord, mipmapLevel);
+
+        // Process the sample based on visualization mode
+        if (visualizationMode == 1) {
+            // Luminance visualization - convert RGB to luminance
+            float luminance = calculateLuminance(currentSample.rgb);
+            currentSample = vec4(vec3(luminance), currentSample.a);
+        }
+        else if (visualizationMode == 2) {
+            // Alpha visualization - show only the alpha channel
+            currentSample = vec4(vec3(currentSample.a), currentSample.a);
+        }
+
         color += (1.0f - color.a) * currentSample;
     } 
-    color.rgb = pow(color.rgb, vec3(1.0 / 2.2));
+    
+    // Apply gamma correction unless we're in a special visualization mode
+    if (visualizationMode == 0) {
+        color.rgb = pow(color.rgb, vec3(1.0 / 2.2));
+    }
 }

@@ -8,7 +8,7 @@
 
 namespace Engine {
 
-    class Shader; // Forward declaration
+    class Shader;
 
     struct Texture {
         GLuint id;
@@ -117,4 +117,4 @@ namespace Engine {
     Model* loadModel(const std::string& filePath);
     Model createCube(const glm::vec3& color, float shininess, float emissive);
 
-} // namespace Engine
+}

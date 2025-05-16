@@ -19,15 +19,15 @@ namespace Cursor {
     }
 
     void FragmentCursor::initialize() {
-        // This cursor is implemented entirely in fragment shader, no OpenGL objects to initialize
+        // This cursor is implemented entirely in fragment shader
     }
 
     void FragmentCursor::render(const glm::mat4& projection, const glm::mat4& view, const glm::vec3& cameraPosition) {
-        // This cursor is rendered via the main shader, nothing to do here
+        // This cursor is rendered via the main shader
     }
 
     void FragmentCursor::cleanup() {
-        // No resources to clean up
+
     }
 
     void FragmentCursor::updateShaderUniforms(Engine::Shader* shader) {

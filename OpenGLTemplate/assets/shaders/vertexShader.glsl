@@ -25,12 +25,15 @@ uniform mat4 view;
 uniform mat4 projection;
 uniform mat4 lightSpaceMatrix;
 
+// Lighting mode constants
+const int LIGHTING_SHADOW_MAPPING = 0;
+const int LIGHTING_VOXEL_CONE_TRACING = 1;
+
 // Render states
 uniform bool isPointCloud;
 uniform bool useInstancing;
-
+uniform int lightingMode;
 uniform int currentMeshIndex;
-uniform bool isMeshSelected;
 
 void main() {
     // Calculate model matrix based on whether we're using instancing
@@ -66,10 +69,11 @@ void main() {
         vs_out.TBN = mat3(T, B, N);
         vs_out.VertexColor = vec3(1.0);
         vs_out.Intensity = 1.0;
-        vs_out.meshIndex = gl_DrawID;
+        vs_out.meshIndex = currentMeshIndex;
     }
     
-    // Transform position to light space for shadow mapping
+    // Calculate light space position for shadow mapping (regardless of lighting mode)
+    // This ensures we always have this data available even if shadow mapping is toggled on later
     vs_out.FragPosLightSpace = lightSpaceMatrix * vec4(vs_out.FragPos, 1.0);
     
     // Final position calculation

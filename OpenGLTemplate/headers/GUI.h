@@ -35,11 +35,6 @@ void renderStereoCameraVisualization(const Camera& camera, const Engine::SceneSe
 void deleteSelectedModel();
 void deleteSelectedPointCloud();
 
-// Utility functions
-void applyPresetToGlobalSettings(const Engine::CursorPreset& preset);
-Engine::CursorPreset createPresetFromCurrentSettings(const std::string& name);
-void setDefaultCursorSettings();
-
 // GUI initialization and cleanup
 bool InitializeGUI(GLFWwindow* window, bool isDarkTheme);
 void CleanupGUI();

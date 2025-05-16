@@ -6,7 +6,7 @@ namespace Engine {
 
     Voxelizer::Voxelizer(int resolution)
         : m_resolution(resolution)
-        , m_voxelGridSize(10.0f)
+        , m_voxelGridSize(2.0f)
         , m_voxelTexture(0)
         , m_voxelShader(nullptr)
         , m_visualizationShader(nullptr)
@@ -408,10 +408,13 @@ namespace Engine {
             glBindTexture(GL_TEXTURE_3D, m_voxelTexture);
             m_visualizationShader->setInt("texture3D", 2);
 
-            // Set other uniforms - normalize camera position consistently regardless of mipmap level
+            // Set other uniforms
             m_visualizationShader->setVec3("cameraPosition", cameraPos / (m_voxelGridSize * 0.5f));
             m_visualizationShader->setMat4("V", view);
             m_visualizationShader->setInt("state", m_state); // Current mipmap level
+
+            // Set visualization mode uniform
+            m_visualizationShader->setInt("visualizationMode", static_cast<int>(visualizationMode));
 
             // Render fullscreen quad
             glBindVertexArray(m_quadVAO);
@@ -563,6 +566,9 @@ namespace Engine {
         m_voxelCubeShader->setVec3("viewPos", cameraPos);
         m_voxelCubeShader->setFloat("opacity", voxelOpacity);
         m_voxelCubeShader->setFloat("colorIntensity", voxelColorIntensity);
+
+        // Set visualization mode uniform
+        m_voxelCubeShader->setInt("visualizationMode", static_cast<int>(visualizationMode));
 
         // Calculate voxel size based on grid size and resolution - adjusted for mipmap level
         float baseVoxelSize = m_voxelGridSize / m_resolution;

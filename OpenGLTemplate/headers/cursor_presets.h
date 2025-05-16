@@ -38,4 +38,4 @@ namespace Engine {
         static std::string getPresetsFilePath();
     };
 
-} // namespace Engine
+}
