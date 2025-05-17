@@ -1462,9 +1462,32 @@ void renderModelManipulationPanel(Engine::Model& model, Engine::Shader* shader) 
 
     // Material
     if (ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::ColorEdit3("Color", glm::value_ptr(model.color));
+        // Basic material properties
+        ImGui::ColorEdit3("Diffuse Color", glm::value_ptr(model.color));
         ImGui::SliderFloat("Shininess", &model.shininess, 1.0f, 90.0f);
         ImGui::SliderFloat("Emissive", &model.emissive, 0.0f, 1.0f);
+
+        // Add VCT specific material properties
+        ImGui::Separator();
+        ImGui::Text("Voxel Cone Tracing Properties:");
+
+        ImGui::SliderFloat("Diffuse Reflectivity", &model.diffuseReflectivity, 0.0f, 1.0f);
+        ImGui::SetItemTooltip("Controls how much diffuse light is reflected");
+
+        ImGui::ColorEdit3("Specular Color", glm::value_ptr(model.specularColor));
+        ImGui::SetItemTooltip("Color of specular reflections (highlights)");
+
+        ImGui::SliderFloat("Specular Reflectivity", &model.specularReflectivity, 0.0f, 1.0f);
+        ImGui::SetItemTooltip("Controls strength of specular reflections");
+
+        ImGui::SliderFloat("Specular Diffusion", &model.specularDiffusion, 0.0f, 1.0f);
+        ImGui::SetItemTooltip("Controls glossiness - lower values = sharper reflections");
+
+        ImGui::SliderFloat("Refractive Index", &model.refractiveIndex, 1.0f, 3.0f);
+        ImGui::SetItemTooltip("Refractive index (1.0=air, 1.33=water, 1.5=glass, 2.4=diamond)");
+
+        ImGui::SliderFloat("Transparency", &model.transparency, 0.0f, 1.0f);
+        ImGui::SetItemTooltip("0=opaque, 1=fully transparent");
     }
 
     // Textures
@@ -1542,6 +1565,10 @@ void renderMeshManipulationPanel(Engine::Model& model, int meshIndex, Engine::Sh
         ImGui::ColorEdit3("Color", glm::value_ptr(mesh.color));
         ImGui::SliderFloat("Shininess", &mesh.shininess, 1.0f, 90.0f);
         ImGui::SliderFloat("Emissive", &mesh.emissive, 0.0f, 1.0f);
+
+        // Add VCT specific material properties for mesh
+        ImGui::Separator();
+        ImGui::Text("Voxel Cone Tracing Properties: Currently only per Model");
     }
 
     // Texture management for this specific mesh

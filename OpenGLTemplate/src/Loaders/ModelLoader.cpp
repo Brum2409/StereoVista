@@ -535,6 +535,14 @@ namespace Engine {
         cubeModel.rotation = glm::vec3(0.0f);
         cubeModel.visible = true;
 
+
+        cubeModel.diffuseReflectivity = 0.8f;
+        cubeModel.specularColor = glm::vec3(1.0f);
+        cubeModel.specularDiffusion = 0.5f;
+        cubeModel.specularReflectivity = 0.2f;
+        cubeModel.refractiveIndex = 1.0f;
+        cubeModel.transparency = 0.0f;
+
         return cubeModel;
     }
 

@@ -291,11 +291,13 @@ namespace Engine {
 
             // Set material properties
             m_voxelShader->setVec3("material.diffuseColor", model.color);
-            m_voxelShader->setVec3("material.specularColor", glm::vec3(1.0f));
-            m_voxelShader->setFloat("material.diffuseReflectivity", 0.8f);
-            m_voxelShader->setFloat("material.specularReflectivity", 0.2f);
+            m_voxelShader->setVec3("material.specularColor", model.specularColor);
+            m_voxelShader->setFloat("material.diffuseReflectivity", model.diffuseReflectivity);
+            m_voxelShader->setFloat("material.specularReflectivity", model.specularReflectivity);
+            m_voxelShader->setFloat("material.specularDiffusion", model.specularDiffusion);
             m_voxelShader->setFloat("material.emissivity", model.emissive);
-            m_voxelShader->setFloat("material.transparency", 0.0f); // Default to opaque
+            m_voxelShader->setFloat("material.refractiveIndex", model.refractiveIndex);
+            m_voxelShader->setFloat("material.transparency", model.transparency);
 
             // Draw each mesh of the model
             for (const auto& mesh : model.getMeshes()) {

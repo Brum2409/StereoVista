@@ -24,7 +24,9 @@ struct Material {
     vec3 specularColor;
     float diffuseReflectivity;
     float specularReflectivity;
+    float specularDiffusion;
     float emissivity;
+    float refractiveIndex;
     float transparency;
     sampler2D textures[16];  // Array of textures
     bool hasTexture;

@@ -1848,12 +1848,13 @@ void renderModels(Engine::Shader* shader) {
 
         // For VCT, set additional material properties
         if (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
-            // These would normally vary per material, but for simplicity we'll use some defaults
-            shader->setFloat("material.diffuseReflectivity", 0.8f);
-            shader->setFloat("material.specularReflectivity", 0.2f);
-            shader->setFloat("material.specularDiffusion", 0.5f);
-            shader->setFloat("material.refractiveIndex", 1.0f);  // No refraction by default
-            shader->setFloat("material.transparency", 0.0f);     // Opaque by default
+            // Set VCT specific material properties
+            shader->setFloat("material.diffuseReflectivity", model.diffuseReflectivity);
+            shader->setVec3("material.specularColor", model.specularColor);
+            shader->setFloat("material.specularReflectivity", model.specularReflectivity);
+            shader->setFloat("material.specularDiffusion", model.specularDiffusion);
+            shader->setFloat("material.refractiveIndex", model.refractiveIndex);
+            shader->setFloat("material.transparency", model.transparency);
         }
 
         // Set selection state

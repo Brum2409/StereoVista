@@ -59,12 +59,13 @@ namespace Engine {
         // Method to set voxel material properties for rendering
         void setVoxelMaterial(Engine::Shader* shader, const Engine::Model& model) {
             shader->setVec3("material.diffuseColor", model.color);
-            shader->setVec3("material.specularColor", glm::vec3(1.0f)); // Default specular
-            shader->setFloat("material.diffuseReflectivity", 0.8f);     // Default diffuse reflectivity
-            shader->setFloat("material.specularReflectivity", 0.2f);    // Default specular reflectivity
-            shader->setFloat("material.specularDiffusion", 0.5f);       // Default specular diffusion
+            shader->setVec3("material.specularColor", model.specularColor);
+            shader->setFloat("material.diffuseReflectivity", model.diffuseReflectivity);
+            shader->setFloat("material.specularReflectivity", model.specularReflectivity);
+            shader->setFloat("material.specularDiffusion", model.specularDiffusion);
             shader->setFloat("material.emissivity", model.emissive);
-            shader->setFloat("material.transparency", 0.0f);            // Default opaque
+            shader->setFloat("material.refractiveIndex", model.refractiveIndex);
+            shader->setFloat("material.transparency", model.transparency);
         }
 
     private:
