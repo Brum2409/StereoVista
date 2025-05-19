@@ -19,10 +19,10 @@ const int LIGHTING_VOXEL_CONE_TRACING = 1;
 // ---- VOXEL CONE TRACING CONSTANTS ----
 #define SQRT2 1.414213
 #define ISQRT2 0.707106
-#define MIPMAP_HARDCAP 5.4f // Prevents too high mipmap levels
-#define DIFFUSE_INDIRECT_FACTOR 0.52f // Controls intensity of indirect diffuse light
-#define SPECULAR_FACTOR 4.0f // Specular intensity factor
-#define SPECULAR_POWER 65.0f // Specular power in lighting calculations
+#define MIPMAP_HARDCAP 5.4f
+#define DIFFUSE_INDIRECT_FACTOR 0.52f
+#define SPECULAR_FACTOR 4.0f
+#define SPECULAR_POWER 65.0f
 
 // ---- MATERIAL STRUCTURE ----
 struct Material {
@@ -54,6 +54,11 @@ struct VCTSettings {
     bool indirectDiffuseLight;
     bool directLight;
     bool shadows;
+    // Quality settings
+    int diffuseConeCount;    // Number of cones for indirect diffuse
+    float tracingMaxDistance; // Maximum distance for cone tracing
+    int shadowSampleCount;   // Number of samples for shadow cones
+    float shadowStepMultiplier; // Step size multiplier for shadows
 };
 
 // ---- LIGHTING STRUCTURES ----
@@ -115,6 +120,24 @@ uniform bool isChunkOutline;
 uniform int selectedMeshIndex;
 uniform bool isMeshSelected;
 
+// ---- HELPER FUNCTIONS ----
+// Returns true if a world position is inside the voxel grid
+bool isInVoxelGrid(vec3 worldPos) {
+    return all(greaterThanEqual(worldPos, gridMin)) && all(lessThanEqual(worldPos, gridMax));
+}
+
+// Convert world position to voxel grid texture coordinates [0,1]
+vec3 worldToVoxelCoord(vec3 worldPos) {
+    return (worldPos - gridMin) / (gridMax - gridMin);
+}
+
+// Returns an orthogonal vector to the input vector
+vec3 orthogonal(vec3 u) {
+    u = normalize(u);
+    vec3 v = vec3(0.99146, 0.11664, 0.05832); // Arbitrary vector
+    return abs(dot(u, v)) > 0.99999f ? cross(u, vec3(0, 1, 0)) : cross(u, v);
+}
+
 // ---- SHADOW MAPPING FUNCTIONS ----
 float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir) {
     if (!enableShadows) return 0.0;
@@ -131,7 +154,6 @@ float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir) {
     float shadow = 0.0;
     vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
     const int halfKernel = 2;
-    const float sampleCount = pow(2 * halfKernel + 1, 2);
     
     for(int x = -halfKernel; x <= halfKernel; ++x) {
         for(int y = -halfKernel; y <= halfKernel; ++y) {
@@ -139,7 +161,8 @@ float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir) {
             shadow += currentDepth - bias > pcfDepth ? 1.0 : 0.0;
         }
     }
-    return shadow / sampleCount;
+    
+    return shadow / 25.0; // (2*halfKernel+1)^2
 }
 
 // ---- TRADITIONAL LIGHTING FUNCTIONS ----
@@ -151,7 +174,7 @@ vec3 calculatePointLight(PointLight light, vec3 normal, vec3 viewDir, float spec
    float spec = pow(max(dot(viewDir, reflectDir), 0.0), material.shininess);
    
    float distance = length(light.position - fs_in.FragPos);
-   float attenuation = 1.0 / (1.0 + 0.09 * distance + 0.032 * distance * distance);
+   float attenuation = 1.0 / (1.0 + 0.09 * distance + 0.032 * (distance * distance));
    
    vec3 ambient = 0.1 * light.color * light.intensity;
    vec3 diffuse = diff * light.color * light.intensity;
@@ -186,28 +209,8 @@ vec3 calculateAmbientFromSkybox(vec3 normal) {
     return texture(skybox, normal).rgb * skyboxIntensity;
 }
 
-// ---- VOXEL CONE TRACING HELPER FUNCTIONS ----
-// Returns true if a world position is inside the voxel grid
-bool isInVoxelGrid(vec3 worldPos) {
-    return worldPos.x >= gridMin.x && worldPos.x <= gridMax.x &&
-           worldPos.y >= gridMin.y && worldPos.y <= gridMax.y &&
-           worldPos.z >= gridMin.z && worldPos.z <= gridMax.z;
-}
-
-// Convert world position to voxel grid texture coordinates [0,1]
-vec3 worldToVoxelCoord(vec3 worldPos) {
-    return (worldPos - gridMin) / (gridMax - gridMin);
-}
-
-// Returns an orthogonal vector to the input vector
-vec3 orthogonal(vec3 u) {
-    u = normalize(u);
-    vec3 v = vec3(0.99146, 0.11664, 0.05832); // Arbitrary vector
-    return abs(dot(u, v)) > 0.99999f ? cross(u, vec3(0, 1, 0)) : cross(u, v);
-}
-
 // ---- VOXEL CONE TRACING CORE FUNCTIONS ----
-// Returns shadow intensity using cone tracing
+// Returns shadow intensity using cone tracing - ORIGINAL implementation
 float traceShadowCone(vec3 from, vec3 direction, float targetDistance) {
     if (!vctSettings.shadows) return 1.0; // No shadow
     
@@ -218,7 +221,11 @@ float traceShadowCone(vec3 from, vec3 direction, float targetDistance) {
     float dist = 3.0 * voxelSize;
     float stopDist = targetDistance - 16.0 * voxelSize;
     
-    while (dist < stopDist && acc < 1.0) {
+    // Get configurable parameters
+    int maxSamples = vctSettings.shadowSampleCount;
+    float stepMultiplier = vctSettings.shadowStepMultiplier;
+    
+    for (int i = 0; i < maxSamples && dist < stopDist && acc < 0.95; i++) {
         vec3 samplePos = from + dist * direction;
         if (!isInVoxelGrid(samplePos)) break;
         
@@ -231,53 +238,51 @@ float traceShadowCone(vec3 from, vec3 direction, float targetDistance) {
         float shadow = s1 + s2;
         
         acc += (1.0 - acc) * shadow;
-        dist += 0.9 * voxelSize * (1.0 + 0.05 * l);
+        dist += 0.9 * voxelSize * (1.0 + stepMultiplier * l); // Use configurable step size multiplier
     }
     
     return 1.0 - pow(smoothstep(0.0, 1.0, acc * 1.4), 1.0 / 1.4);
 }
 
-// Traces a diffuse voxel cone
+// Traces a diffuse voxel cone - optimized with configurable parameters
 vec3 traceDiffuseVoxelCone(vec3 from, vec3 direction) {
     direction = normalize(direction);
     const float CONE_SPREAD = 0.325;
     
     vec4 acc = vec4(0.0);
-    // Increased start distance to reduce near-surface artifacts
     float dist = 0.25;
     
     // Add jitter to starting distance to reduce banding
     dist += voxelSize * 0.1 * fract(sin(dot(direction.xy, vec2(12.9898, 78.233))) * 43758.5453);
     
-    while (dist < SQRT2 && acc.a < 0.95) {  // Reduced threshold to improve blending
+    // Use configurable maximum tracing distance
+    float maxDist = min(vctSettings.tracingMaxDistance, SQRT2); 
+    
+    // Fewer iterations with more adaptive step size for better performance
+    for (int i = 0; i < 6 && dist < maxDist && acc.a < 0.95; i++) {
         vec3 samplePos = from + dist * direction;
         if (!isInVoxelGrid(samplePos)) break;
         
         vec3 texCoord = worldToVoxelCoord(samplePos);
         float level = log2(1.0 + CONE_SPREAD * dist / voxelSize);
+        level = min(level, MIPMAP_HARDCAP);
         
-        // Sample two adjacent mipmap levels and blend them for smoother transitions
-        float levelFloor = floor(level);
-        float levelCeil = ceil(level);
-        float levelFrac = level - levelFloor;
-        
-        vec4 voxelA = textureLod(voxelGrid, texCoord, min(levelFloor, MIPMAP_HARDCAP));
-        vec4 voxelB = textureLod(voxelGrid, texCoord, min(levelCeil, MIPMAP_HARDCAP));
-        vec4 voxel = mix(voxelA, voxelB, levelFrac);
+        // Single sample per iteration for better performance
+        vec4 voxel = textureLod(voxelGrid, texCoord, level);
         
         // Improved blending factor to reduce cone visibility
-        float blendFactor = 0.065 * (1.0 + level);
+        float blendFactor = 0.1 * (1.0 + level);
         acc += blendFactor * voxel * (1.0 - acc.a);
         
         // More graduated step size adjustment
-        dist += voxelSize * (1.5 + 0.6 * level);
+        dist += voxelSize * (1.5 + 0.8 * level);
     }
     
-    // Add slight blur to the result to reduce artifacts
+    // Simple tone mapping 
     return pow(acc.rgb * 2.0, vec3(1.4));
 }
 
-// Traces a specular voxel cone
+// Traces a specular voxel cone - optimized with configurable parameters
 vec3 traceSpecularVoxelCone(vec3 from, vec3 direction) {
     direction = normalize(direction);
 
@@ -292,7 +297,9 @@ vec3 traceSpecularVoxelCone(vec3 from, vec3 direction) {
     
     vec4 acc = vec4(0.0f);
     float dist = 0.0;  // Start at zero since we already added the offset
-    float maxDist = length(gridMax - gridMin) * 0.75;
+    
+    // Use configurable maximum tracing distance
+    float maxDist = min(vctSettings.tracingMaxDistance, length(gridMax - gridMin) * 0.5);
 
     // Trace from the offset position along the reflection direction
     while(dist < maxDist && acc.a < 1.0) {
@@ -318,7 +325,6 @@ vec3 traceSpecularVoxelCone(vec3 from, vec3 direction) {
     return 1.0 * pow(material.specularDiffusion + 1.0, 0.8) * acc.rgb;
 }
 
-// Traces a refractive voxel cone
 vec3 traceRefractiveVoxelCone(vec3 from, vec3 direction) {
     direction = normalize(direction);
     
@@ -331,7 +337,9 @@ vec3 traceRefractiveVoxelCone(vec3 from, vec3 direction) {
     
     vec4 acc = vec4(0.0f);
     float dist = 0.0;
-    float maxDist = length(gridMax - gridMin) * 0.75;
+    
+    // Use configurable maximum tracing distance
+    float maxDist = min(vctSettings.tracingMaxDistance, length(gridMax - gridMin) * 0.5);
     
     // Sample larger area for smoother refraction
     while(dist < maxDist && acc.a < 0.95) {
@@ -372,84 +380,69 @@ vec3 traceRefractiveVoxelCone(vec3 from, vec3 direction) {
     return acc.rgb;
 }
 
-// ---- VOXEL CONE TRACING LIGHTING FUNCTIONS ----
-// Calculate indirect diffuse lighting using multiple cones
-vec3 calculateIndirectDiffuseLight() {
-    // More varied weights to reduce visible patterns
-    const float w[3] = {1.2, 0.8, 0.6}; // Adjusted weights (center, side, corner)
-    const float ANGLE_MIX = 0.575; // Slightly wider angle for better coverage
+// Calculate indirect diffuse lighting with configurable number of cones
+vec3 calculateIndirectDiffuseLight(vec3 normal, vec3 baseColor) {
+    // Weight values for different cone types
+    const float w[3] = {1.5, 0.8, 0.6}; // weights (center, side, corner)
+    const float ANGLE_MIX = 0.6; // Angle for side cones
     
     // Calculate orthogonal base vectors
-    vec3 normal = normalize(fs_in.Normal);
     vec3 ortho = normalize(orthogonal(normal));
     vec3 ortho2 = normalize(cross(ortho, normal));
     
-    // Slightly rotate the base to avoid grid alignment
-    float rotAngle = 0.15;
-    mat2 rotation = mat2(cos(rotAngle), sin(rotAngle), -sin(rotAngle), cos(rotAngle));
-    vec2 rotatedOrtho = rotation * ortho.xy;
-    ortho.xy = rotatedOrtho;
-    
-    rotatedOrtho = rotation * ortho2.xy;
-    ortho2.xy = rotatedOrtho;
-    
-    // Calculate corner vectors
+    // Calculate corner vectors if needed
     vec3 corner = normalize(0.5 * (ortho + ortho2));
     vec3 corner2 = normalize(0.5 * (ortho - ortho2));
     
     // Start position with offset
+    const float CONE_OFFSET = -0.015;
     vec3 N_OFFSET = normal * (1.0 + 3.8 * ISQRT2) * voxelSize;
     vec3 C_ORIGIN = fs_in.FragPos + N_OFFSET;
     
-    // Offset in cone direction for better GI and less artifacts
-    const float CONE_OFFSET = -0.015;
-    
-    // Accumulate indirect diffuse light with smooth falloff
+    // Accumulate indirect diffuse light
     vec3 acc = vec3(0.0);
     
-    // Trace front cone (normal direction) - higher weight
+    // Get the cone count from settings
+    int coneCount = vctSettings.diffuseConeCount;
+    
+    // Always trace the center cone
     acc += w[0] * traceDiffuseVoxelCone(C_ORIGIN + CONE_OFFSET * normal, normal);
     
-    // Trace side cones with slightly varying angles to reduce patterns
-    vec3 s1 = normalize(mix(normal, ortho, ANGLE_MIX + 0.02));
-    vec3 s2 = normalize(mix(normal, -ortho, ANGLE_MIX - 0.01));
-    vec3 s3 = normalize(mix(normal, ortho2, ANGLE_MIX + 0.03));
-    vec3 s4 = normalize(mix(normal, -ortho2, ANGLE_MIX - 0.02));
+    // Trace side cones if using 5 or more cones
+    if (coneCount >= 5) {
+        vec3 s1 = normalize(mix(normal, ortho, ANGLE_MIX));
+        vec3 s2 = normalize(mix(normal, -ortho, ANGLE_MIX));
+        vec3 s3 = normalize(mix(normal, ortho2, ANGLE_MIX));
+        vec3 s4 = normalize(mix(normal, -ortho2, ANGLE_MIX));
+        
+        acc += w[1] * traceDiffuseVoxelCone(C_ORIGIN + CONE_OFFSET * ortho, s1);
+        acc += w[1] * traceDiffuseVoxelCone(C_ORIGIN - CONE_OFFSET * ortho, s2);
+        acc += w[1] * traceDiffuseVoxelCone(C_ORIGIN + CONE_OFFSET * ortho2, s3);
+        acc += w[1] * traceDiffuseVoxelCone(C_ORIGIN - CONE_OFFSET * ortho2, s4);
+    }
     
-    acc += w[1] * traceDiffuseVoxelCone(C_ORIGIN + CONE_OFFSET * ortho, s1);
-    acc += w[1] * traceDiffuseVoxelCone(C_ORIGIN - CONE_OFFSET * ortho, s2);
-    acc += w[1] * traceDiffuseVoxelCone(C_ORIGIN + CONE_OFFSET * ortho2, s3);
-    acc += w[1] * traceDiffuseVoxelCone(C_ORIGIN - CONE_OFFSET * ortho2, s4);
+    // Trace corner cones if using 9 cones
+    if (coneCount >= 9) {
+        vec3 c1 = normalize(mix(normal, corner, ANGLE_MIX));
+        vec3 c2 = normalize(mix(normal, -corner, ANGLE_MIX));
+        vec3 c3 = normalize(mix(normal, corner2, ANGLE_MIX));
+        vec3 c4 = normalize(mix(normal, -corner2, ANGLE_MIX));
+        
+        acc += w[2] * traceDiffuseVoxelCone(C_ORIGIN + CONE_OFFSET * corner, c1);
+        acc += w[2] * traceDiffuseVoxelCone(C_ORIGIN - CONE_OFFSET * corner, c2);
+        acc += w[2] * traceDiffuseVoxelCone(C_ORIGIN + CONE_OFFSET * corner2, c3);
+        acc += w[2] * traceDiffuseVoxelCone(C_ORIGIN - CONE_OFFSET * corner2, c4);
+    }
     
-    // Trace corner cones with varying angles
-    vec3 c1 = normalize(mix(normal, corner, ANGLE_MIX + 0.04));
-    vec3 c2 = normalize(mix(normal, -corner, ANGLE_MIX - 0.03));
-    vec3 c3 = normalize(mix(normal, corner2, ANGLE_MIX + 0.01));
-    vec3 c4 = normalize(mix(normal, -corner2, ANGLE_MIX - 0.04));
-    
-    acc += w[2] * traceDiffuseVoxelCone(C_ORIGIN + CONE_OFFSET * corner, c1);
-    acc += w[2] * traceDiffuseVoxelCone(C_ORIGIN - CONE_OFFSET * corner, c2);
-    acc += w[2] * traceDiffuseVoxelCone(C_ORIGIN + CONE_OFFSET * corner2, c3);
-    acc += w[2] * traceDiffuseVoxelCone(C_ORIGIN - CONE_OFFSET * corner2, c4);
-    
-    // Get base color
-    vec3 baseColor = material.hasTexture > 0.5 ? 
-                    texture(material.textures[0], fs_in.TexCoords).rgb : 
-                    material.objectColor;
-    
-    // Add slight noise/dithering to break up any remaining patterns
+    // Add slight noise to break up patterns
     float noise = fract(sin(dot(fs_in.FragPos.xy, vec2(12.9898, 78.233))) * 43758.5453);
-    float noiseAmount = 0.03; // Very subtle noise
+    float noiseAmount = 0.03;
     
     // Apply material properties with subtle noise to break patterns
-    vec3 result = DIFFUSE_INDIRECT_FACTOR * material.diffuseReflectivity * 
-                 acc * (baseColor + vec3(0.001)) * (1.0 + noise * noiseAmount - noiseAmount/2.0);
-    
-    // Apply slight smoothing to the final result
-    return result;
+    return DIFFUSE_INDIRECT_FACTOR * material.diffuseReflectivity * 
+           acc * baseColor * (1.0 + noise * noiseAmount - noiseAmount/2.0);
 }
 
-// Calculate indirect specular light - correctly handling the view direction
 vec3 calculateIndirectSpecularLight(vec3 viewDirection) {
     // Make sure to use the negative view direction for reflection
     // This was the key issue - viewDirection was not negated properly
@@ -469,7 +462,6 @@ vec3 calculateIndirectSpecularLight(vec3 viewDirection) {
            traceSpecularVoxelCone(fs_in.FragPos, reflection);
 }
 
-// Calculate refracted light with improved quality
 vec3 calculateRefractiveLight(vec3 viewDirection) {
     if (material.transparency < 0.01) return vec3(0.0);
     
@@ -519,7 +511,57 @@ vec3 calculateRefractiveLight(vec3 viewDirection) {
     return tintColor * refractedLight * attenuation;
 }
 
-// Calculate direct light for VCT with shadows
+vec3 calculateVCTSunLight(Sun sun, vec3 viewDirection) {
+    if (!sun.enabled) return vec3(0.0);
+    
+    vec3 normal = normalize(fs_in.Normal);
+    vec3 lightDir = normalize(-sun.direction);
+    
+    // Diffuse lighting
+    float diffuseAngle = max(dot(normal, lightDir), 0.0);
+    
+    // Specular lighting
+    vec3 halfwayDir = normalize(lightDir + (-viewDirection));
+    float specAngle = pow(max(dot(normal, halfwayDir), 0.0), material.shininess);
+    
+    // Refraction
+    float refractiveAngle = 0.0;
+    if (material.transparency > 0.01) {
+        vec3 refraction = refract(viewDirection, normal, 1.0/material.refractiveIndex);
+        if (length(refraction) > 0.01) {
+            refractiveAngle = max(0.0, material.transparency * dot(refraction, lightDir));
+        }
+    }
+    
+    // Shadow calculation
+    float shadow = 1.0;
+    if (vctSettings.shadows && diffuseAngle * (1.0 - material.transparency) > 0.0) {
+        // Sun is directional, so use a large distance
+        shadow = traceShadowCone(fs_in.FragPos, lightDir, 100.0);
+    }
+    
+    // Apply shadow to lighting
+    diffuseAngle = min(shadow, diffuseAngle);
+    specAngle = min(shadow, max(specAngle, refractiveAngle));
+    
+    // Get base color
+    vec3 baseColor = material.hasTexture > 0.5 ? 
+                    texture(material.textures[0], fs_in.TexCoords).rgb : 
+                    material.objectColor;
+    
+    // Calculate with material properties
+    float df = 1.0 / (1.0 + 0.25 * material.specularDiffusion); // Diffusion factor
+    float diffuse = diffuseAngle * (1.0 - material.transparency);
+    float specular = 3.0 * pow(specAngle, df * SPECULAR_POWER);
+    
+    vec3 ambient = 0.1 * sun.color * sun.intensity * baseColor;
+    vec3 diff = material.diffuseReflectivity * baseColor * diffuse * sun.intensity;
+    vec3 spec = material.specularReflectivity * material.specularColor * specular * sun.intensity;
+    
+    return ambient + sun.color * (diff + spec);
+}
+
+// Calculate VCT direct lighting for point lights
 vec3 calculateVCTDirectLight(PointLight light, vec3 viewDirection) {
     vec3 normal = normalize(fs_in.Normal);
     vec3 lightDir = light.position - fs_in.FragPos;
@@ -571,59 +613,9 @@ vec3 calculateVCTDirectLight(PointLight light, vec3 viewDirection) {
     return attenuation * light.intensity * light.color * (diff + spec);
 }
 
-// Calculate sun light for VCT with shadows
-vec3 calculateVCTSunLight(Sun sun, vec3 viewDirection) {
-    if (!sun.enabled) return vec3(0.0);
-    
-    vec3 normal = normalize(fs_in.Normal);
-    vec3 lightDir = normalize(-sun.direction);
-    
-    // Diffuse lighting
-    float diffuseAngle = max(dot(normal, lightDir), 0.0);
-    
-    // Specular lighting
-    vec3 halfwayDir = normalize(lightDir + (-viewDirection));
-    float specAngle = pow(max(dot(normal, halfwayDir), 0.0), material.shininess);
-    
-    // Refraction
-    float refractiveAngle = 0.0;
-    if (material.transparency > 0.01) {
-        vec3 refraction = refract(viewDirection, normal, 1.0/material.refractiveIndex);
-        if (length(refraction) > 0.01) {
-            refractiveAngle = max(0.0, material.transparency * dot(refraction, lightDir));
-        }
-    }
-    
-    // Shadow calculation
-    float shadow = 1.0;
-    if (vctSettings.shadows && diffuseAngle * (1.0 - material.transparency) > 0.0) {
-        // Sun is directional, so use a large distance
-        shadow = traceShadowCone(fs_in.FragPos, lightDir, 100.0);
-    }
-    
-    // Apply shadow to lighting
-    diffuseAngle = min(shadow, diffuseAngle);
-    specAngle = min(shadow, max(specAngle, refractiveAngle));
-    
-    // Get base color
-    vec3 baseColor = material.hasTexture > 0.5 ? 
-                    texture(material.textures[0], fs_in.TexCoords).rgb : 
-                    material.objectColor;
-    
-    // Calculate with material properties
-    float df = 1.0 / (1.0 + 0.25 * material.specularDiffusion); // Diffusion factor
-    float diffuse = diffuseAngle * (1.0 - material.transparency);
-    float specular = 3.0 * pow(specAngle, df * SPECULAR_POWER);
-    
-    vec3 ambient = 0.1 * sun.color * sun.intensity * baseColor;
-    vec3 diff = material.diffuseReflectivity * baseColor * diffuse * sun.intensity;
-    vec3 spec = material.specularReflectivity * material.specularColor * specular * sun.intensity;
-    
-    return ambient + sun.color * (diff + spec);
-}
-
 void main() {
-    // Check for special rendering modes
+    // --- EARLY EXITS for special rendering modes ---
+    // Check for point cloud rendering first - quick exit path
     if (isPointCloud) {
         FragColor = vec4(fs_in.VertexColor * fs_in.Intensity, 1.0);
         
@@ -644,9 +636,7 @@ void main() {
                           step(innerRadius, distanceToCursor);
            
             vec4 inner = mix(FragColor, innerCursorColor, tInner);
-            vec4 cursorEffect = mix(inner, outerCursorColor, tOuter);
-           
-            FragColor = mix(FragColor, cursorEffect, step(0.5, cursorPos.w));
+            FragColor = mix(inner, outerCursorColor, tOuter * step(0.5, cursorPos.w));
         }
         return;
     }
@@ -656,6 +646,7 @@ void main() {
         return;
     }
     
+    // --- COMMON CALCULATIONS - Calculate once, use many times ---
     // Get base color and material properties
     vec3 baseColor = material.hasTexture > 0.5 ? 
                     texture(material.textures[0], fs_in.TexCoords).rgb : 
@@ -664,25 +655,24 @@ void main() {
     float specularStrength = material.hasSpecularMap ? 
                            texture(material.textures[1], fs_in.TexCoords).r : 0.5;
     
-    // Calculate normal
+    // Calculate normal - do this once
     vec3 normal;
     if (material.hasNormalMap) {
         normal = texture(material.textures[2], fs_in.TexCoords).rgb;
-        normal = normal * 2.0 - 1.0;
-        normal = normalize(fs_in.TBN * normal);
+        normal = normalize(fs_in.TBN * (normal * 2.0 - 1.0));
     } else {
         normal = normalize(fs_in.Normal);
     }
     
-    // Important: Calculate viewDir correctly here for use throughout the shader
+    // Calculate view direction once
     vec3 viewDir = normalize(fs_in.FragPos - viewPos);
     vec3 result = vec3(0.0);
     
-    // IMPORTANT: Apply different lighting calculations based on mode
+    // --- LIGHTING CALCULATION BASED ON MODE ---
     if (lightingMode == LIGHTING_SHADOW_MAPPING) {
-        // Traditional shadow mapping lighting
+        // ------ SHADOW MAPPING LIGHTING ------
         
-        // Calculate shadow factor (only if shadows enabled)
+        // Calculate shadow factor (only if shadows enabled and sun is active)
         float shadow = 0.0;
         if (enableShadows && sun.enabled) {
             shadow = ShadowCalculation(fs_in.FragPosLightSpace, normal, normalize(-sun.direction));
@@ -692,13 +682,18 @@ void main() {
         vec3 reflectionColor = calculateEnvironmentReflection(normal, material.shininess / 128.0);
         vec3 ambientLight = calculateAmbientFromSkybox(normal);
         
-        // Direct lighting
-        result = vec3(0.0);
+        // Sun lighting
         if (sun.enabled) {
             result += calculateSunLight(sun, normal, viewDir, specularStrength, shadow);
         }
         
-        for(int i = 0; i < numLights; i++) {
+        // Point lights - limit the number of lights processed based on distance
+        int processedLights = min(numLights, MAX_LIGHTS);
+        for(int i = 0; i < processedLights; i++) {
+            // Skip distant lights for performance
+            float lightDistance = distance(lights[i].position, fs_in.FragPos);
+            if (lightDistance > 50.0) continue; 
+            
             result += calculatePointLight(lights[i], normal, viewDir, specularStrength);
         }
         
@@ -709,7 +704,9 @@ void main() {
         result += material.emissive * baseColor;
     }
     else if (lightingMode == LIGHTING_VOXEL_CONE_TRACING) {
-        // Start with ambient contribution
+        // ------ VOXEL CONE TRACING LIGHTING ------
+        
+        // Start with skybox ambient contribution
         result = calculateAmbientFromSkybox(normal) * baseColor * 0.1;
         
         // Add voxel visualization if enabled
@@ -722,18 +719,15 @@ void main() {
         }
         else {
             // Add indirect diffuse lighting (global illumination)
-if (vctSettings.indirectDiffuseLight) {
-    // Check if any direct light sources are active
-    bool hasDirectLight = sun.enabled || numLights > 0;
-    
-    float diffuseContrib = material.diffuseReflectivity * (1.0 - material.transparency);
-    if (diffuseContrib > 0.01 && hasDirectLight) {
-        // Apply a smoother blend with the existing lighting
-        vec3 indirectDiffuse = calculateIndirectDiffuseLight();
-        // Use a softer blend to avoid harsh transitions
-        result += indirectDiffuse * (1.0 - 0.2 * length(result));
-    }
-}
+            if (vctSettings.indirectDiffuseLight) {
+                float diffuseContrib = material.diffuseReflectivity * (1.0 - material.transparency);
+                if (diffuseContrib > 0.01) {
+                    // Apply a smoother blend with the existing lighting
+                    vec3 indirectDiffuse = calculateIndirectDiffuseLight(normal, baseColor);
+                    // Use a softer blend to avoid harsh transitions
+                    result += indirectDiffuse * (1.0 - 0.2 * length(result));
+                }
+            }
             
             // Add indirect specular lighting (reflections)
             if (vctSettings.indirectSpecularLight) {
@@ -747,13 +741,6 @@ if (vctSettings.indirectDiffuseLight) {
                 
                 // Simply add the specular light 
                 result += specReflection * specularContrib;
-                
-                // Debug tint for specular objects to check if it's working
-                if (material.specularReflectivity > 0.01) {
-                    // Add a slight pink tint to objects that should have specular
-                    // to verify code is executing correctly
-                    result += vec3(0.05, 0.0, 0.05) * material.specularReflectivity;
-                }
             }
             
             // Add transparency/refraction
@@ -790,6 +777,10 @@ if (vctSettings.indirectDiffuseLight) {
                 
                 // Add point light contributions
                 for (int i = 0; i < numLights && i < MAX_LIGHTS; i++) {
+                    // Skip distant lights
+                    float lightDistance = distance(lights[i].position, fs_in.FragPos);
+                    if (lightDistance > 30.0) continue;
+                    
                     result += calculateVCTDirectLight(lights[i], viewDir);
                 }
             }
@@ -828,9 +819,7 @@ if (vctSettings.indirectDiffuseLight) {
                       step(innerRadius, distanceToCursor);
        
         vec4 inner = mix(FragColor, innerCursorColor, tInner);
-        vec4 cursorEffect = mix(inner, outerCursorColor, tOuter);
-       
-        FragColor = mix(FragColor, cursorEffect, step(0.5, cursorPos.w));
+        FragColor = mix(inner, outerCursorColor, tOuter * step(0.5, cursorPos.w));
     }
     
     // Apply gamma correction
