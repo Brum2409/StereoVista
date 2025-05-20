@@ -12,9 +12,9 @@ namespace Engine {
 
 namespace GUI {
     enum SkyboxType {
-        SKYBOX_CUBEMAP,   
-        SKYBOX_SOLID_COLOR, 
-        SKYBOX_GRADIENT    
+        SKYBOX_CUBEMAP,
+        SKYBOX_SOLID_COLOR,
+        SKYBOX_GRADIENT
     };
 
     enum LightingMode {
@@ -23,11 +23,18 @@ namespace GUI {
     };
 
     struct VCTSettings {
+        // Lighting Components
         bool indirectSpecularLight = true;
         bool indirectDiffuseLight = true;
         bool directLight = true;
         bool shadows = true;
+
+        // Quality Settings
         float voxelSize = 1.0f / 64.0f;
+        int diffuseConeCount = 9;     // Number of cones for indirect diffuse (1, 5, or 9)
+        float tracingMaxDistance = 1.41421356237; // Maximum distance for cone tracing in grid units (default: SQRT2)
+        int shadowSampleCount = 10;    // Number of samples for shadow cones
+        float shadowStepMultiplier = 0.15f; // Step size multiplier for shadows
     };
 
     enum CursorScalingMode {
@@ -105,6 +112,5 @@ namespace GUI {
         glm::vec3 skyboxGradientTop = glm::vec3(0.1f, 0.1f, 0.3f);
         glm::vec3 skyboxGradientBottom = glm::vec3(0.7f, 0.7f, 1.0f);
         int selectedCubemap = 0;
-
     };
 }

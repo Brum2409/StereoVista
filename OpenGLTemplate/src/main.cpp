@@ -1062,6 +1062,50 @@ void loadPreferences() {
     file.close();
 }
 
+void initializeVCTSettings() {
+    // Set default VCT settings
+    vctSettings.indirectSpecularLight = true;
+    vctSettings.indirectDiffuseLight = true;
+    vctSettings.directLight = true;
+    vctSettings.shadows = true;
+    vctSettings.voxelSize = 1.0f / 64.0f;
+
+    // Quality settings
+    vctSettings.diffuseConeCount = 9;         // Default: high quality with 9 cones
+    vctSettings.tracingMaxDistance = 1.41421356237;   // Default maximum distance
+    vctSettings.shadowSampleCount = 10;       // Default shadow samples
+    vctSettings.shadowStepMultiplier = 0.15f; // Default step multiplier
+
+    // Load from preferences if available
+    if (preferences.vctSettings.diffuseConeCount > 0) {
+        vctSettings.diffuseConeCount = preferences.vctSettings.diffuseConeCount;
+    }
+    else {
+        preferences.vctSettings.diffuseConeCount = vctSettings.diffuseConeCount;
+    }
+
+    if (preferences.vctSettings.tracingMaxDistance > 0) {
+        vctSettings.tracingMaxDistance = preferences.vctSettings.tracingMaxDistance;
+    }
+    else {
+        preferences.vctSettings.tracingMaxDistance = vctSettings.tracingMaxDistance;
+    }
+
+    if (preferences.vctSettings.shadowSampleCount > 0) {
+        vctSettings.shadowSampleCount = preferences.vctSettings.shadowSampleCount;
+    }
+    else {
+        preferences.vctSettings.shadowSampleCount = vctSettings.shadowSampleCount;
+    }
+
+    if (preferences.vctSettings.shadowStepMultiplier > 0) {
+        vctSettings.shadowStepMultiplier = preferences.vctSettings.shadowStepMultiplier;
+    }
+    else {
+        preferences.vctSettings.shadowStepMultiplier = vctSettings.shadowStepMultiplier;
+    }
+}
+
 void InitializeDefaults() {
     // Set up default values
     preferences = GUI::ApplicationPreferences();
@@ -1311,6 +1355,7 @@ int main() {
     InitializeDefaults();
 
     loadPreferences();
+    initializeVCTSettings();
 
     // ---- OpenGL Settings ----
     glEnable(GL_DEPTH_TEST);
@@ -1674,6 +1719,11 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
         shader->setBool("vctSettings.indirectDiffuseLight", vctSettings.indirectDiffuseLight);
         shader->setBool("vctSettings.directLight", vctSettings.directLight);
         shader->setBool("vctSettings.shadows", vctSettings.shadows);
+
+        shader->setInt("vctSettings.diffuseConeCount", vctSettings.diffuseConeCount);
+        shader->setFloat("vctSettings.tracingMaxDistance", vctSettings.tracingMaxDistance);
+        shader->setInt("vctSettings.shadowSampleCount", vctSettings.shadowSampleCount);
+        shader->setFloat("vctSettings.shadowStepMultiplier", vctSettings.shadowStepMultiplier);
 
         // Bind voxel 3D texture - using texture unit 5
         glActiveTexture(GL_TEXTURE5);
@@ -2259,13 +2309,23 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
             }
         }
         else if (action == GLFW_RELEASE) {
+            // Check if we were moving a model before processing the release
+            bool wasMovingModel = isMovingModel;
+
             if (isMouseCaptured) {
                 // Disable mouse capture when orbiting ends
                 isMouseCaptured = false;
                 firstMouse = true; // Reset first mouse flag for next time
+
+                // Only set input mode to normal if we were moving a model
+                if (wasMovingModel) {
+                    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                }
             }
 
-            if (camera.orbitAroundCursor == false) {
+            // Only reset cursor position if we were NOT moving a model
+            // AND if orbit around cursor is false
+            if (!wasMovingModel && camera.orbitAroundCursor == false) {
                 glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
             }
 
@@ -2273,7 +2333,6 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
             camera.StopOrbiting();
             isMovingModel = false;
             selectionMode = false;
-
         }
     }
     else if (button == GLFW_MOUSE_BUTTON_MIDDLE) {
@@ -2481,6 +2540,20 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
         {
             ctrlPressed = false;
             selectionMode = false;
+
+            // Don't reset cursor position when releasing Ctrl key
+            // This allows the cursor to stay where it is when exiting selection mode
+            if (isMouseCaptured && isMovingModel) {
+                // Get cursor position before releasing capture
+                double mouseX, mouseY;
+                glfwGetCursorPos(window, &mouseX, &mouseY);
+
+                // When releasing Ctrl while moving a model, keep the cursor where it is
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+
+                // No need to reset cursor to center
+                isMovingModel = false;
+            }
         }
     }
 

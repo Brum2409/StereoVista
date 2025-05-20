@@ -6,6 +6,17 @@
 #include <assimp/postprocess.h>
 #include "../Engine/Core.h"
 
+// Material type enum for presets
+enum class MaterialType {
+    CONCRETE,  // Default
+    METAL,
+    PLASTIC,
+    GLASS,
+    WOOD,
+    MARBLE,
+    CUSTOM     // For manual settings
+};
+
 namespace Engine {
 
     class Shader;
@@ -71,6 +82,8 @@ namespace Engine {
         float refractiveIndex = 1.0f;        // For glass/water effects (1.0 = no refraction)
         float transparency = 0.0f;
 
+        MaterialType materialType = MaterialType::CONCRETE;  // Current material preset
+
         bool visible = true;
         float boundingSphereRadius = 0.0f;
         std::string directory;
@@ -109,9 +122,72 @@ namespace Engine {
             return false;
         }
 
+        // Apply material preset based on type
+        void applyMaterialPreset(MaterialType type) {
+            materialType = type;
+
+            switch (type) {
+            case MaterialType::CONCRETE:
+                diffuseReflectivity = 0.8f;
+                specularColor = glm::vec3(0.8f, 0.8f, 0.8f);
+                specularDiffusion = 0.7f;       // More rough
+                specularReflectivity = 0.1f;     // Low reflectivity
+                refractiveIndex = 1.0f;          // No refraction
+                transparency = 0.0f;             // Opaque
+                break;
+
+            case MaterialType::METAL:
+                diffuseReflectivity = 0.4f;      // Lower diffuse for metals
+                specularColor = glm::vec3(0.95f, 0.95f, 0.95f); // Bright specular
+                specularDiffusion = 0.1f;        // Low diffusion (smooth)
+                specularReflectivity = 0.9f;     // High reflectivity
+                refractiveIndex = 1.0f;          // No refraction
+                transparency = 0.0f;             // Opaque
+                break;
+
+            case MaterialType::PLASTIC:
+                diffuseReflectivity = 0.7f;
+                specularColor = glm::vec3(1.0f, 1.0f, 1.0f);
+                specularDiffusion = 0.3f;        // Moderate smoothness
+                specularReflectivity = 0.3f;     // Moderate reflection
+                refractiveIndex = 1.05f;         // Slight refraction
+                transparency = 0.0f;             // Opaque
+                break;
+
+            case MaterialType::GLASS:
+                diffuseReflectivity = 0.1f;      // Very low diffuse
+                specularColor = glm::vec3(1.0f, 1.0f, 1.0f);
+                specularDiffusion = 0.05f;       // Very smooth
+                specularReflectivity = 0.8f;     // High reflectivity
+                refractiveIndex = 1.5f;          // High refraction
+                transparency = 0.9f;             // Highly transparent
+                break;
+
+            case MaterialType::WOOD:
+                diffuseReflectivity = 0.9f;      // High diffuse
+                specularColor = glm::vec3(0.7f, 0.6f, 0.5f); // Warm specular
+                specularDiffusion = 0.6f;        // Fairly rough
+                specularReflectivity = 0.15f;    // Low reflectivity
+                refractiveIndex = 1.0f;          // No refraction
+                transparency = 0.0f;             // Opaque
+                break;
+
+            case MaterialType::MARBLE:
+                diffuseReflectivity = 0.6f;      // Moderate diffuse
+                specularColor = glm::vec3(0.9f, 0.9f, 0.9f);
+                specularDiffusion = 0.25f;       // Fairly smooth
+                specularReflectivity = 0.4f;     // Moderate reflectivity
+                refractiveIndex = 1.0f;          // No refraction
+                transparency = 0.0f;             // Opaque
+                break;
+
+            case MaterialType::CUSTOM:
+                // Do nothing, keep current values
+                break;
+            }
+        }
+
     private:
-
-
         std::vector<Texture> loadedTextures;
 
         void loadModel(const std::string& path);

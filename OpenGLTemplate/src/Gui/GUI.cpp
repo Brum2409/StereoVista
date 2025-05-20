@@ -843,6 +843,101 @@ void renderSettingsWindow() {
                     ImGui::TreePop();
                 }
 
+                if (ImGui::TreeNode("Quality Settings")) {
+                    ImGui::Text("Indirect Diffuse Cones");
+                    const char* coneCountOptions[] = { "1 (Low)", "5 (Medium)", "9 (High)" };
+                    int coneCountIndex = 0;
+
+                    // Convert from actual count to combo index
+                    if (preferences.vctSettings.diffuseConeCount <= 1) coneCountIndex = 0;
+                    else if (preferences.vctSettings.diffuseConeCount <= 5) coneCountIndex = 1;
+                    else coneCountIndex = 2;
+
+                    if (ImGui::Combo("Diffuse Cone Count", &coneCountIndex, coneCountOptions, IM_ARRAYSIZE(coneCountOptions))) {
+                        // Convert back from index to actual count
+                        switch (coneCountIndex) {
+                        case 0: preferences.vctSettings.diffuseConeCount = 1; break;
+                        case 1: preferences.vctSettings.diffuseConeCount = 5; break;
+                        case 2: preferences.vctSettings.diffuseConeCount = 9; break;
+                        }
+                        vctSettings.diffuseConeCount = preferences.vctSettings.diffuseConeCount;
+                        settingsChanged = true;
+                    }
+                    ImGui::SetItemTooltip("Controls the number of cones used for indirect diffuse lighting.\nMore cones = better quality but slower performance");
+
+                    ImGui::Separator();
+                    ImGui::Text("Cone Tracing Parameters");
+
+                    if (ImGui::SliderFloat("Max Tracing Distance", &preferences.vctSettings.tracingMaxDistance, 0.5f, 2.5f, "%.2f")) {
+                        vctSettings.tracingMaxDistance = preferences.vctSettings.tracingMaxDistance;
+                        settingsChanged = true;
+                    }
+                    ImGui::SetItemTooltip("Maximum distance for tracing cones (in grid units).\nLarger values capture more distant lighting but reduce performance");
+
+                    int shadowSamples = preferences.vctSettings.shadowSampleCount;
+                    if (ImGui::SliderInt("Shadow Samples", &shadowSamples, 5, 20)) {
+                        preferences.vctSettings.shadowSampleCount = shadowSamples;
+                        vctSettings.shadowSampleCount = shadowSamples;
+                        settingsChanged = true;
+                    }
+                    ImGui::SetItemTooltip("Number of samples taken when tracing shadow cones.\nMore samples = smoother shadows but slower performance");
+
+                    if (ImGui::SliderFloat("Shadow Step Multiplier", &preferences.vctSettings.shadowStepMultiplier, 0.05f, 0.5f, "%.3f")) {
+                        vctSettings.shadowStepMultiplier = preferences.vctSettings.shadowStepMultiplier;
+                        settingsChanged = true;
+                    }
+                    ImGui::SetItemTooltip("Controls how fast shadow cone tracing advances.\nLarger values are faster but may miss details");
+
+                    ImGui::Separator();
+                    ImGui::Text("Presets");
+
+                    if (ImGui::Button("Low Quality")) {
+                        preferences.vctSettings.diffuseConeCount = 1;
+                        preferences.vctSettings.shadowSampleCount = 5;
+                        preferences.vctSettings.shadowStepMultiplier = 0.3f;
+                        preferences.vctSettings.tracingMaxDistance = 1.0f;
+
+                        // Apply to actual settings
+                        vctSettings.diffuseConeCount = preferences.vctSettings.diffuseConeCount;
+                        vctSettings.shadowSampleCount = preferences.vctSettings.shadowSampleCount;
+                        vctSettings.shadowStepMultiplier = preferences.vctSettings.shadowStepMultiplier;
+                        vctSettings.tracingMaxDistance = preferences.vctSettings.tracingMaxDistance;
+                        settingsChanged = true;
+                    }
+                    ImGui::SameLine();
+
+                    if (ImGui::Button("Medium Quality")) {
+                        preferences.vctSettings.diffuseConeCount = 5;
+                        preferences.vctSettings.shadowSampleCount = 8;
+                        preferences.vctSettings.shadowStepMultiplier = 0.2f;
+                        preferences.vctSettings.tracingMaxDistance = 1.5f;
+
+                        // Apply to actual settings
+                        vctSettings.diffuseConeCount = preferences.vctSettings.diffuseConeCount;
+                        vctSettings.shadowSampleCount = preferences.vctSettings.shadowSampleCount;
+                        vctSettings.shadowStepMultiplier = preferences.vctSettings.shadowStepMultiplier;
+                        vctSettings.tracingMaxDistance = preferences.vctSettings.tracingMaxDistance;
+                        settingsChanged = true;
+                    }
+                    ImGui::SameLine();
+
+                    if (ImGui::Button("High Quality")) {
+                        preferences.vctSettings.diffuseConeCount = 9;
+                        preferences.vctSettings.shadowSampleCount = 15;
+                        preferences.vctSettings.shadowStepMultiplier = 0.1f;
+                        preferences.vctSettings.tracingMaxDistance = 2.0f;
+
+                        // Apply to actual settings
+                        vctSettings.diffuseConeCount = preferences.vctSettings.diffuseConeCount;
+                        vctSettings.shadowSampleCount = preferences.vctSettings.shadowSampleCount;
+                        vctSettings.shadowStepMultiplier = preferences.vctSettings.shadowStepMultiplier;
+                        vctSettings.tracingMaxDistance = preferences.vctSettings.tracingMaxDistance;
+                        settingsChanged = true;
+                    }
+
+                    ImGui::TreePop();
+                }
+
                 // Voxel Grid Settings
                 if (ImGui::TreeNode("Voxel Grid Settings")) {
                     float gridSize = voxelizer->getVoxelGridSize();
@@ -1470,6 +1565,28 @@ void renderModelManipulationPanel(Engine::Model& model, Engine::Shader* shader) 
         // Add VCT specific material properties
         ImGui::Separator();
         ImGui::Text("Voxel Cone Tracing Properties:");
+
+        // Material preset selection
+        static const char* material_types[] = { "Concrete", "Metal", "Plastic", "Glass", "Wood", "Marble", "Custom" };
+        int current_type = static_cast<int>(model.materialType);
+
+        if (ImGui::Combo("Material Preset", &current_type, material_types, IM_ARRAYSIZE(material_types))) {
+            // Apply preset when changed
+            model.applyMaterialPreset(static_cast<MaterialType>(current_type));
+        }
+        ImGui::SetItemTooltip("Select a material preset to quickly configure material properties");
+
+        if (ImGui::Button("Apply Concrete (Default)")) {
+            model.applyMaterialPreset(MaterialType::CONCRETE);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Apply Metal")) {
+            model.applyMaterialPreset(MaterialType::METAL);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Apply Glass")) {
+            model.applyMaterialPreset(MaterialType::GLASS);
+        }
 
         ImGui::SliderFloat("Diffuse Reflectivity", &model.diffuseReflectivity, 0.0f, 1.0f);
         ImGui::SetItemTooltip("Controls how much diffuse light is reflected");
