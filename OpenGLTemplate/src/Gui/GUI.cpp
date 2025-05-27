@@ -526,32 +526,13 @@ void renderSettingsWindow() {
                 renderStereoCameraVisualization(camera, currentScene.settings);
             }
 
-            if (ImGui::BeginCombo("Stereo Method", camera.useNewMethod ? "New Method" : "Legacy")) {
-                if (ImGui::Selectable("Legacy", !camera.useNewMethod)) {
-                    camera.useNewMethod = false;
-                    currentScene.settings.separation = 0.02f;
-                    preferences.useNewStereoMethod = false;
-                    savePreferences();
-                }
-                if (ImGui::Selectable("New Method", camera.useNewMethod)) {
-                    camera.useNewMethod = true;
-                    currentScene.settings.separation = 0.005f;
-                    preferences.useNewStereoMethod = true;
-                    savePreferences();
-                }
-                ImGui::EndCombo();
-            }
-            ImGui::SetItemTooltip("Switch between legacy and new stereo rendering methods. New method provides better depth perception");
-
-            float minSep = 0.0f;
-            float maxSep = camera.useNewMethod ? 20.0f : 0.05f;
-            if (ImGui::SliderFloat("Separation", &currentScene.settings.separation, minSep, maxSep)) {
+            if (ImGui::SliderFloat("Separation", &currentScene.settings.separation, 0.01f, 2.0f)) {
                 preferences.separation = currentScene.settings.separation;
                 settingsChanged = true;
             }
             ImGui::SetItemTooltip("Adjusts the distance between stereo views. Higher values increase 3D effect");
 
-            if (ImGui::SliderFloat("Convergence", &currentScene.settings.convergence, 0.0f, 200.0f)) {
+            if (ImGui::SliderFloat("Convergence", &currentScene.settings.convergence, 0.0f, 40.0f)) {
                 preferences.convergence = currentScene.settings.convergence;
                 settingsChanged = true;
             }
@@ -611,39 +592,33 @@ void renderSettingsWindow() {
             ImGui::SetItemTooltip("When enabled, scrolling zooms toward or away from the 3D cursor position");
 
             ImGui::Spacing();
-            ImGui::Text("Smooth Scrolling");
+            ImGui::Text("Scroll Settings");
             ImGui::Separator();
 
-            if (ImGui::Checkbox("Enable Smooth Scrolling", &camera.useSmoothScrolling)) {
+            if (ImGui::Checkbox("Smooth Scrolling", &camera.useSmoothScrolling)) {
                 preferences.useSmoothScrolling = camera.useSmoothScrolling;
-                if (!camera.useSmoothScrolling) {
-                    camera.scrollVelocity = 0.0f;
-                }
                 settingsChanged = true;
             }
-            ImGui::SetItemTooltip("Enables physics-based smooth scrolling instead of instant movement");
+            ImGui::SetItemTooltip("Enable physics-based smooth scrolling");
 
             if (camera.useSmoothScrolling) {
-                ImGui::BeginGroup();
-                ImGui::Text("Scroll Properties");
-                if (ImGui::SliderFloat("Momentum", &camera.scrollMomentum, 0.1f, 5.0f)) {
+                if (ImGui::SliderFloat("Momentum", &camera.scrollMomentum, 0.0f, 1.0f)) {
                     preferences.scrollMomentum = camera.scrollMomentum;
                     settingsChanged = true;
                 }
-                ImGui::SetItemTooltip("Controls how quickly scroll speed builds up. Higher values feel more responsive");
+                ImGui::SetItemTooltip("Controls how much scrolling 'carries' (higher = more momentum)");
 
-                if (ImGui::SliderFloat("Max Speed", &camera.maxScrollVelocity, 0.1f, 10.0f)) {
+                if (ImGui::SliderFloat("Max Velocity", &camera.maxScrollVelocity, 0.5f, 10.0f)) {
                     preferences.maxScrollVelocity = camera.maxScrollVelocity;
                     settingsChanged = true;
                 }
-                ImGui::SetItemTooltip("Limits maximum scrolling speed for more controlled movement");
+                ImGui::SetItemTooltip("Maximum scroll speed");
 
-                if (ImGui::SliderFloat("Deceleration", &camera.scrollDeceleration, 0.1f, 10.0f)) {
+                if (ImGui::SliderFloat("Deceleration", &camera.scrollDeceleration, 1.0f, 20.0f)) {
                     preferences.scrollDeceleration = camera.scrollDeceleration;
                     settingsChanged = true;
                 }
-                ImGui::SetItemTooltip("Determines how quickly scrolling comes to a stop");
-                ImGui::EndGroup();
+                ImGui::SetItemTooltip("How quickly scrolling slows down");
             }
 
             ImGui::Spacing();
@@ -680,6 +655,48 @@ void renderSettingsWindow() {
                 settingsChanged = true;
             }
             ImGui::SetItemTooltip("Centers the view on cursor position before orbiting");
+
+            ImGui::EndTabItem();
+        }
+
+        // Radar Tab
+        if (ImGui::BeginTabItem("Radar")) {
+            ImGui::Text("Radar Settings");
+            ImGui::Separator();
+
+            if (ImGui::Checkbox("Enable Radar", &preferences.radarEnabled)) {
+                currentScene.settings.radarEnabled = preferences.radarEnabled;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Show a radar overlay with the camera frustum");
+
+            if (preferences.radarEnabled) {
+                ImGui::Text("Position");
+                if (ImGui::SliderFloat("X Position", &preferences.radarPos.x, -1.0f, 1.0f)) {
+                    currentScene.settings.radarPos.x = preferences.radarPos.x;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Horizontal position of the radar (-1 to 1)");
+
+                if (ImGui::SliderFloat("Y Position", &preferences.radarPos.y, -1.0f, 1.0f)) {
+                    currentScene.settings.radarPos.y = preferences.radarPos.y;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Vertical position of the radar (-1 to 1)");
+
+                if (ImGui::SliderFloat("Scale", &preferences.radarScale, 0.005f, 0.5f)) {
+                    currentScene.settings.radarScale = preferences.radarScale;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Size of the radar display");
+
+                if (ImGui::Checkbox("Show Scene in Radar", &preferences.radarShowScene)) {
+                    currentScene.settings.radarShowScene = preferences.radarShowScene;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Show the scene models in the radar view");
+            }
+
             ImGui::EndTabItem();
         }
 

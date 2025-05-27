@@ -57,6 +57,13 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& view, Engine::Shader* shader, ImGuiViewportP* viewport, ImGuiWindowFlags windowFlags, GLFWwindow* window);
 void renderModels(Engine::Shader* shader);
 void renderPointClouds(Engine::Shader* shader);
+void DrawRadar(bool isStereoWindow, Camera camera, GLfloat focaldist, 
+    glm::mat4 view, glm::mat4 projection, 
+    glm::mat4 leftview, glm::mat4 leftprojection,
+    glm::mat4 rightview, glm::mat4 rightprojection,
+    Engine::Shader* shader,
+    bool renderScene, float radarScale, glm::vec2 position);
+glm::vec4 divw(glm::vec4 vec);
 
 // ---- Update Functions ----
 void updatePointLights();
@@ -91,12 +98,12 @@ float aspectRatio = 1.0f;
 float mouseSmoothingFactor = 0.7;
 
 // ---- Stereo Rendering Settings ----
-float maxSeparation = 0.05f;   // Maximum stereo separation
-float minSeparation = 0.0001f; // Minimum stereo separation
+float maxSeparation = 2.0f;   // Maximum stereo separation
+float minSeparation = 0.01f; // Minimum stereo separation
 
 // The convergence will shift the zFokus but there is still some weirdness when going into negative
 float minConvergence = 0.0f;  // Minimum convergence
-float maxConvergence = 200.0f;   // Maximum convergence
+float maxConvergence = 40.0f;   // Maximum convergence
 
 double accumulatedXOffset = 0.0;
 double accumulatedYOffset = 0.0;
@@ -208,6 +215,16 @@ Engine::Voxelizer* voxelizer = nullptr;
 GLuint skyboxVAO, skyboxVBO, cubemapTexture;
 float ambientStrengthFromSkybox = 0.1f;
 Engine::Shader* skyboxShader = nullptr;
+
+glm::vec4 divw(glm::vec4 vec) {
+    if (vec.w != 0) {
+        vec.x /= vec.w;
+        vec.y /= vec.w;
+        vec.z /= vec.w;
+        vec.w = 1.0f;
+    }
+    return vec;
+}
 
 
 void window_focus_callback(GLFWwindow* window, int focused) {
@@ -786,6 +803,13 @@ void savePreferences() {
     j["ui"]["darkTheme"] = preferences.isDarkTheme;
     j["ui"]["showFPS"] = preferences.showFPS;
     j["ui"]["show3DCursor"] = preferences.show3DCursor;
+    
+    // Radar settings
+    j["radar"]["enabled"] = preferences.radarEnabled;
+    j["radar"]["posX"] = preferences.radarPos.x;
+    j["radar"]["posY"] = preferences.radarPos.y;
+    j["radar"]["scale"] = preferences.radarScale;
+    j["radar"]["showScene"] = preferences.radarShowScene;
 
     // Camera settings
     j["camera"]["separation"] = preferences.separation;
@@ -858,6 +882,12 @@ void applyPreferencesToProgram() {
     currentScene.settings.farPlane = preferences.farPlane;
     camera.useNewMethod = preferences.useNewStereoMethod;
     camera.Zoom = preferences.fov;
+    
+    // Apply radar preferences
+    currentScene.settings.radarEnabled = preferences.radarEnabled;
+    currentScene.settings.radarPos = preferences.radarPos;
+    currentScene.settings.radarScale = preferences.radarScale;
+    currentScene.settings.radarShowScene = preferences.radarShowScene;
     camera.scrollMomentum = preferences.scrollMomentum;
     camera.maxScrollVelocity = preferences.maxScrollVelocity;
     camera.scrollDeceleration = preferences.scrollDeceleration;
@@ -993,10 +1023,19 @@ void loadPreferences() {
             preferences.show3DCursor = j["ui"].value("show3DCursor", true);
         }
 
+        // Radar settings
+        if (j.contains("radar")) {
+            preferences.radarEnabled = j["radar"].value("enabled", false);
+            preferences.radarPos.x = j["radar"].value("posX", 0.8f);
+            preferences.radarPos.y = j["radar"].value("posY", -0.8f);
+            preferences.radarScale = j["radar"].value("scale", 0.2f);
+            preferences.radarShowScene = j["radar"].value("showScene", true);
+        }
+
         // Camera settings
         if (j.contains("camera")) {
-            preferences.separation = j["camera"].value("separation", 0.005f);
-            preferences.convergence = j["camera"].value("convergence", 1.5f);
+            preferences.separation = j["camera"].value("separation", 0.5f);
+            preferences.convergence = j["camera"].value("convergence", 25.0f);
             preferences.nearPlane = j["camera"].value("nearPlane", 0.1f);
             preferences.farPlane = j["camera"].value("farPlane", 200.0f);
             preferences.cameraSpeedFactor = j["camera"].value("speedFactor", 1.0f);
@@ -1109,6 +1148,12 @@ void initializeVCTSettings() {
 void InitializeDefaults() {
     // Set up default values
     preferences = GUI::ApplicationPreferences();
+    
+    // Set default radar settings
+    currentScene.settings.radarEnabled = preferences.radarEnabled;
+    currentScene.settings.radarPos = preferences.radarPos;
+    currentScene.settings.radarScale = preferences.radarScale;
+    currentScene.settings.radarShowScene = preferences.radarShowScene;
 
     // Initialize the camera with default values from preferences
     camera.useNewMethod = preferences.useNewStereoMethod;
@@ -1134,6 +1179,7 @@ void InitializeDefaults() {
     currentScene.settings.convergence = preferences.convergence;
     currentScene.settings.nearPlane = preferences.nearPlane;
     currentScene.settings.farPlane = preferences.farPlane;
+
 
     // Set up default cursor preset if needed
     if (Engine::CursorPresetManager::getPresetNames().empty()) {
@@ -1466,43 +1512,32 @@ int main() {
         glm::mat4 leftView = view;
         glm::mat4 rightView = view;
 
-        if (isStereoWindow) {
-            if (!camera.useNewMethod) {
-                // Original method using offsetProjection
-                leftProjection = camera.offsetProjection(projection, currentScene.settings.separation / 2.0f,
-                    currentScene.settings.convergence);
-                rightProjection = camera.offsetProjection(projection, -currentScene.settings.separation / 2.0f,
-                    currentScene.settings.convergence);
-            }
-            else {
-                // New method using asymmetric frustums and view offset
-                GLfloat frustum[6];
-                float effectiveSeparation = currentScene.settings.separation;
+        if (isStereoWindow || currentScene.settings.radarEnabled) {
+        GLfloat frustum[6];
+        float effectiveSeparation = currentScene.settings.separation;
 
-                PerspectiveProjection(frustum, -1.0f, camera.Zoom, aspectRatio,
-                    currentScene.settings.nearPlane, currentScene.settings.farPlane,
-                    effectiveSeparation, currentScene.settings.convergence);
-                leftProjection = glm::frustum(frustum[0], frustum[1], frustum[2], frustum[3], frustum[4], frustum[5]);
+        PerspectiveProjection(frustum, -1.0f, camera.Zoom, aspectRatio,
+            currentScene.settings.nearPlane, currentScene.settings.farPlane,
+            effectiveSeparation, currentScene.settings.convergence);
+        leftProjection = glm::frustum(frustum[0], frustum[1], frustum[2], frustum[3], frustum[4], frustum[5]);
 
-                PerspectiveProjection(frustum, +1.0f, camera.Zoom, aspectRatio,
-                    currentScene.settings.nearPlane, currentScene.settings.farPlane,
-                    effectiveSeparation, currentScene.settings.convergence);
-                rightProjection = glm::frustum(frustum[0], frustum[1], frustum[2], frustum[3], frustum[4], frustum[5]);
+        PerspectiveProjection(frustum, +1.0f, camera.Zoom, aspectRatio,
+            currentScene.settings.nearPlane, currentScene.settings.farPlane,
+            effectiveSeparation, currentScene.settings.convergence);
+        rightProjection = glm::frustum(frustum[0], frustum[1], frustum[2], frustum[3], frustum[4], frustum[5]);
 
-                // Calculate offset view matrices
-                glm::vec3 pos = camera.Position;
-                glm::vec3 rightVec = camera.Right;
-                glm::vec3 upVec = camera.Up;
-                glm::vec3 frontVec = camera.Front;
+        // Calculate offset view matrices
+        glm::vec3 pos = camera.Position;
+        glm::vec3 rightVec = camera.Right;
+        glm::vec3 upVec = camera.Up;
+        glm::vec3 frontVec = camera.Front;
 
-                glm::vec3 leftEyePos = pos - (rightVec * effectiveSeparation / 2.0f);
-                leftView = glm::lookAt(leftEyePos, leftEyePos + frontVec, upVec);
+        glm::vec3 leftEyePos = pos - (rightVec * effectiveSeparation / 2.0f);
+        leftView = glm::lookAt(leftEyePos, leftEyePos + frontVec, upVec);
 
-                glm::vec3 rightEyePos = pos + (rightVec * effectiveSeparation / 2.0f);
-                rightView = glm::lookAt(rightEyePos, rightEyePos + frontVec, upVec);
-            }
+        glm::vec3 rightEyePos = pos + (rightVec * effectiveSeparation / 2.0f);
+        rightView = glm::lookAt(rightEyePos, rightEyePos + frontVec, upVec);
         }
-
         // ---- Update Scene State ----
         // Set wireframe mode before rendering
         glPolygonMode(GL_FRONT_AND_BACK, camera.wireframe ? GL_LINE : GL_FILL);
@@ -1524,6 +1559,15 @@ int main() {
         else {
             // Render mono view to default buffer (usually GL_BACK_LEFT or just GL_BACK)
             renderEye(GL_BACK_LEFT, projection, view, shader, viewport, windowFlags, window); // Or use GL_BACK if not explicitly stereo
+        }
+
+        if (currentScene.settings.radarEnabled) {
+            DrawRadar(isStereoWindow, camera, currentScene.settings.convergence,
+                view, projection,
+                leftView, leftProjection,
+                rightView, rightProjection,
+                shader, currentScene.settings.radarShowScene,
+                currentScene.settings.radarScale, currentScene.settings.radarPos);
         }
 
         // ---- Swap Buffers ----
@@ -1998,11 +2042,213 @@ void renderPointClouds(Engine::Shader* shader) {
 
     shader->setBool("isPointCloud", false);
 }
-#pragma endregion
 
+void DrawRadar(bool isStereoWindow, Camera camera, GLfloat focaldist, 
+    glm::mat4 view, glm::mat4 projection, 
+    glm::mat4 leftview, glm::mat4 leftprojection,
+    glm::mat4 rightview, glm::mat4 rightprojection,
+    Engine::Shader* shader,
+    bool renderScene, float radarScale, glm::vec2 position)
+{
+    // construct view and projection matrices
+    glm::mat4 p(1.0f);
+    glm::mat4 v(1.0f);
+    v = glm::translate(v, glm::vec3(position, 0));
+    v = glm::rotate(v, -90.0f, glm::vec3(1.0f, 0, 0));
+    v = glm::rotate(v, 180.0f, glm::vec3(1.0f, 0.0f, 0.0f));
+    v = glm::scale(v, glm::vec3(radarScale));
+    v = v * view;
 
-// ---- Shader and Lighting ----
-#pragma region Shader and Lighting
+    // construct frustum in NDC and inv-project it 
+    glm::vec2 frust_ndc[6]{};
+    glm::vec4 frust_world[12]{}; // idx 0-5 left, idx 6-11 right
+
+    glm::mat4 defaultView = glm::lookAt(
+        glm::vec3(0.0f, 0.0f, 0.0f),   // eye at origin
+        glm::vec3(0.0f, 0.0f, 1.0f),   // looking towards +Z
+        glm::vec3(0.0f, 1.0f, 0.0f));  // up is +Y
+
+    glm::vec4 fd_ndc = projection * defaultView * glm::vec4(0, 0, focaldist, 1.0f);
+    fd_ndc = divw(fd_ndc);
+
+    // define the line endpoints in ndc
+    frust_ndc[0].x = -1.0; // near left
+    frust_ndc[0].y = -1.0;
+    frust_ndc[1].x = 1.0; // near right
+    frust_ndc[1].y = -1.0;
+    frust_ndc[2].x = -1.0; // far left
+    frust_ndc[2].y = 1.0;
+    frust_ndc[3].x = 1.0; // far right
+    frust_ndc[3].y = 1.0;
+    frust_ndc[4].x = -1.0; // focaldist left
+    frust_ndc[4].y = fd_ndc.z;
+    frust_ndc[5].x = 1.0; // focaldist right
+    frust_ndc[5].y = fd_ndc.z;
+
+    // transform the points back to world space
+    glm::mat4 inv_left = glm::inverse(leftprojection * leftview);
+    glm::mat4 inv_right = glm::inverse(rightprojection * rightview);
+    for (int i = 0; i < 6; i++) {
+        glm::vec4 p(frust_ndc[i].x, 0, frust_ndc[i].y, 1.0f);
+        frust_world[i] = inv_left * p;
+        frust_world[i] = divw(frust_world[i]);
+        frust_world[i + 6] = inv_right * p;
+        frust_world[i + 6] = divw(frust_world[i + 6]);
+    }
+
+    // construct frustum lines 
+    const int numPoints = 20;
+    GLfloat buf[numPoints * 3];
+    int i = 0;
+    buf[i++] = frust_world[0].x; // near left --> far left
+    buf[i++] = frust_world[0].y;
+    buf[i++] = frust_world[0].z;
+    buf[i++] = frust_world[2].x;
+    buf[i++] = frust_world[2].y;
+    buf[i++] = frust_world[2].z;
+    buf[i++] = frust_world[1].x; // near right --> far right
+    buf[i++] = frust_world[1].y;
+    buf[i++] = frust_world[1].z;
+    buf[i++] = frust_world[3].x;
+    buf[i++] = frust_world[3].y;
+    buf[i++] = frust_world[3].z;
+    buf[i++] = frust_world[0].x; // near left --> near right
+    buf[i++] = frust_world[0].y;
+    buf[i++] = frust_world[0].z;
+    buf[i++] = frust_world[1].x;
+    buf[i++] = frust_world[1].y;
+    buf[i++] = frust_world[1].z;
+    buf[i++] = frust_world[2].x; // far left --> far right
+    buf[i++] = frust_world[2].y;
+    buf[i++] = frust_world[2].z;
+    buf[i++] = frust_world[3].x;
+    buf[i++] = frust_world[3].y;
+    buf[i++] = frust_world[3].z;
+    buf[i++] = frust_world[4].x; // focal left --> focal right
+    buf[i++] = frust_world[4].y;
+    buf[i++] = frust_world[4].z;
+    buf[i++] = frust_world[5].x;
+    buf[i++] = frust_world[5].y;
+    buf[i++] = frust_world[5].z;
+
+    buf[i++] = frust_world[6].x; // near left --> far left
+    buf[i++] = frust_world[6].y;
+    buf[i++] = frust_world[6].z;
+    buf[i++] = frust_world[8].x;
+    buf[i++] = frust_world[8].y;
+    buf[i++] = frust_world[8].z;
+    buf[i++] = frust_world[7].x; // near right --> far right
+    buf[i++] = frust_world[7].y;
+    buf[i++] = frust_world[7].z;
+    buf[i++] = frust_world[9].x;
+    buf[i++] = frust_world[9].y;
+    buf[i++] = frust_world[9].z;
+    buf[i++] = frust_world[6].x; // near left --> near right
+    buf[i++] = frust_world[6].y;
+    buf[i++] = frust_world[6].z;
+    buf[i++] = frust_world[7].x;
+    buf[i++] = frust_world[7].y;
+    buf[i++] = frust_world[7].z;
+    buf[i++] = frust_world[8].x; // far left --> far right
+    buf[i++] = frust_world[8].y;
+    buf[i++] = frust_world[8].z;
+    buf[i++] = frust_world[9].x;
+    buf[i++] = frust_world[9].y;
+    buf[i++] = frust_world[9].z;
+    buf[i++] = frust_world[10].x; // focal left --> focal right
+    buf[i++] = frust_world[10].y;
+    buf[i++] = frust_world[10].z;
+    buf[i++] = frust_world[11].x;
+    buf[i++] = frust_world[11].y;
+    buf[i++] = frust_world[11].z;
+
+    // render the lines
+    glUseProgram(0);
+    glBindVertexArray(0);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    
+    glViewport(0, 0, windowWidth, windowHeight);
+    glDisable(GL_DEPTH_TEST);
+
+    GLuint vao;
+    GLuint vbo;
+    glGenVertexArrays(1, &vao);
+    glGenBuffers(1, &vbo);
+
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * 3 * numPoints, buf, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat), (void*)0);
+
+    glEnableVertexAttribArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
+
+    shader->use();
+    shader->setMat4("projection", p);
+    shader->setMat4("view", v);
+    shader->setMat4("model", glm::mat4(1));
+
+    shader->setBool("isChunkOutline", true);
+    shader->setBool("isPointCloud", false);
+
+    glLineWidth(1.0f);
+
+    glm::vec4 leftColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
+    glm::vec4 rightColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
+
+    glBindVertexArray(vao);
+    if (isStereoWindow) {
+        glDrawBuffer(GL_BACK_LEFT);
+        shader->setVec4("outlineColor", leftColor);
+        glDrawArrays(GL_LINES, 0, 10);
+        shader->setVec4("outlineColor", rightColor);
+        glDrawArrays(GL_LINES, 10, 10);
+
+        glDrawBuffer(GL_BACK_RIGHT);
+        shader->setVec4("outlineColor", leftColor);
+        glDrawArrays(GL_LINES, 0, 10);
+        shader->setVec4("outlineColor", rightColor);
+        glDrawArrays(GL_LINES, 10, 10);
+    }
+    else {
+        glDrawBuffer(GL_BACK);
+        shader->setVec4("outlineColor", leftColor);
+        glDrawArrays(GL_LINES, 0, 10);
+        shader->setVec4("outlineColor", rightColor);
+        glDrawArrays(GL_LINES, 10, 10);
+    }
+    glBindVertexArray(0);
+
+    shader->setBool("isChunkOutline", false);
+
+    // render the model seen from above
+    if (renderScene) {
+        shader->use();
+        shader->setMat4("projection", p);
+        shader->setMat4("view", v);
+        shader->setMat4("model", glm::mat4(1));
+
+        if (isStereoWindow) {
+            glDrawBuffer(GL_BACK_LEFT);
+            renderModels(shader);
+            glDrawBuffer(GL_BACK_RIGHT);
+            renderModels(shader);
+        }
+        else {
+            glDrawBuffer(GL_BACK);
+            renderModels(shader);
+        }
+    }
+
+    glEnable(GL_DEPTH_TEST);
+
+    // Cleanup temporary VAO/VBO
+    glDeleteVertexArrays(1, &vao);
+    glDeleteBuffers(1, &vbo);
+}
+
 void updatePointLights() {
     pointLights.clear();
     for (const auto& model : currentScene.models) {

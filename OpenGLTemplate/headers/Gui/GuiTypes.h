@@ -78,8 +78,8 @@ namespace GUI {
 
     struct ApplicationPreferences {
         bool isDarkTheme = true;
-        float separation = 10.0f;
-        float convergence = 50.0f;
+        float separation = 0.5f;
+        float convergence = 25.0f;
         float nearPlane = 0.1f;
         float farPlane = 200.0f;
         std::string currentPresetName = "Sphere";
@@ -106,6 +106,11 @@ namespace GUI {
         float mouseSensitivity = 0.17f;
 
         bool showStereoVisualization = true;
+
+        bool radarEnabled = false;
+        glm::vec2 radarPos = glm::vec2(0.8f, -0.8f);
+        float radarScale = 0.03f;
+        bool radarShowScene = true;
 
         int skyboxType = SKYBOX_CUBEMAP;
         glm::vec3 skyboxSolidColor = glm::vec3(0.2f, 0.3f, 0.4f);

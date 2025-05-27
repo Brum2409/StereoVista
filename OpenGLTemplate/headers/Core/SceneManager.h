@@ -3,6 +3,7 @@
 #include <vector>
 #include <string>
 #include "Loaders/ModelLoader.h"
+#include <glm/glm.hpp> // Added glm header for glm::vec2
 
 namespace Engine {
 
@@ -12,6 +13,12 @@ namespace Engine {
         float nearPlane = 0.1f;
         float farPlane = 200.0f;
         int msaaSamples = 2;
+        
+        // Added radar fields:
+        bool radarEnabled = false;
+        glm::vec2 radarPos = glm::vec2(0.8f, -0.8f);
+        float radarScale = 0.2f;
+        bool radarShowScene = true;
     };
 
     struct Scene {
