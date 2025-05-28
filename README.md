@@ -28,7 +28,7 @@ StereoVista is an OpenGL 4.6 application designed for interactive visualization 
 ### 👓 Native Stereo Rendering
 * Quad-buffer stereo via GLFW – compatible with any GPU supporting the `GLFW_STEREO` hint
 * Configurable **Separation** & **Convergence** parameters with real-time visual feedback
-* Independent left/right eye rendering passes for accurate stereo effects, culling and post-processing
+* Independent left/right eye rendering passes for accurate stereo effect using asymetric-frustrum matrix calculation
 
 ### 🎥 Advanced Camera System
 * Multiple camera control modes:
@@ -47,8 +47,9 @@ StereoVista is an OpenGL 4.6 application designed for interactive visualization 
 |------|------------|----------|
 | **Sphere Cursor** | ![Sphere Cursor](screenshots/sphere_cursor.png) | Full 3D lit sphere with four scaling modes (normal, fixed, constrained dynamic, logarithmic), optional inner sphere for depth perception and lots of customization |
 | **Fragment Cursor** | ![Fragment Cursor](screenshots/frag_cursor.png) | Circular cursor which draws on geometry with fully customizable color, inner/outer radius, and border thickness |
+| **Plane Cursor** | ![Plane Cursor](screenshots/plane_cursor.png) | Flat plane that follows the surface geometry, useful for visualizing the tangent plane at cursor position |
 
-Both cursor types are managed by a unified **Cursor Manager** that:
+All cursor types are managed by a unified **Cursor Manager** that:
 * Maintains cursor position using depth buffer sampling
 * Provides JSON-based preset system for saving/loading cursor configurations
 * Offers seamless interaction with scene objects
@@ -146,7 +147,8 @@ All user preferences are automatically saved to `preferences.json` and restored 
 | **Right Mouse Button** drag | Free rotation (first-person style) |
 | **Mouse Wheel** | Zoom in/out (with optional physics-based smooth scrolling) |
 | **W / A / S / D** | Move camera forward / left / backward / right |
-| **Q / E** | Move camera down / up |
+| **Space / Left Shift** | Move camera up / down |
+| **C** | Center camera on cursor position or scene midpoint |
 
 ### Model & Object Interaction
 | Input | Action |
@@ -154,6 +156,8 @@ All user preferences are automatically saved to `preferences.json` and restored 
 | **Ctrl + Left Mouse** | Select model or point cloud under cursor |
 | **Ctrl + Left Mouse** drag | Move selected model in the view plane |
 | **Delete** | Remove selected model or point cloud from scene |
+
+> **Note:** When releasing the Ctrl key after moving a model, the cursor remains at its current position rather than resetting to the center of the window, allowing for more intuitive model manipulation.
 
 ### View & Rendering Options
 | Input | Action |
@@ -166,7 +170,6 @@ All user preferences are automatically saved to `preferences.json` and restored 
 * Hold **Ctrl** to activate selection mode
 * Click on a model to select it - selected objects show manipulation controls
 * Models can be moved by holding **Ctrl** and dragging with the left mouse button
-* The cursor updates to indicate when hovering over a selectable object
 
 ---
 
