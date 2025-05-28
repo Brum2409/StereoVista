@@ -53,7 +53,7 @@ namespace Cursor {
         glBindVertexArray(0);
 
         try {
-            m_shader = Engine::loadShader("sphereVertexShader.glsl", "sphereFragmentShader.glsl");
+            m_shader = Engine::loadShader("cursors/sphereVertexShader.glsl", "cursors/sphereFragmentShader.glsl");
         }
         catch (const std::exception& e) {
             std::cerr << "Fatal error loading sphere cursor shader: " << e.what() << std::endl;

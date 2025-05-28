@@ -64,7 +64,7 @@ namespace Cursor {
         glEnableVertexAttribArray(0);
 
         try {
-            m_shader = Engine::loadShader("planeCursorVertexShader.glsl", "planeCursorFragmentShader.glsl");
+            m_shader = Engine::loadShader("cursors/planeCursorVertexShader.glsl", "cursors/planeCursorFragmentShader.glsl");
         }
         catch (const std::exception& e) {
             std::cerr << "Failed to load plane cursor shaders: " << e.what() << std::endl;

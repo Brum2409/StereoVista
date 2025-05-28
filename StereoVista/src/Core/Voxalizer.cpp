@@ -36,27 +36,27 @@ namespace Engine {
         try {
             // Load voxelization shader
             m_voxelShader = Engine::loadShader(
-                "voxelization.vert",
-                "voxelization.frag",
-                "voxelization.geom"
+                "voxelization/voxelization.vert",
+                "voxelization/voxelization.frag",
+                "voxelization/voxelization.geom"
             );
 
             // Load visualization shaders
             m_visualizationShader = Engine::loadShader(
-                "voxel_visualization.vert",
-                "voxel_visualization.frag"
+                "voxelization/voxel_visualization.vert",
+                "voxelization/voxel_visualization.frag"
             );
 
             // Load world position shader for cube face capture
             m_worldPositionShader = Engine::loadShader(
-                "world_position.vert",
-                "world_position.frag"
+                "voxelization/world_position.vert",
+                "voxelization/world_position.frag"
             );
 
             // Load voxel cube shader for individual voxel rendering
             m_voxelCubeShader = Engine::loadShader(
-                "voxel_cube.vert",
-                "voxel_cube.frag"
+                "voxelization/voxel_cube.vert",
+                "voxelization/voxel_cube.frag"
             );
 
             // Add define for step length

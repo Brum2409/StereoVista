@@ -582,8 +582,8 @@ void updateSkybox() {
 
     // Always (re)create the skybox shader
     try {
-        skyboxShader = Engine::loadShader("skyboxVertexShader.glsl",
-            "skyboxFragmentShader.glsl");
+        skyboxShader = Engine::loadShader("skybox/skyboxVertexShader.glsl",
+            "skybox/skyboxFragmentShader.glsl");
     }
     catch (const std::exception& e) {
         std::cerr << "Error loading skybox shaders: " << e.what() << std::endl;
@@ -619,7 +619,7 @@ void setupShadowMapping() {
 
     // Load shadow mapping shaders
     try {
-        simpleDepthShader = Engine::loadShader("simpleDepthVertexShader.glsl", "simpleDepthFragmentShader.glsl");
+        simpleDepthShader = Engine::loadShader("core/simpleDepthVertexShader.glsl", "core/simpleDepthFragmentShader.glsl");
     }
     catch (const std::exception& e) {
         std::cerr << "Error loading depth shader: " << e.what() << std::endl;
@@ -1338,7 +1338,7 @@ int main() {
     // ---- Initialize Shader ----
     Engine::Shader* shader = nullptr;
     try {
-        shader = Engine::loadShader("vertexShader.glsl", "fragmentShader.glsl");
+        shader = Engine::loadShader("core/vertexShader.glsl", "core/fragmentShader.glsl");
     }
     catch (std::exception& e) {
         std::cout << e.what() << std::endl;
