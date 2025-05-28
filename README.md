@@ -75,8 +75,8 @@ All cursor types are managed by a unified **Cursor Manager** that:
 ### 💡 Advanced Lighting and Shadows
 | Technique | Screenshot | Description |
 |-----------|------------|-------------|
-| **Voxel Cone Tracing** | ![Voxel Cone Tracing GI](screenshots/voxel_gi.png) | Real-time global illumination with indirect bounces |
-| **Shadow Mapping** | ![Voxel Transparency](screenshots/voxel_transparency.png) | Support for transparency and reflections |
+| **Global Illumination** | ![Voxel Cone Tracing GI](screenshots/voxel_gi.png) | Real-time global illumination with indirect bounces |
+| **Transparency** | ![Voxel Transparency](screenshots/voxel_transparency.png) | Support for transparency and reflections |
 
 * **Voxel Cone Tracing (VCT)**:
   * Dynamic voxelization of part of the scene into a 3D texture grid each frame
