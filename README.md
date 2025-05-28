@@ -94,7 +94,7 @@ All cursor types are managed by a unified **Cursor Manager** that:
 ### 🔧 Additional Features
 * **Complete Scene Management** - Save and load entire scenes including models and point clouds
 * **Dynamic Lighting System** - Emissive materials automatically generate point lights with customizable intensity caps
-* **Skybox & Environment Mapping** - Multiple skybox modes (cubemap, solid color, gradient) with HDRI support
+* **Skybox & Environment Mapping** - Multiple skybox modes (cubemap, solid color, gradient)
 * **Radar Overlay** - Miniature camera frustum visualization for improved spatial awareness
 * **Model Manipulation** - Select and transform 3D models with intuitive mouse controls
 
@@ -218,7 +218,7 @@ Stereo-Viewer-Project/
 │   ├── cursor_presets.json     # Saved cursor configurations
 │   └── preferences.json        # User preferences
 ├── dependencies/               # Third-party libraries
-├── skybox/                     # HDRI environment maps
+├── skybox/                     # Cubemaps
 ├── screenshots/                # Images for documentation
 └── README.md                   # This documentation
 ```
