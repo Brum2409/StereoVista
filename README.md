@@ -76,7 +76,7 @@ All cursor types are managed by a unified **Cursor Manager** that:
 | Technique | Screenshot | Description |
 |-----------|------------|-------------|
 | **Voxel Cone Tracing** | ![Voxel Cone Tracing GI](screenshots/voxel_gi.png) | Real-time global illumination with indirect bounces |
-| **Shadow Mapping** | ![Voxel Transparency](screenshots/voxel_transparency.png) | Traditional shadow maps with configurable resolution |
+| **Shadow Mapping** | ![Voxel Transparency](screenshots/voxel_transparency.png) | Support for transparency and reflections |
 
 * **Voxel Cone Tracing (VCT)**:
   * Dynamic voxelization of part of the scene into a 3D texture grid each frame
@@ -92,7 +92,7 @@ All cursor types are managed by a unified **Cursor Manager** that:
 * Easily toggle between lighting techniques with the **L** key
 
 ### 🔧 Additional Features
-* **Complete Scene Management** - Save and load entire scenes including models, point clouds, camera position, lighting setup, and render settings
+* **Complete Scene Management** - Save and load entire scenes including models and point clouds
 * **Dynamic Lighting System** - Emissive materials automatically generate point lights with customizable intensity caps
 * **Skybox & Environment Mapping** - Multiple skybox modes (cubemap, solid color, gradient) with HDRI support
 * **Radar Overlay** - Miniature camera frustum visualization for improved spatial awareness
