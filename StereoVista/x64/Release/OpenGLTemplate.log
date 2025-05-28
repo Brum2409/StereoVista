@@ -1,0 +1,12 @@
+﻿  SceneManager.cpp
+  Voxalizer.cpp
+  GUI.cpp
+  ModelLoader.cpp
+  main.cpp
+  Generating code
+  603 of 8504 functions ( 7.1%) were compiled, the rest were copied from previous compilation.
+    21 functions were new in current compilation
+    446 functions had inline decision re-evaluated but remain unchanged
+  Finished generating code
+  OpenGLTemplate.vcxproj -> C:\Users\Benbrem\Downloads\Arbeit\Stereo-Demo-main\Stereo-Viewer-Project\bin\x64\Release\Stereo Demo.exe
+          1 Datei(en) kopiert.

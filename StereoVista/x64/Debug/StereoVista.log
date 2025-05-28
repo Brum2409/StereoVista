@@ -1,0 +1,40 @@
+﻿C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Microsoft\VC\v170\Microsoft.CppBuild.targets(531,5): warning MSB8028: The intermediate directory (x64\Debug\) contains files shared from another project (Stereo Demo.vcxproj).  This can lead to incorrect clean and rebuild behavior.
+  main.cpp
+C:\Users\Benbrem\Downloads\Arbeit\Stereo-Demo-main\Stereo-Viewer-Project\StereoVista\headers\Core\Camera.h(192,36): warning C4244: '=': conversion from 'double' to 'float', possible loss of data
+  (compiling source file 'src/main.cpp')
+  
+C:\Users\Benbrem\Downloads\Arbeit\Stereo-Demo-main\Stereo-Viewer-Project\StereoVista\headers\Core\Camera.h(193,36): warning C4244: '=': conversion from 'double' to 'float', possible loss of data
+  (compiling source file 'src/main.cpp')
+  
+C:\Users\Benbrem\Downloads\Arbeit\Stereo-Demo-main\Stereo-Viewer-Project\StereoVista\headers\Core\Camera.h(390,27): warning C4244: 'initializing': conversion from 'double' to 'float', possible loss of data
+  (compiling source file 'src/main.cpp')
+  
+C:\Users\Benbrem\Downloads\Arbeit\Stereo-Demo-main\Stereo-Viewer-Project\StereoVista\headers\Core\Camera.h(574,18): warning C4244: 'return': conversion from 'double' to 'float', possible loss of data
+  (compiling source file 'src/main.cpp')
+  
+C:\Users\Benbrem\Downloads\Arbeit\Stereo-Demo-main\Stereo-Viewer-Project\StereoVista\headers\Gui\GuiTypes.h(10,11): warning C4099: 'Engine::CursorPreset': type name first seen using 'struct' now seen using 'class'
+  (compiling source file 'src/main.cpp')
+  C:\Users\Benbrem\Downloads\Arbeit\Stereo-Demo-main\Stereo-Viewer-Project\StereoVista\headers\Cursors\CursorPresets.h(10,12):
+  see declaration of 'Engine::CursorPreset'
+  
+C:\Users\Benbrem\Downloads\Arbeit\Stereo-Demo-main\Stereo-Viewer-Project\StereoVista\headers\Gui\GuiTypes.h(35,36): warning C4305: 'initializing': truncation from 'double' to 'float'
+  (compiling source file 'src/main.cpp')
+  
+C:\Users\Benbrem\Downloads\Arbeit\Stereo-Demo-main\Stereo-Viewer-Project\StereoVista\headers\Gui\Gui.h(16,7): warning C4099: 'ImGuiViewportP': type name first seen using 'struct' now seen using 'class'
+  (compiling source file 'src/main.cpp')
+  C:\Users\Benbrem\Downloads\Arbeit\Stereo-Demo-main\Stereo-Viewer-Project\StereoVista\headers\libs\imgui\imgui_internal.h(1803,8):
+  see declaration of 'ImGuiViewportP'
+  
+C:\Users\Benbrem\Downloads\Arbeit\Stereo-Demo-main\Stereo-Viewer-Project\StereoVista\headers\Gui\Gui.h(18,11): warning C4099: 'Engine::CursorPreset': type name first seen using 'struct' now seen using 'class'
+  (compiling source file 'src/main.cpp')
+  C:\Users\Benbrem\Downloads\Arbeit\Stereo-Demo-main\Stereo-Viewer-Project\StereoVista\headers\Gui\GuiTypes.h(10,11):
+  see declaration of 'Engine::CursorPreset'
+  
+C:\Users\Benbrem\Downloads\Arbeit\Stereo-Demo-main\Stereo-Viewer-Project\StereoVista\src\main.cpp(98,28): warning C4305: 'initializing': truncation from 'double' to 'float'
+C:\Users\Benbrem\Downloads\Arbeit\Stereo-Demo-main\Stereo-Viewer-Project\StereoVista\src\main.cpp(1114,38): warning C4305: '=': truncation from 'double' to 'float'
+C:\Users\Benbrem\Downloads\Arbeit\Stereo-Demo-main\Stereo-Viewer-Project\StereoVista\src\main.cpp(1593,47): warning C4267: 'argument': conversion from 'size_t' to 'GLsizei', possible loss of data
+C:\Users\Benbrem\Downloads\Arbeit\Stereo-Demo-main\Stereo-Viewer-Project\StereoVista\src\main.cpp(2025,69): warning C4267: 'argument': conversion from 'size_t' to 'GLsizei', possible loss of data
+C:\Users\Benbrem\Downloads\Arbeit\Stereo-Demo-main\Stereo-Viewer-Project\StereoVista\src\main.cpp(2036,75): warning C4267: 'argument': conversion from 'size_t' to 'GLsizei', possible loss of data
+C:\Users\Benbrem\Downloads\Arbeit\Stereo-Demo-main\Stereo-Viewer-Project\StereoVista\src\main.cpp(2416,35): warning C4244: 'argument': conversion from 'double' to 'float', possible loss of data
+  StereoVista.vcxproj -> C:\Users\Benbrem\Downloads\Arbeit\Stereo-Demo-main\Stereo-Viewer-Project\bin\x64\Debug\StereoVista.exe
+          1 Datei(en) kopiert.
