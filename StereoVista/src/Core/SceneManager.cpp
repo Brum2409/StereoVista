@@ -10,7 +10,7 @@ using json = nlohmann::json;
 
 namespace Engine {
 
-    void saveScene(const std::string& filename, const Scene& scene) {
+    void saveScene(const std::string& filename, const Scene& scene, const Camera& camera) {
         try {
             // Ensure filename has .scene extension
             std::filesystem::path scenePath(filename);
@@ -31,6 +31,15 @@ namespace Engine {
             sceneJson["settings"]["convergence"] = scene.settings.convergence;
             sceneJson["settings"]["nearPlane"] = scene.settings.nearPlane;
             sceneJson["settings"]["farPlane"] = scene.settings.farPlane;
+
+            // Save current camera state
+            auto cameraState = camera.GetState();
+            sceneJson["camera"]["position"] = {cameraState.position.x, cameraState.position.y, cameraState.position.z};
+            sceneJson["camera"]["front"] = {cameraState.front.x, cameraState.front.y, cameraState.front.z};
+            sceneJson["camera"]["up"] = {cameraState.up.x, cameraState.up.y, cameraState.up.z};
+            sceneJson["camera"]["yaw"] = cameraState.yaw;
+            sceneJson["camera"]["pitch"] = cameraState.pitch;
+            sceneJson["camera"]["zoom"] = cameraState.zoom;
 
             // Save models
             json modelsJson = json::array();
@@ -179,12 +188,18 @@ namespace Engine {
         }
     }
 
-    Scene loadScene(const std::string& filename) {
+    Scene loadScene(const std::string& filename, Camera& camera) {
         Scene scene;
+        json sceneJson;
+        std::filesystem::path scenePath;
+        std::filesystem::path sceneDir;
+
         try {
             // Check if this is a chunked file
             std::ifstream metaFile(filename);
-            json sceneJson;
+            if (!metaFile.is_open()) {
+                throw std::runtime_error("Failed to open scene file: " + filename);
+            }
 
             if (metaFile.is_open()) {
                 json metaJson;
@@ -206,7 +221,6 @@ namespace Engine {
                             std::istreambuf_iterator<char>());
                         combinedJson += chunk;
                     }
-
                     sceneJson = json::parse(combinedJson);
                 }
                 else {
@@ -215,20 +229,73 @@ namespace Engine {
                     metaFile >> sceneJson;
                 }
             }
-            else {
-                throw std::runtime_error("Failed to open scene file: " + filename);
-            }
 
-            std::filesystem::path scenePath(filename);
-            std::filesystem::path sceneDir = scenePath.parent_path() / scenePath.stem();
+            // Get scene directory
+            scenePath = std::filesystem::path(filename);
+            sceneDir = scenePath.parent_path() / scenePath.stem();
 
-            // Load scene settings
+            // Load scene settings if they exist
             if (sceneJson.contains("settings")) {
-                auto& settings = sceneJson["settings"];
-                scene.settings.separation = settings.value("separation", 0.02f);
-                scene.settings.convergence = settings.value("convergence", 1.0f);
+                const auto& settings = sceneJson["settings"];
+                scene.settings.separation = settings.value("separation", 0.5f);
+                scene.settings.convergence = settings.value("convergence", 2.6f);
                 scene.settings.nearPlane = settings.value("nearPlane", 0.1f);
                 scene.settings.farPlane = settings.value("farPlane", 200.0f);
+            }
+
+            // Load camera state if it exists in the scene
+            if (sceneJson.contains("camera")) {
+                const auto& cameraJson = sceneJson["camera"];
+                
+                // Position
+                if (cameraJson.contains("position") && cameraJson["position"].is_array() && 
+                    cameraJson["position"].size() == 3) {
+                    scene.cameraState.position = {
+                        cameraJson["position"][0].get<float>(),
+                        cameraJson["position"][1].get<float>(),
+                        cameraJson["position"][2].get<float>()
+                    };
+                }
+                
+                // Front vector
+                if (cameraJson.contains("front") && cameraJson["front"].is_array() && 
+                    cameraJson["front"].size() == 3) {
+                    scene.cameraState.front = {
+                        cameraJson["front"][0].get<float>(),
+                        cameraJson["front"][1].get<float>(),
+                        cameraJson["front"][2].get<float>()
+                    };
+                }
+                
+                // Up vector
+                if (cameraJson.contains("up") && cameraJson["up"].is_array() && 
+                    cameraJson["up"].size() == 3) {
+                    scene.cameraState.up = {
+                        cameraJson["up"][0].get<float>(),
+                        cameraJson["up"][1].get<float>(),
+                        cameraJson["up"][2].get<float>()
+                    };
+                }
+                
+                // Other camera properties
+                if (cameraJson.contains("yaw")) {
+                    scene.cameraState.yaw = cameraJson["yaw"].get<float>();
+                    camera.Yaw = scene.cameraState.yaw;
+                }
+                if (cameraJson.contains("pitch")) {
+                    scene.cameraState.pitch = cameraJson["pitch"].get<float>();
+                    camera.Pitch = scene.cameraState.pitch;
+                }
+                if (cameraJson.contains("zoom")) {
+                    scene.cameraState.zoom = cameraJson["zoom"].get<float>();
+                    camera.Zoom = scene.cameraState.zoom;
+                }
+                
+                // Update camera vectors
+                camera.Position = scene.cameraState.position;
+                camera.Front = scene.cameraState.front;
+                camera.Up = scene.cameraState.up;
+                camera.updateCameraVectors();
             }
 
             // Load models
@@ -236,9 +303,12 @@ namespace Engine {
                 for (const auto& modelJson : sceneJson["models"]) {
                     try {
                         Model model;
+                        
+                        // Check if this is a model with a local path or a cube
                         if (modelJson.contains("localPath")) {
                             std::filesystem::path modelPath = sceneDir / modelJson["localPath"].get<std::string>();
-
+                            
+                            // Load model from file
                             model = *Engine::loadModel(modelPath.string());
                             model.path = modelJson["path"].get<std::string>();
                             model.directory = modelPath.parent_path().string();
@@ -291,8 +361,7 @@ namespace Engine {
                                     }
                                 }
                             }
-                        }
-                        else {
+                        } else {
                             // Creating a cube
                             model = Engine::createCube(
                                 glm::vec3(

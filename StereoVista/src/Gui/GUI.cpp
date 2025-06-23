@@ -148,7 +148,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                     { "Scene Files", "*.scene", "All Files", "*" }).result();
                 if (!selection.empty()) {
                     try {
-                        currentScene = Engine::loadScene(selection[0]);
+                        currentScene = Engine::loadScene(selection[0], camera);
                         currentSelectedIndex = currentScene.models.empty() ? -1 : 0;
                     }
                     catch (const std::exception& e) {
@@ -161,7 +161,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                     { "Scene Files", "*.scene", "All Files", "*" }).result();
                 if (!destination.empty()) {
                     try {
-                        Engine::saveScene(destination, currentScene);
+                        // Use the global camera variable
+                        Engine::saveScene(destination, currentScene, camera);
                     }
                     catch (const std::exception& e) {
                         std::cerr << "Failed to save scene: " << e.what() << std::endl;
@@ -679,7 +680,7 @@ void renderSettingsWindow() {
                 }
                 ImGui::SetItemTooltip("Vertical position of the radar (-1 to 1)");
 
-                if (ImGui::SliderFloat("Scale", &preferences.radarScale, 0.005f, 0.5f)) {
+                if (ImGui::SliderFloat("Scale", &preferences.radarScale, 0.001f, 0.5f)) {
                     currentScene.settings.radarScale = preferences.radarScale;
                     settingsChanged = true;
                 }

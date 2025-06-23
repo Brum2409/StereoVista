@@ -149,7 +149,7 @@ float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir) {
         return 0.0;
         
     float currentDepth = projCoords.z;
-    float bias = max(0.00001 * (1.0 - dot(normal, lightDir)), 0.0005);
+    float bias = max(0.001 * (1.0 - dot(normal, lightDir)), 0.0005);    
     
     float shadow = 0.0;
     vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
@@ -162,7 +162,8 @@ float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir) {
         }
     }
     
-    return shadow / 25.0; // (2*halfKernel+1)^2
+    const float sampleCount = pow(2 * halfKernel + 1, 2);
+    return shadow / sampleCount;
 }
 
 // ---- TRADITIONAL LIGHTING FUNCTIONS ----

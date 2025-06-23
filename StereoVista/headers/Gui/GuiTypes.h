@@ -33,7 +33,7 @@ namespace GUI {
         float voxelSize = 1.0f / 64.0f;
         int diffuseConeCount = 9;     // Number of cones for indirect diffuse (1, 5, or 9)
         float tracingMaxDistance = 1.41421356237; // Maximum distance for cone tracing in grid units (default: SQRT2)
-        int shadowSampleCount = 10;    // Number of samples for shadow cones
+        int shadowSampleCount = 18;    // Number of samples for shadow cones
         float shadowStepMultiplier = 0.15f; // Step size multiplier for shadows
     };
 
@@ -79,7 +79,7 @@ namespace GUI {
     struct ApplicationPreferences {
         bool isDarkTheme = true;
         float separation = 0.5f;
-        float convergence = 25.0f;
+        float convergence = 2.6f;
         float nearPlane = 0.1f;
         float farPlane = 200.0f;
         std::string currentPresetName = "Sphere";

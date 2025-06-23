@@ -26,6 +26,16 @@ const float ZOOM = 45.0f;
 
 class Camera {
 public:
+    // Camera state structure
+    struct CameraState {
+        glm::vec3 position;
+        glm::vec3 front;
+        glm::vec3 up;
+        float yaw;
+        float pitch;
+        float zoom;
+    };
+
     // Camera attributes
     glm::vec3 Position;
     glm::vec3 Front;
@@ -107,6 +117,29 @@ public:
     // Returns the projection matrix for the camera
     glm::mat4 GetProjectionMatrix(float aspectRatio, float nearPlane, float farPlane) const {
         return glm::perspective(glm::radians(Zoom), aspectRatio, nearPlane, farPlane);
+    }
+
+    // Gets the current camera state
+    CameraState GetState() const {
+        CameraState state;
+        state.position = Position;
+        state.front = Front;
+        state.up = Up;
+        state.yaw = Yaw;
+        state.pitch = Pitch;
+        state.zoom = Zoom;
+        return state;
+    }
+
+    // Sets the camera state
+    void SetState(const CameraState& state) {
+        Position = state.position;
+        Front = state.front;
+        Up = state.up;
+        Yaw = state.yaw;
+        Pitch = state.pitch;
+        Zoom = state.zoom;
+        updateCameraVectors();
     }
 
     // Updates the cursor information for cursor-based navigation
@@ -555,9 +588,6 @@ public:
         return distance;
     }
 
-private:
-    float lastScrollTime = 0.0f;
-
     // Calculates the Front, Right and Up vectors from the Yaw and Pitch angles
     void updateCameraVectors() {
         glm::vec3 front;
@@ -568,6 +598,9 @@ private:
         Right = glm::normalize(glm::cross(Front, WorldUp));
         Up = glm::normalize(glm::cross(Right, Front));
     }
+
+private:
+    float lastScrollTime = 0.0f;
 
     // Cubic easing function for smooth animation
     float easeOutCubic(float t) {

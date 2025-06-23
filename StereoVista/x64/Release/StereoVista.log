@@ -1,15 +1,8 @@
-﻿  imgui_style.cpp
-  Voxalizer.cpp
-  CursorManager.cpp
-  FragmentCursor.cpp
-  PlaneCursor.cpp
-  SphereCursor.cpp
-  GUI.cpp
-  main.cpp
+﻿  Voxalizer.cpp
   Generating code
-  6 of 8504 functions (<0.1%) were compiled, the rest were copied from previous compilation.
+  1 of 8510 functions (<0.1%) were compiled, the rest were copied from previous compilation.
     0 functions were new in current compilation
-    75 functions had inline decision re-evaluated but remain unchanged
+    76 functions had inline decision re-evaluated but remain unchanged
   Finished generating code
   StereoVista.vcxproj -> C:\Users\Benbrem\Downloads\Arbeit\Stereo-Demo-main\Stereo-Viewer-Project\bin\x64\Release\StereoVista.exe
           1 Datei(en) kopiert.

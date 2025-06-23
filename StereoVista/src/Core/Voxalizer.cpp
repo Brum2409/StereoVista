@@ -6,7 +6,7 @@ namespace Engine {
 
     Voxelizer::Voxelizer(int resolution)
         : m_resolution(resolution)
-        , m_voxelGridSize(2.0f)
+        , m_voxelGridSize(4.0f)
         , m_voxelTexture(0)
         , m_voxelShader(nullptr)
         , m_visualizationShader(nullptr)

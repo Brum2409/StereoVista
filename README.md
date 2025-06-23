@@ -85,7 +85,7 @@ All cursor types are managed by a unified **Cursor Manager** that:
   * Support for transparency, reflections and light bleeding effects
   
 * **Shadow Mapping**:
-  * High-resolution shadow maps (up to 4096²)
+  * High-resolution shadow maps
   * Directional light (sun) shadow casting
   * Real-time shadow updates with model manipulation
 
