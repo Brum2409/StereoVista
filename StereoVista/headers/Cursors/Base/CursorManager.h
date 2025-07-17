@@ -19,6 +19,12 @@ namespace Cursor {
 
         // Update cursor position based on ray casting
         void updateCursorPosition(GLFWwindow* window, const glm::mat4& projection, const glm::mat4& view, Engine::Shader* shader);
+        
+        // Update cursor position with control over when to actually calculate
+        void updateCursorPosition(GLFWwindow* window, const glm::mat4& projection, const glm::mat4& view, Engine::Shader* shader, bool forceRecalculate);
+        
+        // Reset frame calculation flag (call at start of each frame)
+        void resetFrameCalculationFlag();
 
         // Render all visible cursors
         void renderCursors(const glm::mat4& projection, const glm::mat4& view);
@@ -57,6 +63,7 @@ namespace Cursor {
         // Cached cursor position shared between cursor types
         glm::vec3 m_cursorPosition;
         bool m_cursorPositionValid;
+        bool m_cursorPositionCalculatedThisFrame;
 
         // Orbit center properties
         bool m_showOrbitCenter;

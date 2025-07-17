@@ -12,6 +12,7 @@ namespace Cursor {
     CursorManager::CursorManager() :
         m_cursorPosition(0.0f),
         m_cursorPositionValid(false),
+        m_cursorPositionCalculatedThisFrame(false),
         m_showOrbitCenter(false),
         m_orbitCenterColor(0.0f, 1.0f, 0.0f, 0.7f),
         m_orbitCenterSphereRadius(0.2f),
@@ -41,6 +42,15 @@ namespace Cursor {
 
     // Updates 3D cursor position based on mouse position and depth buffer
     void CursorManager::updateCursorPosition(GLFWwindow* window, const glm::mat4& projection, const glm::mat4& view, Engine::Shader* shader) {
+        updateCursorPosition(window, projection, view, shader, true);
+    }
+    
+    // Updates 3D cursor position with control over when to actually calculate
+    void CursorManager::updateCursorPosition(GLFWwindow* window, const glm::mat4& projection, const glm::mat4& view, Engine::Shader* shader, bool forceRecalculate) {
+        // If we already calculated this frame and not forcing recalculation, return
+        if (m_cursorPositionCalculatedThisFrame && !forceRecalculate) {
+            return;
+        }
         // Skip if ImGui wants mouse input
         if (ImGui::GetIO().WantCaptureMouse) {
             glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
@@ -98,7 +108,10 @@ namespace Cursor {
             // Update radius for sphere cursor based on camera distance
             m_sphereCursor->calculateRadius(camera.Position);
 
-            if (camera.IsPanning || (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS)) return;
+            if (camera.IsPanning || (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS)) {
+                m_cursorPositionCalculatedThisFrame = true;
+                return;
+            }
             glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
         }
         else {
@@ -108,9 +121,20 @@ namespace Cursor {
             m_fragmentCursor->setPositionValid(false);
             m_planeCursor->setPositionValid(false);
 
-            if (camera.IsPanning || (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS)) return;
+            if (camera.IsPanning || (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS)) {
+                m_cursorPositionCalculatedThisFrame = true;
+                return;
+            }
             glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
         }
+        
+        // Mark that cursor position has been calculated this frame
+        m_cursorPositionCalculatedThisFrame = true;
+    }
+    
+    // Reset frame calculation flag (call at start of each frame)
+    void CursorManager::resetFrameCalculationFlag() {
+        m_cursorPositionCalculatedThisFrame = false;
     }
 
     // Render visible 3D cursors in the scene

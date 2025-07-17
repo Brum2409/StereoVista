@@ -117,7 +117,6 @@ void UpdateGuiScale(int windowWidth, int windowHeight) {
     
     // Calculate new scale
     float newScale = CalculateGuiScale(windowWidth, windowHeight);
-    std::cout << "Calculated new scale: " << newScale << std::endl;
     
     // Always update on first call (when lastWindowWidth/Height are 0)
     bool isFirstCall = (g_GuiScale.lastWindowWidth == 0 && g_GuiScale.lastWindowHeight == 0);

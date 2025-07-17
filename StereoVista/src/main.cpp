@@ -1640,6 +1640,9 @@ int main() {
         // Set wireframe mode before rendering
         glPolygonMode(GL_FRONT_AND_BACK, camera.wireframe ? GL_LINE : GL_FILL);
 
+        // Reset cursor position calculation flag at start of frame
+        cursorManager.resetFrameCalculationFlag();
+        
         // Adjust camera movement speed based on distance
         float distanceToNearestObject = camera.getDistanceToNearestObject(camera, projection, view, currentScene.settings.farPlane, windowWidth, windowHeight);
         // Update camera's internal distance info AFTER getting it
@@ -1649,14 +1652,19 @@ int main() {
 
         // ---- Rendering ----
         if (isStereoWindow) {
-            // Render left eye to left buffer
+            // Render left eye to left buffer (cursor position will be calculated here first time)
             renderEye(GL_BACK_LEFT, leftProjection, leftView, shader, viewport, windowFlags, window);
-            // Render right eye to right buffer
+            // Render right eye to right buffer (cursor position will use cached value)
             renderEye(GL_BACK_RIGHT, rightProjection, rightView, shader, viewport, windowFlags, window);
         }
         else {
-            // Render mono view to default buffer (usually GL_BACK_LEFT or just GL_BACK)
-            renderEye(GL_BACK_LEFT, projection, view, shader, viewport, windowFlags, window); // Or use GL_BACK if not explicitly stereo
+            // Render mono view to default buffer (cursor position will be calculated here)
+            renderEye(GL_BACK_LEFT, projection, view, shader, viewport, windowFlags, window);
+        }
+        
+        // Update the cursor's captured position if available (after rendering)
+        if (cursorManager.isCursorPositionValid()) {
+            capturedCursorPos = cursorManager.getCursorPosition();
         }
 
         if (currentScene.settings.radarEnabled) {
@@ -1910,13 +1918,9 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
         renderZeroPlane(shader, projection, view, currentScene.settings.convergence);
     }
 
-    // Update cursor position after scene is rendered
-    cursorManager.updateCursorPosition(window, projection, view, shader);
-
-    // Update the cursor's captured position if available
-    if (cursorManager.isCursorPositionValid()) {
-        capturedCursorPos = cursorManager.getCursorPosition();
-    }
+    // Calculate cursor position (only once per frame for stereo consistency)
+    // For stereo: first call (left eye) calculates, second call (right eye) uses cached value
+    cursorManager.updateCursorPosition(window, projection, view, shader, false);
 
     // Update shader uniforms for cursors
     cursorManager.updateShaderUniforms(shader);
