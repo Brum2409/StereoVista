@@ -1,5 +1,6 @@
 #include "Engine/Input.h"
 #include "Engine/Window.h"
+#include "imgui/imgui_sytle.h"
 
 namespace Engine {
 	namespace Window {
@@ -54,7 +55,8 @@ namespace Engine {
 
 		void addWindowCallbacks() {
 			if (nativeWindow != nullptr) {
-				glfwSetFramebufferSizeCallback(nativeWindow, windowResizeCallback);			// Window resize callback
+				// NOTE: framebuffer resize callback is set up in main.cpp
+				// glfwSetFramebufferSizeCallback(nativeWindow, windowResizeCallback);			// Framebuffer resize callback
 				glfwSetKeyCallback(nativeWindow, Input::keyCallback);					// Window key callback
 				glfwSetCursorPosCallback(nativeWindow, Input::mousePosCallback);			// Window mouse position callback
 				glfwSetMouseButtonCallback(nativeWindow, Input::mouseButtonCallback);	// Window mouse button callback
@@ -66,6 +68,11 @@ namespace Engine {
 			windowHeight = height;
 			glViewport(0, 0, width, height);
 			printf("Window size is: %d x %d\n", width, height);
+			printf("Window resize callback called - about to call UpdateGuiScale\n");
+			
+			// Update GUI scaling based on new window dimensions
+			UpdateGuiScale(width, height);
+			printf("UpdateGuiScale call completed\n");
 		}
 
 		void close() {

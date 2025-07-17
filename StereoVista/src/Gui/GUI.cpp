@@ -9,6 +9,7 @@
 #include "Core/Camera.h"
 #include "Core/Voxalizer.h"
 #include "Cursors/Base/CursorManager.h"
+#include "imgui/imgui_sytle.h"
 
 using namespace GUI;
 
@@ -78,6 +79,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         return;
     }
+
+    // Check if GUI rescaling is needed
+    RescaleImGuiFonts(Engine::Window::nativeWindow, isDarkTheme);
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();

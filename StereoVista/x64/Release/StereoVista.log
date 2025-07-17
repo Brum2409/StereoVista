@@ -1,8 +1,9 @@
-﻿  main.cpp
+﻿  imgui_style.cpp
+  main.cpp
   Generating code
-  3 of 8512 functions (<0.1%) were compiled, the rest were copied from previous compilation.
-    1 functions were new in current compilation
-    114 functions had inline decision re-evaluated but remain unchanged
+  7 of 8516 functions (<0.1%) were compiled, the rest were copied from previous compilation.
+    0 functions were new in current compilation
+    122 functions had inline decision re-evaluated but remain unchanged
   Finished generating code
   StereoVista.vcxproj -> C:\Users\Benbrem\Downloads\Arbeit\Stereo-Demo-main\Stereo-Viewer-Project\bin\x64\Release\StereoVista.exe
           1 Datei(en) kopiert.

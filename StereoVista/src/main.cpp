@@ -17,6 +17,7 @@
 
 // ---- GUI and Dialog ----
 #include "imgui/imgui_incl.h"
+#include "imgui/imgui_sytle.h"
 #include <portable-file-dialogs.h>
 
 // ---- Utility Libraries ----
@@ -1480,6 +1481,11 @@ int main() {
         return -1;
     }
 
+    // Initialize GUI scaling based on current window size (only if window is valid)
+    if (Engine::Window::windowWidth > 0 && Engine::Window::windowHeight > 0) {
+        UpdateGuiScale(Engine::Window::windowWidth, Engine::Window::windowHeight);
+    }
+
     // Configure additional ImGui settings
     ImGuiViewportP* viewport = (ImGuiViewportP*)(void*)ImGui::GetMainViewport();
     ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNavFocus;
@@ -2594,6 +2600,9 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height)
     glViewport(0, 0, width, height);
     windowWidth = width;
     windowHeight = height;
+    
+    // Update GUI scaling based on new window dimensions
+    UpdateGuiScale(width, height);
 }
 
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
