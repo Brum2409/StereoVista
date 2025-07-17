@@ -112,6 +112,8 @@ namespace GUI {
         float radarScale = 0.03f;
         bool radarShowScene = true;
 
+        bool showZeroPlane = false;
+
         int skyboxType = SKYBOX_CUBEMAP;
         glm::vec3 skyboxSolidColor = glm::vec3(0.2f, 0.3f, 0.4f);
         glm::vec3 skyboxGradientTop = glm::vec3(0.1f, 0.1f, 0.3f);

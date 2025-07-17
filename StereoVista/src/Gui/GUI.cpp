@@ -691,6 +691,15 @@ void renderSettingsWindow() {
                     settingsChanged = true;
                 }
                 ImGui::SetItemTooltip("Show the scene models in the radar view");
+
+                ImGui::Separator();
+                ImGui::Text("Zero Plane Visualization");
+                
+                if (ImGui::Checkbox("Show Zero Plane", &preferences.showZeroPlane)) {
+                    currentScene.settings.showZeroPlane = preferences.showZeroPlane;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Display the zero plane in the visualization");
             }
 
             ImGui::EndTabItem();

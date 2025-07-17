@@ -20,6 +20,9 @@ namespace Engine {
         glm::vec2 radarPos = glm::vec2(0.8f, -0.8f);
         float radarScale = 0.2f;
         bool radarShowScene = true;
+        
+        // Zero plane visualization
+        bool showZeroPlane = false;
     };
 
     struct Scene {

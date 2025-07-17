@@ -57,6 +57,7 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& view, Engine::Shader* shader, ImGuiViewportP* viewport, ImGuiWindowFlags windowFlags, GLFWwindow* window);
 void renderModels(Engine::Shader* shader);
 void renderPointClouds(Engine::Shader* shader);
+void renderZeroPlane(Engine::Shader* shader, const glm::mat4& projection, const glm::mat4& view, float convergence);
 void DrawRadar(bool isStereoWindow, Camera camera, GLfloat focaldist, 
     glm::mat4 view, glm::mat4 projection, 
     glm::mat4 leftview, glm::mat4 leftprojection,
@@ -215,6 +216,10 @@ Engine::Voxelizer* voxelizer = nullptr;
 GLuint skyboxVAO, skyboxVBO, cubemapTexture;
 float ambientStrengthFromSkybox = 0.1f;
 Engine::Shader* skyboxShader = nullptr;
+
+// ---- Zero Plane Rendering ----
+Engine::Shader* zeroPlaneShader = nullptr;
+GLuint zeroPlaneVAO, zeroPlaneVBO, zeroPlaneEBO;
 
 glm::vec4 divw(glm::vec4 vec) {
     if (vec.w != 0) {
@@ -1360,6 +1365,15 @@ int main() {
         return -1;
     }
 
+    // ---- Initialize Zero Plane Shader ----
+    try {
+        zeroPlaneShader = Engine::loadShader("core/zeroPlaneVertexShader.glsl", "core/zeroPlaneFragmentShader.glsl");
+    }
+    catch (std::exception& e) {
+        std::cout << "Warning: Failed to load zero plane shader: " << e.what() << std::endl;
+        zeroPlaneShader = nullptr;
+    }
+
     // ---- Load Default cube ----
     // ---- Create Temp Default scene
 
@@ -1680,6 +1694,12 @@ void cleanup(Engine::Shader* shader) {
     glDeleteTextures(1, &cubemapTexture);
     delete skyboxShader;
 
+    // Delete zero plane resources
+    glDeleteVertexArrays(1, &zeroPlaneVAO);
+    glDeleteBuffers(1, &zeroPlaneVBO);
+    glDeleteBuffers(1, &zeroPlaneEBO);
+    delete zeroPlaneShader;
+
     // Delete shadow mapping resources
     glDeleteFramebuffers(1, &depthMapFBO);
     glDeleteTextures(1, &depthMap);
@@ -1878,6 +1898,11 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     // Render scene
     renderModels(shader);
     renderPointClouds(shader);
+    
+    // Render zero plane if enabled
+    if (currentScene.settings.showZeroPlane) {
+        renderZeroPlane(shader, projection, view, currentScene.settings.convergence);
+    }
 
     // Update cursor position after scene is rendered
     cursorManager.updateCursorPosition(window, projection, view, shader);
@@ -2119,6 +2144,95 @@ void renderPointClouds(Engine::Shader* shader) {
     }
 
     shader->setBool("isPointCloud", false);
+}
+
+void renderZeroPlane(Engine::Shader* shader, const glm::mat4& projection, const glm::mat4& view, float convergence) {
+    // Skip if zero plane shader is not loaded
+    if (!zeroPlaneShader) return;
+    
+    // Create quad geometry for zero plane (only once)
+    static bool initialized = false;
+    if (!initialized) {
+        // Quad vertices with texture coordinates
+        float vertices[] = {
+            // positions        // texture coords
+            -1.0f,  1.0f, 0.0f,  0.0f, 1.0f,
+            -1.0f, -1.0f, 0.0f,  0.0f, 0.0f,
+             1.0f, -1.0f, 0.0f,  1.0f, 0.0f,
+             1.0f,  1.0f, 0.0f,  1.0f, 1.0f
+        };
+        
+        unsigned int indices[] = {
+            0, 1, 2,
+            0, 2, 3
+        };
+        
+        glGenVertexArrays(1, &zeroPlaneVAO);
+        glGenBuffers(1, &zeroPlaneVBO);
+        glGenBuffers(1, &zeroPlaneEBO);
+        
+        glBindVertexArray(zeroPlaneVAO);
+        
+        glBindBuffer(GL_ARRAY_BUFFER, zeroPlaneVBO);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+        
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, zeroPlaneEBO);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
+        
+        // Position attribute
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+        
+        // Texture coordinate attribute
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+        glEnableVertexAttribArray(1);
+        
+        glBindVertexArray(0);
+        initialized = true;
+    }
+    
+    // Enable blending for transparency
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    
+    // Use zero plane shader
+    zeroPlaneShader->use();
+    
+    // Position the plane at convergence distance in world space
+    glm::vec3 planePosition = camera.Position + camera.Front * convergence;
+    
+    // Create billboard matrix that always faces the camera
+    // The plane's normal should point towards the camera
+    glm::vec3 forward = -camera.Front;  // Plane normal points toward camera
+    glm::vec3 right = camera.Right;     // Use camera's right vector
+    glm::vec3 up = camera.Up;           // Use camera's up vector
+    
+    // Construct billboard transformation matrix
+    glm::mat4 billboardMatrix = glm::mat4(1.0f);
+    billboardMatrix[0] = glm::vec4(right, 0.0f);
+    billboardMatrix[1] = glm::vec4(up, 0.0f);
+    billboardMatrix[2] = glm::vec4(forward, 0.0f);
+    billboardMatrix[3] = glm::vec4(planePosition, 1.0f);
+    
+    // Scale the plane to make it large enough to be visible
+    glm::mat4 scaleMatrix = glm::scale(glm::mat4(1.0f), glm::vec3(10.0f, 10.0f, 1.0f));
+    glm::mat4 model = billboardMatrix * scaleMatrix;
+    
+    // Set uniforms
+    zeroPlaneShader->setMat4("model", model);
+    zeroPlaneShader->setMat4("view", view);
+    zeroPlaneShader->setMat4("projection", projection);
+    zeroPlaneShader->setVec4("planeColor", glm::vec4(0.0f, 1.0f, 0.0f, 0.5f)); // Green with transparency
+    zeroPlaneShader->setFloat("convergence", convergence);
+    zeroPlaneShader->setVec3("cameraPos", camera.Position);
+    
+    // Render the quad
+    glBindVertexArray(zeroPlaneVAO);
+    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+    glBindVertexArray(0);
+    
+    // Disable blending
+    glDisable(GL_BLEND);
 }
 
 void DrawRadar(bool isStereoWindow, Camera camera, GLfloat focaldist, 
