@@ -814,14 +814,14 @@ void renderSettingsWindow() {
             ImGui::Text("Lighting System");
             ImGui::Separator();
 
-            const char* lightingModes[] = { "Shadow Mapping", "Voxel Cone Tracing" };
+            const char* lightingModes[] = { "Shadow Mapping", "Voxel Cone Tracing", "Radiance" };
             int currentLightingMode = static_cast<int>(preferences.lightingMode);
             if (ImGui::Combo("Lighting Mode", &currentLightingMode, lightingModes, IM_ARRAYSIZE(lightingModes))) {
                 preferences.lightingMode = static_cast<GUI::LightingMode>(currentLightingMode);
                 ::currentLightingMode = preferences.lightingMode; // Update the global variable
                 settingsChanged = true;
             }
-            ImGui::SetItemTooltip("Switch between traditional shadow mapping and voxel cone tracing for global illumination");
+            ImGui::SetItemTooltip("Switch between traditional shadow mapping, voxel cone tracing for global illumination, and radiance rendering");
 
             // Shadow mapping options
             if (preferences.lightingMode == GUI::LIGHTING_SHADOW_MAPPING) {
@@ -1029,6 +1029,27 @@ void renderSettingsWindow() {
 
                     ImGui::TreePop();
                 }
+            }
+
+            // Radiance rendering options
+            if (preferences.lightingMode == GUI::LIGHTING_RADIANCE) {
+                ImGui::Text("Radiance Rendering Settings");
+                
+                static bool enableDirectionalLight = true;
+                ImGui::Checkbox("Enable Directional Light", &enableDirectionalLight);
+                ImGui::SetItemTooltip("Enable simple directional lighting for Radiance mode");
+                
+                static float lightIntensity = 1.0f;
+                ImGui::SliderFloat("Light Intensity", &lightIntensity, 0.0f, 3.0f);
+                ImGui::SetItemTooltip("Adjust the intensity of the directional light");
+                
+                static glm::vec3 lightDirection = glm::vec3(-0.2f, -1.0f, -0.3f);
+                ImGui::SliderFloat3("Light Direction", &lightDirection.x, -1.0f, 1.0f);
+                ImGui::SetItemTooltip("Set the direction of the directional light");
+                
+                static glm::vec3 lightColor = glm::vec3(1.0f, 1.0f, 1.0f);
+                ImGui::ColorEdit3("Light Color", &lightColor.x);
+                ImGui::SetItemTooltip("Set the color of the directional light");
             }
 
             ImGui::Spacing();

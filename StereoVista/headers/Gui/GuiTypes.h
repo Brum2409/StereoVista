@@ -19,7 +19,8 @@ namespace GUI {
 
     enum LightingMode {
         LIGHTING_SHADOW_MAPPING,
-        LIGHTING_VOXEL_CONE_TRACING
+        LIGHTING_VOXEL_CONE_TRACING,
+        LIGHTING_RADIANCE
     };
 
     struct VCTSettings {

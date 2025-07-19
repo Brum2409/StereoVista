@@ -194,6 +194,7 @@ unsigned int depthMapFBO;
 unsigned int depthMap;
 const unsigned int SHADOW_WIDTH = 4096, SHADOW_HEIGHT = 4096;
 Engine::Shader* simpleDepthShader = nullptr;
+Engine::Shader* radianceShader = nullptr;
 
 GUI::LightingMode currentLightingMode = GUI::LIGHTING_SHADOW_MAPPING;
 bool enableShadows = true;
@@ -1375,6 +1376,15 @@ int main() {
         zeroPlaneShader = nullptr;
     }
 
+    // ---- Initialize Radiance Shader ----
+    try {
+        radianceShader = Engine::loadShader("core/radianceVertexShader.glsl", "core/radianceFragmentShader.glsl");
+    }
+    catch (std::exception& e) {
+        std::cout << "Warning: Failed to load radiance shader: " << e.what() << std::endl;
+        radianceShader = nullptr;
+    }
+
     // ---- Load Default cube ----
     // ---- Create Temp Default scene
 
@@ -1650,16 +1660,22 @@ int main() {
         // Now adjust speed using the updated internal value
         camera.AdjustMovementSpeed(distanceToNearestObject, largestDimension, currentScene.settings.farPlane); // Assuming largestDimension is calculated elsewhere
 
+        // ---- Shader Selection ----
+        Engine::Shader* activeShader = shader;  // Default to standard shader
+        if (currentLightingMode == GUI::LIGHTING_RADIANCE && radianceShader) {
+            activeShader = radianceShader;
+        }
+
         // ---- Rendering ----
         if (isStereoWindow) {
             // Render left eye to left buffer (cursor position will be calculated here first time)
-            renderEye(GL_BACK_LEFT, leftProjection, leftView, shader, viewport, windowFlags, window);
+            renderEye(GL_BACK_LEFT, leftProjection, leftView, activeShader, viewport, windowFlags, window);
             // Render right eye to right buffer (cursor position will use cached value)
-            renderEye(GL_BACK_RIGHT, rightProjection, rightView, shader, viewport, windowFlags, window);
+            renderEye(GL_BACK_RIGHT, rightProjection, rightView, activeShader, viewport, windowFlags, window);
         }
         else {
             // Render mono view to default buffer (cursor position will be calculated here)
-            renderEye(GL_BACK_LEFT, projection, view, shader, viewport, windowFlags, window);
+            renderEye(GL_BACK_LEFT, projection, view, activeShader, viewport, windowFlags, window);
         }
         
         // Update the cursor's captured position if available (after rendering)
@@ -1718,6 +1734,7 @@ void cleanup(Engine::Shader* shader) {
     glDeleteFramebuffers(1, &depthMapFBO);
     glDeleteTextures(1, &depthMap);
     delete simpleDepthShader;
+    delete radianceShader;
 
     // Delete shader
     delete shader;
@@ -1908,6 +1925,20 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
         }
         shader->setInt("numLights", std::min((int)pointLights.size(), MAX_LIGHTS));
     }
+    // Radiance rendering specific setup
+    else if (currentLightingMode == GUI::LIGHTING_RADIANCE) {
+        // Set simple directional light for radiance mode
+        shader->setVec3("dirLight.direction", glm::vec3(-0.2f, -1.0f, -0.3f));
+        shader->setVec3("dirLight.ambient", glm::vec3(0.05f, 0.05f, 0.05f));
+        shader->setVec3("dirLight.diffuse", glm::vec3(0.8f, 0.8f, 0.8f));
+        shader->setVec3("dirLight.specular", glm::vec3(1.0f, 1.0f, 1.0f));
+        shader->setFloat("dirLight.intensity", 1.0f);
+        
+        // Set point cloud rendering parameters
+        shader->setFloat("pointCloudDotSize", 2.0f);
+        shader->setFloat("pointOpacity", 0.8f);
+        shader->setBool("intensityColorCoding", false);
+    }
 
     // Render scene
     renderModels(shader);
@@ -1922,7 +1953,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     // For stereo: first call (left eye) calculates, second call (right eye) uses cached value
     cursorManager.updateCursorPosition(window, projection, view, shader, false);
 
-    // Update shader uniforms for cursors
+    // Update shader uniforms for cursors (use active shader, not original shader)
     cursorManager.updateShaderUniforms(shader);
 
     // Render orbit center if needed
@@ -2894,9 +2925,16 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
     }
 
     if (key == GLFW_KEY_L && action == GLFW_PRESS) {
-        // Toggle between shadow mapping and voxel cone tracing
-        currentLightingMode = (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING) ?
-            GUI::LIGHTING_VOXEL_CONE_TRACING : GUI::LIGHTING_SHADOW_MAPPING;
+        // Cycle through lighting modes: Shadow Mapping -> Voxel Cone Tracing -> Radiance -> Shadow Mapping
+        if (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING) {
+            currentLightingMode = GUI::LIGHTING_VOXEL_CONE_TRACING;
+        }
+        else if (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
+            currentLightingMode = GUI::LIGHTING_RADIANCE;
+        }
+        else {
+            currentLightingMode = GUI::LIGHTING_SHADOW_MAPPING;
+        }
 
 
         // Reset OpenGL state when switching modes
