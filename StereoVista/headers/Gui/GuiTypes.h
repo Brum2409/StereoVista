@@ -94,6 +94,20 @@ namespace GUI {
         LightingMode lightingMode = LIGHTING_SHADOW_MAPPING;
         bool enableShadows = true;
         VCTSettings vctSettings;
+        
+        // Radiance raytracing settings
+        struct RadianceSettings {
+            bool enableRaytracing = true;
+            int maxBounces = 2;
+            int samplesPerPixel = 1;
+            float rayMaxDistance = 50.0f;
+            bool enableIndirectLighting = true;
+            bool enableEmissiveLighting = true;
+            float indirectIntensity = 0.3f;
+            float skyIntensity = 1.0f;
+            float emissiveIntensity = 1.0f;
+            float materialRoughness = 0.5f;
+        } radianceSettings;
 
         // Scroll and movement settings
         float scrollMomentum = 0.5f;

@@ -200,6 +200,7 @@ GUI::LightingMode currentLightingMode = GUI::LIGHTING_SHADOW_MAPPING;
 bool enableShadows = true;
 
 GUI::VCTSettings vctSettings;
+GUI::ApplicationPreferences::RadianceSettings radianceSettings;
 
 // Predefined cubemap paths
 std::vector<GUI::CubemapPreset> cubemapPresets = {
@@ -1927,17 +1928,92 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     }
     // Radiance rendering specific setup
     else if (currentLightingMode == GUI::LIGHTING_RADIANCE) {
-        // Set simple directional light for radiance mode
-        shader->setVec3("dirLight.direction", glm::vec3(-0.2f, -1.0f, -0.3f));
-        shader->setVec3("dirLight.ambient", glm::vec3(0.05f, 0.05f, 0.05f));
-        shader->setVec3("dirLight.diffuse", glm::vec3(0.8f, 0.8f, 0.8f));
-        shader->setVec3("dirLight.specular", glm::vec3(1.0f, 1.0f, 1.0f));
-        shader->setFloat("dirLight.intensity", 1.0f);
+        // Set raytracing parameters from GUI settings
+        shader->setBool("enableRaytracing", radianceSettings.enableRaytracing);
+        shader->setInt("maxBounces", radianceSettings.maxBounces);
+        shader->setInt("samplesPerPixel", radianceSettings.samplesPerPixel);
+        shader->setFloat("rayMaxDistance", radianceSettings.rayMaxDistance);
+        shader->setBool("enableIndirectLighting", radianceSettings.enableIndirectLighting);
+        shader->setBool("enableEmissiveLighting", radianceSettings.enableEmissiveLighting);
+        shader->setFloat("indirectIntensity", radianceSettings.indirectIntensity);
+        shader->setFloat("skyIntensity", radianceSettings.skyIntensity);
+        shader->setFloat("emissiveIntensity", radianceSettings.emissiveIntensity);
+        shader->setFloat("materialRoughness", radianceSettings.materialRoughness);
         
-        // Set point cloud rendering parameters
-        shader->setFloat("pointCloudDotSize", 2.0f);
-        shader->setFloat("pointOpacity", 0.8f);
-        shader->setBool("intensityColorCoding", false);
+        // No camera matrices needed - using rasterized fragment positions
+        
+        // Set actual scene lights (same as other modes)
+        updatePointLights();
+        
+        // Set point light uniforms
+        for (int i = 0; i < pointLights.size() && i < MAX_LIGHTS; i++) {
+            std::string lightName = "pointLights[" + std::to_string(i) + "]";
+            shader->setVec3(lightName + ".position", pointLights[i].position);
+            shader->setVec3(lightName + ".color", pointLights[i].color);
+            shader->setFloat(lightName + ".intensity", pointLights[i].intensity);
+        }
+        shader->setInt("numPointLights", std::min((int)pointLights.size(), MAX_LIGHTS));
+        
+        // Set sun properties
+        shader->setBool("sun.enabled", sun.enabled);
+        shader->setVec3("sun.direction", sun.direction);
+        shader->setVec3("sun.color", sun.color);
+        shader->setFloat("sun.intensity", sun.intensity);
+        
+        // Extract triangle data from scene models (simplified for performance)
+        int triangleCount = 0;
+        const int MAX_TRIANGLES = 64; // Match shader constant
+        
+        for (const auto& model : currentScene.models) {
+            if (triangleCount >= MAX_TRIANGLES) break;
+            
+            for (const auto& mesh : model.getMeshes()) {
+                if (triangleCount >= MAX_TRIANGLES) break;
+                
+                // Calculate model matrix for this model
+                glm::mat4 modelMatrix = glm::mat4(1.0f);
+                modelMatrix = glm::translate(modelMatrix, model.position);
+                modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.x), glm::vec3(1, 0, 0));
+                modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.y), glm::vec3(0, 1, 0));
+                modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.z), glm::vec3(0, 0, 1));
+                modelMatrix = glm::scale(modelMatrix, model.scale);
+                
+                // Get mesh vertices and indices directly (they are public members)
+                const auto& vertices = mesh.vertices;
+                const auto& indices = mesh.indices;
+                
+                // Extract triangles (simplified - sample every few triangles for performance)
+                for (size_t i = 0; i < indices.size() && triangleCount < MAX_TRIANGLES; i += 9) { // Skip triangles for performance
+                    if (i + 2 < indices.size()) {
+                        // Get triangle vertices
+                        glm::vec3 v0 = glm::vec3(modelMatrix * glm::vec4(vertices[indices[i]].position, 1.0f));
+                        glm::vec3 v1 = glm::vec3(modelMatrix * glm::vec4(vertices[indices[i+1]].position, 1.0f));
+                        glm::vec3 v2 = glm::vec3(modelMatrix * glm::vec4(vertices[indices[i+2]].position, 1.0f));
+                        
+                        // Calculate triangle normal
+                        glm::vec3 normal = normalize(cross(v1 - v0, v2 - v0));
+                        
+                        // Set triangle data
+                        std::string triPrefix = "triangles[" + std::to_string(triangleCount) + "]";
+                        shader->setVec3(triPrefix + ".v0", v0);
+                        shader->setVec3(triPrefix + ".v1", v1);
+                        shader->setVec3(triPrefix + ".v2", v2);
+                        shader->setVec3(triPrefix + ".normal", normal);
+                        shader->setVec3(triPrefix + ".color", model.color);
+                        shader->setFloat(triPrefix + ".emissiveness", model.emissive);
+                        shader->setFloat(triPrefix + ".shininess", model.shininess);
+                        shader->setInt(triPrefix + ".materialId", triangleCount);
+                        
+                        triangleCount++;
+                    }
+                }
+            }
+        }
+        
+        shader->setInt("numTriangles", triangleCount);
+        
+        // Disable ground plane for pure raytracing (was causing unwanted lighting)
+        shader->setBool("hasGroundPlane", false);
     }
 
     // Render scene

@@ -34,6 +34,7 @@ extern bool orbitFollowsCursor;
 extern GUI::LightingMode currentLightingMode;
 extern bool enableShadows;
 extern GUI::VCTSettings vctSettings;
+extern GUI::ApplicationPreferences::RadianceSettings radianceSettings;
 
 // Selection state for object interaction
 extern enum class SelectedType {
@@ -1033,23 +1034,74 @@ void renderSettingsWindow() {
 
             // Radiance rendering options
             if (preferences.lightingMode == GUI::LIGHTING_RADIANCE) {
-                ImGui::Text("Radiance Rendering Settings");
+                ImGui::Text("Radiance Raytracing Settings");
                 
-                static bool enableDirectionalLight = true;
-                ImGui::Checkbox("Enable Directional Light", &enableDirectionalLight);
-                ImGui::SetItemTooltip("Enable simple directional lighting for Radiance mode");
+                if (ImGui::Checkbox("Enable Raytracing", &preferences.radianceSettings.enableRaytracing)) {
+                    ::radianceSettings.enableRaytracing = preferences.radianceSettings.enableRaytracing;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Enable proper raytracing from camera through pixels");
                 
-                static float lightIntensity = 1.0f;
-                ImGui::SliderFloat("Light Intensity", &lightIntensity, 0.0f, 3.0f);
-                ImGui::SetItemTooltip("Adjust the intensity of the directional light");
+                if (ImGui::SliderInt("Max Bounces", &preferences.radianceSettings.maxBounces, 1, 4)) {
+                    ::radianceSettings.maxBounces = preferences.radianceSettings.maxBounces;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Maximum number of ray bounces (1=direct lighting only, 2+=indirect lighting)");
                 
-                static glm::vec3 lightDirection = glm::vec3(-0.2f, -1.0f, -0.3f);
-                ImGui::SliderFloat3("Light Direction", &lightDirection.x, -1.0f, 1.0f);
-                ImGui::SetItemTooltip("Set the direction of the directional light");
+                if (ImGui::SliderInt("Samples Per Pixel", &preferences.radianceSettings.samplesPerPixel, 1, 4)) {
+                    ::radianceSettings.samplesPerPixel = preferences.radianceSettings.samplesPerPixel;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Number of rays cast per pixel (higher = better quality, lower performance)");
                 
-                static glm::vec3 lightColor = glm::vec3(1.0f, 1.0f, 1.0f);
-                ImGui::ColorEdit3("Light Color", &lightColor.x);
-                ImGui::SetItemTooltip("Set the color of the directional light");
+                if (ImGui::SliderFloat("Ray Max Distance", &preferences.radianceSettings.rayMaxDistance, 10.0f, 100.0f)) {
+                    ::radianceSettings.rayMaxDistance = preferences.radianceSettings.rayMaxDistance;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Maximum distance for ray casting");
+                
+                if (ImGui::Checkbox("Enable Indirect Lighting", &preferences.radianceSettings.enableIndirectLighting)) {
+                    ::radianceSettings.enableIndirectLighting = preferences.radianceSettings.enableIndirectLighting;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Enable indirect lighting through ray bounces");
+                
+                if (ImGui::Checkbox("Enable Emissive Lighting", &preferences.radianceSettings.enableEmissiveLighting)) {
+                    ::radianceSettings.enableEmissiveLighting = preferences.radianceSettings.enableEmissiveLighting;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Use emissive objects as light sources");
+                
+                if (ImGui::SliderFloat("Indirect Intensity", &preferences.radianceSettings.indirectIntensity, 0.0f, 1.0f)) {
+                    ::radianceSettings.indirectIntensity = preferences.radianceSettings.indirectIntensity;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Intensity of indirect lighting contribution");
+                
+                if (ImGui::SliderFloat("Sky Intensity", &preferences.radianceSettings.skyIntensity, 0.0f, 2.0f)) {
+                    ::radianceSettings.skyIntensity = preferences.radianceSettings.skyIntensity;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Brightness of sky lighting when rays miss geometry");
+                
+                if (ImGui::SliderFloat("Emissive Intensity", &preferences.radianceSettings.emissiveIntensity, 0.0f, 3.0f)) {
+                    ::radianceSettings.emissiveIntensity = preferences.radianceSettings.emissiveIntensity;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Multiplier for emissive object brightness");
+                
+                if (ImGui::SliderFloat("Material Roughness", &preferences.radianceSettings.materialRoughness, 0.0f, 1.0f)) {
+                    ::radianceSettings.materialRoughness = preferences.radianceSettings.materialRoughness;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Global material roughness (0=mirror, 1=diffuse)");
+                
+                ImGui::Separator();
+                ImGui::Text("Features:");
+                ImGui::BulletText("Camera-to-pixel raytracing");
+                ImGui::BulletText("Uses actual scene lights (sun + point lights)");
+                ImGui::BulletText("Material property propagation through bounces");
+                ImGui::BulletText("Proper BRDF evaluation");
             }
 
             ImGui::Spacing();
