@@ -54,11 +54,11 @@ vec3 calculatePointLight(const PointLight light) {
 }
 
 bool isInsideCube(const vec3 p, float e) { 
-    // Scale the boundary check based on the actual grid size
-    float scaleFactor = 2.0 / gridSize;
-    return abs(p.x * scaleFactor) < 1 + e && 
-           abs(p.y * scaleFactor) < 1 + e && 
-           abs(p.z * scaleFactor) < 1 + e; 
+    // Check if the world position is within the voxel grid bounds
+    float halfGrid = gridSize * 0.5;
+    return abs(p.x) < halfGrid + e && 
+           abs(p.y) < halfGrid + e && 
+           abs(p.z) < halfGrid + e; 
 }
 
 void main() {
@@ -93,11 +93,9 @@ void main() {
     // Ensure colors are in a reasonable range
     finalColor = clamp(finalColor, vec3(0.0), vec3(1.0));
 
-    // Scale world position to normalized coordinates based on grid size
-    vec3 scaledPos = worldPositionFrag * (2.0 / gridSize);
-    
-    // Map from [-1,1] to [0,1] range
-    vec3 normalizedPos = scaledPos * 0.5 + 0.5;
+    // Convert world position to normalized voxel coordinates [0,1]
+    float halfGrid = gridSize * 0.5;
+    vec3 normalizedPos = (worldPositionFrag + halfGrid) / gridSize;
     
     // Get texture dimensions
     ivec3 texDim = imageSize(texture3D);

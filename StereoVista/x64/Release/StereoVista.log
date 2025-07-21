@@ -1,12 +1,8 @@
-﻿  CursorManager.cpp
-  FragmentCursor.cpp
-  SphereCursor.cpp
-  GUI.cpp
-  main.cpp
+﻿  GUI.cpp
   Generating code
-  36 of 8518 functions ( 0.4%) were compiled, the rest were copied from previous compilation.
+  1 of 8522 functions (<0.1%) were compiled, the rest were copied from previous compilation.
     0 functions were new in current compilation
-    82 functions had inline decision re-evaluated but remain unchanged
+    76 functions had inline decision re-evaluated but remain unchanged
   Finished generating code
   StereoVista.vcxproj -> C:\Users\Benbrem\Downloads\Arbeit\Stereo-Demo-main\Stereo-Viewer-Project\bin\x64\Release\StereoVista.exe
           1 Datei(en) kopiert.

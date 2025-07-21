@@ -968,35 +968,32 @@ void renderSettingsWindow() {
                 // Voxel Grid Settings
                 if (ImGui::TreeNode("Voxel Grid Settings")) {
                     float gridSize = voxelizer->getVoxelGridSize();
-                    if (ImGui::SliderFloat("Grid Size", &gridSize, 1.0f, 50.0f)) {
+                    if (ImGui::SliderFloat("Grid Dimensions", &gridSize, 1.0f, 50.0f)) {
                         voxelizer->setVoxelGridSize(gridSize);
                     }
-                    ImGui::SetItemTooltip("Size of the voxel grid in world units");
+                    ImGui::SetItemTooltip("World space area coverage for voxelization (larger = more world captured, more voxels)");
 
                     float voxelSize = preferences.vctSettings.voxelSize;
-                    if (ImGui::SliderFloat("Voxel Size", &voxelSize, 1.0f / 256.0f, 1.0f / 32.0f, "%.5f")) {
+                    if (ImGui::SliderFloat("VCT Voxel Resolution", &voxelSize, 1.0f / 256.0f, 1.0f / 32.0f, "%.5f")) {
                         preferences.vctSettings.voxelSize = voxelSize;
                         vctSettings.voxelSize = voxelSize;
                         settingsChanged = true;
                     }
-                    ImGui::SetItemTooltip("Size of individual voxels (smaller = more detail but slower)");
+                    ImGui::SetItemTooltip("Voxel resolution for cone tracing calculations (smaller = higher quality but slower)");
 
-                    static int mipmapLevel = 0;
-                    if (ImGui::SliderInt("Mipmap Level", &mipmapLevel, 0, 7)) {
-                        // Optionally update mipmap level used for rendering
-                    }
-                    ImGui::SetItemTooltip("Mipmap level used for voxel cone tracing (higher = blurrier but faster)");
+                    // Note: Mipmap level is controlled by increaseState()/decreaseState() via keyboard shortcuts
 
                     ImGui::TreePop();
                 }
 
                 // Visualization settings
                 if (ImGui::TreeNode("Visualization Settings")) {
-                    bool useRayCast = voxelizer->useRayCastVisualization;
-                    if (ImGui::Checkbox("Use Ray-Cast Visualization", &useRayCast)) {
-                        voxelizer->useRayCastVisualization = useRayCast;
+                    // Debug cube display size (independent of grid dimensions)
+                    float debugVoxelSize = voxelizer->debugVoxelSize;
+                    if (ImGui::SliderFloat("Debug Cube Size", &debugVoxelSize, 0.001f, 0.1f, "%.4f")) {
+                        voxelizer->debugVoxelSize = debugVoxelSize;
                     }
-                    ImGui::SetItemTooltip("Ray-cast rendering provides smoother visualization");
+                    ImGui::SetItemTooltip("Visual size of debug voxel cubes (affected by mipmap level)");
 
                     float opacity = voxelizer->voxelOpacity;
                     if (ImGui::SliderFloat("Voxel Opacity", &opacity, 0.0f, 1.0f)) {

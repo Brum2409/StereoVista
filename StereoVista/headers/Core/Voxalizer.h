@@ -10,14 +10,14 @@ namespace Engine {
         enum VisualizationMode {
             VISUALIZATION_NORMAL,
             VISUALIZATION_LUMINANCE,
-            VISUALIZATION_ALPHA
+            VISUALIZATION_ALPHA,
+            VISUALIZATION_EMISSIVE
         };
 
         bool showDebugVisualization = false;
-        float debugVoxelSize = 0.1f;
+        float debugVoxelSize = 0.02f;  // Fixed size for debug voxel display (independent of grid size)
         float voxelOpacity = 0.5f;   // Controls transparency of visualized voxels
         float voxelColorIntensity = 1.0f; // Controls brightness of voxel colors
-        bool useRayCastVisualization = false; // Toggle between ray casting(currently broken) and individual cubes
         VisualizationMode visualizationMode = VISUALIZATION_NORMAL;
 
         Voxelizer(int resolution = 128);
@@ -35,7 +35,18 @@ namespace Engine {
         void decreaseState();
 
         void cycleVisualizationMode() {
-            visualizationMode = static_cast<VisualizationMode>((static_cast<int>(visualizationMode) + 1) % 3);
+            visualizationMode = static_cast<VisualizationMode>((static_cast<int>(visualizationMode) + 1) % 4);
+        }
+
+        // Calculate appropriate mipmap level based on distance from camera
+        int calculateMipmapLevel(float distanceFromCamera) const {
+            // Distance-based LOD selection with faster falloff
+            // Only very close to camera uses highest detail (level 0)
+            // Further distances quickly scale up to lower detail
+            float lodFactor = distanceFromCamera / 2.0f; // Smaller reference = faster falloff
+            int level = static_cast<int>(std::floor(std::log2(std::max(0.5f, lodFactor))));
+            int maxLevels = static_cast<int>(std::log2(m_resolution));
+            return std::clamp(level, 0, maxLevels);
         }
 
         void clearVoxelTexture() {
@@ -77,24 +88,16 @@ namespace Engine {
 
         // Visualization variables
         int m_state = 0; // Mipmap level for visualization
-        Shader* m_visualizationShader;
-        Shader* m_worldPositionShader;
         Shader* m_voxelCubeShader;   // Shader for rendering individual voxel cubes
-
-        // Screen quad for visualization
-        GLuint m_quadVAO, m_quadVBO;
 
         // Cube for visualization
         GLuint m_cubeVAO, m_cubeVBO;
-
-        // FBO and textures for front/back faces
-        GLuint m_frontFBO, m_backFBO;
-        GLuint m_frontTexture, m_backTexture;
 
         // Voxel data for direct rendering
         struct VoxelData {
             glm::vec3 position;
             glm::vec4 color;
+            int mipmapLevel;  // Store the mipmap level for proper size rendering
         };
         std::vector<VoxelData> m_visibleVoxels;
         GLuint m_voxelInstanceVBO;
@@ -110,11 +113,9 @@ namespace Engine {
 
         void initializeVoxelTexture();
         void initializeVisualization();
-        void setupScreenQuad();
         void setupUnitCube();
-        void renderCubeFaces(const glm::vec3& cameraPos, const glm::mat4& projection, const glm::mat4& view);
         void renderVoxelsAsCubes(const glm::vec3& cameraPos, const glm::mat4& projection, const glm::mat4& view);
-        void updateVisibleVoxels();
+        void updateVisibleVoxels(const glm::vec3& cameraPos);
     };
 
 } 

@@ -211,119 +211,208 @@ vec3 calculateAmbientFromSkybox(vec3 normal) {
 }
 
 // ---- VOXEL CONE TRACING CORE FUNCTIONS ----
-// Returns shadow intensity using cone tracing - ORIGINAL implementation
+// Improved shadow cone tracing with proper aperture and sampling
 float traceShadowCone(vec3 from, vec3 direction, float targetDistance) {
     if (!vctSettings.shadows) return 1.0; // No shadow
     
-    // Push start position slightly along normal to avoid self-shadowing
-    from += normalize(fs_in.Normal) * 0.05f;
+    // Better self-shadow avoidance - use surface normal
+    vec3 normal = normalize(fs_in.Normal);
+    from += normal * max(2.0 * voxelSize, 0.01);
     
-    float acc = 0.0;
-    float dist = 3.0 * voxelSize;
-    float stopDist = targetDistance - 16.0 * voxelSize;
+    // Cone parameters for soft shadows
+    const float CONE_APERTURE = 0.1; // Controls shadow softness (0.1 = ~6 degrees)
+    const float MIN_DIAMETER = voxelSize;
     
-    // Get configurable parameters
-    int maxSamples = vctSettings.shadowSampleCount;
-    float stepMultiplier = vctSettings.shadowStepMultiplier;
+    float occlusion = 0.0;
+    float dist = voxelSize; // Start closer for better detail
+    float maxDist = min(targetDistance * 0.95, vctSettings.tracingMaxDistance);
     
-    for (int i = 0; i < maxSamples && dist < stopDist && acc < 0.95; i++) {
+    // Dynamic step size based on distance
+    for (int i = 0; i < vctSettings.shadowSampleCount && dist < maxDist && occlusion < 0.98; i++) {
         vec3 samplePos = from + dist * direction;
         if (!isInVoxelGrid(samplePos)) break;
         
+        // Calculate cone radius at current distance
+        float coneRadius = max(MIN_DIAMETER, CONE_APERTURE * dist);
+        
+        // Determine mipmap level based on cone radius
+        float mipmapLevel = max(0.0, log2(coneRadius / voxelSize));
+        mipmapLevel = min(mipmapLevel, MIPMAP_HARDCAP);
+        
         vec3 texCoord = worldToVoxelCoord(samplePos);
-        float l = pow(dist, 2.0); // Inverse square falloff
         
-        // Multi-level sampling improves shadow quality
-        float s1 = 0.062 * textureLod(voxelGrid, texCoord, 1.0 + 0.75 * l).a;
-        float s2 = 0.135 * textureLod(voxelGrid, texCoord, min(4.5 * l, MIPMAP_HARDCAP)).a;
-        float shadow = s1 + s2;
+        // Multi-sample within cone for better quality
+        vec4 samples = vec4(0.0);
+        samples.x = textureLod(voxelGrid, texCoord, mipmapLevel).a;
         
-        acc += (1.0 - acc) * shadow;
-        dist += 0.9 * voxelSize * (1.0 + stepMultiplier * l); // Use configurable step size multiplier
+        // Add offset samples for cone aperture (jittered sampling)
+        if (coneRadius > voxelSize * 1.5) {
+            vec3 offset1 = orthogonal(direction) * coneRadius * 0.3;
+            vec3 offset2 = cross(direction, offset1) * coneRadius * 0.3;
+            
+            samples.y = textureLod(voxelGrid, worldToVoxelCoord(samplePos + offset1), mipmapLevel).a;
+            samples.z = textureLod(voxelGrid, worldToVoxelCoord(samplePos + offset2), mipmapLevel).a;
+            samples.w = textureLod(voxelGrid, worldToVoxelCoord(samplePos - offset1), mipmapLevel).a;
+        }
+        
+        // Average samples for smoother shadows
+        float shadowValue = (samples.x + samples.y + samples.z + samples.w) * 0.25;
+        
+        // Distance-based attenuation for realistic falloff
+        float attenuation = 1.0 - smoothstep(0.0, maxDist, dist);
+        shadowValue *= attenuation;
+        
+        // Volumetric accumulation
+        occlusion += (1.0 - occlusion) * shadowValue;
+        
+        // Adaptive step size - larger steps for distant samples
+        float stepSize = voxelSize * (1.0 + coneRadius / voxelSize * 0.5);
+        dist += stepSize * vctSettings.shadowStepMultiplier;
     }
     
-    return 1.0 - pow(smoothstep(0.0, 1.0, acc * 1.4), 1.0 / 1.4);
+    // Smooth shadow transition
+    return 1.0 - smoothstep(0.0, 1.0, occlusion);
 }
 
-// Traces a diffuse voxel cone - optimized with configurable parameters
+// Improved diffuse voxel cone tracing with better sampling
 vec3 traceDiffuseVoxelCone(vec3 from, vec3 direction) {
     direction = normalize(direction);
-    const float CONE_SPREAD = 0.325;
+    
+    // Cone parameters - wider cone for diffuse lighting
+    const float CONE_SPREAD = 0.325; // ~18.6 degrees
+    const float MIN_CONE_RADIUS = voxelSize;
     
     vec4 acc = vec4(0.0);
-    float dist = 0.25;
+    float dist = voxelSize * 0.5; // Start closer to surface
     
-    // Add jitter to starting distance to reduce banding
-    dist += voxelSize * 0.1 * fract(sin(dot(direction.xy, vec2(12.9898, 78.233))) * 43758.5453);
+    // Add temporal jitter to reduce banding artifacts
+    float jitter = fract(sin(dot(fs_in.FragPos.xy + direction.xy, vec2(12.9898, 78.233))) * 43758.5453);
+    dist += voxelSize * 0.2 * jitter;
     
-    // Use configurable maximum tracing distance
-    float maxDist = min(vctSettings.tracingMaxDistance, SQRT2); 
+    float maxDist = min(vctSettings.tracingMaxDistance, SQRT2 * 1.2);
     
-    // Fewer iterations with more adaptive step size for better performance
-    for (int i = 0; i < 6 && dist < maxDist && acc.a < 0.95; i++) {
+    // Improved sampling with variable step count based on distance
+    int maxSteps = 8; // Increased for better quality
+    for (int i = 0; i < maxSteps && dist < maxDist && acc.a < 0.95; i++) {
         vec3 samplePos = from + dist * direction;
         if (!isInVoxelGrid(samplePos)) break;
         
-        vec3 texCoord = worldToVoxelCoord(samplePos);
-        float level = log2(1.0 + CONE_SPREAD * dist / voxelSize);
+        // Calculate cone radius and appropriate mipmap level
+        float coneRadius = max(MIN_CONE_RADIUS, CONE_SPREAD * dist);
+        float level = max(0.0, log2(coneRadius / voxelSize * 1.2)); // Slightly faster LOD
         level = min(level, MIPMAP_HARDCAP);
         
-        // Single sample per iteration for better performance
-        vec4 voxel = textureLod(voxelGrid, texCoord, level);
+        vec3 texCoord = worldToVoxelCoord(samplePos);
         
-        // Improved blending factor to reduce cone visibility
-        float blendFactor = 0.1 * (1.0 + level);
+        // Multi-sample for larger cones to reduce aliasing
+        vec4 voxel = vec4(0.0);
+        float sampleWeight = 1.0;
+        
+        if (coneRadius > voxelSize * 2.0 && i > 1) {
+            // Sample multiple points within the cone
+            vec3 ortho1 = orthogonal(direction);
+            vec3 ortho2 = cross(direction, ortho1);
+            float offset = coneRadius * 0.25;
+            
+            voxel += textureLod(voxelGrid, texCoord, level); // Center
+            voxel += textureLod(voxelGrid, worldToVoxelCoord(samplePos + ortho1 * offset), level);
+            voxel += textureLod(voxelGrid, worldToVoxelCoord(samplePos - ortho1 * offset), level);
+            voxel += textureLod(voxelGrid, worldToVoxelCoord(samplePos + ortho2 * offset), level);
+            voxel += textureLod(voxelGrid, worldToVoxelCoord(samplePos - ortho2 * offset), level);
+            voxel *= 0.2; // Average 5 samples
+            sampleWeight = 1.2; // Boost multi-sample contribution
+        } else {
+            voxel = textureLod(voxelGrid, texCoord, level);
+        }
+        
+        // Distance-based attenuation for realistic lighting falloff
+        float distAttenuation = 1.0 / (1.0 + 0.1 * dist);
+        
+        // Improved blending with energy conservation
+        float blendFactor = 0.08 * (1.0 + 0.5 * level) * sampleWeight * distAttenuation;
         acc += blendFactor * voxel * (1.0 - acc.a);
         
-        // More graduated step size adjustment
-        dist += voxelSize * (1.5 + 0.8 * level);
+        // Adaptive step size - faster steps for distant samples
+        float stepMultiplier = 1.8 + 0.6 * level;
+        dist += voxelSize * stepMultiplier;
     }
     
-    // Simple tone mapping 
-    return pow(acc.rgb * 2.0, vec3(1.4));
+    // Better tone mapping and energy conservation
+    vec3 result = acc.rgb * 1.8;
+    result = result / (1.0 + result); // Simple Reinhard tone mapping
+    return pow(result, vec3(1.2)); // Slight gamma adjustment
 }
 
-// Traces a specular voxel cone - optimized with configurable parameters
+// Improved specular voxel cone tracing with proper cone aperture
 vec3 traceSpecularVoxelCone(vec3 from, vec3 direction) {
     direction = normalize(direction);
 
-    // We need a larger offset based on the object size to avoid self-reflection
-    // This was a key issue - the offset wasn't enough to avoid self-intersection
-    const float OFFSET = 16.0 * voxelSize;
-    const float STEP = voxelSize;
-
-    // IMPORTANT: Push start position along the reflection direction, not normal
-    // This is critical to avoid self-intersection and get the right reflection direction
-    from += OFFSET * direction;
+    // Better self-intersection avoidance
+    vec3 normal = normalize(fs_in.Normal);
+    float offset = max(3.0 * voxelSize, 0.02);
+    from += offset * direction; // Move along reflection direction
     
-    vec4 acc = vec4(0.0f);
-    float dist = 0.0;  // Start at zero since we already added the offset
+    // Cone parameters for specular reflections
+    // Tighter cone for sharp reflections, wider for rough materials
+    float coneAperture = 0.02 + 0.15 * material.specularDiffusion; // 1-9 degrees
+    const float MIN_CONE_RADIUS = voxelSize * 0.5;
     
-    // Use configurable maximum tracing distance
-    float maxDist = min(vctSettings.tracingMaxDistance, length(gridMax - gridMin) * 0.5);
-
-    // Trace from the offset position along the reflection direction
-    while(dist < maxDist && acc.a < 1.0) {
+    vec4 acc = vec4(0.0);
+    float dist = 0.0; // Start from offset position
+    float maxDist = min(vctSettings.tracingMaxDistance, length(gridMax - gridMin) * 0.6);
+    
+    // Use more samples for high-quality reflections
+    int maxSteps = min(12, int(8.0 + 4.0 / (material.specularDiffusion + 0.1)));
+    
+    for (int i = 0; i < maxSteps && dist < maxDist && acc.a < 0.98; i++) {
         vec3 samplePos = from + dist * direction;
-        if(!isInVoxelGrid(samplePos)) break;
+        if (!isInVoxelGrid(samplePos)) break;
+        
+        // Calculate cone radius based on distance and material roughness
+        float coneRadius = max(MIN_CONE_RADIUS, coneAperture * dist);
+        
+        // Determine mipmap level from cone radius
+        float level = max(0.0, log2(coneRadius / voxelSize));
+        level = min(level, MIPMAP_HARDCAP);
         
         vec3 texCoord = worldToVoxelCoord(samplePos);
-        float level = 0.1 * material.specularDiffusion * log2(1.0 + dist / voxelSize);
+        vec4 voxel = vec4(0.0);
         
-        vec4 voxel = textureLod(voxelGrid, texCoord, min(level, MIPMAP_HARDCAP));
+        // For very tight cones (sharp reflections), use single sample
+        if (coneRadius < voxelSize * 1.5) {
+            voxel = textureLod(voxelGrid, texCoord, level);
+        } else {
+            // For wider cones, use multi-sampling for better quality
+            vec3 ortho1 = orthogonal(direction);
+            vec3 ortho2 = cross(direction, ortho1);
+            float sampleOffset = coneRadius * 0.3;
+            
+            // Sample center and 4 offset points
+            voxel += textureLod(voxelGrid, texCoord, level) * 0.4; // Center weighted more
+            voxel += textureLod(voxelGrid, worldToVoxelCoord(samplePos + ortho1 * sampleOffset), level) * 0.15;
+            voxel += textureLod(voxelGrid, worldToVoxelCoord(samplePos - ortho1 * sampleOffset), level) * 0.15;
+            voxel += textureLod(voxelGrid, worldToVoxelCoord(samplePos + ortho2 * sampleOffset), level) * 0.15;
+            voxel += textureLod(voxelGrid, worldToVoxelCoord(samplePos - ortho2 * sampleOffset), level) * 0.15;
+        }
+        
+        // Distance-based attenuation for realistic reflections
+        float distAttenuation = 1.0 / (1.0 + 0.02 * dist);
+        
+        // Energy conservation with proper blending
         float f = 1.0 - acc.a;
+        float weight = 0.12 * (1.0 + 0.8 * material.specularDiffusion) * distAttenuation;
         
-        // This matches the example but with better weighting for distance
-        float weight = 0.25 * (1.0 + material.specularDiffusion);
         acc.rgb += weight * voxel.rgb * voxel.a * f;
         acc.a += weight * voxel.a * f;
         
-        // Adaptive step size - step size increases with distance for efficiency
-        dist += STEP * (1.0 + 0.125 * level);
+        // Adaptive step size based on cone radius and distance
+        float stepSize = voxelSize * (0.8 + 0.4 * level + 0.01 * dist);
+        dist += stepSize;
     }
     
-    // Use example formula for final multiplier
-    return 1.0 * pow(material.specularDiffusion + 1.0, 0.8) * acc.rgb;
+    // Final specular contribution with material properties
+    float specularStrength = material.specularReflectivity * (2.0 - material.specularDiffusion);
+    return acc.rgb * specularStrength * material.specularColor;
 }
 
 vec3 traceRefractiveVoxelCone(vec3 from, vec3 direction) {
@@ -349,10 +438,10 @@ vec3 traceRefractiveVoxelCone(vec3 from, vec3 direction) {
         
         vec3 texCoord = worldToVoxelCoord(samplePos);
         
-        // Use lower mipmap levels for refraction for sharper results
-        // Reduce specular diffusion influence for cleaner refractions
+        // Faster refraction LOD transition for better performance
+        // Use higher mipmap levels sooner to improve performance
         float specDiffusion = max(0.05, 0.6 * material.specularDiffusion);
-        float level = 0.08 * specDiffusion * log2(1.0 + dist / voxelSize);
+        float level = 0.12 * specDiffusion * log2(1.0 + dist / voxelSize * 1.4); // 1.4x faster falloff
         
         // Sample surrounding points and average to reduce noise
         vec4 voxelCenter = textureLod(voxelGrid, texCoord, min(level, MIPMAP_HARDCAP));

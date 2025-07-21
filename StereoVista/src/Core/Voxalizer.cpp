@@ -6,22 +6,14 @@ namespace Engine {
 
     Voxelizer::Voxelizer(int resolution)
         : m_resolution(resolution)
-        , m_voxelGridSize(4.0f)
+        , m_voxelGridSize(10.0f)
         , m_voxelTexture(0)
         , m_voxelShader(nullptr)
-        , m_visualizationShader(nullptr)
-        , m_worldPositionShader(nullptr)
         , m_voxelCubeShader(nullptr)
-        , m_quadVAO(0)
-        , m_quadVBO(0)
         , m_cubeVAO(0)
         , m_cubeVBO(0)
-        , m_frontFBO(0)
-        , m_backFBO(0)
-        , m_frontTexture(0)
-        , m_backTexture(0)
         , m_voxelInstanceVBO(0)
-        , voxelOpacity(0.5f)
+        , voxelOpacity(1.0f)
         , voxelColorIntensity(1.0f) {
 
         initializeVoxelTexture();
@@ -41,28 +33,11 @@ namespace Engine {
                 "voxelization/voxelization.geom"
             );
 
-            // Load visualization shaders
-            m_visualizationShader = Engine::loadShader(
-                "voxelization/voxel_visualization.vert",
-                "voxelization/voxel_visualization.frag"
-            );
-
-            // Load world position shader for cube face capture
-            m_worldPositionShader = Engine::loadShader(
-                "voxelization/world_position.vert",
-                "voxelization/world_position.frag"
-            );
-
             // Load voxel cube shader for individual voxel rendering
             m_voxelCubeShader = Engine::loadShader(
                 "voxelization/voxel_cube.vert",
                 "voxelization/voxel_cube.frag"
             );
-
-            // Add define for step length
-            const char* stepLengthDefine = "#define STEP_LENGTH 0.005f\n";
-            GLuint visualShaderID = m_visualizationShader->getID();
-            glShaderSource(visualShaderID, 1, &stepLengthDefine, NULL);
         }
         catch (const std::exception& e) {
             std::cerr << "Failed to load voxelization shaders: " << e.what() << std::endl;
@@ -75,19 +50,11 @@ namespace Engine {
 
     Voxelizer::~Voxelizer() {
         glDeleteTextures(1, &m_voxelTexture);
-        glDeleteTextures(1, &m_frontTexture);
-        glDeleteTextures(1, &m_backTexture);
-        glDeleteFramebuffers(1, &m_frontFBO);
-        glDeleteFramebuffers(1, &m_backFBO);
-        glDeleteVertexArrays(1, &m_quadVAO);
-        glDeleteBuffers(1, &m_quadVBO);
         glDeleteVertexArrays(1, &m_cubeVAO);
         glDeleteBuffers(1, &m_cubeVBO);
         glDeleteBuffers(1, &m_voxelInstanceVBO);
 
         delete m_voxelShader;
-        delete m_visualizationShader;
-        delete m_worldPositionShader;
         delete m_voxelCubeShader;
     }
 
@@ -109,117 +76,61 @@ namespace Engine {
     }
 
     void Voxelizer::initializeVisualization() {
-        // Setup screen quad for visualization
-        setupScreenQuad();
-
         // Setup unit cube for visualization
         setupUnitCube();
-
-        // Create FBOs for front and back faces
-        glGenFramebuffers(1, &m_frontFBO);
-        glGenFramebuffers(1, &m_backFBO);
-
-        // Generate textures for front and back face capture
-        glGenTextures(1, &m_frontTexture);
-        glBindTexture(GL_TEXTURE_2D, m_frontTexture);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, 1024, 1024, 0, GL_RGBA, GL_FLOAT, nullptr);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-        glGenTextures(1, &m_backTexture);
-        glBindTexture(GL_TEXTURE_2D, m_backTexture);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, 1024, 1024, 0, GL_RGBA, GL_FLOAT, nullptr);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-        // Setup FBOs
-        glBindFramebuffer(GL_FRAMEBUFFER, m_frontFBO);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_frontTexture, 0);
-
-        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-            std::cerr << "ERROR: Front face FBO is not complete!" << std::endl;
-        }
-
-        glBindFramebuffer(GL_FRAMEBUFFER, m_backFBO);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_backTexture, 0);
-
-        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-            std::cerr << "ERROR: Back face FBO is not complete!" << std::endl;
-        }
-
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 
-    void Voxelizer::setupScreenQuad() {
-        float quadVertices[] = {
-            // positions        
-            -1.0f,  1.0f, 0.0f,
-            -1.0f, -1.0f, 0.0f,
-             1.0f,  1.0f, 0.0f,
-             1.0f, -1.0f, 0.0f,
-        };
-
-        glGenVertexArrays(1, &m_quadVAO);
-        glGenBuffers(1, &m_quadVBO);
-
-        glBindVertexArray(m_quadVAO);
-        glBindBuffer(GL_ARRAY_BUFFER, m_quadVBO);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), quadVertices, GL_STATIC_DRAW);
-
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-
-        glBindVertexArray(0);
-    }
 
     void Voxelizer::setupUnitCube() {
+        // Unit cube vertices with correct counter-clockwise winding order
         float cubeVertices[] = {
-            // positions          
-            -1.0f,  1.0f, -1.0f,
-            -1.0f, -1.0f, -1.0f,
-             1.0f, -1.0f, -1.0f,
-             1.0f, -1.0f, -1.0f,
-             1.0f,  1.0f, -1.0f,
-            -1.0f,  1.0f, -1.0f,
-
-            -1.0f, -1.0f,  1.0f,
-            -1.0f, -1.0f, -1.0f,
-            -1.0f,  1.0f, -1.0f,
-            -1.0f,  1.0f, -1.0f,
-            -1.0f,  1.0f,  1.0f,
-            -1.0f, -1.0f,  1.0f,
-
-             1.0f, -1.0f, -1.0f,
-             1.0f, -1.0f,  1.0f,
-             1.0f,  1.0f,  1.0f,
-             1.0f,  1.0f,  1.0f,
-             1.0f,  1.0f, -1.0f,
-             1.0f, -1.0f, -1.0f,
-
-            -1.0f, -1.0f,  1.0f,
-            -1.0f,  1.0f,  1.0f,
-             1.0f,  1.0f,  1.0f,
-             1.0f,  1.0f,  1.0f,
-             1.0f, -1.0f,  1.0f,
-            -1.0f, -1.0f,  1.0f,
-
-            -1.0f,  1.0f, -1.0f,
-             1.0f,  1.0f, -1.0f,
-             1.0f,  1.0f,  1.0f,
-             1.0f,  1.0f,  1.0f,
-            -1.0f,  1.0f,  1.0f,
-            -1.0f,  1.0f, -1.0f,
-
-            -1.0f, -1.0f, -1.0f,
-            -1.0f, -1.0f,  1.0f,
-             1.0f, -1.0f, -1.0f,
-             1.0f, -1.0f, -1.0f,
-            -1.0f, -1.0f,  1.0f,
-             1.0f, -1.0f,  1.0f
+            // Back face (facing -Z, CCW when viewed from outside)
+            -0.5f, -0.5f, -0.5f,
+            -0.5f,  0.5f, -0.5f,
+             0.5f,  0.5f, -0.5f,
+             0.5f,  0.5f, -0.5f,
+             0.5f, -0.5f, -0.5f,
+            -0.5f, -0.5f, -0.5f,
+            
+            // Front face (facing +Z, CCW when viewed from outside)
+            -0.5f, -0.5f,  0.5f,
+             0.5f, -0.5f,  0.5f,
+             0.5f,  0.5f,  0.5f,
+             0.5f,  0.5f,  0.5f,
+            -0.5f,  0.5f,  0.5f,
+            -0.5f, -0.5f,  0.5f,
+            
+            // Left face (facing -X, CCW when viewed from outside)
+            -0.5f,  0.5f,  0.5f,
+            -0.5f,  0.5f, -0.5f,
+            -0.5f, -0.5f, -0.5f,
+            -0.5f, -0.5f, -0.5f,
+            -0.5f, -0.5f,  0.5f,
+            -0.5f,  0.5f,  0.5f,
+            
+            // Right face (facing +X, CCW when viewed from outside)
+             0.5f,  0.5f,  0.5f,
+             0.5f, -0.5f,  0.5f,
+             0.5f, -0.5f, -0.5f,
+             0.5f, -0.5f, -0.5f,
+             0.5f,  0.5f, -0.5f,
+             0.5f,  0.5f,  0.5f,
+            
+            // Bottom face (facing -Y, CCW when viewed from outside)
+            -0.5f, -0.5f, -0.5f,
+             0.5f, -0.5f, -0.5f,
+             0.5f, -0.5f,  0.5f,
+             0.5f, -0.5f,  0.5f,
+            -0.5f, -0.5f,  0.5f,
+            -0.5f, -0.5f, -0.5f,
+            
+            // Top face (facing +Y, CCW when viewed from outside)
+            -0.5f,  0.5f, -0.5f,
+            -0.5f,  0.5f,  0.5f,
+             0.5f,  0.5f,  0.5f,
+             0.5f,  0.5f,  0.5f,
+             0.5f,  0.5f, -0.5f,
+            -0.5f,  0.5f, -0.5f
         };
 
         glGenVertexArrays(1, &m_cubeVAO);
@@ -229,6 +140,7 @@ namespace Engine {
         glBindBuffer(GL_ARRAY_BUFFER, m_cubeVBO);
         glBufferData(GL_ARRAY_BUFFER, sizeof(cubeVertices), cubeVertices, GL_STATIC_DRAW);
 
+        // Position attribute
         glEnableVertexAttribArray(0);
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
 
@@ -244,12 +156,18 @@ namespace Engine {
         // Bind voxel texture for writing
         glBindImageTexture(0, m_voxelTexture, 0, GL_TRUE, 0, GL_READ_WRITE, GL_RGBA8);
 
-        // Set viewport for voxelization
+        // Set viewport for voxelization - critical for proper fragment generation
         glViewport(0, 0, m_resolution, m_resolution);
 
-        // Disable depth test and face culling for voxelization
+        // Disable depth test and enable conservative rasterization for voxelization
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_CULL_FACE);
+        glDisable(GL_BLEND);
+        
+        // Enable conservative rasterization if available (OpenGL 4.3+)
+        #ifdef GL_CONSERVATIVE_RASTERIZATION_NV
+        glEnable(GL_CONSERVATIVE_RASTERIZATION_NV);
+        #endif
 
         m_voxelShader->use();
 
@@ -345,152 +263,99 @@ namespace Engine {
         // Reset state
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_CULL_FACE);
+        
+        // Disable conservative rasterization
+        #ifdef GL_CONSERVATIVE_RASTERIZATION_NV
+        glDisable(GL_CONSERVATIVE_RASTERIZATION_NV);
+        #endif
     }
 
-
-    void Voxelizer::renderCubeFaces(const glm::vec3& cameraPos, const glm::mat4& projection, const glm::mat4& view) {
-        // Calculate effective grid size based on mipmap level
-        int effectiveResolution = m_resolution >> m_state;
-        if (effectiveResolution < 1) effectiveResolution = 1;
-
-        float scaleFactor = static_cast<float>(m_resolution) / effectiveResolution;
-
-        // Set up cube transforms - maintain the same scale regardless of mipmap level
-        glm::mat4 modelMatrix = glm::scale(glm::mat4(1.0f), glm::vec3(m_voxelGridSize * 0.5f));
-
-        m_worldPositionShader->use();
-        m_worldPositionShader->setMat4("M", modelMatrix);
-        m_worldPositionShader->setMat4("V", view);
-        m_worldPositionShader->setMat4("P", projection);
-
-        // Capture front faces
-        glBindFramebuffer(GL_FRAMEBUFFER, m_frontFBO);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        glEnable(GL_CULL_FACE);
-        glCullFace(GL_BACK);
-
-        glBindVertexArray(m_cubeVAO);
-        glDrawArrays(GL_TRIANGLES, 0, 36);
-
-        // Capture back faces
-        glBindFramebuffer(GL_FRAMEBUFFER, m_backFBO);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        glCullFace(GL_FRONT);
-
-        glBindVertexArray(m_cubeVAO);
-        glDrawArrays(GL_TRIANGLES, 0, 36);
-
-        // Reset state
-        glCullFace(GL_BACK);
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    }
 
     void Voxelizer::renderDebugVisualization(const glm::vec3& cameraPos, const glm::mat4& projection, const glm::mat4& view) {
         if (!showDebugVisualization) return;
-
-        // If using ray-cast visualization
-        if (useRayCastVisualization) {
-            // First render cube front and back faces
-            renderCubeFaces(cameraPos, projection, view);
-
-            // Then use those textures for ray-casting visualization
-            m_visualizationShader->use();
-
-            // Bind front and back textures
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, m_frontTexture);
-            m_visualizationShader->setInt("textureFront", 0);
-
-            glActiveTexture(GL_TEXTURE1);
-            glBindTexture(GL_TEXTURE_2D, m_backTexture);
-            m_visualizationShader->setInt("textureBack", 1);
-
-            // Bind voxel 3D texture
-            glActiveTexture(GL_TEXTURE2);
-            glBindTexture(GL_TEXTURE_3D, m_voxelTexture);
-            m_visualizationShader->setInt("texture3D", 2);
-
-            // Set other uniforms
-            m_visualizationShader->setVec3("cameraPosition", cameraPos / (m_voxelGridSize * 0.5f));
-            m_visualizationShader->setMat4("V", view);
-            m_visualizationShader->setInt("state", m_state); // Current mipmap level
-
-            // Set visualization mode uniform
-            m_visualizationShader->setInt("visualizationMode", static_cast<int>(visualizationMode));
-
-            // Render fullscreen quad
-            glBindVertexArray(m_quadVAO);
-            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-
-            // Reset state
-            glBindVertexArray(0);
-            glActiveTexture(GL_TEXTURE0);
-        }
-        else {
-            // Render scene as voxel cubes 
-            renderVoxelsAsCubes(cameraPos, projection, view);
-        }
+        
+        // Always render as voxel cubes (ray-cast visualization removed)
+        renderVoxelsAsCubes(cameraPos, projection, view);
     }
 
-    void Voxelizer::updateVisibleVoxels() {
+    void Voxelizer::updateVisibleVoxels(const glm::vec3& cameraPos) {
         // Clear previous visible voxels
         m_visibleVoxels.clear();
-
-        // Calculate voxel size based on grid size and resolution
-        float baseVoxelSize = m_voxelGridSize / m_resolution;
 
         // Bind the 3D texture
         glBindTexture(GL_TEXTURE_3D, m_voxelTexture);
 
-        // Get texture data for the current mipmap level
-        int effectiveResolution = m_resolution >> m_state; // Resolution at current mipmap level
-        if (effectiveResolution < 1) effectiveResolution = 1;
+        // Implement proper distance-based multi-level sampling with constant density
+        // Calculate effective resolution based on grid size to maintain constant voxel density
+        float baseGridSize = 10.0f; // Reference grid size
+        float densityScale = m_voxelGridSize / baseGridSize; // How much more/less dense we need
+        
+        int maxMipLevels = static_cast<int>(std::log2(m_resolution)) + 1;
+        
+        for (int level = 0; level < maxMipLevels; level++) {
+            int levelResolution = m_resolution >> level;
+            if (levelResolution < 1) break;
+            
+            // Get texture data for this mipmap level
+            std::vector<glm::vec4> voxelData(levelResolution * levelResolution * levelResolution);
+            glGetTexImage(GL_TEXTURE_3D, level, GL_RGBA, GL_FLOAT, voxelData.data());
+            
+            int stride = 1 << level;
+            
+            // Calculate sampling density to maintain constant voxel density
+            // Larger grid size = need more samples to maintain density
+            int samplingStride = std::max(1, static_cast<int>(baseGridSize / m_voxelGridSize));
+            int effectiveSamples = levelResolution * samplingStride;
+            
+            // Loop through voxels with density-adjusted sampling
+            for (int x = 0; x < effectiveSamples; x += samplingStride) {
+                for (int y = 0; y < effectiveSamples; y += samplingStride) {
+                    for (int z = 0; z < effectiveSamples; z += samplingStride) {
+                        // Map back to texture coordinates
+                        int tx = std::min(x / samplingStride, levelResolution - 1);
+                        int ty = std::min(y / samplingStride, levelResolution - 1);
+                        int tz = std::min(z / samplingStride, levelResolution - 1);
+                        // Calculate index using texture coordinates
+                        int index = (tz * levelResolution * levelResolution) + (ty * levelResolution) + tx;
 
-        std::vector<glm::vec4> voxelData(effectiveResolution * effectiveResolution * effectiveResolution);
-        glGetTexImage(GL_TEXTURE_3D, m_state, GL_RGBA, GL_FLOAT, voxelData.data());
+                        // Check if this voxel has any color data
+                        glm::vec4 voxelColor = voxelData[index];
+                        if (voxelColor.a > 0.001f || (voxelColor.r + voxelColor.g + voxelColor.b) > 0.001f) {
+                            // Calculate normalized position based on virtual sampling position
+                            float nx = ((float)x + 0.5f) / (float)effectiveSamples;
+                            float ny = ((float)y + 0.5f) / (float)effectiveSamples;
+                            float nz = ((float)z + 0.5f) / (float)effectiveSamples;
 
-        // Calculate stride and scaled voxel size
-        int stride = 1 << m_state;
-        float scaledVoxelSize = baseVoxelSize * stride; // Scale voxel size based on mipmap level
+                            // Convert back to world space using the SAME mapping as voxelization shader
+                            // This must match the voxelization.frag: normalizedPos = (worldPos + halfGrid) / gridSize
+                            float halfGrid = m_voxelGridSize * 0.5f;
+                            glm::vec3 position(
+                                (nx * m_voxelGridSize) - halfGrid,
+                                (ny * m_voxelGridSize) - halfGrid,
+                                (nz * m_voxelGridSize) - halfGrid
+                            );
 
-        // Calculate the half grid size (in world units)
-        float halfGrid = m_voxelGridSize * 0.5f;
-
-        // Loop through voxels at the current mipmap level
-        for (int x = 0; x < effectiveResolution; x++) {
-            for (int y = 0; y < effectiveResolution; y++) {
-                for (int z = 0; z < effectiveResolution; z++) {
-                    // Calculate index in the downsampled mipmap
-                    int index = (z * effectiveResolution * effectiveResolution) +
-                        (y * effectiveResolution) + x;
-
-                    // Check if this voxel is visible
-                    if (voxelData[index].a > 0.01f) {
-                        // Calculate normalized position in [0,1] range
-                        float nx = (float)x / (float)(effectiveResolution - 1);
-                        float ny = (float)y / (float)(effectiveResolution - 1);
-                        float nz = (float)z / (float)(effectiveResolution - 1);
-
-                        // Convert to world space position in [-halfGrid, halfGrid] range
-                        // This ensures voxels are positioned correctly regardless of mipmap level
-                        glm::vec3 position(
-                            (nx * 2.0f - 1.0f) * halfGrid,
-                            (ny * 2.0f - 1.0f) * halfGrid,
-                            (nz * 2.0f - 1.0f) * halfGrid
-                        );
-
-                        // Add to visible voxels
-                        VoxelData voxel;
-                        voxel.position = position;
-                        voxel.color = voxelData[index];
-                        m_visibleVoxels.push_back(voxel);
+                            // Calculate distance from camera
+                            float distanceFromCamera = glm::length(position - cameraPos);
+                            int appropriateLOD = calculateMipmapLevel(distanceFromCamera);
+                            
+                            // Only show voxel if this is the appropriate LOD level for this distance
+                            if (appropriateLOD == level) {
+                                // Add to visible voxels with LOD information
+                                VoxelData voxel;
+                                voxel.position = position;
+                                voxel.color = voxelColor;
+                                voxel.mipmapLevel = level;
+                                m_visibleVoxels.push_back(voxel);
+                            }
+                        }
                     }
                 }
             }
         }
 
-        // If we have too many voxels, randomly subsample to prevent performance issues
-        const size_t maxVoxels = 100000;
+        // Allow more voxels to be displayed for better scene coverage
+        const size_t maxVoxels = 200000;
         if (m_visibleVoxels.size() > maxVoxels) {
             std::random_device rd;
             std::mt19937 g(rd());
@@ -502,9 +367,9 @@ namespace Engine {
         if (!m_visibleVoxels.empty()) {
             glBindBuffer(GL_ARRAY_BUFFER, m_voxelInstanceVBO);
 
-            // Create a buffer for position and color data
+            // Create a buffer for position, color, and mipmap level data
             std::vector<float> instanceData;
-            instanceData.reserve(m_visibleVoxels.size() * 7); // 3 for position, 4 for color
+            instanceData.reserve(m_visibleVoxels.size() * 8); // 3 for position, 4 for color, 1 for mipmap level
 
             for (const auto& voxel : m_visibleVoxels) {
                 // Position
@@ -517,6 +382,9 @@ namespace Engine {
                 instanceData.push_back(voxel.color.g);
                 instanceData.push_back(voxel.color.b);
                 instanceData.push_back(voxel.color.a);
+
+                // Mipmap level (as float for GPU upload)
+                instanceData.push_back(static_cast<float>(voxel.mipmapLevel));
             }
 
             // Upload instance data
@@ -527,13 +395,18 @@ namespace Engine {
 
             // Position attribute (location 2)
             glEnableVertexAttribArray(2);
-            glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)0);
+            glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
             glVertexAttribDivisor(2, 1); // This makes it instanced
 
             // Color attribute (location 3)
             glEnableVertexAttribArray(3);
-            glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)(3 * sizeof(float)));
+            glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
             glVertexAttribDivisor(3, 1); // This makes it instanced
+
+            // Mipmap level attribute (location 4)
+            glEnableVertexAttribArray(4);
+            glVertexAttribPointer(4, 1, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(7 * sizeof(float)));
+            glVertexAttribDivisor(4, 1); // This makes it instanced
 
             glBindVertexArray(0);
         }
@@ -544,7 +417,7 @@ namespace Engine {
     void Voxelizer::renderVoxelsAsCubes(const glm::vec3& cameraPos, const glm::mat4& projection, const glm::mat4& view) {
         // Update voxel data if needed
         if (m_voxelDataNeedsUpdate || m_visibleVoxels.empty()) {
-            updateVisibleVoxels();
+            updateVisibleVoxels(cameraPos);
         }
 
         // Skip rendering if no visible voxels
@@ -552,11 +425,13 @@ namespace Engine {
             return;
         }
 
-        // Setup rendering state
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glEnable(GL_CULL_FACE);
+        // Setup rendering state for solid voxel cubes
+        glDisable(GL_BLEND);
         glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LESS);
+        
+        // Disable face culling to show all cube faces for debugging
+        glDisable(GL_CULL_FACE);
 
         // Use voxel cube shader
         m_voxelCubeShader->use();
@@ -572,11 +447,9 @@ namespace Engine {
         // Set visualization mode uniform
         m_voxelCubeShader->setInt("visualizationMode", static_cast<int>(visualizationMode));
 
-        // Calculate voxel size based on grid size and resolution - adjusted for mipmap level
-        float baseVoxelSize = m_voxelGridSize / m_resolution;
-        int stride = 1 << m_state;
-        float scaledVoxelSize = baseVoxelSize * stride;
-        m_voxelCubeShader->setFloat("voxelSize", scaledVoxelSize);
+        // Set base voxel size (level 0) - independent of grid size as per NVIDIA paper
+        m_voxelCubeShader->setFloat("baseVoxelSize", debugVoxelSize);
+        m_voxelCubeShader->setInt("resolution", m_resolution);
 
         // Make sure the cube VAO is properly set up
         if (m_cubeVAO == 0) {
@@ -589,7 +462,6 @@ namespace Engine {
 
         // Reset state
         glBindVertexArray(0);
-        glDisable(GL_BLEND);
     }
 
     void Voxelizer::increaseState() {

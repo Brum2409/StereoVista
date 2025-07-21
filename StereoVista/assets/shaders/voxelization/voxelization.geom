@@ -5,35 +5,50 @@ layout(triangle_strip, max_vertices = 3) out;
 
 in vec3 worldPositionGeom[];
 in vec3 normalGeom[];
-in vec2 texCoordGeom[];  // Added texture coordinates input from vertex shader
+in vec2 texCoordGeom[];
 
 out vec3 worldPositionFrag;
 out vec3 normalFrag;
-out vec2 texCoordFrag;    // Added texture coordinates output to fragment shader
+out vec2 texCoordFrag;
+
+uniform float gridSize;
 
 void main() {
-    // Determine dominant axis for projection
-    const vec3 p1 = worldPositionGeom[1] - worldPositionGeom[0];
-    const vec3 p2 = worldPositionGeom[2] - worldPositionGeom[0];
-    const vec3 p = abs(cross(p1, p2)); 
+    // Calculate face normal for dominant axis selection
+    vec3 v0 = worldPositionGeom[1] - worldPositionGeom[0];
+    vec3 v1 = worldPositionGeom[2] - worldPositionGeom[0];
+    vec3 faceNormal = abs(normalize(cross(v0, v1)));
     
-    for(uint i = 0; i < 3; ++i) {
-        // Pass through world position, normal, and texture coordinates
+    // Find dominant axis
+    int axis = 2; // default to Z-axis
+    if(faceNormal.x > faceNormal.y && faceNormal.x > faceNormal.z) {
+        axis = 0; // X-axis dominant
+    } else if(faceNormal.y > faceNormal.z) {
+        axis = 1; // Y-axis dominant
+    }
+    
+    // Scale factor to map world coordinates to [-1, 1] range
+    float scale = 2.0 / gridSize;
+    
+    for(int i = 0; i < 3; ++i) {
         worldPositionFrag = worldPositionGeom[i];
         normalFrag = normalGeom[i];
-        texCoordFrag = texCoordGeom[i];  // Pass texture coordinates
+        texCoordFrag = texCoordGeom[i];
         
-        // Choose projection plane based on dominant axis
-        if(p.z > p.x && p.z > p.y) {
-            // Project onto XY plane
-            gl_Position = vec4(worldPositionFrag.x, worldPositionFrag.y, 0, 1);
-        } else if (p.x > p.y && p.x > p.z) {
-            // Project onto YZ plane
-            gl_Position = vec4(worldPositionFrag.y, worldPositionFrag.z, 0, 1);
+        // Project triangle onto the dominant axis plane
+        vec3 projectedPos = worldPositionFrag * scale; // Scale to [-1, 1]
+        
+        if(axis == 0) {
+            // Project onto YZ plane (X is dominant)
+            gl_Position = vec4(projectedPos.y, projectedPos.z, 0.0, 1.0);
+        } else if(axis == 1) {
+            // Project onto XZ plane (Y is dominant)  
+            gl_Position = vec4(projectedPos.x, projectedPos.z, 0.0, 1.0);
         } else {
-            // Project onto XZ plane
-            gl_Position = vec4(worldPositionFrag.x, worldPositionFrag.z, 0, 1);
+            // Project onto XY plane (Z is dominant)
+            gl_Position = vec4(projectedPos.x, projectedPos.y, 0.0, 1.0);
         }
+        
         EmitVertex();
     }
     EndPrimitive();
