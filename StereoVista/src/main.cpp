@@ -12,6 +12,7 @@
 #include "Loaders/PointCloudLoader.h"
 #include "Cursors/Base/CursorManager.h"
 #include "Core/Voxalizer.h"
+#include "Engine/OctreePointCloudManager.h"
 #include "Gui/Gui.h"
 #include "Gui/GuiTypes.h"
 
@@ -1296,9 +1297,13 @@ void PerspectiveProjection(GLfloat* frustum, GLfloat dir,
 }
 
 int main() {
+    // ---- Initialize Async Loading System ----
+    Engine::OctreePointCloudManager::initializeAsyncSystem();
+    
     // ---- Initialize GLFW ----
     if (!glfwInit()) {
         std::cout << "Failed to initialize GLFW" << std::endl;
+        Engine::OctreePointCloudManager::shutdownAsyncSystem();
         return -1;
     }
 
@@ -1699,6 +1704,9 @@ int main() {
 
     // ---- Cleanup ----
     cleanup(shader);
+    
+    // ---- Shutdown Async Loading System ----
+    Engine::OctreePointCloudManager::shutdownAsyncSystem();
 
     return 0;
 }
@@ -1712,9 +1720,6 @@ void cleanup(Engine::Shader* shader) {
 
     // Delete point cloud resources
     for (auto& pointCloud : currentScene.pointClouds) {
-        for (auto& chunk : pointCloud.chunks) {
-            glDeleteBuffers(chunk.lodVBOs.size(), chunk.lodVBOs.data());
-        }
         glDeleteBuffers(1, &pointCloud.instanceVBO);
         glDeleteVertexArrays(1, &pointCloud.vao);
     }
@@ -2202,58 +2207,33 @@ void renderPointClouds(Engine::Shader* shader) {
         shader->setMat4("model", modelMatrix);
         shader->setBool("isPointCloud", true);
 
-        glBindVertexArray(pointCloud.vao);
-
-        glm::mat4 viewMatrix = camera.GetViewMatrix();
-        glm::mat4 projectionMatrix = camera.GetProjectionMatrix(aspectRatio, currentScene.settings.nearPlane, currentScene.settings.farPlane);
-        glm::mat4 viewProjectionMatrix = projectionMatrix * viewMatrix;
-        glm::vec3 cameraPosition = camera.Position;
-
-        for (const auto& chunk : pointCloud.chunks) {
-            // Calculate transformed chunk position using the point cloud's model matrix
-            glm::vec3 chunkWorldPos = glm::vec3(modelMatrix * glm::vec4(chunk.centerPosition, 1.0f));
-
-            // Frustum culling using transformed position
-            if (!camera.isInFrustum(chunkWorldPos, chunk.boundingRadius * glm::compMax(pointCloud.scale), viewProjectionMatrix)) {
-                continue;
-            }
-
-            float distanceToCamera = glm::distance(chunkWorldPos, cameraPosition);
-
-            // Determine LOD based on distance
-            int lodLevel = 4;  // Start with lowest detail
-            for (int i = 0; i < 5; ++i) {
-                if (distanceToCamera < pointCloud.lodDistances[i] * 1.0f) {
-                    lodLevel = i;
-                    break;
-                }
-            }
-
-            float pointSizeMultiplier = 1.0f + (lodLevel) * 0.5f;
-            float adjustedPointSize = pointCloud.basePointSize * pointSizeMultiplier;
-
-            glBindBuffer(GL_ARRAY_BUFFER, chunk.lodVBOs[lodLevel]);
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(PointCloudPoint), (void*)0);
-            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(PointCloudPoint), (void*)offsetof(PointCloudPoint, color));
-            glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(PointCloudPoint), (void*)offsetof(PointCloudPoint, intensity));
-
-            glEnableVertexAttribArray(0);
-            glEnableVertexAttribArray(1);
-            glEnableVertexAttribArray(2);
-
-            glPointSize(adjustedPointSize);
-            glDrawArrays(GL_POINTS, 0, chunk.lodPointCounts[lodLevel]);
+        // Always use octree-based rendering (legacy system removed)
+        if (pointCloud.octreeRoot) {
+            // Update LOD system for current camera position
+            glm::vec3 cameraPosition = camera.Position;
+            Engine::OctreePointCloudManager::updateLOD(pointCloud, cameraPosition);
+            
+            // Bind VAO for octree rendering (octree nodes use their own VBOs but need the VAO for attributes)
+            glBindVertexArray(pointCloud.vao);
+            
+            // Render visible octree nodes
+            Engine::OctreePointCloudManager::renderVisible(pointCloud, cameraPosition);
+            
+            glBindVertexArray(0);
         }
 
-        glBindVertexArray(0);
-
-        // Visualize chunk boundaries if enabled
-        if (pointCloud.visualizeChunks) {
+        // Visualize octree structure if enabled
+        if (pointCloud.visualizeOctree && pointCloud.octreeRoot) {
+            // Generate octree visualization if not already done
+            if (pointCloud.chunkOutlineVertices.empty()) {
+                Engine::OctreePointCloudManager::generateOctreeVisualization(pointCloud, pointCloud.visualizeDepth);
+            }
+            
             shader->setBool("isChunkOutline", true);
-            shader->setVec3("outlineColor", glm::vec3(1.0f, 1.0f, 0.0f));
+            shader->setVec3("outlineColor", glm::vec3(0.0f, 1.0f, 0.0f));
 
             glBindVertexArray(pointCloud.chunkOutlineVAO);
-            glDrawArrays(GL_LINES, 0, pointCloud.chunkOutlineVertices.size());
+            glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(pointCloud.chunkOutlineVertices.size()));
             glBindVertexArray(0);
 
             shader->setBool("isChunkOutline", false);

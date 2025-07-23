@@ -10,6 +10,7 @@
 #include "Core/Voxalizer.h"
 #include "Cursors/Base/CursorManager.h"
 #include "imgui/imgui_sytle.h"
+#include <utility>
 
 using namespace GUI;
 
@@ -106,9 +107,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
         if (ImGui::BeginMenu("File")) {
             if (ImGui::MenuItem("Open")) {
                 auto selection = pfd::open_file("Select a file to open", ".",
-                    { "All Supported Files", "*.obj *.fbx *.3ds *.gltf *.glb *.txt *.xyz *.ply *.pcb",
+                    { "All Supported Files", "*.obj *.fbx *.3ds *.gltf *.glb *.txt *.xyz *.ply *.pcb *.h5 *.hdf5 *.f5",
                       "3D Models", "*.obj *.fbx *.3ds *.gltf *.glb",
-                      "Point Cloud Files", "*.txt *.xyz *.ply *.pcb",
+                      "Point Cloud Files", "*.txt *.xyz *.ply *.pcb *.h5 *.hdf5 *.f5",
                       "All Files", "*" }).result();
 
                 if (!selection.empty()) {
@@ -127,19 +128,34 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                         }
                     }
                     else if (extension == ".txt" || extension == ".xyz" || extension == ".ply") {
-                        Engine::PointCloud newPointCloud = Engine::PointCloudLoader::loadPointCloudFile(filePath);
+                        Engine::PointCloud newPointCloud = std::move(Engine::PointCloudLoader::loadPointCloudFile(filePath));
                         newPointCloud.filePath = filePath;
-                        currentScene.pointClouds.push_back(newPointCloud);
+                        currentScene.pointClouds.emplace_back(std::move(newPointCloud));
                     }
                     else if (extension == ".pcb") {
-                        Engine::PointCloud newPointCloud = Engine::PointCloudLoader::loadFromBinary(filePath);
-                        if (!newPointCloud.points.empty()) {
+                        Engine::PointCloud newPointCloud = std::move(Engine::PointCloudLoader::loadFromBinary(filePath));
+                        // Check if octree was built successfully (points vector may be empty after octree build)
+                        if (newPointCloud.octreeRoot || !newPointCloud.points.empty() || newPointCloud.instanceCount > 0) {
                             newPointCloud.filePath = filePath;
                             newPointCloud.name = std::filesystem::path(filePath).stem().string();
-                            currentScene.pointClouds.push_back(newPointCloud);
+                            currentScene.pointClouds.emplace_back(std::move(newPointCloud));
+                            std::cout << "[DEBUG] Successfully loaded point cloud: " << filePath << std::endl;
                         }
                         else {
                             std::cerr << "Failed to load point cloud from: " << filePath << std::endl;
+                        }
+                    }
+                    else if (extension == ".h5" || extension == ".hdf5" || extension == ".f5") {
+                        Engine::PointCloud newPointCloud = std::move(Engine::PointCloudLoader::loadPointCloudFile(filePath));
+                        // Check if octree was built successfully (points vector may be empty after octree build)
+                        if (newPointCloud.octreeRoot || !newPointCloud.points.empty() || newPointCloud.instanceCount > 0) {
+                            newPointCloud.filePath = filePath;
+                            newPointCloud.name = std::filesystem::path(filePath).stem().string();
+                            currentScene.pointClouds.emplace_back(std::move(newPointCloud));
+                            std::cout << "[DEBUG] Successfully loaded HDF5 point cloud: " << filePath << std::endl;
+                        }
+                        else {
+                            std::cerr << "Failed to load HDF5 point cloud from: " << filePath << std::endl;
                         }
                     }
                 }
@@ -1856,7 +1872,9 @@ void renderMeshManipulationPanel(Engine::Model& model, int meshIndex, Engine::Sh
 
 void renderPointCloudManipulationPanel(Engine::PointCloud& pointCloud) {
     ImGui::Text("Point Cloud Manipulation: %s", pointCloud.name.c_str());
-    if (pointCloud.points.empty()) {
+    // Check if point cloud has data (either in points vector or octree)
+    bool hasData = !pointCloud.points.empty() || pointCloud.octreeRoot || pointCloud.instanceCount > 0;
+    if (!hasData) {
         ImGui::Text("Point cloud is empty");
         return;
     }

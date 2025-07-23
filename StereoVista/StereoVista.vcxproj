@@ -127,14 +127,14 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions);_CRT_SECURE_NO_WARNINGS</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>../dependencies/include;include;src;headers;src;headers/libs/imgui;backend;headers/libs;headers/libs/highfive;headers/libs/highfive/bits;headers/libs/hdf5;headers/libs/highfive/h5easy_bits</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>../dependencies/include;../dependencies/include/hdf5;include;src;headers;src;headers/libs/imgui;backend;headers/libs;headers/libs/highfive;headers/libs/highfive/bits;headers/libs/hdf5;headers/libs/highfive/h5easy_bits</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>glfw3.lib;opengl32.lib;assimp-vc143-mtd.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>glfw3.lib;opengl32.lib;assimp-vc143-mtd.lib;libhdf5.lib;libhdf5_cpp.lib;libzlib.lib;libaec.lib;libszaec.lib;legacy_stdio_definitions.lib;Shlwapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>../dependencies/lib/debug;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <PostBuildEvent>
@@ -149,9 +149,9 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>../dependencies/include;headers;src;headers/libs/imgui;backend;headers/libs;headers/libs/highfive;headers/libs/highfive/bits;headers/libs/hdf5;headers/libs/highfive/h5easy_bits</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>../dependencies/include;../dependencies/include/hdf5;headers;src;headers/libs/imgui;backend;headers/libs;headers/libs/highfive;headers/libs/highfive/bits;headers/libs/hdf5;headers/libs/highfive/h5easy_bits</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -159,7 +159,7 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>../dependencies/lib/release;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>glfw3_mt.lib;opengl32.lib;assimp-vc143-mt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>glfw3_mt.lib;opengl32.lib;assimp-vc143-mt.lib;libhdf5.lib;libhdf5_cpp.lib;libzlib.lib;libaec.lib;libszaec.lib;legacy_stdio_definitions.lib;Shlwapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <IgnoreAllDefaultLibraries>
       </IgnoreAllDefaultLibraries>
     </Link>
@@ -172,6 +172,7 @@
     <ClCompile Include="src\Cursors\CursorPresets.cpp" />
     <ClCompile Include="src\Engine\Buffers.cpp" />
     <ClCompile Include="src\Engine\Input.cpp" />
+    <ClCompile Include="src\Engine\OctreePointCloudManager.cpp" />
     <ClCompile Include="src\Engine\Shader.cpp" />
     <ClCompile Include="src\Engine\Window.cpp" />
     <ClCompile Include="headers\libs\imgui\backends\imgui_impl_glfw.cpp" />
@@ -202,6 +203,7 @@
     <ClInclude Include="headers\engine\buffers.h" />
     <ClInclude Include="headers\engine\data.h" />
     <ClInclude Include="headers\engine\input.h" />
+    <ClInclude Include="headers\Engine\OctreePointCloudManager.h" />
     <ClInclude Include="headers\engine\shader.h" />
     <ClInclude Include="headers\engine\window.h" />
     <ClInclude Include="headers\Camera.h" />

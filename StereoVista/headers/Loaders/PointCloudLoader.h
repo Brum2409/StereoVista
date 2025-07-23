@@ -1,6 +1,7 @@
 // point_cloud_loader.h
 #pragma once
 #include "../Engine/Data.h"
+#include <sstream>
 
 namespace Engine {
 
@@ -10,6 +11,8 @@ namespace Engine {
         static bool exportToXYZ(const PointCloud& pointCloud, const std::string& filePath);
         static bool exportToBinary(const PointCloud& pointCloud, const std::string& filePath);
         static PointCloud loadFromBinary(const std::string& filePath);
+        static PointCloud loadFromHDF5(const std::string& filePath, size_t downsampleFactor = 1);
+        static bool exportToHDF5(const PointCloud& pointCloud, const std::string& filePath);
 
     private:
         static void setupPointCloudGLBuffers(PointCloud& pointCloud);

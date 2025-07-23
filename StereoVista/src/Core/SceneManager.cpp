@@ -5,6 +5,7 @@
 #include "Loaders/PointCloudLoader.h"
 #include <filesystem>
 #include <unordered_set>
+#include <utility>
 
 using json = nlohmann::json;
 
@@ -428,7 +429,7 @@ namespace Engine {
                         }
 
                         std::filesystem::path pcPath = sceneDir / pointCloudJson["dataPath"].get<std::string>();
-                        PointCloud pointCloud = Engine::PointCloudLoader::loadFromBinary(pcPath.string());
+                        PointCloud pointCloud = std::move(Engine::PointCloudLoader::loadFromBinary(pcPath.string()));
 
                         pointCloud.name = pointCloudJson["name"];
                         pointCloud.position = glm::vec3(
@@ -447,7 +448,7 @@ namespace Engine {
                             pointCloudJson["scale"][2].get<float>()
                         );
 
-                        scene.pointClouds.push_back(pointCloud);
+                        scene.pointClouds.push_back(std::move(pointCloud));
                     }
                     catch (const std::exception& e) {
                         std::cerr << "Failed to load point cloud: " << e.what() << std::endl;
