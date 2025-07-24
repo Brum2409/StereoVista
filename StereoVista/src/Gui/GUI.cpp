@@ -135,7 +135,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                     else if (extension == ".pcb") {
                         Engine::PointCloud newPointCloud = std::move(Engine::PointCloudLoader::loadFromBinary(filePath));
                         // Check if octree was built successfully (points vector may be empty after octree build)
-                        if (newPointCloud.octreeRoot || !newPointCloud.points.empty() || newPointCloud.instanceCount > 0) {
+                        if (newPointCloud.octreeRoot || !newPointCloud.points.empty()) {
                             newPointCloud.filePath = filePath;
                             newPointCloud.name = std::filesystem::path(filePath).stem().string();
                             currentScene.pointClouds.emplace_back(std::move(newPointCloud));
@@ -148,7 +148,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                     else if (extension == ".h5" || extension == ".hdf5" || extension == ".f5") {
                         Engine::PointCloud newPointCloud = std::move(Engine::PointCloudLoader::loadPointCloudFile(filePath));
                         // Check if octree was built successfully (points vector may be empty after octree build)
-                        if (newPointCloud.octreeRoot || !newPointCloud.points.empty() || newPointCloud.instanceCount > 0) {
+                        if (newPointCloud.octreeRoot || !newPointCloud.points.empty() ) {
                             newPointCloud.filePath = filePath;
                             newPointCloud.name = std::filesystem::path(filePath).stem().string();
                             currentScene.pointClouds.emplace_back(std::move(newPointCloud));
@@ -1031,7 +1031,7 @@ void renderSettingsWindow() {
                         // Update default material property
                     }
 
-                    static float specularReflectivity = 0.2f;
+                    static float specularReflectivity = 0.0f;
                     if (ImGui::SliderFloat("Specular Reflectivity", &specularReflectivity, 0.0f, 1.0f)) {
                         // Update default material property
                     }
@@ -1873,7 +1873,7 @@ void renderMeshManipulationPanel(Engine::Model& model, int meshIndex, Engine::Sh
 void renderPointCloudManipulationPanel(Engine::PointCloud& pointCloud) {
     ImGui::Text("Point Cloud Manipulation: %s", pointCloud.name.c_str());
     // Check if point cloud has data (either in points vector or octree)
-    bool hasData = !pointCloud.points.empty() || pointCloud.octreeRoot || pointCloud.instanceCount > 0;
+    bool hasData = !pointCloud.points.empty() || pointCloud.octreeRoot;
     if (!hasData) {
         ImGui::Text("Point cloud is empty");
         return;

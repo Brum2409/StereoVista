@@ -560,6 +560,7 @@ namespace Engine {
         }
     }
     
+    
     void OctreePointCloudManager::renderNodeAtLOD(
         PointCloudOctreeNode* node,
         float distance,

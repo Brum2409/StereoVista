@@ -120,9 +120,6 @@ namespace Engine {
         GLuint vao;
         GLuint vbo;
 
-        GLuint instanceVBO;
-        std::vector<glm::mat4> instanceMatrices;
-        size_t instanceCount;
 
         float basePointSize = 2.0f;
 
@@ -167,8 +164,7 @@ namespace Engine {
             : name(std::move(other.name)), filePath(std::move(other.filePath)),
               points(std::move(other.points)), position(other.position),
               rotation(other.rotation), scale(other.scale), visible(other.visible),
-              vao(other.vao), vbo(other.vbo), instanceVBO(other.instanceVBO),
-              instanceMatrices(std::move(other.instanceMatrices)), instanceCount(other.instanceCount),
+              vao(other.vao), vbo(other.vbo),
               basePointSize(other.basePointSize), octreeRoot(std::move(other.octreeRoot)),
               octreeBoundsMin(other.octreeBoundsMin), octreeBoundsMax(other.octreeBoundsMax),
               octreeCenter(other.octreeCenter), octreeSize(other.octreeSize),
@@ -189,7 +185,6 @@ namespace Engine {
             // Reset other object
             other.vao = 0;
             other.vbo = 0;
-            other.instanceVBO = 0;
             other.chunkOutlineVAO = 0;
             other.chunkOutlineVBO = 0;
         }
@@ -208,9 +203,6 @@ namespace Engine {
                 visible = other.visible;
                 vao = other.vao;
                 vbo = other.vbo;
-                instanceVBO = other.instanceVBO;
-                instanceMatrices = std::move(other.instanceMatrices);
-                instanceCount = other.instanceCount;
                 basePointSize = other.basePointSize;
                 
                 octreeRoot = std::move(other.octreeRoot);
@@ -245,7 +237,6 @@ namespace Engine {
                 // Reset other object
                 other.vao = 0;
                 other.vbo = 0;
-                other.instanceVBO = 0;
                 other.chunkOutlineVAO = 0;
                 other.chunkOutlineVBO = 0;
             }

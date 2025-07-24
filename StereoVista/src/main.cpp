@@ -1298,12 +1298,12 @@ void PerspectiveProjection(GLfloat* frustum, GLfloat dir,
 
 int main() {
     // ---- Initialize Async Loading System ----
-    Engine::OctreePointCloudManager::initializeAsyncSystem();
+    OctreePointCloudManager::initializeAsyncSystem();
     
     // ---- Initialize GLFW ----
     if (!glfwInit()) {
         std::cout << "Failed to initialize GLFW" << std::endl;
-        Engine::OctreePointCloudManager::shutdownAsyncSystem();
+        OctreePointCloudManager::shutdownAsyncSystem();
         return -1;
     }
 
@@ -1706,7 +1706,7 @@ int main() {
     cleanup(shader);
     
     // ---- Shutdown Async Loading System ----
-    Engine::OctreePointCloudManager::shutdownAsyncSystem();
+    OctreePointCloudManager::shutdownAsyncSystem();
 
     return 0;
 }
@@ -1720,8 +1720,8 @@ void cleanup(Engine::Shader* shader) {
 
     // Delete point cloud resources
     for (auto& pointCloud : currentScene.pointClouds) {
-        glDeleteBuffers(1, &pointCloud.instanceVBO);
         glDeleteVertexArrays(1, &pointCloud.vao);
+        glDeleteBuffers(1, &pointCloud.vbo);
     }
 
     // Delete skybox resources
@@ -1911,7 +1911,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
 
         // Set default material properties for voxel cone tracing
         shader->setFloat("material.diffuseReflectivity", 0.8f);
-        shader->setFloat("material.specularReflectivity", 0.2f);
+        shader->setFloat("material.specularReflectivity", 0.0f);
         shader->setFloat("material.specularDiffusion", 0.5f);
         shader->setFloat("material.refractiveIndex", 1.0f);  // Default to no refraction
         shader->setFloat("material.transparency", 0.0f);     // Default to opaque
@@ -2154,7 +2154,6 @@ void renderModels(Engine::Shader* shader) {
 
         // Set model matrix in shader
         shader->setMat4("model", modelMatrix);
-        shader->setBool("useInstancing", false);
 
         // Set standard material properties
         shader->setBool("material.hasNormalMap", model.hasNormalMap());
@@ -2211,13 +2210,13 @@ void renderPointClouds(Engine::Shader* shader) {
         if (pointCloud.octreeRoot) {
             // Update LOD system for current camera position
             glm::vec3 cameraPosition = camera.Position;
-            Engine::OctreePointCloudManager::updateLOD(pointCloud, cameraPosition);
+            OctreePointCloudManager::updateLOD(pointCloud, cameraPosition);
             
             // Bind VAO for octree rendering (octree nodes use their own VBOs but need the VAO for attributes)
             glBindVertexArray(pointCloud.vao);
             
             // Render visible octree nodes
-            Engine::OctreePointCloudManager::renderVisible(pointCloud, cameraPosition);
+            OctreePointCloudManager::renderVisible(pointCloud, cameraPosition);
             
             glBindVertexArray(0);
         }
@@ -2226,7 +2225,7 @@ void renderPointClouds(Engine::Shader* shader) {
         if (pointCloud.visualizeOctree && pointCloud.octreeRoot) {
             // Generate octree visualization if not already done
             if (pointCloud.chunkOutlineVertices.empty()) {
-                Engine::OctreePointCloudManager::generateOctreeVisualization(pointCloud, pointCloud.visualizeDepth);
+                OctreePointCloudManager::generateOctreeVisualization(pointCloud, pointCloud.visualizeDepth);
             }
             
             shader->setBool("isChunkOutline", true);

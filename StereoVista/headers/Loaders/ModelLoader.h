@@ -78,7 +78,7 @@ namespace Engine {
         float diffuseReflectivity = 0.8f;    // Controls strength of diffuse reflection
         glm::vec3 specularColor = glm::vec3(1.0f); // Specular color (default white)
         float specularDiffusion = 0.5f;      // Controls glossiness/roughness
-        float specularReflectivity = 0.2f;   // Controls strength of specular reflection
+        float specularReflectivity = 0.0f;   // Controls strength of specular reflection
         float refractiveIndex = 1.0f;        // For glass/water effects (1.0 = no refraction)
         float transparency = 0.0f;
 

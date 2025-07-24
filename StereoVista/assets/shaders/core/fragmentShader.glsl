@@ -149,7 +149,7 @@ float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir) {
         return 0.0;
         
     float currentDepth = projCoords.z;
-    float bias = max(0.001 * (1.0 - dot(normal, lightDir)), 0.0005);    
+    float bias = max(0.001 * (1.0 - abs(dot(normal, lightDir))), 0.0005);    
     
     float shadow = 0.0;
     vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
@@ -754,8 +754,8 @@ void main() {
         normal = normalize(fs_in.Normal);
     }
     
-    // Calculate view direction once
-    vec3 viewDir = normalize(fs_in.FragPos - viewPos);
+    // Calculate view direction once (FROM fragment TO camera)
+    vec3 viewDir = normalize(viewPos - fs_in.FragPos);
     vec3 result = vec3(0.0);
     
     // --- LIGHTING CALCULATION BASED ON MODE ---
@@ -768,9 +768,9 @@ void main() {
             shadow = ShadowCalculation(fs_in.FragPosLightSpace, normal, normalize(-sun.direction));
         }
         
-        // Calculate environment lighting
-        vec3 reflectionColor = calculateEnvironmentReflection(normal, material.shininess / 128.0);
-        vec3 ambientLight = calculateAmbientFromSkybox(normal);
+        // Calculate ambient lighting from skybox
+        vec3 ambientLight = calculateAmbientFromSkybox(normal) * 0.1;
+        result += ambientLight * baseColor;
         
         // Sun lighting
         if (sun.enabled) {
@@ -787,10 +787,14 @@ void main() {
             result += calculatePointLight(lights[i], normal, viewDir, specularStrength);
         }
         
-        // Combine all lighting
+        // Apply base color to all accumulated lighting
         result *= baseColor;
+        
+        // Add environment reflection
+        vec3 reflectionColor = calculateEnvironmentReflection(normal, material.shininess / 128.0);
         result += reflectionColor * specularStrength;
-        result += ambientLight * baseColor;
+        
+        // Add emissive contribution
         result += material.emissive * baseColor;
     }
     else if (lightingMode == LIGHTING_VOXEL_CONE_TRACING) {

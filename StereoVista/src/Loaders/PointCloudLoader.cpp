@@ -130,14 +130,6 @@ namespace Engine {
 
         setupPointCloudGLBuffers(pointCloud);
 
-        // Create instance matrices before octree building (which clears points vector)
-        pointCloud.instanceMatrices.reserve(pointCloud.points.size());
-        for (const auto& point : pointCloud.points) {
-            glm::mat4 instanceMatrix = glm::translate(glm::mat4(1.0f), point.position);
-            // can add rotation and scaling here if needed
-            pointCloud.instanceMatrices.push_back(instanceMatrix);
-        }
-        pointCloud.instanceCount = pointCloud.instanceMatrices.size();
 
         if (pointCloud.useOctree) {
             OctreePointCloudManager::buildOctree(pointCloud);
@@ -145,21 +137,6 @@ namespace Engine {
             generateChunks(pointCloud, 2.0f);
         }
 
-        // Create and populate instance VBO
-        glGenBuffers(1, &pointCloud.instanceVBO);
-        glBindBuffer(GL_ARRAY_BUFFER, pointCloud.instanceVBO);
-        glBufferData(GL_ARRAY_BUFFER, pointCloud.instanceCount * sizeof(glm::mat4),
-            pointCloud.instanceMatrices.data(), GL_STATIC_DRAW);
-
-        // Set up instanced array
-        glBindVertexArray(pointCloud.vao);
-        for (unsigned int i = 0; i < 4; i++) {
-            glEnableVertexAttribArray(3 + i);
-            glVertexAttribPointer(3 + i, 4, GL_FLOAT, GL_FALSE, sizeof(glm::mat4),
-                (void*)(sizeof(glm::vec4) * i));
-            glVertexAttribDivisor(3 + i, 1);
-        }
-        glBindVertexArray(0);
 
         return std::move(pointCloud);
     }
@@ -377,16 +354,6 @@ namespace Engine {
             pointCloud = std::move(PointCloud{}); // Reset to empty point cloud
         }
 
-        std::cout << "[DEBUG] Creating instance matrices for " << pointCloud.points.size() << " points..." << std::endl;
-        // Create instance matrices before octree building (which clears points vector)
-        pointCloud.instanceMatrices.reserve(pointCloud.points.size());
-        for (const auto& point : pointCloud.points) {
-            glm::mat4 instanceMatrix = glm::translate(glm::mat4(1.0f), point.position);
-            // You can add rotation and scaling here if needed
-            pointCloud.instanceMatrices.push_back(instanceMatrix);
-        }
-        pointCloud.instanceCount = pointCloud.instanceMatrices.size();
-        std::cout << "[DEBUG] Created " << pointCloud.instanceCount << " instance matrices" << std::endl;
 
         std::cout << "[DEBUG] useOctree flag: " << (pointCloud.useOctree ? "true" : "false") << std::endl;
         if (pointCloud.useOctree) {
@@ -399,25 +366,6 @@ namespace Engine {
             std::cout << "[DEBUG] Legacy chunk generation completed" << std::endl;
         }
 
-        std::cout << "[DEBUG] Creating instance VBO..." << std::endl;
-        // Create and populate instance VBO
-        glGenBuffers(1, &pointCloud.instanceVBO);
-        glBindBuffer(GL_ARRAY_BUFFER, pointCloud.instanceVBO);
-        glBufferData(GL_ARRAY_BUFFER, pointCloud.instanceCount * sizeof(glm::mat4),
-            pointCloud.instanceMatrices.data(), GL_STATIC_DRAW);
-        std::cout << "[DEBUG] Instance VBO created with " << pointCloud.instanceCount << " matrices" << std::endl;
-
-        std::cout << "[DEBUG] Setting up instanced arrays..." << std::endl;
-        // Set up instanced array
-        glBindVertexArray(pointCloud.vao);
-        for (unsigned int i = 0; i < 4; i++) {
-            glEnableVertexAttribArray(3 + i);
-            glVertexAttribPointer(3 + i, 4, GL_FLOAT, GL_FALSE, sizeof(glm::mat4),
-                (void*)(sizeof(glm::vec4) * i));
-            glVertexAttribDivisor(3 + i, 1);
-        }
-        glBindVertexArray(0);
-        std::cout << "[DEBUG] Instanced arrays setup complete" << std::endl;
 
         std::cout << "[DEBUG] loadFromBinary() returning successfully" << std::endl;
         return std::move(pointCloud);
@@ -1367,13 +1315,6 @@ namespace Engine {
                             // Set up OpenGL buffers and build octree
                             setupPointCloudGLBuffers(pointCloud);
                             
-                            // Create instance matrices before octree building (which clears points vector)
-                            pointCloud.instanceMatrices.reserve(pointCloud.points.size());
-                            for (const auto& point : pointCloud.points) {
-                                glm::mat4 instanceMatrix = glm::translate(glm::mat4(1.0f), point.position);
-                                pointCloud.instanceMatrices.push_back(instanceMatrix);
-                            }
-                            pointCloud.instanceCount = pointCloud.instanceMatrices.size();
                             
                             if (pointCloud.useOctree) {
                                 OctreePointCloudManager::buildOctree(pointCloud);
@@ -1381,21 +1322,6 @@ namespace Engine {
                                 generateChunks(pointCloud, 2.0f);
                             }
 
-                            // Create and populate instance VBO
-                            glGenBuffers(1, &pointCloud.instanceVBO);
-                            glBindBuffer(GL_ARRAY_BUFFER, pointCloud.instanceVBO);
-                            glBufferData(GL_ARRAY_BUFFER, pointCloud.instanceCount * sizeof(glm::mat4),
-                                pointCloud.instanceMatrices.data(), GL_STATIC_DRAW);
-
-                            // Set up instanced array
-                            glBindVertexArray(pointCloud.vao);
-                            for (unsigned int i = 0; i < 4; i++) {
-                                glEnableVertexAttribArray(3 + i);
-                                glVertexAttribPointer(3 + i, 4, GL_FLOAT, GL_FALSE, sizeof(glm::mat4),
-                                    (void*)(sizeof(glm::vec4) * i));
-                                glVertexAttribDivisor(3 + i, 1);
-                            }
-                            glBindVertexArray(0);
                             
                             std::cout << "Successfully loaded " << pointCloud.points.size() << " points from f5 file" << std::endl;
                             return std::move(pointCloud);
@@ -1427,13 +1353,6 @@ namespace Engine {
         // Set up OpenGL buffers and build octree
         setupPointCloudGLBuffers(pointCloud);
         
-        // Create instance matrices before octree building (which clears points vector)
-        pointCloud.instanceMatrices.reserve(pointCloud.points.size());
-        for (const auto& point : pointCloud.points) {
-            glm::mat4 instanceMatrix = glm::translate(glm::mat4(1.0f), point.position);
-            pointCloud.instanceMatrices.push_back(instanceMatrix);
-        }
-        pointCloud.instanceCount = pointCloud.instanceMatrices.size();
         
         if (pointCloud.useOctree) {
             OctreePointCloudManager::buildOctree(pointCloud);
@@ -1442,21 +1361,6 @@ namespace Engine {
             generateChunks(pointCloud, 2.0f);
         }
 
-        // Create and populate instance VBO
-        glGenBuffers(1, &pointCloud.instanceVBO);
-        glBindBuffer(GL_ARRAY_BUFFER, pointCloud.instanceVBO);
-        glBufferData(GL_ARRAY_BUFFER, pointCloud.instanceCount * sizeof(glm::mat4),
-            pointCloud.instanceMatrices.data(), GL_STATIC_DRAW);
-
-        // Set up instanced array
-        glBindVertexArray(pointCloud.vao);
-        for (unsigned int i = 0; i < 4; i++) {
-            glEnableVertexAttribArray(3 + i);
-            glVertexAttribPointer(3 + i, 4, GL_FLOAT, GL_FALSE, sizeof(glm::mat4),
-                (void*)(sizeof(glm::vec4) * i));
-            glVertexAttribDivisor(3 + i, 1);
-        }
-        glBindVertexArray(0);
 
         return std::move(pointCloud);
     }

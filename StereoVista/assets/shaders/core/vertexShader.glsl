@@ -5,8 +5,6 @@ layout (location = 2) in vec2 aTexCoords;
 layout (location = 3) in vec3 aTangent;
 layout (location = 4) in vec3 aBitangent;
 
-// Instance data (if needed)
-layout (location = 5) in mat4 instanceMatrix;
 
 out VS_OUT {
     vec3 FragPos;
@@ -31,17 +29,15 @@ const int LIGHTING_VOXEL_CONE_TRACING = 1;
 
 // Render states
 uniform bool isPointCloud;
-uniform bool useInstancing;
 uniform int lightingMode;
 uniform int currentMeshIndex;
 
 void main() {
-    // Calculate model matrix based on whether we're using instancing
-    mat4 finalModel = useInstancing ? instanceMatrix : model;
-    mat3 normalMatrix = transpose(inverse(mat3(finalModel)));
+    // Use the model matrix directly
+    mat3 normalMatrix = transpose(inverse(mat3(model)));
     
     // Calculate fragment position in world space
-    vs_out.FragPos = vec3(finalModel * vec4(aPos, 1.0));
+    vs_out.FragPos = vec3(model * vec4(aPos, 1.0));
     
     if (isPointCloud) {
         // Point cloud specific attributes
