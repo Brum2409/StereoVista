@@ -1,11 +1,9 @@
-﻿  OctreePointCloudManager.cpp
-  main.cpp
-  PointCloudLoader.cpp
+﻿  GUI.cpp
 LINK : warning LNK4098: defaultlib 'LIBCMT' conflicts with use of other libs; use /NODEFAULTLIB:library
   Generating code
-  3 of 8800 functions (<0.1%) were compiled, the rest were copied from previous compilation.
+  1 of 8799 functions (<0.1%) were compiled, the rest were copied from previous compilation.
     0 functions were new in current compilation
-    79 functions had inline decision re-evaluated but remain unchanged
+    77 functions had inline decision re-evaluated but remain unchanged
   Finished generating code
 libhdf5.lib(H5.obj) : warning LNK4099: PDB '' was not found with 'libhdf5.lib(H5.obj)' or at ''; linking object as if no debug info
 libhdf5.lib(H5CX.obj) : warning LNK4099: PDB '' was not found with 'libhdf5.lib(H5CX.obj)' or at ''; linking object as if no debug info

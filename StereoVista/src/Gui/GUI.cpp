@@ -520,45 +520,22 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
 }
 
 void renderSettingsWindow() {
-    ImGui::SetNextWindowSize(ImVec2(400, 500), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(450, 600), ImGuiCond_FirstUseEver);
     ImGui::Begin("Settings", &showSettingsWindow);
     bool settingsChanged = false;
 
     if (ImGui::BeginTabBar("SettingsTabs")) {
-        // Camera Tab
-        if (ImGui::BeginTabItem("Camera")) {
-            ImGui::Text("Stereo Settings");
-            ImGui::Separator();
-
-            // Stereo visualization removed - not working correctly
-            // if (ImGui::Checkbox("Show Stereo Visualization", &preferences.showStereoVisualization)) {
-            //     savePreferences(); // Save when changed
-            // }
-            // ImGui::SetItemTooltip("Show a visualization of the stereo camera setup");
-
-            // if (preferences.showStereoVisualization) {
-            //     renderStereoCameraVisualization(camera, currentScene.settings);
-            // }
-
-            // Always disable stereo visualization
-            preferences.showStereoVisualization = false;
-
-            if (ImGui::SliderFloat("Separation", &currentScene.settings.separation, 0.01f, 2.0f)) {
-                preferences.separation = currentScene.settings.separation;
-                settingsChanged = true;
-            }
-            ImGui::SetItemTooltip("Adjusts the distance between stereo views. Higher values increase 3D effect");
-
-            if (ImGui::SliderFloat("Convergence", &currentScene.settings.convergence, 0.0f, 40.0f)) {
-                preferences.convergence = currentScene.settings.convergence;
-                settingsChanged = true;
-            }
-            ImGui::SetItemTooltip("Sets the focal point distance where left and right views converge");
-
-            ImGui::Spacing();
+        
+        // =====================
+        // TAB 1: CAMERA & VIEW
+        // =====================
+        if (ImGui::BeginTabItem("Camera & View")) {
+            
+            // Camera Properties
+            ImGui::BeginGroup();
             ImGui::Text("Camera Properties");
             ImGui::Separator();
-
+            
             if (ImGui::SliderFloat("Field of View", &camera.Zoom, 1.0f, 120.0f)) {
                 preferences.fov = camera.Zoom;
                 settingsChanged = true;
@@ -576,14 +553,38 @@ void renderSettingsWindow() {
                 settingsChanged = true;
             }
             ImGui::SetItemTooltip("Maximum visible distance from camera. Higher values may impact performance");
-
-            ImGui::EndTabItem();
-        }
-
-        // Movement Tab
-        if (ImGui::BeginTabItem("Movement")) {
-            ImGui::Text("Mouse Settings");
+            ImGui::EndGroup();
+            
+            ImGui::Spacing();
+            
+            // Stereo Settings
+            ImGui::BeginGroup();
+            ImGui::Text("Stereo Settings");
             ImGui::Separator();
+            
+            // Always disable stereo visualization
+            preferences.showStereoVisualization = false;
+
+            if (ImGui::SliderFloat("Separation", &currentScene.settings.separation, 0.01f, 2.0f)) {
+                preferences.separation = currentScene.settings.separation;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Adjusts the distance between stereo views. Higher values increase 3D effect");
+
+            if (ImGui::SliderFloat("Convergence", &currentScene.settings.convergence, 0.0f, 40.0f)) {
+                preferences.convergence = currentScene.settings.convergence;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Sets the focal point distance where left and right views converge");
+            ImGui::EndGroup();
+            
+            ImGui::Spacing();
+            
+            // Movement & Controls
+            ImGui::BeginGroup();
+            ImGui::Text("Movement & Controls");
+            ImGui::Separator();
+            
             if (ImGui::SliderFloat("Mouse Sensitivity", &camera.MouseSensitivity, 0.01f, 0.08f)) {
                 preferences.mouseSensitivity = camera.MouseSensitivity;
                 settingsChanged = true;
@@ -607,41 +608,8 @@ void renderSettingsWindow() {
                 settingsChanged = true;
             }
             ImGui::SetItemTooltip("When enabled, scrolling zooms toward or away from the 3D cursor position");
-
-            ImGui::Spacing();
-            ImGui::Text("Scroll Settings");
-            ImGui::Separator();
-
-            if (ImGui::Checkbox("Smooth Scrolling", &camera.useSmoothScrolling)) {
-                preferences.useSmoothScrolling = camera.useSmoothScrolling;
-                settingsChanged = true;
-            }
-            ImGui::SetItemTooltip("Enable physics-based smooth scrolling");
-
-            if (camera.useSmoothScrolling) {
-                if (ImGui::SliderFloat("Momentum", &camera.scrollMomentum, 0.0f, 1.0f)) {
-                    preferences.scrollMomentum = camera.scrollMomentum;
-                    settingsChanged = true;
-                }
-                ImGui::SetItemTooltip("Controls how much scrolling 'carries' (higher = more momentum)");
-
-                if (ImGui::SliderFloat("Max Velocity", &camera.maxScrollVelocity, 0.5f, 10.0f)) {
-                    preferences.maxScrollVelocity = camera.maxScrollVelocity;
-                    settingsChanged = true;
-                }
-                ImGui::SetItemTooltip("Maximum scroll speed");
-
-                if (ImGui::SliderFloat("Deceleration", &camera.scrollDeceleration, 1.0f, 20.0f)) {
-                    preferences.scrollDeceleration = camera.scrollDeceleration;
-                    settingsChanged = true;
-                }
-                ImGui::SetItemTooltip("How quickly scrolling slows down");
-            }
-
-            ImGui::Spacing();
+            
             ImGui::Text("Orbiting Behavior");
-            ImGui::Separator();
-
             bool standardOrbit = !camera.orbitAroundCursor && !orbitFollowsCursor;
             bool orbitAroundCursorOption = camera.orbitAroundCursor;
             bool orbitFollowsCursorOption = orbitFollowsCursor;
@@ -672,23 +640,502 @@ void renderSettingsWindow() {
                 settingsChanged = true;
             }
             ImGui::SetItemTooltip("Centers the view on cursor position before orbiting");
+            ImGui::EndGroup();
+            
+            ImGui::Spacing();
+            
+            // Smooth Scrolling
+            ImGui::BeginGroup();
+            ImGui::Text("Smooth Scrolling");
+            ImGui::Separator();
+            
+            if (ImGui::Checkbox("Enable Smooth Scrolling", &camera.useSmoothScrolling)) {
+                preferences.useSmoothScrolling = camera.useSmoothScrolling;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Enable physics-based smooth scrolling");
+
+            if (camera.useSmoothScrolling) {
+                if (ImGui::SliderFloat("Momentum", &camera.scrollMomentum, 0.0f, 1.0f)) {
+                    preferences.scrollMomentum = camera.scrollMomentum;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Controls how much scrolling 'carries' (higher = more momentum)");
+
+                if (ImGui::SliderFloat("Max Velocity", &camera.maxScrollVelocity, 0.5f, 10.0f)) {
+                    preferences.maxScrollVelocity = camera.maxScrollVelocity;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Maximum scroll speed");
+
+                if (ImGui::SliderFloat("Deceleration", &camera.scrollDeceleration, 1.0f, 20.0f)) {
+                    preferences.scrollDeceleration = camera.scrollDeceleration;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("How quickly scrolling slows down");
+            }
+            ImGui::EndGroup();
 
             ImGui::EndTabItem();
         }
 
-        // Radar Tab
-        if (ImGui::BeginTabItem("Radar")) {
-            ImGui::Text("Radar Settings");
+        // ============================
+        // TAB 2: RENDERING & GRAPHICS
+        // ============================
+        if (ImGui::BeginTabItem("Rendering & Graphics")) {
+            
+            // Rendering Mode
+            ImGui::BeginGroup();
+            ImGui::Text("Rendering Mode");
             ImGui::Separator();
+            
+            const char* lightingModes[] = { "Shadow Mapping", "Voxel Cone Tracing", "Radiance" };
+            int currentLightingMode = static_cast<int>(preferences.lightingMode);
+            if (ImGui::Combo("Lighting Mode", &currentLightingMode, lightingModes, IM_ARRAYSIZE(lightingModes))) {
+                preferences.lightingMode = static_cast<GUI::LightingMode>(currentLightingMode);
+                ::currentLightingMode = preferences.lightingMode;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Switch between traditional shadow mapping, voxel cone tracing for global illumination, and radiance rendering");
 
-            if (ImGui::Checkbox("Enable Radar", &preferences.radarEnabled)) {
+            if (ImGui::Checkbox("Wireframe Mode", &camera.wireframe)) {
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Renders objects as wireframes instead of solid surfaces");
+            ImGui::EndGroup();
+            
+            ImGui::Spacing();
+            
+            // Shadow Mapping Settings
+            if (preferences.lightingMode == GUI::LIGHTING_SHADOW_MAPPING) {
+                ImGui::BeginGroup();
+                ImGui::Text("Shadow Mapping Settings");
+                ImGui::Separator();
+                
+                if (ImGui::Checkbox("Enable Shadows", &preferences.enableShadows)) {
+                    ::enableShadows = preferences.enableShadows;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Toggle shadow mapping on/off");
+                ImGui::EndGroup();
+            }
+            
+            // Voxel Cone Tracing Settings
+            else if (preferences.lightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
+                ImGui::BeginGroup();
+                ImGui::Text("Voxel Cone Tracing Settings");
+                ImGui::Separator();
+                
+                // VCT Components
+                ImGui::Text("Enable VCT Components");
+                if (ImGui::Checkbox("Indirect Diffuse Light", &preferences.vctSettings.indirectDiffuseLight)) {
+                    vctSettings.indirectDiffuseLight = preferences.vctSettings.indirectDiffuseLight;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Enable indirect diffuse lighting (global illumination effects)");
+
+                if (ImGui::Checkbox("Indirect Specular Light", &preferences.vctSettings.indirectSpecularLight)) {
+                    vctSettings.indirectSpecularLight = preferences.vctSettings.indirectSpecularLight;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Enable indirect specular reflections (glossy reflections)");
+
+                if (ImGui::Checkbox("Direct Light", &preferences.vctSettings.directLight)) {
+                    vctSettings.directLight = preferences.vctSettings.directLight;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Enable direct lighting from light sources");
+
+                if (ImGui::Checkbox("Shadows", &preferences.vctSettings.shadows)) {
+                    vctSettings.shadows = preferences.vctSettings.shadows;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Enable soft shadows through voxel cone tracing");
+                
+                ImGui::Separator();
+                
+                // Quality Settings
+                ImGui::Text("Quality Settings");
+                
+                // Quality presets
+                if (ImGui::Button("Low Quality")) {
+                    preferences.vctSettings.diffuseConeCount = 1;
+                    preferences.vctSettings.shadowSampleCount = 5;
+                    preferences.vctSettings.shadowStepMultiplier = 0.3f;
+                    preferences.vctSettings.tracingMaxDistance = 1.0f;
+                    vctSettings.diffuseConeCount = preferences.vctSettings.diffuseConeCount;
+                    vctSettings.shadowSampleCount = preferences.vctSettings.shadowSampleCount;
+                    vctSettings.shadowStepMultiplier = preferences.vctSettings.shadowStepMultiplier;
+                    vctSettings.tracingMaxDistance = preferences.vctSettings.tracingMaxDistance;
+                    settingsChanged = true;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Medium Quality")) {
+                    preferences.vctSettings.diffuseConeCount = 5;
+                    preferences.vctSettings.shadowSampleCount = 8;
+                    preferences.vctSettings.shadowStepMultiplier = 0.2f;
+                    preferences.vctSettings.tracingMaxDistance = 1.5f;
+                    vctSettings.diffuseConeCount = preferences.vctSettings.diffuseConeCount;
+                    vctSettings.shadowSampleCount = preferences.vctSettings.shadowSampleCount;
+                    vctSettings.shadowStepMultiplier = preferences.vctSettings.shadowStepMultiplier;
+                    vctSettings.tracingMaxDistance = preferences.vctSettings.tracingMaxDistance;
+                    settingsChanged = true;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("High Quality")) {
+                    preferences.vctSettings.diffuseConeCount = 9;
+                    preferences.vctSettings.shadowSampleCount = 15;
+                    preferences.vctSettings.shadowStepMultiplier = 0.1f;
+                    preferences.vctSettings.tracingMaxDistance = 2.0f;
+                    vctSettings.diffuseConeCount = preferences.vctSettings.diffuseConeCount;
+                    vctSettings.shadowSampleCount = preferences.vctSettings.shadowSampleCount;
+                    vctSettings.shadowStepMultiplier = preferences.vctSettings.shadowStepMultiplier;
+                    vctSettings.tracingMaxDistance = preferences.vctSettings.tracingMaxDistance;
+                    settingsChanged = true;
+                }
+                
+                const char* coneCountOptions[] = { "1 (Low)", "5 (Medium)", "9 (High)" };
+                int coneCountIndex = 0;
+                if (preferences.vctSettings.diffuseConeCount <= 1) coneCountIndex = 0;
+                else if (preferences.vctSettings.diffuseConeCount <= 5) coneCountIndex = 1;
+                else coneCountIndex = 2;
+
+                if (ImGui::Combo("Diffuse Cone Count", &coneCountIndex, coneCountOptions, IM_ARRAYSIZE(coneCountOptions))) {
+                    switch (coneCountIndex) {
+                    case 0: preferences.vctSettings.diffuseConeCount = 1; break;
+                    case 1: preferences.vctSettings.diffuseConeCount = 5; break;
+                    case 2: preferences.vctSettings.diffuseConeCount = 9; break;
+                    }
+                    vctSettings.diffuseConeCount = preferences.vctSettings.diffuseConeCount;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Controls the number of cones used for indirect diffuse lighting.\nMore cones = better quality but slower performance");
+
+                if (ImGui::SliderFloat("Max Tracing Distance", &preferences.vctSettings.tracingMaxDistance, 0.5f, 2.5f, "%.2f")) {
+                    vctSettings.tracingMaxDistance = preferences.vctSettings.tracingMaxDistance;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Maximum distance for tracing cones (in grid units).\nLarger values capture more distant lighting but reduce performance");
+
+                int shadowSamples = preferences.vctSettings.shadowSampleCount;
+                if (ImGui::SliderInt("Shadow Samples", &shadowSamples, 5, 20)) {
+                    preferences.vctSettings.shadowSampleCount = shadowSamples;
+                    vctSettings.shadowSampleCount = shadowSamples;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Number of samples taken when tracing shadow cones.\nMore samples = smoother shadows but slower performance");
+
+                if (ImGui::SliderFloat("Shadow Step Multiplier", &preferences.vctSettings.shadowStepMultiplier, 0.05f, 0.5f, "%.3f")) {
+                    vctSettings.shadowStepMultiplier = preferences.vctSettings.shadowStepMultiplier;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Controls how fast shadow cone tracing advances.\nLarger values are faster but may miss details");
+                
+                ImGui::Separator();
+                
+                // Grid Configuration
+                ImGui::Text("Grid Configuration");
+                
+                float gridSize = voxelizer->getVoxelGridSize();
+                if (ImGui::SliderFloat("Grid Dimensions", &gridSize, 1.0f, 50.0f)) {
+                    voxelizer->setVoxelGridSize(gridSize);
+                }
+                ImGui::SetItemTooltip("World space area coverage for voxelization (larger = more world captured, more voxels)");
+
+                float voxelSize = preferences.vctSettings.voxelSize;
+                if (ImGui::SliderFloat("VCT Voxel Resolution", &voxelSize, 1.0f / 256.0f, 1.0f / 32.0f, "%.5f")) {
+                    preferences.vctSettings.voxelSize = voxelSize;
+                    vctSettings.voxelSize = voxelSize;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Voxel resolution for cone tracing calculations (smaller = higher quality but slower)");
+                
+                ImGui::Separator();
+                
+                // Debug Visualization
+                ImGui::Text("Debug Visualization");
+                
+                ImGui::Checkbox("Show Voxel Visualization", &voxelizer->showDebugVisualization);
+                ImGui::SetItemTooltip("Show the voxel representation for debugging");
+
+                float debugVoxelSize = voxelizer->debugVoxelSize;
+                if (ImGui::SliderFloat("Debug Cube Size", &debugVoxelSize, 0.001f, 0.1f, "%.4f")) {
+                    voxelizer->debugVoxelSize = debugVoxelSize;
+                }
+                ImGui::SetItemTooltip("Visual size of debug voxel cubes (affected by mipmap level)");
+
+                float opacity = voxelizer->voxelOpacity;
+                if (ImGui::SliderFloat("Voxel Opacity", &opacity, 0.0f, 1.0f)) {
+                    voxelizer->voxelOpacity = opacity;
+                }
+
+                float colorIntensity = voxelizer->voxelColorIntensity;
+                if (ImGui::SliderFloat("Color Intensity", &colorIntensity, 0.0f, 5.0f)) {
+                    voxelizer->voxelColorIntensity = colorIntensity;
+                }
+                ImGui::EndGroup();
+            }
+            
+            // Radiance Raytracing Settings
+            else if (preferences.lightingMode == GUI::LIGHTING_RADIANCE) {
+                ImGui::BeginGroup();
+                ImGui::Text("Radiance Raytracing Settings");
+                ImGui::Separator();
+                
+                if (ImGui::Checkbox("Enable Raytracing", &preferences.radianceSettings.enableRaytracing)) {
+                    ::radianceSettings.enableRaytracing = preferences.radianceSettings.enableRaytracing;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Enable proper raytracing from camera through pixels");
+                
+                // Performance group
+                ImGui::Text("Performance");
+                if (ImGui::SliderInt("Max Bounces", &preferences.radianceSettings.maxBounces, 1, 4)) {
+                    ::radianceSettings.maxBounces = preferences.radianceSettings.maxBounces;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Maximum number of ray bounces (1=direct lighting only, 2+=indirect lighting)");
+                
+                if (ImGui::SliderInt("Samples Per Pixel", &preferences.radianceSettings.samplesPerPixel, 1, 4)) {
+                    ::radianceSettings.samplesPerPixel = preferences.radianceSettings.samplesPerPixel;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Number of rays cast per pixel (higher = better quality, lower performance)");
+                
+                if (ImGui::SliderFloat("Ray Max Distance", &preferences.radianceSettings.rayMaxDistance, 10.0f, 100.0f)) {
+                    ::radianceSettings.rayMaxDistance = preferences.radianceSettings.rayMaxDistance;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Maximum distance for ray casting");
+                
+                ImGui::Separator();
+                
+                // Lighting Features group
+                ImGui::Text("Lighting Features");
+                if (ImGui::Checkbox("Enable Indirect Lighting", &preferences.radianceSettings.enableIndirectLighting)) {
+                    ::radianceSettings.enableIndirectLighting = preferences.radianceSettings.enableIndirectLighting;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Enable indirect lighting through ray bounces");
+                
+                if (ImGui::Checkbox("Enable Emissive Lighting", &preferences.radianceSettings.enableEmissiveLighting)) {
+                    ::radianceSettings.enableEmissiveLighting = preferences.radianceSettings.enableEmissiveLighting;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Use emissive objects as light sources");
+                
+                ImGui::Separator();
+                
+                // Intensity Controls group
+                ImGui::Text("Intensity Controls");
+                if (ImGui::SliderFloat("Indirect Intensity", &preferences.radianceSettings.indirectIntensity, 0.0f, 1.0f)) {
+                    ::radianceSettings.indirectIntensity = preferences.radianceSettings.indirectIntensity;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Intensity of indirect lighting contribution");
+                
+                if (ImGui::SliderFloat("Sky Intensity", &preferences.radianceSettings.skyIntensity, 0.0f, 2.0f)) {
+                    ::radianceSettings.skyIntensity = preferences.radianceSettings.skyIntensity;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Brightness of sky lighting when rays miss geometry");
+                
+                if (ImGui::SliderFloat("Emissive Intensity", &preferences.radianceSettings.emissiveIntensity, 0.0f, 3.0f)) {
+                    ::radianceSettings.emissiveIntensity = preferences.radianceSettings.emissiveIntensity;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Multiplier for emissive object brightness");
+                
+                // Material Override
+                if (ImGui::SliderFloat("Material Roughness", &preferences.radianceSettings.materialRoughness, 0.0f, 1.0f)) {
+                    ::radianceSettings.materialRoughness = preferences.radianceSettings.materialRoughness;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Global material roughness (0=mirror, 1=diffuse)");
+                ImGui::EndGroup();
+            }
+
+            ImGui::EndTabItem();
+        }
+
+        // ===============================
+        // TAB 3: ENVIRONMENT & LIGHTING
+        // ===============================
+        if (ImGui::BeginTabItem("Environment & Lighting")) {
+            
+            // Skybox Configuration
+            ImGui::BeginGroup();
+            ImGui::Text("Skybox Configuration");
+            ImGui::Separator();
+            
+            const char* skyboxTypes[] = { "Cubemap Texture", "Solid Color", "Gradient" };
+            int currentType = static_cast<int>(skyboxConfig.type);
+            if (ImGui::Combo("Skybox Type", &currentType, skyboxTypes, IM_ARRAYSIZE(skyboxTypes))) {
+                skyboxConfig.type = static_cast<GUI::SkyboxType>(currentType);
+                updateSkybox();
+                preferences.skyboxType = static_cast<int>(skyboxConfig.type);
+                savePreferences();
+            }
+            ImGui::SetItemTooltip("Change the type of skybox used in the scene");
+
+            // Type-specific controls
+            if (skyboxConfig.type == GUI::SKYBOX_CUBEMAP) {
+                std::vector<const char*> presetNames;
+                for (const auto& preset : cubemapPresets) {
+                    presetNames.push_back(preset.name.c_str());
+                }
+
+                if (ImGui::Combo("Cubemap Theme", &skyboxConfig.selectedCubemap,
+                    presetNames.data(), static_cast<int>(presetNames.size()))) {
+                    updateSkybox();
+                    preferences.selectedCubemap = skyboxConfig.selectedCubemap;
+                    savePreferences();
+                }
+
+                if (skyboxConfig.selectedCubemap >= 0 && skyboxConfig.selectedCubemap < cubemapPresets.size()) {
+                    ImGui::SetItemTooltip("%s", cubemapPresets[skyboxConfig.selectedCubemap].description.c_str());
+                }
+
+                if (ImGui::Button("Browse Custom Skybox")) {
+                    auto selection = pfd::select_folder("Select skybox directory").result();
+                    if (!selection.empty()) {
+                        std::string path = selection + "/";
+                        std::string dirName = std::filesystem::path(selection).filename().string();
+                        std::string name = "Custom: " + dirName;
+
+                        GUI::CubemapPreset newPreset;
+                        newPreset.name = name;
+                        newPreset.path = path;
+                        newPreset.description = "Custom skybox from: " + path;
+                        cubemapPresets.push_back(newPreset);
+
+                        skyboxConfig.selectedCubemap = static_cast<int>(cubemapPresets.size()) - 1;
+                        updateSkybox();
+                        preferences.selectedCubemap = skyboxConfig.selectedCubemap;
+                        savePreferences();
+                    }
+                }
+                ImGui::SetItemTooltip("Select a directory containing skybox textures (right.jpg, left.jpg, etc. OR posx.jpg, negx.jpg, etc.)");
+            }
+            else if (skyboxConfig.type == GUI::SKYBOX_SOLID_COLOR) {
+                if (ImGui::ColorEdit3("Skybox Color", glm::value_ptr(skyboxConfig.solidColor))) {
+                    updateSkybox();
+                    preferences.skyboxSolidColor = skyboxConfig.solidColor;
+                    savePreferences();
+                }
+                ImGui::SetItemTooltip("Set a single color for the entire skybox");
+            }
+            else if (skyboxConfig.type == GUI::SKYBOX_GRADIENT) {
+                bool colorChanged = false;
+                colorChanged |= ImGui::ColorEdit3("Top Color", glm::value_ptr(skyboxConfig.gradientTopColor));
+                ImGui::SetItemTooltip("Color of the top portion of the skybox");
+
+                colorChanged |= ImGui::ColorEdit3("Bottom Color", glm::value_ptr(skyboxConfig.gradientBottomColor));
+                ImGui::SetItemTooltip("Color of the bottom portion of the skybox");
+
+                if (colorChanged) {
+                    updateSkybox();
+                    preferences.skyboxGradientTop = skyboxConfig.gradientTopColor;
+                    preferences.skyboxGradientBottom = skyboxConfig.gradientBottomColor;
+                    savePreferences();
+                }
+            }
+
+            if (ImGui::SliderFloat("Ambient Strength", &ambientStrengthFromSkybox, 0.0f, 1.0f)) {
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Controls how much the skybox illuminates the scene. Higher values create brighter ambient lighting");
+            ImGui::EndGroup();
+            
+            ImGui::Spacing();
+            
+            // Sun Lighting
+            ImGui::BeginGroup();
+            ImGui::Text("Sun Lighting");
+            ImGui::Separator();
+            
+            settingsChanged |= ImGui::Checkbox("Enable Sun", &sun.enabled);
+            ImGui::SetItemTooltip("Toggles sun lighting on/off");
+            
+            settingsChanged |= ImGui::ColorEdit3("Sun Color", glm::value_ptr(sun.color));
+            ImGui::SetItemTooltip("Sets the color of sunlight in the scene");
+
+            settingsChanged |= ImGui::SliderFloat("Sun Intensity", &sun.intensity, 0.0f, 1.0f);
+            ImGui::SetItemTooltip("Controls the brightness of sunlight");
+
+            settingsChanged |= ImGui::DragFloat3("Sun Direction", glm::value_ptr(sun.direction), 0.01f, -1.0f, 1.0f);
+            ImGui::SetItemTooltip("Sets the direction of sunlight. Affects shadows and lighting");
+            ImGui::EndGroup();
+            
+            ImGui::Spacing();
+            
+            // Default Material Properties
+            ImGui::BeginGroup();
+            ImGui::Text("Default Material Properties");
+            ImGui::Separator();
+            
+            static float diffuseReflectivity = 0.8f;
+            if (ImGui::SliderFloat("Diffuse Reflectivity", &diffuseReflectivity, 0.0f, 1.0f)) {
+                // Update default material property
+            }
+
+            static float specularReflectivity = 0.0f;
+            if (ImGui::SliderFloat("Specular Reflectivity", &specularReflectivity, 0.0f, 1.0f)) {
+                // Update default material property
+            }
+
+            static float specularDiffusion = 0.5f;
+            if (ImGui::SliderFloat("Specular Diffusion", &specularDiffusion, 0.0f, 1.0f)) {
+                // Update default material property
+            }
+            ImGui::EndGroup();
+
+            ImGui::EndTabItem();
+        }
+
+        // ==============================
+        // TAB 4: INTERFACE & DISPLAY
+        // ==============================
+        if (ImGui::BeginTabItem("Interface & Display")) {
+            
+            // Interface Options
+            ImGui::BeginGroup();
+            ImGui::Text("Interface Options");
+            ImGui::Separator();
+            
+            if (ImGui::Checkbox("Show FPS Counter", &showFPS)) {
+                preferences.showFPS = showFPS;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Shows/hides the FPS counter in the top-right corner");
+
+            if (ImGui::Checkbox("Show GUI", &showGui)) {
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Toggle the entire GUI interface on/off");
+
+            if (ImGui::Checkbox("Dark Theme", &isDarkTheme)) {
+                SetupImGuiStyle(isDarkTheme, 1.0f);
+                preferences.isDarkTheme = isDarkTheme;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Switches between light and dark color themes for the interface");
+
+            if (ImGui::Checkbox("Show Radar", &preferences.radarEnabled)) {
                 currentScene.settings.radarEnabled = preferences.radarEnabled;
                 settingsChanged = true;
             }
             ImGui::SetItemTooltip("Show a radar overlay with the camera frustum");
-
+            ImGui::EndGroup();
+            
+            ImGui::Spacing();
+            
+            // Radar Configuration
             if (preferences.radarEnabled) {
-                ImGui::Text("Position");
+                ImGui::BeginGroup();
+                ImGui::Text("Radar Configuration");
+                ImGui::Separator();
+                
                 if (ImGui::SliderFloat("X Position", &preferences.radarPos.x, -1.0f, 1.0f)) {
                     currentScene.settings.radarPos.x = preferences.radarPos.x;
                     settingsChanged = true;
@@ -712,519 +1159,185 @@ void renderSettingsWindow() {
                     settingsChanged = true;
                 }
                 ImGui::SetItemTooltip("Show the scene models in the radar view");
+                ImGui::EndGroup();
+                
+                ImGui::Spacing();
+            }
+            
+            // Zero Plane
+            ImGui::BeginGroup();
+            ImGui::Text("Zero Plane");
+            ImGui::Separator();
+            
+            if (ImGui::Checkbox("Show Zero Plane", &preferences.showZeroPlane)) {
+                currentScene.settings.showZeroPlane = preferences.showZeroPlane;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Display the zero plane in the visualization");
+            ImGui::EndGroup();
 
+            ImGui::EndTabItem();
+        }
+
+        // ============================
+        // TAB 5: INPUT & CONTROLS
+        // ============================
+        if (ImGui::BeginTabItem("Input & Controls")) {
+            
+            // Mouse Settings
+            ImGui::BeginGroup();
+            ImGui::Text("Mouse Settings");
+            ImGui::Separator();
+            
+            if (ImGui::SliderFloat("Mouse Sensitivity", &camera.MouseSensitivity, 0.01f, 0.08f)) {
+                preferences.mouseSensitivity = camera.MouseSensitivity;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Adjusts how quickly the camera rotates in response to mouse movement");
+
+            if (ImGui::SliderFloat("Mouse Smoothing", &mouseSmoothingFactor, 0.1f, 1.0f)) {
+                preferences.mouseSmoothingFactor = mouseSmoothingFactor;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Controls smoothness of mouse movement. Lower values = smoother, higher values = more responsive");
+
+            if (ImGui::SliderFloat("Speed Multiplier", &camera.speedFactor, 0.1f, 5.0f)) {
+                preferences.cameraSpeedFactor = camera.speedFactor;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Multiplies base movement speed. Useful for navigating larger scenes");
+
+            if (ImGui::Checkbox("Zoom to Cursor", &camera.zoomToCursor)) {
+                preferences.zoomToCursor = camera.zoomToCursor;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("When enabled, scrolling zooms toward or away from the 3D cursor position");
+            ImGui::EndGroup();
+            
+            ImGui::Spacing();
+            
+            // Camera Behavior
+            ImGui::BeginGroup();
+            ImGui::Text("Camera Behavior");
+            ImGui::Separator();
+            
+            bool standardOrbit = !camera.orbitAroundCursor && !orbitFollowsCursor;
+            bool orbitAroundCursorOption = camera.orbitAroundCursor;
+            bool orbitFollowsCursorOption = orbitFollowsCursor;
+
+            if (ImGui::RadioButton("Standard Orbit", standardOrbit)) {
+                camera.orbitAroundCursor = false;
+                orbitFollowsCursor = false;
+                preferences.orbitAroundCursor = false;
+                preferences.orbitFollowsCursor = false;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Orbits around the viewport center at cursor depth");
+
+            if (ImGui::RadioButton("Orbit Around Cursor", orbitAroundCursorOption)) {
+                camera.orbitAroundCursor = true;
+                orbitFollowsCursor = false;
+                preferences.orbitAroundCursor = true;
+                preferences.orbitFollowsCursor = false;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Orbits around the 3D position of the cursor without centering the view");
+
+            if (ImGui::RadioButton("Orbit Follows Cursor (Center)", orbitFollowsCursorOption)) {
+                camera.orbitAroundCursor = false;
+                orbitFollowsCursor = true;
+                preferences.orbitAroundCursor = false;
+                preferences.orbitFollowsCursor = true;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Centers the view on cursor position before orbiting");
+            
+            if (ImGui::Checkbox("Smooth Scrolling", &camera.useSmoothScrolling)) {
+                preferences.useSmoothScrolling = camera.useSmoothScrolling;
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Enable physics-based smooth scrolling");
+
+            if (camera.useSmoothScrolling) {
+                if (ImGui::SliderFloat("Momentum", &camera.scrollMomentum, 0.0f, 1.0f)) {
+                    preferences.scrollMomentum = camera.scrollMomentum;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Controls how much scrolling 'carries' (higher = more momentum)");
+
+                if (ImGui::SliderFloat("Max Velocity", &camera.maxScrollVelocity, 0.5f, 10.0f)) {
+                    preferences.maxScrollVelocity = camera.maxScrollVelocity;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Maximum scroll speed");
+
+                if (ImGui::SliderFloat("Deceleration", &camera.scrollDeceleration, 1.0f, 20.0f)) {
+                    preferences.scrollDeceleration = camera.scrollDeceleration;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("How quickly scrolling slows down");
+            }
+            ImGui::EndGroup();
+            
+            ImGui::Spacing();
+            
+            // Keybind Reference (Read-only collapsible section)
+            if (ImGui::CollapsingHeader("Keybind Reference")) {
+                ImGui::Text("Camera Controls");
                 ImGui::Separator();
-                ImGui::Text("Zero Plane Visualization");
-                
-                if (ImGui::Checkbox("Show Zero Plane", &preferences.showZeroPlane)) {
-                    currentScene.settings.showZeroPlane = preferences.showZeroPlane;
-                    settingsChanged = true;
-                }
-                ImGui::SetItemTooltip("Display the zero plane in the visualization");
-            }
+                ImGui::Columns(2, "keybinds");
+                ImGui::SetColumnWidth(0, 150);
 
-            ImGui::EndTabItem();
-        }
+                ImGui::Text("W/S"); ImGui::NextColumn();
+                ImGui::Text("Move forward/backward"); ImGui::NextColumn();
 
-        // Environment Tab
-        if (ImGui::BeginTabItem("Environment")) {
-            bool settingsChanged = false;
-            ImGui::Text("Skybox Settings");
-            ImGui::Separator();
+                ImGui::Text("A/D"); ImGui::NextColumn();
+                ImGui::Text("Move left/right"); ImGui::NextColumn();
 
-            // Skybox type dropdown
-            const char* skyboxTypes[] = { "Cubemap Texture", "Solid Color", "Gradient" };
-            int currentType = static_cast<int>(skyboxConfig.type);
-            if (ImGui::Combo("Skybox Type", &currentType, skyboxTypes, IM_ARRAYSIZE(skyboxTypes))) {
-                skyboxConfig.type = static_cast<GUI::SkyboxType>(currentType);
-                updateSkybox();
+                ImGui::Text("Space/Shift"); ImGui::NextColumn();
+                ImGui::Text("Move up/down"); ImGui::NextColumn();
 
-                // Save the preferences
-                preferences.skyboxType = static_cast<int>(skyboxConfig.type);
-                savePreferences();
-            }
-            ImGui::SetItemTooltip("Change the type of skybox used in the scene");
+                ImGui::Text("Left Mouse + Drag"); ImGui::NextColumn();
+                ImGui::Text("Orbit around the viewport center at cursor depth"); ImGui::NextColumn();
 
-            // Type-specific controls
-            if (skyboxConfig.type == GUI::SKYBOX_CUBEMAP) {
-                // Create a vector of preset names for the combo box
-                std::vector<const char*> presetNames;
-                for (const auto& preset : cubemapPresets) {
-                    presetNames.push_back(preset.name.c_str());
-                }
+                ImGui::Text("Right Mouse + Drag"); ImGui::NextColumn();
+                ImGui::Text("Rotate the camera"); ImGui::NextColumn();
 
-                if (ImGui::Combo("Cubemap Theme", &skyboxConfig.selectedCubemap,
-                    presetNames.data(), static_cast<int>(presetNames.size()))) {
-                    updateSkybox();
+                ImGui::Text("Middle Mouse + Drag"); ImGui::NextColumn();
+                ImGui::Text("Pan camera"); ImGui::NextColumn();
 
-                    // Save the preferences
-                    preferences.selectedCubemap = skyboxConfig.selectedCubemap;
-                    savePreferences();
-                }
+                ImGui::Text("Mouse Wheel"); ImGui::NextColumn();
+                ImGui::Text("Zoom in/out"); ImGui::NextColumn();
 
-                // Display description as tooltip
-                if (skyboxConfig.selectedCubemap >= 0 && skyboxConfig.selectedCubemap < cubemapPresets.size()) {
-                    ImGui::SetItemTooltip("%s", cubemapPresets[skyboxConfig.selectedCubemap].description.c_str());
-                }
+                ImGui::Text("Double Click"); ImGui::NextColumn();
+                ImGui::Text("Center on cursor"); ImGui::NextColumn();
 
-                if (ImGui::Button("Browse Custom Skybox")) {
-                    auto selection = pfd::select_folder("Select skybox directory").result();
-                    if (!selection.empty()) {
-                        std::string path = selection + "/";
+                ImGui::Spacing(); ImGui::NextColumn(); ImGui::Spacing(); ImGui::NextColumn();
 
-                        // Create a name from the directory name
-                        std::string dirName = std::filesystem::path(selection).filename().string();
-                        std::string name = "Custom: " + dirName;
-
-                        // Add to presets
-                        GUI::CubemapPreset newPreset;
-                        newPreset.name = name;
-                        newPreset.path = path;
-                        newPreset.description = "Custom skybox from: " + path;
-                        cubemapPresets.push_back(newPreset);
-
-                        skyboxConfig.selectedCubemap = static_cast<int>(cubemapPresets.size()) - 1;
-                        updateSkybox();
-
-                        // Save the preferences (including new cubemap preset in preferences.json)
-                        preferences.selectedCubemap = skyboxConfig.selectedCubemap;
-                        savePreferences();
-                    }
-                }
-                ImGui::SetItemTooltip("Select a directory containing skybox textures (right.jpg, left.jpg, etc. OR posx.jpg, negx.jpg, etc.)");
-            }
-            else if (skyboxConfig.type == GUI::SKYBOX_SOLID_COLOR) {
-                if (ImGui::ColorEdit3("Skybox Color", glm::value_ptr(skyboxConfig.solidColor))) {
-                    updateSkybox();
-
-                    // Save the preferences
-                    preferences.skyboxSolidColor = skyboxConfig.solidColor;
-                    savePreferences();
-                }
-                ImGui::SetItemTooltip("Set a single color for the entire skybox");
-            }
-            else if (skyboxConfig.type == GUI::SKYBOX_GRADIENT) {
-                bool colorChanged = false;
-                colorChanged |= ImGui::ColorEdit3("Top Color", glm::value_ptr(skyboxConfig.gradientTopColor));
-                ImGui::SetItemTooltip("Color of the top portion of the skybox");
-
-                colorChanged |= ImGui::ColorEdit3("Bottom Color", glm::value_ptr(skyboxConfig.gradientBottomColor));
-                ImGui::SetItemTooltip("Color of the bottom portion of the skybox");
-
-                if (colorChanged) {
-                    updateSkybox();
-
-                    // Save the preferences
-                    preferences.skyboxGradientTop = skyboxConfig.gradientTopColor;
-                    preferences.skyboxGradientBottom = skyboxConfig.gradientBottomColor;
-                    savePreferences();
-                }
-            }
-
-            ImGui::Spacing();
-            if (ImGui::SliderFloat("Ambient Strength", &ambientStrengthFromSkybox, 0.0f, 1.0f)) {
-                settingsChanged = true;
-            }
-            ImGui::SetItemTooltip("Controls how much the skybox illuminates the scene. Higher values create brighter ambient lighting");
-
-            ImGui::Spacing();
-            ImGui::Text("Lighting System");
-            ImGui::Separator();
-
-            const char* lightingModes[] = { "Shadow Mapping", "Voxel Cone Tracing", "Radiance" };
-            int currentLightingMode = static_cast<int>(preferences.lightingMode);
-            if (ImGui::Combo("Lighting Mode", &currentLightingMode, lightingModes, IM_ARRAYSIZE(lightingModes))) {
-                preferences.lightingMode = static_cast<GUI::LightingMode>(currentLightingMode);
-                ::currentLightingMode = preferences.lightingMode; // Update the global variable
-                settingsChanged = true;
-            }
-            ImGui::SetItemTooltip("Switch between traditional shadow mapping, voxel cone tracing for global illumination, and radiance rendering");
-
-            // Shadow mapping options
-            if (preferences.lightingMode == GUI::LIGHTING_SHADOW_MAPPING) {
-                ImGui::Text("Shadow Mapping Settings");
-                if (ImGui::Checkbox("Enable Shadows", &preferences.enableShadows)) {
-                    ::enableShadows = preferences.enableShadows; // Update the global variable
-                    settingsChanged = true;
-                }
-                ImGui::SetItemTooltip("Toggle shadow mapping on/off");
-            }
-
-            // Voxel Cone Tracing options
-            if (preferences.lightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
-                ImGui::Text("Voxel Cone Tracing Settings");
-
-                ImGui::Checkbox("Show Voxel Visualization", &voxelizer->showDebugVisualization);
-                ImGui::SetItemTooltip("Show the voxel representation for debugging");
-
-                // VCT Components
-                if (ImGui::TreeNode("VCT Components")) {
-                    if (ImGui::Checkbox("Indirect Diffuse Light", &preferences.vctSettings.indirectDiffuseLight)) {
-                        vctSettings.indirectDiffuseLight = preferences.vctSettings.indirectDiffuseLight;
-                        settingsChanged = true;
-                    }
-                    ImGui::SetItemTooltip("Enable indirect diffuse lighting (global illumination effects)");
-
-                    if (ImGui::Checkbox("Indirect Specular Light", &preferences.vctSettings.indirectSpecularLight)) {
-                        vctSettings.indirectSpecularLight = preferences.vctSettings.indirectSpecularLight;
-                        settingsChanged = true;
-                    }
-                    ImGui::SetItemTooltip("Enable indirect specular reflections (glossy reflections)");
-
-                    if (ImGui::Checkbox("Direct Light", &preferences.vctSettings.directLight)) {
-                        vctSettings.directLight = preferences.vctSettings.directLight;
-                        settingsChanged = true;
-                    }
-                    ImGui::SetItemTooltip("Enable direct lighting from light sources");
-
-                    if (ImGui::Checkbox("Shadows", &preferences.vctSettings.shadows)) {
-                        vctSettings.shadows = preferences.vctSettings.shadows;
-                        settingsChanged = true;
-                    }
-                    ImGui::SetItemTooltip("Enable soft shadows through voxel cone tracing");
-
-                    ImGui::TreePop();
-                }
-
-                if (ImGui::TreeNode("Quality Settings")) {
-                    ImGui::Text("Indirect Diffuse Cones");
-                    const char* coneCountOptions[] = { "1 (Low)", "5 (Medium)", "9 (High)" };
-                    int coneCountIndex = 0;
-
-                    // Convert from actual count to combo index
-                    if (preferences.vctSettings.diffuseConeCount <= 1) coneCountIndex = 0;
-                    else if (preferences.vctSettings.diffuseConeCount <= 5) coneCountIndex = 1;
-                    else coneCountIndex = 2;
-
-                    if (ImGui::Combo("Diffuse Cone Count", &coneCountIndex, coneCountOptions, IM_ARRAYSIZE(coneCountOptions))) {
-                        // Convert back from index to actual count
-                        switch (coneCountIndex) {
-                        case 0: preferences.vctSettings.diffuseConeCount = 1; break;
-                        case 1: preferences.vctSettings.diffuseConeCount = 5; break;
-                        case 2: preferences.vctSettings.diffuseConeCount = 9; break;
-                        }
-                        vctSettings.diffuseConeCount = preferences.vctSettings.diffuseConeCount;
-                        settingsChanged = true;
-                    }
-                    ImGui::SetItemTooltip("Controls the number of cones used for indirect diffuse lighting.\nMore cones = better quality but slower performance");
-
-                    ImGui::Separator();
-                    ImGui::Text("Cone Tracing Parameters");
-
-                    if (ImGui::SliderFloat("Max Tracing Distance", &preferences.vctSettings.tracingMaxDistance, 0.5f, 2.5f, "%.2f")) {
-                        vctSettings.tracingMaxDistance = preferences.vctSettings.tracingMaxDistance;
-                        settingsChanged = true;
-                    }
-                    ImGui::SetItemTooltip("Maximum distance for tracing cones (in grid units).\nLarger values capture more distant lighting but reduce performance");
-
-                    int shadowSamples = preferences.vctSettings.shadowSampleCount;
-                    if (ImGui::SliderInt("Shadow Samples", &shadowSamples, 5, 20)) {
-                        preferences.vctSettings.shadowSampleCount = shadowSamples;
-                        vctSettings.shadowSampleCount = shadowSamples;
-                        settingsChanged = true;
-                    }
-                    ImGui::SetItemTooltip("Number of samples taken when tracing shadow cones.\nMore samples = smoother shadows but slower performance");
-
-                    if (ImGui::SliderFloat("Shadow Step Multiplier", &preferences.vctSettings.shadowStepMultiplier, 0.05f, 0.5f, "%.3f")) {
-                        vctSettings.shadowStepMultiplier = preferences.vctSettings.shadowStepMultiplier;
-                        settingsChanged = true;
-                    }
-                    ImGui::SetItemTooltip("Controls how fast shadow cone tracing advances.\nLarger values are faster but may miss details");
-
-                    ImGui::Separator();
-                    ImGui::Text("Presets");
-
-                    if (ImGui::Button("Low Quality")) {
-                        preferences.vctSettings.diffuseConeCount = 1;
-                        preferences.vctSettings.shadowSampleCount = 5;
-                        preferences.vctSettings.shadowStepMultiplier = 0.3f;
-                        preferences.vctSettings.tracingMaxDistance = 1.0f;
-
-                        // Apply to actual settings
-                        vctSettings.diffuseConeCount = preferences.vctSettings.diffuseConeCount;
-                        vctSettings.shadowSampleCount = preferences.vctSettings.shadowSampleCount;
-                        vctSettings.shadowStepMultiplier = preferences.vctSettings.shadowStepMultiplier;
-                        vctSettings.tracingMaxDistance = preferences.vctSettings.tracingMaxDistance;
-                        settingsChanged = true;
-                    }
-                    ImGui::SameLine();
-
-                    if (ImGui::Button("Medium Quality")) {
-                        preferences.vctSettings.diffuseConeCount = 5;
-                        preferences.vctSettings.shadowSampleCount = 8;
-                        preferences.vctSettings.shadowStepMultiplier = 0.2f;
-                        preferences.vctSettings.tracingMaxDistance = 1.5f;
-
-                        // Apply to actual settings
-                        vctSettings.diffuseConeCount = preferences.vctSettings.diffuseConeCount;
-                        vctSettings.shadowSampleCount = preferences.vctSettings.shadowSampleCount;
-                        vctSettings.shadowStepMultiplier = preferences.vctSettings.shadowStepMultiplier;
-                        vctSettings.tracingMaxDistance = preferences.vctSettings.tracingMaxDistance;
-                        settingsChanged = true;
-                    }
-                    ImGui::SameLine();
-
-                    if (ImGui::Button("High Quality")) {
-                        preferences.vctSettings.diffuseConeCount = 9;
-                        preferences.vctSettings.shadowSampleCount = 15;
-                        preferences.vctSettings.shadowStepMultiplier = 0.1f;
-                        preferences.vctSettings.tracingMaxDistance = 2.0f;
-
-                        // Apply to actual settings
-                        vctSettings.diffuseConeCount = preferences.vctSettings.diffuseConeCount;
-                        vctSettings.shadowSampleCount = preferences.vctSettings.shadowSampleCount;
-                        vctSettings.shadowStepMultiplier = preferences.vctSettings.shadowStepMultiplier;
-                        vctSettings.tracingMaxDistance = preferences.vctSettings.tracingMaxDistance;
-                        settingsChanged = true;
-                    }
-
-                    ImGui::TreePop();
-                }
-
-                // Voxel Grid Settings
-                if (ImGui::TreeNode("Voxel Grid Settings")) {
-                    float gridSize = voxelizer->getVoxelGridSize();
-                    if (ImGui::SliderFloat("Grid Dimensions", &gridSize, 1.0f, 50.0f)) {
-                        voxelizer->setVoxelGridSize(gridSize);
-                    }
-                    ImGui::SetItemTooltip("World space area coverage for voxelization (larger = more world captured, more voxels)");
-
-                    float voxelSize = preferences.vctSettings.voxelSize;
-                    if (ImGui::SliderFloat("VCT Voxel Resolution", &voxelSize, 1.0f / 256.0f, 1.0f / 32.0f, "%.5f")) {
-                        preferences.vctSettings.voxelSize = voxelSize;
-                        vctSettings.voxelSize = voxelSize;
-                        settingsChanged = true;
-                    }
-                    ImGui::SetItemTooltip("Voxel resolution for cone tracing calculations (smaller = higher quality but slower)");
-
-                    // Note: Mipmap level is controlled by increaseState()/decreaseState() via keyboard shortcuts
-
-                    ImGui::TreePop();
-                }
-
-                // Visualization settings
-                if (ImGui::TreeNode("Visualization Settings")) {
-                    // Debug cube display size (independent of grid dimensions)
-                    float debugVoxelSize = voxelizer->debugVoxelSize;
-                    if (ImGui::SliderFloat("Debug Cube Size", &debugVoxelSize, 0.001f, 0.1f, "%.4f")) {
-                        voxelizer->debugVoxelSize = debugVoxelSize;
-                    }
-                    ImGui::SetItemTooltip("Visual size of debug voxel cubes (affected by mipmap level)");
-
-                    float opacity = voxelizer->voxelOpacity;
-                    if (ImGui::SliderFloat("Voxel Opacity", &opacity, 0.0f, 1.0f)) {
-                        voxelizer->voxelOpacity = opacity;
-                    }
-
-                    float colorIntensity = voxelizer->voxelColorIntensity;
-                    if (ImGui::SliderFloat("Color Intensity", &colorIntensity, 0.0f, 5.0f)) {
-                        voxelizer->voxelColorIntensity = colorIntensity;
-                    }
-
-                    ImGui::TreePop();
-                }
-
-                // Material defaults for cone tracing
-                if (ImGui::TreeNode("Default Material Properties")) {
-                    static float diffuseReflectivity = 0.8f;
-                    if (ImGui::SliderFloat("Diffuse Reflectivity", &diffuseReflectivity, 0.0f, 1.0f)) {
-                        // Update default material property
-                    }
-
-                    static float specularReflectivity = 0.0f;
-                    if (ImGui::SliderFloat("Specular Reflectivity", &specularReflectivity, 0.0f, 1.0f)) {
-                        // Update default material property
-                    }
-
-                    static float specularDiffusion = 0.5f;
-                    if (ImGui::SliderFloat("Specular Diffusion", &specularDiffusion, 0.0f, 1.0f)) {
-                        // Update default material property
-                    }
-
-                    ImGui::TreePop();
-                }
-            }
-
-            // Radiance rendering options
-            if (preferences.lightingMode == GUI::LIGHTING_RADIANCE) {
-                ImGui::Text("Radiance Raytracing Settings");
-                
-                if (ImGui::Checkbox("Enable Raytracing", &preferences.radianceSettings.enableRaytracing)) {
-                    ::radianceSettings.enableRaytracing = preferences.radianceSettings.enableRaytracing;
-                    settingsChanged = true;
-                }
-                ImGui::SetItemTooltip("Enable proper raytracing from camera through pixels");
-                
-                if (ImGui::SliderInt("Max Bounces", &preferences.radianceSettings.maxBounces, 1, 4)) {
-                    ::radianceSettings.maxBounces = preferences.radianceSettings.maxBounces;
-                    settingsChanged = true;
-                }
-                ImGui::SetItemTooltip("Maximum number of ray bounces (1=direct lighting only, 2+=indirect lighting)");
-                
-                if (ImGui::SliderInt("Samples Per Pixel", &preferences.radianceSettings.samplesPerPixel, 1, 4)) {
-                    ::radianceSettings.samplesPerPixel = preferences.radianceSettings.samplesPerPixel;
-                    settingsChanged = true;
-                }
-                ImGui::SetItemTooltip("Number of rays cast per pixel (higher = better quality, lower performance)");
-                
-                if (ImGui::SliderFloat("Ray Max Distance", &preferences.radianceSettings.rayMaxDistance, 10.0f, 100.0f)) {
-                    ::radianceSettings.rayMaxDistance = preferences.radianceSettings.rayMaxDistance;
-                    settingsChanged = true;
-                }
-                ImGui::SetItemTooltip("Maximum distance for ray casting");
-                
-                if (ImGui::Checkbox("Enable Indirect Lighting", &preferences.radianceSettings.enableIndirectLighting)) {
-                    ::radianceSettings.enableIndirectLighting = preferences.radianceSettings.enableIndirectLighting;
-                    settingsChanged = true;
-                }
-                ImGui::SetItemTooltip("Enable indirect lighting through ray bounces");
-                
-                if (ImGui::Checkbox("Enable Emissive Lighting", &preferences.radianceSettings.enableEmissiveLighting)) {
-                    ::radianceSettings.enableEmissiveLighting = preferences.radianceSettings.enableEmissiveLighting;
-                    settingsChanged = true;
-                }
-                ImGui::SetItemTooltip("Use emissive objects as light sources");
-                
-                if (ImGui::SliderFloat("Indirect Intensity", &preferences.radianceSettings.indirectIntensity, 0.0f, 1.0f)) {
-                    ::radianceSettings.indirectIntensity = preferences.radianceSettings.indirectIntensity;
-                    settingsChanged = true;
-                }
-                ImGui::SetItemTooltip("Intensity of indirect lighting contribution");
-                
-                if (ImGui::SliderFloat("Sky Intensity", &preferences.radianceSettings.skyIntensity, 0.0f, 2.0f)) {
-                    ::radianceSettings.skyIntensity = preferences.radianceSettings.skyIntensity;
-                    settingsChanged = true;
-                }
-                ImGui::SetItemTooltip("Brightness of sky lighting when rays miss geometry");
-                
-                if (ImGui::SliderFloat("Emissive Intensity", &preferences.radianceSettings.emissiveIntensity, 0.0f, 3.0f)) {
-                    ::radianceSettings.emissiveIntensity = preferences.radianceSettings.emissiveIntensity;
-                    settingsChanged = true;
-                }
-                ImGui::SetItemTooltip("Multiplier for emissive object brightness");
-                
-                if (ImGui::SliderFloat("Material Roughness", &preferences.radianceSettings.materialRoughness, 0.0f, 1.0f)) {
-                    ::radianceSettings.materialRoughness = preferences.radianceSettings.materialRoughness;
-                    settingsChanged = true;
-                }
-                ImGui::SetItemTooltip("Global material roughness (0=mirror, 1=diffuse)");
-                
+                ImGui::Text("Other Controls");
                 ImGui::Separator();
-                ImGui::Text("Features:");
-                ImGui::BulletText("Camera-to-pixel raytracing");
-                ImGui::BulletText("Uses actual scene lights (sun + point lights)");
-                ImGui::BulletText("Material property propagation through bounces");
-                ImGui::BulletText("Proper BRDF evaluation");
+
+                ImGui::Text("G"); ImGui::NextColumn();
+                ImGui::Text("Toggle GUI"); ImGui::NextColumn();
+
+                ImGui::Text("Ctrl + Click"); ImGui::NextColumn();
+                ImGui::Text("Select object"); ImGui::NextColumn();
+
+                ImGui::Text("Ctrl + Click + Drag"); ImGui::NextColumn();
+                ImGui::Text("Move Objects around"); ImGui::NextColumn();
+
+                ImGui::Text("Delete"); ImGui::NextColumn();
+                ImGui::Text("Delete selected object"); ImGui::NextColumn();
+
+                ImGui::Text("C"); ImGui::NextColumn();
+                ImGui::Text("Center the Scene to the Cursor/Selected Model/Scene Center"); ImGui::NextColumn();
+
+                ImGui::Text("Esc"); ImGui::NextColumn();
+                ImGui::Text("Exit application"); ImGui::NextColumn();
+
+                ImGui::Columns(1);
             }
 
-            ImGui::Spacing();
-            ImGui::Text("Ambient Settings");
-            ImGui::Separator();
-
-            ImGui::Spacing();
-            ImGui::Text("Sun Settings");
-            ImGui::Separator();
-            settingsChanged |= ImGui::ColorEdit3("Sun Color", glm::value_ptr(sun.color));
-            ImGui::SetItemTooltip("Sets the color of sunlight in the scene");
-
-            settingsChanged |= ImGui::SliderFloat("Sun Intensity", &sun.intensity, 0.0f, 1.0f);
-            ImGui::SetItemTooltip("Controls the brightness of sunlight");
-
-            settingsChanged |= ImGui::DragFloat3("Sun Direction", glm::value_ptr(sun.direction), 0.01f, -1.0f, 1.0f);
-            ImGui::SetItemTooltip("Sets the direction of sunlight. Affects shadows and lighting");
-
-            settingsChanged |= ImGui::Checkbox("Enable Sun", &sun.enabled);
-            ImGui::SetItemTooltip("Toggles sun lighting on/off");
-
-            if (settingsChanged) {
-                savePreferences();
-            }
-
-            ImGui::EndTabItem();
-        }
-
-        // Display Tab
-        if (ImGui::BeginTabItem("Display")) {
-            ImGui::Text("Interface Settings");
-            ImGui::Separator();
-
-            if (ImGui::Checkbox("Show FPS Counter", &showFPS)) {
-                preferences.showFPS = showFPS;
-                settingsChanged = true;
-            }
-            ImGui::SetItemTooltip("Shows/hides the FPS counter in the top-right corner");
-
-            if (ImGui::Checkbox("Dark Theme", &isDarkTheme)) {
-                SetupImGuiStyle(isDarkTheme, 1.0f);
-                preferences.isDarkTheme = isDarkTheme;
-                settingsChanged = true;
-            }
-            ImGui::SetItemTooltip("Switches between light and dark color themes for the interface");
-
-            ImGui::Spacing();
-            ImGui::Text("Rendering Settings");
-            ImGui::Separator();
-            ImGui::Checkbox("Wireframe Mode", &camera.wireframe);
-            ImGui::SetItemTooltip("Renders objects as wireframes instead of solid surfaces");
-
-            ImGui::EndTabItem();
-        }
-
-        // Keybinds Tab
-        if (ImGui::BeginTabItem("Keybinds")) {
-            ImGui::Text("Camera Controls");
-            ImGui::Separator();
-            ImGui::Columns(2, "keybinds");
-            ImGui::SetColumnWidth(0, 150);
-
-            ImGui::Text("W/S"); ImGui::NextColumn();
-            ImGui::Text("Move forward/backward"); ImGui::NextColumn();
-
-            ImGui::Text("A/D"); ImGui::NextColumn();
-            ImGui::Text("Move left/right"); ImGui::NextColumn();
-
-            ImGui::Text("Space/Shift"); ImGui::NextColumn();
-            ImGui::Text("Move up/down"); ImGui::NextColumn();
-
-            ImGui::Text("Left Mouse + Drag"); ImGui::NextColumn();
-            ImGui::Text("Orbit around the viewport center at cursor depth"); ImGui::NextColumn();
-
-            ImGui::Text("Right Mouse + Drag"); ImGui::NextColumn();
-            ImGui::Text("Rotate the camera"); ImGui::NextColumn();
-
-            ImGui::Text("Middle Mouse + Drag"); ImGui::NextColumn();
-            ImGui::Text("Pan camera"); ImGui::NextColumn();
-
-            ImGui::Text("Mouse Wheel"); ImGui::NextColumn();
-            ImGui::Text("Zoom in/out"); ImGui::NextColumn();
-
-            ImGui::Text("Double Click"); ImGui::NextColumn();
-            ImGui::Text("Center on cursor"); ImGui::NextColumn();
-
-            ImGui::Spacing(); ImGui::NextColumn(); ImGui::Spacing(); ImGui::NextColumn();
-
-            ImGui::Text("Other Controls");
-            ImGui::Separator();
-
-            ImGui::Text("G"); ImGui::NextColumn();
-            ImGui::Text("Toggle GUI"); ImGui::NextColumn();
-
-            ImGui::Text("Ctrl + Click"); ImGui::NextColumn();
-            ImGui::Text("Select object"); ImGui::NextColumn();
-
-            ImGui::Text("Ctrl + Click + Drag"); ImGui::NextColumn();
-            ImGui::Text("Move Objects around"); ImGui::NextColumn();
-
-            ImGui::Text("Delete"); ImGui::NextColumn();
-            ImGui::Text("Delete selected object"); ImGui::NextColumn();
-
-            ImGui::Text("C"); ImGui::NextColumn();
-            ImGui::Text("Center the Scene to the Cursor/Selected Model/Scene Center"); ImGui::NextColumn();
-
-            ImGui::Text("Esc"); ImGui::NextColumn();
-            ImGui::Text("Exit application"); ImGui::NextColumn();
-
-            ImGui::Columns(1);
             ImGui::EndTabItem();
         }
 
@@ -1244,11 +1357,17 @@ void renderCursorSettingsWindow() {
     auto* fragmentCursor = cursorManager.getFragmentCursor();
     auto* planeCursor = cursorManager.getPlaneCursor();
 
-    ImGui::SetNextWindowSize(ImVec2(500, 600), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(520, 650), ImGuiCond_FirstUseEver);
     ImGui::Begin("3D Cursor Settings", &showCursorSettingsWindow);
 
-    // Preset management
-    if (ImGui::BeginCombo("Cursor Preset", currentPresetName.c_str())) {
+    // =====================
+    // CURSOR PRESETS
+    // =====================
+    ImGui::BeginGroup();
+    ImGui::Text("Cursor Presets");
+    ImGui::Separator();
+    
+    if (ImGui::BeginCombo("Preset", currentPresetName.c_str())) {
         std::vector<std::string> presetNames = Engine::CursorPresetManager::getPresetNames();
 
         if (ImGui::Selectable("New Preset")) {
@@ -1353,8 +1472,11 @@ void renderCursorSettingsWindow() {
             strcpy_s(editPresetNameBuffer, currentPresetName.c_str());
         }
     }
-
-    ImGui::SameLine();
+    
+    // Preset management buttons
+    ImGui::Spacing();
+    ImGui::Text("Preset Management");
+    
     if (ImGui::Button("Update Preset")) {
         // Create preset from current cursor manager settings
         Engine::CursorPreset updatedPreset;
@@ -1437,103 +1559,117 @@ void renderCursorSettingsWindow() {
             }
         }
     }
+    ImGui::EndGroup();
 
+    ImGui::Spacing();
+
+    // =====================
+    // ORBIT VISUALIZATION
+    // =====================
+    ImGui::BeginGroup();
+    ImGui::Text("Orbit Visualization");
     ImGui::Separator();
+    
+    ImGui::Text("Camera Orbit Behavior");
+    bool standardOrbit = !orbitFollowsCursor && !camera.orbitAroundCursor;
+    bool orbitAroundCursorOption = camera.orbitAroundCursor;
+    bool orbitFollowsCursorOption = orbitFollowsCursor;
 
-    if (ImGui::CollapsingHeader("Orbit Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Text("Camera Orbit Behavior:");
+    if (ImGui::RadioButton("Standard Orbit", standardOrbit)) {
+        camera.orbitAroundCursor = false;
+        orbitFollowsCursor = false;
+        preferences.orbitAroundCursor = false;
+        preferences.orbitFollowsCursor = false;
+        savePreferences();
+    }
+    ImGui::SetItemTooltip("Orbits around the viewport center at cursor depth");
 
-        bool standardOrbit = !orbitFollowsCursor && !camera.orbitAroundCursor;
-        bool orbitAroundCursorOption = camera.orbitAroundCursor;
-        bool orbitFollowsCursorOption = orbitFollowsCursor;
+    if (ImGui::RadioButton("Orbit Around Cursor", orbitAroundCursorOption)) {
+        camera.orbitAroundCursor = true;
+        orbitFollowsCursor = false;
+        preferences.orbitAroundCursor = true;
+        preferences.orbitFollowsCursor = false;
+        savePreferences();
+    }
+    ImGui::SetItemTooltip("Orbits around the 3D position of the cursor without centering the view");
 
-        if (ImGui::RadioButton("Standard Orbit", standardOrbit)) {
-            // Enable standard orbit - disable the other two
-            camera.orbitAroundCursor = false;
-            orbitFollowsCursor = false;
-            preferences.orbitAroundCursor = false;
-            preferences.orbitFollowsCursor = false;
+    if (ImGui::RadioButton("Orbit Follows Cursor (Center)", orbitFollowsCursorOption)) {
+        camera.orbitAroundCursor = false;
+        orbitFollowsCursor = true;
+        preferences.orbitAroundCursor = false;
+        preferences.orbitFollowsCursor = true;
+        savePreferences();
+    }
+    ImGui::SetItemTooltip("Centers the view on cursor position before orbiting");
+    
+    bool showOrbitCenter = cursorManager.isShowOrbitCenter();
+    if (ImGui::Checkbox("Show Orbit Center", &showOrbitCenter)) {
+        cursorManager.setShowOrbitCenter(showOrbitCenter);
+        savePreferences();
+    }
+    ImGui::SetItemTooltip("Display a visual indicator at the orbit center point");
+
+    if (showOrbitCenter) {
+        glm::vec4 orbitCenterColor = cursorManager.getOrbitCenterColor();
+        if (ImGui::ColorEdit3("Orbit Center Color", glm::value_ptr(orbitCenterColor))) {
+            cursorManager.setOrbitCenterColor(orbitCenterColor);
             savePreferences();
         }
-        ImGui::SetItemTooltip("Orbits around the viewport center at cursor depth");
 
-        if (ImGui::RadioButton("Orbit Around Cursor", orbitAroundCursorOption)) {
-            // Enable orbit around cursor - disable the other one
-            camera.orbitAroundCursor = true;
-            orbitFollowsCursor = false;
-            preferences.orbitAroundCursor = true;
-            preferences.orbitFollowsCursor = false;
+        float orbitCenterSize = cursorManager.getOrbitCenterSphereRadius();
+        if (ImGui::SliderFloat("Orbit Center Size", &orbitCenterSize, 0.01f, 1.0f)) {
+            cursorManager.setOrbitCenterSphereRadius(orbitCenterSize);
             savePreferences();
-        }
-        ImGui::SetItemTooltip("Orbits around the 3D cursor position without centering the view");
-
-        if (ImGui::RadioButton("Orbit Follows Cursor (Center)", orbitFollowsCursorOption)) {
-            // Enable orbit follows cursor - disable the other one
-            camera.orbitAroundCursor = false;
-            orbitFollowsCursor = true;
-            preferences.orbitAroundCursor = false;
-            preferences.orbitFollowsCursor = true;
-            savePreferences();
-        }
-        ImGui::SetItemTooltip("Centers the view on cursor position before orbiting");
-
-        ImGui::Separator();
-
-        bool showOrbitCenter = cursorManager.isShowOrbitCenter();
-        if (ImGui::Checkbox("Show Orbit Center", &showOrbitCenter)) {
-            cursorManager.setShowOrbitCenter(showOrbitCenter);
-        }
-
-        if (showOrbitCenter) {
-            glm::vec4 orbitCenterColor = cursorManager.getOrbitCenterColor();
-            if (ImGui::ColorEdit4("Orbit Center Color", glm::value_ptr(orbitCenterColor))) {
-                cursorManager.setOrbitCenterColor(orbitCenterColor);
-            }
-
-            float orbitCenterSphereRadius = cursorManager.getOrbitCenterSphereRadius();
-            if (ImGui::SliderFloat("Orbit Center Size", &orbitCenterSphereRadius, 0.01f, 1.0f)) {
-                cursorManager.setOrbitCenterSphereRadius(orbitCenterSphereRadius);
-            }
         }
     }
+    ImGui::EndGroup();
 
-    ImGui::Separator();
+    ImGui::Spacing();
 
-    // 3D Sphere Cursor Settings
+    // =====================
+    // 3D SPHERE CURSOR
+    // =====================
     if (ImGui::CollapsingHeader("3D Sphere Cursor", ImGuiTreeNodeFlags_DefaultOpen)) {
-        bool showSphereCursor = sphereCursor->isVisible();
-        if (ImGui::Checkbox("Show 3D Sphere Cursor", &showSphereCursor)) {
-            sphereCursor->setVisible(showSphereCursor);
+        bool sphereVisible = sphereCursor->isVisible();
+        if (ImGui::Checkbox("Show 3D Sphere Cursor", &sphereVisible)) {
+            sphereCursor->setVisible(sphereVisible);
         }
+        ImGui::SetItemTooltip("Display a 3D sphere at the cursor position");
 
-        if (showSphereCursor) {
-            // Get cursor scaling mode
-            GUI::CursorScalingMode scalingMode = sphereCursor->getScalingMode();
-            const char* scalingModes[] = { "Normal", "Fixed", "Constrained Dynamic", "Logarithmic" };
-            int currentMode = static_cast<int>(scalingMode);
-            if (ImGui::Combo("Cursor Scaling Mode", &currentMode, scalingModes, IM_ARRAYSIZE(scalingModes))) {
+        if (sphereVisible) {
+            // Cursor Scaling Mode
+            ImGui::Text("Scaling Mode");
+            const char* scalingModes[] = { "Fixed Size", "Depth-based" };
+            int currentMode = static_cast<int>(sphereCursor->getScalingMode());
+            if (ImGui::Combo("Scaling Mode", &currentMode, scalingModes, IM_ARRAYSIZE(scalingModes))) {
                 sphereCursor->setScalingMode(static_cast<GUI::CursorScalingMode>(currentMode));
             }
+            ImGui::SetItemTooltip("Fixed: constant size, Depth-based: size varies with distance");
 
-            float fixedRadius = sphereCursor->getFixedRadius();
-            if (ImGui::SliderFloat("Fixed Sphere Radius", &fixedRadius, 0.01f, 3.0f)) {
-                sphereCursor->setFixedRadius(fixedRadius);
-            }
-
-            if (sphereCursor->getScalingMode() == GUI::CURSOR_CONSTRAINED_DYNAMIC) {
-                float minDiff = sphereCursor->getMinDiff();
-                if (ImGui::SliderFloat("Min Difference", &minDiff, 0.001f, 0.1f)) {
-                    sphereCursor->setMinDiff(minDiff);
+            // Size controls
+            if (currentMode == static_cast<int>(GUI::CursorScalingMode::CURSOR_FIXED)) {
+                float fixedRadius = sphereCursor->getFixedRadius();
+                if (ImGui::SliderFloat("Fixed Sphere Radius", &fixedRadius, 0.01f, 3.0f)) {
+                    sphereCursor->setFixedRadius(fixedRadius);
+                }
+            } else {
+                float minDifference = sphereCursor->getMinDiff();
+                if (ImGui::SliderFloat("Min Difference", &minDifference, 0.01f, 2.0f)) {
+                    sphereCursor->setMinDiff(minDifference);
                 }
 
-                float maxDiff = sphereCursor->getMaxDiff();
-                if (ImGui::SliderFloat("Max Difference", &maxDiff, 0.01f, 1.0f)) {
-                    sphereCursor->setMaxDiff(maxDiff);
+                float maxDifference = sphereCursor->getMaxDiff();
+                if (ImGui::SliderFloat("Max Difference", &maxDifference, 0.02f, 5.0f)) {
+                    sphereCursor->setMaxDiff(maxDifference);
                 }
             }
 
+            ImGui::Separator();
+            
+            // Appearance
+            ImGui::Text("Appearance");
             glm::vec4 cursorColor = sphereCursor->getColor();
-            if (ImGui::ColorEdit4("Cursor Color", glm::value_ptr(cursorColor))) {
+            if (ImGui::ColorEdit3("Cursor Color", glm::value_ptr(cursorColor))) {
                 sphereCursor->setColor(cursorColor);
             }
 
@@ -1552,6 +1688,10 @@ void renderCursorSettingsWindow() {
                 sphereCursor->setCenterTransparency(centerTransparency);
             }
 
+            ImGui::Separator();
+            
+            // Inner Sphere
+            ImGui::Text("Inner Sphere");
             bool showInnerSphere = sphereCursor->getShowInnerSphere();
             if (ImGui::Checkbox("Show Inner Sphere", &showInnerSphere)) {
                 sphereCursor->setShowInnerSphere(showInnerSphere);
@@ -1559,7 +1699,7 @@ void renderCursorSettingsWindow() {
 
             if (showInnerSphere) {
                 glm::vec4 innerSphereColor = sphereCursor->getInnerSphereColor();
-                if (ImGui::ColorEdit4("Inner Sphere Color", glm::value_ptr(innerSphereColor))) {
+                if (ImGui::ColorEdit3("Inner Sphere Color", glm::value_ptr(innerSphereColor))) {
                     sphereCursor->setInnerSphereColor(innerSphereColor);
                 }
 
@@ -1571,32 +1711,35 @@ void renderCursorSettingsWindow() {
         }
     }
 
-    // Fragment Shader Cursor Settings
+    // ============================
+    // FRAGMENT SHADER CURSOR
+    // ============================
     if (ImGui::CollapsingHeader("Fragment Shader Cursor", ImGuiTreeNodeFlags_DefaultOpen)) {
-        bool showFragmentCursor = fragmentCursor->isVisible();
-        if (ImGui::Checkbox("Show Fragment Shader Cursor", &showFragmentCursor)) {
-            fragmentCursor->setVisible(showFragmentCursor);
+        bool fragmentVisible = fragmentCursor->isVisible();
+        if (ImGui::Checkbox("Show Fragment Shader Cursor", &fragmentVisible)) {
+            fragmentCursor->setVisible(fragmentVisible);
         }
+        ImGui::SetItemTooltip("Display a 2D circular cursor rendered in the fragment shader");
 
-        if (showFragmentCursor) {
-            float baseOuterRadius = fragmentCursor->getBaseOuterRadius();
-            if (ImGui::SliderFloat("Outer Radius", &baseOuterRadius, 0.0f, 0.3f)) {
-                fragmentCursor->setBaseOuterRadius(baseOuterRadius);
+        if (fragmentVisible) {
+            float outerRadius = fragmentCursor->getBaseOuterRadius();
+            if (ImGui::SliderFloat("Outer Radius", &outerRadius, 0.0f, 0.3f)) {
+                fragmentCursor->setBaseOuterRadius(outerRadius);
             }
 
-            float baseOuterBorderThickness = fragmentCursor->getBaseOuterBorderThickness();
-            if (ImGui::SliderFloat("Outer Border Thickness", &baseOuterBorderThickness, 0.0f, 0.08f)) {
-                fragmentCursor->setBaseOuterBorderThickness(baseOuterBorderThickness);
+            float outerBorderThickness = fragmentCursor->getBaseOuterBorderThickness();
+            if (ImGui::SliderFloat("Outer Border Thickness", &outerBorderThickness, 0.0f, 0.08f)) {
+                fragmentCursor->setBaseOuterBorderThickness(outerBorderThickness);
             }
 
-            float baseInnerRadius = fragmentCursor->getBaseInnerRadius();
-            if (ImGui::SliderFloat("Inner Radius", &baseInnerRadius, 0.0f, 0.2f)) {
-                fragmentCursor->setBaseInnerRadius(baseInnerRadius);
+            float innerRadius = fragmentCursor->getBaseInnerRadius();
+            if (ImGui::SliderFloat("Inner Radius", &innerRadius, 0.0f, 0.2f)) {
+                fragmentCursor->setBaseInnerRadius(innerRadius);
             }
 
-            float baseInnerBorderThickness = fragmentCursor->getBaseInnerBorderThickness();
-            if (ImGui::SliderFloat("Inner Border Thickness", &baseInnerBorderThickness, 0.0f, 0.08f)) {
-                fragmentCursor->setBaseInnerBorderThickness(baseInnerBorderThickness);
+            float innerBorderThickness = fragmentCursor->getBaseInnerBorderThickness();
+            if (ImGui::SliderFloat("Inner Border Thickness", &innerBorderThickness, 0.0f, 0.08f)) {
+                fragmentCursor->setBaseInnerBorderThickness(innerBorderThickness);
             }
 
             glm::vec4 outerColor = fragmentCursor->getOuterColor();
@@ -1611,27 +1754,32 @@ void renderCursorSettingsWindow() {
         }
     }
 
+    // ==================
+    // PLANE CURSOR
+    // ==================
     if (ImGui::CollapsingHeader("Plane Cursor", ImGuiTreeNodeFlags_DefaultOpen)) {
-        bool showPlaneCursor = planeCursor->isVisible();
-        if (ImGui::Checkbox("Show Plane Cursor", &showPlaneCursor)) {
-            planeCursor->setVisible(showPlaneCursor);
+        bool planeVisible = planeCursor->isVisible();
+        if (ImGui::Checkbox("Show Plane Cursor", &planeVisible)) {
+            planeCursor->setVisible(planeVisible);
         }
+        ImGui::SetItemTooltip("Display a plane that follows surface geometry");
 
-        if (showPlaneCursor) {
+        if (planeVisible) {
             glm::vec4 planeColor = planeCursor->getColor();
-            if (ImGui::ColorEdit4("Plane Color", glm::value_ptr(planeColor))) {
+            if (ImGui::ColorEdit3("Plane Color", glm::value_ptr(planeColor))) {
                 planeCursor->setColor(planeColor);
             }
 
-            float diameter = planeCursor->getDiameter();
-            if (ImGui::SliderFloat("Plane Diameter", &diameter, 0.1f, 5.0f)) {
-                planeCursor->setDiameter(diameter);
+            float planeDiameter = planeCursor->getDiameter();
+            if (ImGui::SliderFloat("Plane Diameter", &planeDiameter, 0.1f, 5.0f)) {
+                planeCursor->setDiameter(planeDiameter);
             }
         }
     }
 
     ImGui::End();
 }
+            
 
 void renderSunManipulationPanel() {
     ImGui::Text("Sun Settings");
@@ -1671,7 +1819,7 @@ void renderModelManipulationPanel(Engine::Model& model, Engine::Shader* shader) 
     if (ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen)) {
         // Basic material properties
         ImGui::ColorEdit3("Diffuse Color", glm::value_ptr(model.color));
-        ImGui::SliderFloat("Shininess", &model.shininess, 0.1f, 90.0f);
+        ImGui::SliderFloat("Shininess", &model.shininess, 1.0f, 90.0f);
         ImGui::SliderFloat("Emissive", &model.emissive, 0.0f, 1.0f);
 
         // Add VCT specific material properties
