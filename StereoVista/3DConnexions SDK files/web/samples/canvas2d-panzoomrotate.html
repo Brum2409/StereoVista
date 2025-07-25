@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html>
+<!--
+  /**
+  * Copyright (c) 2013-2018 3Dconnexion. All rights reserved.
+  * License:
+  *   This file in licensed under the terms of the '3Dconnexion
+  *   Software Development Kit' license agreement found in the
+  *   'LicenseAgreementSDK.txt' file.
+  *   All rights not expressly granted by 3Dconnexion are reserved.
+  *
+  * $Revision: 21321 $
+  *
+  * The sample uses a canvas as a viewport. A bitmap is displayed in the
+  * the canvas. The bitmap can be panned, zoomed and rotated around the
+  * look axis.
+  *
+  * The sample supports intelligent 3d navigation algorithms (AutoPivot)
+  * as well as the CadMouse QuickZoom functions
+  *
+  * World coordinate system:
+  * The sample's coordinate system is a right-handed system with x to the
+  * right and y up. The origin is at the top left corner of the canvas.
+  *
+  * Camera / Viewport coordinates:
+  * The camera's coordinate system is right handed x to the right, y-up with
+  * the origin in the middle of the camera.
+  *
+  */
+  ///////////////////////////////////////////////////////////////////////////
+  // History
+  //
+  // $Id: canvas2d-panzoomrotate.html 21321 2025-01-09 13:35:56Z mbonk $
+  //
+  // 10/25/18 MSB Synchronize animation frame and 3Dmouse data using the frame
+  //              time.
+  // 01/30/18 MSB API change to 3DconnexionJS v0.5.
+  //              API change to column major matrices.
+  //              API change names of mutators from 'put' to 'set'.
+  // 10/19/17 MSB Added handling of setTransaction().
+  // 08/30/17 MSB
+  //
+-->
+<head>
+  <title>3Dconnexion 2D Pan Zoom Sample</title>
+  <meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+  <script>const TRACE_MESSAGES = false;</script>
+  <script type="text/javascript" src="./scripts/gl-matrix-2.4.0.min.js"></script>
+  <script type="text/javascript" src="./scripts/webgl-utils.js"></script>
+  <script type="text/javascript" src="./scripts/3dconnexion.min.js"></script>
+
+  <script type="text/javascript">
+    // The matrix below defines the samples coordinate system as right handed in terms
+    // of the navlib coordinate system (x to the right y up).
+    // Using this instead of the canvas coordinate system (y-down) makes life easier
+    // calculating the rotation
+    const coordinateSystem = [
+      1, 0, 0, 0,
+      0, 1, 0, 0,
+      0, 0, 1, 0,
+      0, 0, 0, 1];
+
+    // The default fov of the camera
+    const fov = Math.PI / 2.;
+
+    const zAxis = [0, 0, 1];
+
+    // plane equation: normal = z-axis, z=0
+    const constructionPlane = [0, 0, 1, 0];
+
+    const ViewState = function () {
+      this.zoom = 1;
+      this.x = 0;
+      this.y = 0;
+      this.angle = 0;
+      return this;
+    };
+
+    ViewState.prototype = {
+      constructor: { value: ViewState }
+      , zoom: { value: 1, writable: true, enumerable: true }
+      , x: { value: 0, writable: true, enumerable: true }
+      , y: { value: 0, writable: true, enumerable: true }
+      , z: { value: 0, writable: true, enumerable: true }
+      , angle: { value: 0, writable: true, enumerable: true }
+    };
+
+    const Viewport = function () {
+      const self = this;
+      self.state = new ViewState();
+      self.canvas = document.getElementById('theImage');
+      self.canvas.focus();
+      self.ctx = self.canvas.getContext('2d');
+      self.image = new Image();
+
+      self.image.onload = function () {
+
+        let aspect = this.naturalWidth / this.naturalHeight;
+
+        // projection scale factor converts image dimensions to
+        // canvas dimensions
+        if (self.canvas.height * aspect > self.canvas.width) {
+          self.scale = self.canvas.width / this.naturalWidth;
+        } else {
+          self.scale = self.canvas.height / this.naturalHeight;
+        }
+
+        self.width = self.canvas.width / self.scale;
+        self.height = self.canvas.height / self.scale;
+
+        // Center the image inside the canvas by putting the
+        // viewport origin at the center of the image.
+        self.state.x = this.naturalWidth / 2.;
+        self.state.y = -this.naturalHeight / 2.;
+        self.state.z = self.height / 2. / Math.tan(fov / 2.);
+
+        self.state.angle = 0;
+        self.state.zoom = 1;
+
+        self.draw();
+      }
+      self.image.src = 'Images/SpaceMouseWireless-Kit.jpg';
+      return this;
+    };
+
+    Viewport.prototype = {
+      constructor: { value: Viewport }
+      , canvas: { value: null, writable: true, enumerable: true }
+      , image: { value: null, writable: true, enumerable: true }
+      , ctx: { value: null, writable: true, enumerable: true }
+      , state: { value: null, writable: true, enumerable: true }
+      , scale: { value: 1, writable: true, enumerable: true }
+      , width: { value: 0, writable: true, enumerable: true }
+      , height: { value: 0, writable: true, enumerable: true }
+    };
+
+    Viewport.prototype.draw = function () {
+      const self = this;
+
+      self.ctx.setTransform(1, 0, 0, 1, 0, 0);
+      self.ctx.clearRect(0, 0, self.canvas.width, self.canvas.height);
+
+      self.ctx.translate(self.canvas.width / 2., self.canvas.height / 2.);
+      self.ctx.rotate(self.state.angle);
+      self.ctx.translate(-self.canvas.width / 2., -self.canvas.height / 2.);
+
+      // image pixel of top left corner of canvas
+      const top_left = vec2.fromValues(self.state.x - self.width / self.state.zoom / 2., -self.state.y - self.height / self.state.zoom / 2., 0);
+      let scale = self.scale * self.state.zoom;
+      vec2.scale(top_left, top_left, scale);
+      self.ctx.translate(-top_left[0], -top_left[1]);
+
+      self.ctx.drawImage(self.image, 0, 0, self.image.naturalWidth * scale, self.image.naturalHeight * scale);
+    };
+
+    Viewport.prototype.getCameraMatrix = function (cameraMatrix) {
+      const self = this;
+
+      // position of the camera /eye
+      let eye = vec3.fromValues(self.state.x, self.state.y, self.state.z);
+
+      // what we are looking at
+      let target = vec3.fromValues(self.state.x, self.state.y, 0);
+
+      // the camera up vector
+      let up = vec3.fromValues(0, 1., 0);
+      vec3.rotateZ(up, up, [0, 0, 0], self.state.angle);
+
+      mat4.targetTo(cameraMatrix, eye, target, up);
+    };
+
+    Viewport.prototype.setCameraMatrix = function (cameraMatrix) {
+      const self = this;
+
+      let positionVector = [];
+      mat4.getTranslation(positionVector, cameraMatrix);
+
+      self.state.x = positionVector[0];
+      self.state.y = positionVector[1];
+
+      var rotation = [], axis = [];
+      mat4.getRotation(rotation, cameraMatrix);
+      var angle = quat.getAxisAngle(axis, rotation);
+
+      angle *= vec3.dot(axis, zAxis);
+
+      self.state.angle = angle;
+    };
+
+    Viewport.prototype.getLookAt = function (lookAt) {
+      const self = this;
+
+      lookAt[0] = self.state.x
+      lookAt[1] = self.state.y
+      lookAt[2] = 0;
+    };
+
+    const TdxDriver = function (client) {
+      _3Dconnexion.call(this, client);
+      return this;
+    };
+
+    TdxDriver.prototype = Object.create(_3Dconnexion.prototype, {
+      constructor: { value: TdxDriver }
+    });
+
+
+    init = function () {
+      this.viewport = new Viewport();
+
+      start();
+    };
+
+    /* **************************************
+         Initialization / Configuration
+    **************************************** */
+    start = () => {
+      this.spaceMouse = new TdxDriver(self);
+      if (!this.spaceMouse.connect()) {
+        DEBUG_ERR('Cannot connect to 3Dconnexion NL-Proxy');                        // eslint-disable-line no-undef
+      }
+    };
+
+    onConnect = () => {
+      const name = 'Image Web Viewer';
+      const canvas = viewport.canvas;
+      self.spaceMouse.create3dmouse(canvas, name);
+    };
+
+    on3dmouseCreated = () => {
+      const self = this;
+      let actionTree = new _3Dconnexion.ActionTree();
+      const actionImages = new _3Dconnexion.ImageCache();
+
+      // set ourselves as the timing source for the animation frames
+      self.spaceMouse.update3dcontroller({
+        'frame': { 'timingSource': 1 }
+      });
+
+      actionImages.onload = () => {
+        self.spaceMouse.update3dcontroller({ 'images': actionImages.images });
+      };
+
+      // An actionset can also be considered to be a buttonbank, a menubar, or a set of toolbars
+      // Define a unique string for the action set to be able to specify the active action set
+      // Because we only have one action set use the 'Default' action set id to not display the label
+      let buttonBank = actionTree.push(new _3Dconnexion.ActionSet('Default', 'Custom action set'));
+      getApplicationCommands(buttonBank, actionImages);
+
+      // Expose the commands to 3Dxware and specify the active buttonbank / action set
+      self.spaceMouse.update3dcontroller({ 'commands': { 'activeSet': 'Default', 'tree': actionTree } });
+    };
+
+    onDisconnect = function (reason) {
+      if (TRACE_MESSAGES) {
+        console.log('3Dconnexion NL-Proxy disconnected ' + reason);
+      }
+    };
+
+    /* *********************************************
+       Setup
+    ********************************************** */
+    // Treat our coordinate system like a 3d orthographic matrix.
+    getPerspective = () => false;
+
+    // Allow rotation.
+    getViewRotatable = () => true;
+
+    // Give the driver our coordinate system.
+    getCoordinateSystem = () => {
+      return coordinateSystem;
+    };
+
+    /*
+    // Give the driver the construction plane.
+    // The side effect is that the 3Dconnexion library will only
+    // allow PI/2 rotations around the normal when the normal
+    // and camera lookat axis are parallel.
+
+    this.getConstructionPlane = () => {
+      return constructionPlane;
+    };
+    */
+
+    /* *********************************************
+       Animation
+     ********************************************** */
+    onStartMotion = () => {
+      const self = this;
+      if (!self.animating) {
+        self.animating = true;
+        window.requestAnimationFrame(self.render.bind(self));
+      }
+    };
+
+    onStopMotion = () => {
+      this.animating = false;
+    };
+
+    /* *********************************************
+       User Interaction
+     ********************************************** */
+
+    // extents = min, max
+    // the center of the model extents is used as the
+    // center of rotation in examine mode navigation
+    // the top left of the model (image) is chosen to be [0,0,0]
+    // which makes life easier when drawing to the canvas
+    getModelExtents = () => {
+      return [0
+        , -this.viewport.image.naturalHeight
+        , 0
+        , this.viewport.image.naturalWidth
+        , 0
+        , 0];
+    };
+
+    getViewExtents = () => {
+      return [0
+        , 0
+        , -this.viewport.state.z - 0.1
+        , this.viewport.width / this.viewport.state.zoom
+        , this.viewport.height / this.viewport.state.zoom
+        , -this.viewport.state.z + 0.1];
+    };
+
+    setViewExtents = (extents) => {
+      const self = this;
+
+      const zoom = self.viewport.height / extents[4];
+      self.viewport.state.zoom = zoom;
+    };
+
+    // getPointerPosition is called when the navlib needs to know where the
+    // mouse pointer is on the projection/near plane
+    // in an orthographic projection supporting this method is sufficient to
+    // enable the quick zoom functions
+    getPointerPosition = () => {
+      const self = this;
+
+      let rect = self.viewport.canvas.getBoundingClientRect();
+
+      // position of the mouse in the canvas (windows [0,0] is at the top-left
+      // of the screen, with right, y down). The sample viewport coordinate system has y-up [0,0] at the center.
+      // the position is tracked relative to the window so we need to subtract the relative position of the canvas
+      // Setting z=0 puts the mouse on the construction plane / face of the model.
+
+      let pos = vec3.fromValues(window.mouseX - rect.left - rect.width / 2., -(window.mouseY - rect.top - rect.height / 2.), 0.);
+
+      // projection in this sample (orthographic) is simply a scaling and a translation.
+      // unproject the mouse position (mouse position in viewport coordinates)
+      let factor = 1. / (self.viewport.scale * self.viewport.state.zoom);
+      vec3.scale(pos, pos, factor);
+
+      // mouse pointer position in world coordinates
+      var cameraMatrix = [];
+      self.viewport.getCameraMatrix(cameraMatrix);
+      vec3.transformMat4(pos, pos, cameraMatrix);
+
+      // console.log('PointerPosition =[' + pos.toString() + ']');
+
+      return Array.prototype.slice.call(pos);
+    };
+
+    // Tell the driver the camera is looking at the drawing
+    getViewMatrix = () => {
+      const self = this;
+
+      var cameraMatrix = [];
+      self.viewport.getCameraMatrix(cameraMatrix);
+      return cameraMatrix;
+    };
+
+    getLookAt = () => {
+      const self = this;
+
+      var pos = [];
+      self.viewport.getLookAt(pos);
+      // console.log('lookAt= [' + pos.toString() + ']');
+
+      return pos;
+    };
+
+    // Receive position information from the driver and convert it to viewport state.
+    // Camera [0,0,0] is in the middle of the canvas/screen
+    setViewMatrix = (data) => {
+      const self = this;
+
+      self.viewport.setCameraMatrix(data);
+    };
+
+    // setTransaction is called twice per frame
+    // transaction >0 at the beginning of a frame change
+    // transaction ===0 at the end of a frame change
+    setTransaction = (transaction) => {
+      const self = this;
+      if (transaction === 0) {
+        // request a redraw if not animating
+        if (!self.animating) {
+          window.requestAnimationFrame(self.render.bind(self));
+        }
+      }
+    };
+
+    // this function fills the action and images structures that are exposed
+    // to the 3Dconnexion button configuration editor
+    function getApplicationCommands(buttonBank, images) {
+
+      // Add a couple of categories / menus / tabs to the buttonbank/menubar/toolbar
+      // Use the categories to group actions so that the user can find them easily
+      let fileNode = buttonBank.push(new _3Dconnexion.Category('CAT_ID_FILE', 'File'));
+      let editNode = buttonBank.push(new _3Dconnexion.Category('CAT_ID_EDIT', 'Edit'));
+
+      // Add menu items / actions
+      fileNode.push(new _3Dconnexion.Action('ID_OPEN', 'Open', 'Open file'));
+      fileNode.push(new _3Dconnexion.Action('ID_CLOSE', 'Close', 'Close file'));
+      fileNode.push(new _3Dconnexion.Action('ID_EXIT', 'Exit', 'Exit program'));
+
+      // Add menu items / actions
+      editNode.push(new _3Dconnexion.Action('ID_UNDO', 'Undo', 'Shortcut is Ctrl + Z'));
+      editNode.push(new _3Dconnexion.Action('ID_REDO', 'Redo', 'Shortcut is Ctrl + Y'));
+      editNode.push(new _3Dconnexion.Action('ID_CUT', 'Cut', 'Shortcut is Ctrl + X'));
+      editNode.push(new _3Dconnexion.Action('ID_COPY', 'Copy', 'Shortcut is Ctrl + C'));
+      editNode.push(new _3Dconnexion.Action('ID_PASTE', 'Paste', 'Shortcut is Ctrl + V'));
+
+      // Now add the images to the cache and associate it with the menu item by using the same id as the menu item / action
+      // These images will be shown in the 3Dconnexion properties editor and in the UI elements which display the
+      // active button configuration of the 3dmouse
+      images.push(_3Dconnexion.ImageItem.fromURL('images/open.png', 'ID_OPEN'));
+      images.push(_3Dconnexion.ImageItem.fromURL('images/close.png', 'ID_CLOSE'));
+      images.push(_3Dconnexion.ImageItem.fromURL('images/exit.png', 'ID_EXIT'));
+      images.push(_3Dconnexion.ImageItem.fromURL('images/Macro_Cut.png', 'ID_CUT'));
+      images.push(_3Dconnexion.ImageItem.fromURL('images/Macro_Copy.png', 'ID_COPY'));
+      images.push(_3Dconnexion.ImageItem.fromURL('images/Macro_Paste.png', 'ID_PASTE'));
+      images.push(_3Dconnexion.ImageItem.fromURL('images/Macro_Undo.png', 'ID_UNDO'));
+      images.push(_3Dconnexion.ImageItem.fromURL('images/Macro_Redo.png', 'ID_REDO'));
+    }
+
+    // the callback that results in the scene being rendered
+    render = function (time) {
+      const self = this;
+      if (self.animating) {
+        // Initiate a new frame transaction by updating the controller with the frame time.
+        self.spaceMouse.update3dcontroller({
+          'frame': { 'time': time }
+        });
+        // Request an animation frame for the next incoming transaction data.
+        window.requestAnimationFrame(self.render.bind(self));
+      }
+
+        // Render the current scene.
+      self.drawScene();
+    };
+
+    // drawScene initiates the actual drawing
+    drawScene = function () {
+      viewport.draw();
+    }
+
+    // this function tracks the mouse in the window so that we can
+    // query the mouse position outside of an event. The mouse position
+    // is cached in the global window
+    document.addEventListener("mousemove", function (e) {
+      window.mouseX = e.pageX;
+      window.mouseY = e.pageY;
+      if ('TRACE_MOUSE_MESSAGES' in window && TRACE_MOUSE_MESSAGES)
+        console.log('mouse=[' + mouseX + ', ' + +mouseY + ']');
+    });
+  </script>
+
+  <style type="text/css">
+    .error {
+      color: red;
+    }
+
+    .success {
+      color: green;
+    }
+
+    #console_wrapper {
+      background-color: black;
+      color: white;
+      padding: 5px;
+    }
+
+    #console p {
+      padding: 0;
+      margin: 0;
+    }
+
+    canvas {
+      border: 1px solid black;
+    }
+  </style>
+</head>
+
+<body onload="init()">
+  <h1>2D 3DconnexionJS Sample</h1>
+  <canvas id="theImage" width="1024" height="768" tabindex="1" autofocus="true"></canvas>
+</body>
+</html>

@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html>
+<!--
+  /**
+  * Copyright (c) 2013-2024 3Dconnexion. All rights reserved.
+  * License:
+  *   This file in licensed under the terms of the '3Dconnexion
+  *   Software Development Kit' license agreement found in the
+  *   'LicenseAgreementSDK.txt' file.
+  *   All rights not expressly granted by 3Dconnexion are reserved.
+  *
+  * $Revision: 21321 $
+  */
+  ///////////////////////////////////////////////////////////////////////////
+  // History
+  //
+  // $Id: ortho_webglapp.html 21321 2025-01-09 13:35:56Z mbonk $
+  //
+  // 10/25/18 MSB Synchronize animation frame and 3Dmouse data using the frame
+  //              time.
+  // 01/30/18 MSB API change to 3DconnexionJS v0.5.
+  //              API change to column major matrices.
+  //              API change names of mutators from 'put' to 'set'.
+  // 10/19/17 MSB Added handling of putTransaction().
+  // 01/24/17 MSB Corrected name used in create3dmouse().
+  // 11/10/16 MSB Added command and image export.
+  // 05/28/15 NGO Use 3dconnexion.min.js (includes autobahn.js).
+  // 04/23/15 MSB Added getPivotPosition.
+-->
+<head>
+  <title>3Dconnexion Sample</title>
+  <meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+  <script>const TRACE_MESSAGES = false;</script>
+  <script type="text/javascript" src="./scripts/gl-matrix-2.4.0.min.js"></script>
+  <script>
+    // The following code has been copied from gl-matrix version 1.3.0 and modified
+    // for gl-matrix-2.2.0.
+    // Note the following code is not part of gl-matrix-2.2.0
+    /*
+     * Copyright (c) 2011 Brandon Jones
+     *
+     * This software is provided 'as-is', without any express or implied
+     * warranty. In no event will the authors be held liable for any damages
+     * arising from the use of this software.
+     *
+     * Permission is granted to anyone to use this software for any purpose,
+     * including commercial applications, and to alter it and redistribute it
+     * freely, subject to the following restrictions:
+     *
+     *    1. The origin of this software must not be misrepresented; you must not
+     *    claim that you wrote the original software. If you use this software
+     *    in a product, an acknowledgment in the product documentation would be
+     *    appreciated but is not required.
+     *
+     *    2. Altered source versions must be plainly marked as such, and must not
+     *    be misrepresented as being the original software.
+     *
+     *    3. This notice may not be removed or altered from any source
+     *    distribution.
+     */
+    /**
+     * Projects the specified vec3 from screen space into object space
+     * Based on the <a href="http://webcvs.freedesktop.org/mesa/Mesa/src/glu/mesa/project.c?revision=1.4&view=markup">Mesa gluUnProject implementation</a>
+     *
+     * @param {vec3} vec Screen-space vector to project
+     * @param {mat4} view View matrix
+     * @param {mat4} proj Projection matrix
+     * @param {vec4} viewport Viewport as given to gl.viewport [x, y, width, height]
+     * @param {vec3} [dest] vec3 receiving unprojected result. If not specified result is written to vec
+     *
+     * @returns {vec3} dest if specified, vec otherwise
+     */
+    vec3.unproject = function (vec, view, proj, viewport, dest) {
+      if (!dest) { dest = vec; }
+
+      var v = vec4.create();
+      v[0] = (vec[0] - viewport[0]) * 2.0 / viewport[2] - 1.0;
+      v[1] = (vec[1] - viewport[1]) * 2.0 / viewport[3] - 1.0;
+      v[2] = 2.0 * vec[2] - 1.0;
+      v[3] = 1.0;
+
+      var m = mat4.create();
+      mat4.multiply(m, proj, view);
+      if (!mat4.invert(m, m)) { return null; }
+
+      vec4.transformMat4(v, v, m);
+      if (v[3] === 0.0) { return null; }
+
+      dest[0] = v[0] / v[3];
+      dest[1] = v[1] / v[3];
+      dest[2] = v[2] / v[3];
+
+      return dest;
+    };
+  </script>
+  <script type="text/javascript" src="./scripts/webgl-utils.js"></script>
+  <script type="text/javascript" src="./scripts/3dconnexion.min.js"></script>
+
+  <script id="shader-fs" type="x-shader/x-fragment">
+    precision mediump float;
+
+    varying vec4 vColor;
+
+    void main(void) {
+    gl_FragColor = vColor;
+    }
+  </script>
+
+  <script id="shader-vs" type="x-shader/x-vertex">
+    attribute vec3 aVertexPosition;
+    attribute vec4 aVertexColor;
+
+    uniform mat4 uMVMatrix;
+    uniform mat4 uPMatrix;
+
+    varying vec4 vColor;
+
+    void main(void) {
+    gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
+    vColor = aVertexColor;
+    }
+  </script>
+
+  <script type="text/javascript">
+    /// ------------- WEBGL section -------------
+    function GL(canvasId) {
+      if (TRACE_MESSAGES)
+        console.log("GL: " + canvasId);
+      this.canvasId = canvasId;
+      this.gl = {};
+      this.shaderProgram = {};
+      this.cameraMatrix = mat4.create();
+      this.modelMatrix = mat4.create();
+      this.mvMatrix = mat4.create();
+      this.mvMatrixStack = [];
+      this.pMatrix = mat4.create();
+      this.model = {};
+      this.model.extents = {};
+      this.model.extents.min = vec3.create();
+      this.model.extents.max = vec3.create();
+
+      this.animating = false;
+
+      this.initGL = function (canvas) {
+        try {
+          this.gl = canvas.getContext("experimental-webgl");
+          this.gl.viewportWidth = canvas.width;
+          this.gl.viewportHeight = canvas.height;
+          this.gl.fov = 33 * Math.PI / 180.0;
+          this.gl.frustumNear = -1000;
+          this.gl.frustumFar = 1000;
+
+          this.gl.left = -175;
+          this.gl.right = -this.gl.left;
+          this.gl.bottom = -(this.gl.right - this.gl.left) * this.gl.viewportHeight / this.gl.viewportWidth / 2.;
+          this.gl.top = -this.gl.bottom;
+
+          var eye = vec3.create();
+          var center = vec3.create();
+          var up = vec3.create();
+          vec3.set(eye, -364.6192, 0., 0.);
+          vec3.set(center, 0., 0., 0.);
+          vec3.set(up, 0., 0., 1.);
+          var viewMatrix = mat4.create();
+
+          mat4.lookAt(viewMatrix, eye, center, up);
+          mat4.invert(this.cameraMatrix, viewMatrix);
+
+          mat4.identity(this.modelMatrix);
+          // Just to prove the point
+          mat4.translate(this.modelMatrix, this.modelMatrix, [0, 100, 0]);
+        } catch (e) {
+        }
+        if (!this.gl) {
+          alert("Could not initialize WebGL, sorry :-(");
+        }
+      };
+
+      this.getShader = function (gl, id) {
+        var shaderScript = document.getElementById(id);
+        if (!shaderScript) {
+          return null;
+        }
+
+        var str = "";
+        var k = shaderScript.firstChild;
+        while (k) {
+          if (k.nodeType == 3) {
+            str += k.textContent;
+          }
+          k = k.nextSibling;
+        }
+
+        var shader;
+        if (shaderScript.type == "x-shader/x-fragment") {
+          shader = gl.createShader(gl.FRAGMENT_SHADER);
+        } else if (shaderScript.type == "x-shader/x-vertex") {
+          shader = gl.createShader(gl.VERTEX_SHADER);
+        } else {
+          return null;
+        }
+
+        gl.shaderSource(shader, str);
+        gl.compileShader(shader);
+
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+          alert(gl.getShaderInfoLog(shader));
+          return null;
+        }
+
+        return shader;
+      };
+
+      this.initShaders = function () {
+        var gl = this.gl;
+        var fragmentShader = this.getShader(gl, "shader-fs");
+        var vertexShader = this.getShader(gl, "shader-vs");
+
+        this.shaderProgram = gl.createProgram();
+        gl.attachShader(this.shaderProgram, vertexShader);
+        gl.attachShader(this.shaderProgram, fragmentShader);
+        gl.linkProgram(this.shaderProgram);
+
+        if (!gl.getProgramParameter(this.shaderProgram, gl.LINK_STATUS)) {
+          alert("Could not initialize shaders");
+        }
+
+        gl.useProgram(this.shaderProgram);
+
+        this.shaderProgram.vertexPositionAttribute = gl.getAttribLocation(this.shaderProgram, "aVertexPosition");
+        gl.enableVertexAttribArray(this.shaderProgram.vertexPositionAttribute);
+
+        this.shaderProgram.vertexColorAttribute = gl.getAttribLocation(this.shaderProgram, "aVertexColor");
+        gl.enableVertexAttribArray(this.shaderProgram.vertexColorAttribute);
+
+        this.shaderProgram.pMatrixUniform = gl.getUniformLocation(this.shaderProgram, "uPMatrix");
+        this.shaderProgram.mvMatrixUniform = gl.getUniformLocation(this.shaderProgram, "uMVMatrix");
+      };
+
+      this.mvPushMatrix = function () {
+        var copy = mat4.create();
+        mat4.copy(copy, this.mvMatrix);
+        this.mvMatrixStack.push(copy);
+      };
+
+      this.mvPopMatrix = function () {
+        if (this.mvMatrixStack.length == 0) {
+          throw new Error("Invalid popMatrix!");
+        }
+        this.mvMatrix = this.mvMatrixStack.pop();
+      };
+
+      this.setMatrixUniforms = function () {
+        var gl = this.gl;
+        gl.uniformMatrix4fv(this.shaderProgram.pMatrixUniform, false, this.pMatrix);
+        gl.uniformMatrix4fv(this.shaderProgram.mvMatrixUniform, false, this.mvMatrix);
+      };
+
+      this.initBuffers = function () {
+        var gl = this.gl;
+        this.pyramidVertexPositionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.pyramidVertexPositionBuffer);
+        var vertices = [
+          // Front face
+          0.0, 100.0, 0.0,
+          -100.0, -100.0, 100.0,
+          100.0, -100.0, 100.0,
+
+          // Right face
+          0.0, 100.0, 0.0,
+          100.0, -100.0, 100.0,
+          100.0, -100.0, -100.0,
+
+          // Back face
+          0.0, 100.0, 0.0,
+          100.0, -100.0, -100.0,
+          -100.0, -100.0, -100.0,
+
+          // Left face
+          0.0, 100.0, 0.0,
+          -100.0, -100.0, -100.0,
+          -100.0, -100.0, 100.0,
+
+          // Bottom face 1
+          -100.0, -100.0, 100.0,
+          100.0, -100.0, 100.0,
+          -100.0, -100.0, -100.0,
+
+          // Bottom face 2
+          100.0, -100.0, -100.0,
+          100.0, -100.0, 100.0,
+          -100.0, -100.0, -100.0,
+        ];
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+        this.pyramidVertexPositionBuffer.itemSize = 3;
+        this.pyramidVertexPositionBuffer.numItems = 18;
+
+        this.model.extents.min.set([-100, -100, -100]);
+        this.model.extents.max.set([100, 100, 100]);
+
+        this.pyramidVertexColorBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.pyramidVertexColorBuffer);
+        var colors = [
+          // Front face
+          1.0, 0.0, 0.0, 1.0,
+          0.0, 1.0, 0.0, 1.0,
+          0.0, 0.0, 1.0, 1.0,
+
+          // Right face
+          1.0, 0.0, 0.0, 1.0,
+          0.0, 0.0, 1.0, 1.0,
+          0.0, 1.0, 0.0, 1.0,
+
+          // Back face
+          1.0, 0.0, 0.0, 1.0,
+          0.0, 1.0, 0.0, 1.0,
+          0.0, 0.0, 1.0, 1.0,
+
+          // Left face
+          1.0, 0.0, 0.0, 1.0,
+          0.0, 0.0, 1.0, 1.0,
+          0.0, 1.0, 0.0, 1.0,
+
+          // Bottom face 1
+          1.0, 0.0, 0.0, 1.0,
+          0.0, 0.0, 1.0, 1.0,
+          0.0, 1.0, 0.0, 1.0,
+
+          // Bottom face 2
+          1.0, 0.0, 0.0, 1.0,
+          0.0, 0.0, 1.0, 1.0,
+          0.0, 1.0, 0.0, 1.0
+        ];
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colors), gl.STATIC_DRAW);
+        this.pyramidVertexColorBuffer.itemSize = 4;
+        this.pyramidVertexColorBuffer.numItems = 12;
+      };
+
+      // update the scene after a change
+      this.updateScene = function () {
+        // if we are not animating request an animation frame
+        // otherwise do nothing as the scene will be redrawn in the animation loop
+        var self = this;
+        if (!self.animating) {
+          window.requestAnimationFrame(self.render.bind(self));
+        }
+      };
+
+      // the callback that results in the scene being rendered
+      this.render = function (time) {
+        var self = this;
+        if (self.animating) {
+          // Initiate a new frame transaction by updating the controller with the frame time.
+          self.spaceMouse.update3dcontroller({
+            'frame': { 'time': time }
+          });
+          // Request an animation frame for the next incoming transaction data.
+          window.requestAnimationFrame(self.render.bind(self));
+        }
+
+        // Render the current scene.
+        self.drawScene();
+      };
+
+      // drawScene initiates the actual drawing
+      this.drawScene = function () {
+        var gl = this.gl;
+
+        this.gl.viewport(0, 0, this.gl.viewportWidth, this.gl.viewportHeight);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+        mat4.ortho(this.pMatrix, gl.left, gl.right, gl.bottom, gl.top, gl.frustumNear, gl.frustumFar);
+
+        var invCamera = mat4.create();
+        mat4.invert(invCamera, this.cameraMatrix);
+        mat4.multiply(this.mvMatrix, invCamera, this.modelMatrix);
+        this.mvPushMatrix();
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.pyramidVertexPositionBuffer);
+        gl.vertexAttribPointer(this.shaderProgram.vertexPositionAttribute, this.pyramidVertexPositionBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.pyramidVertexColorBuffer);
+        gl.vertexAttribPointer(this.shaderProgram.vertexColorAttribute, this.pyramidVertexColorBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+        this.setMatrixUniforms();
+        gl.drawArrays(gl.TRIANGLES, 0, this.pyramidVertexPositionBuffer.numItems);
+
+        this.mvPopMatrix();
+      };
+
+      ///////////////////////////////////////////////////////////////////////
+      // the 3dconnexion.js callbacks
+      this.getCoordinateSystem = function () {
+        // In this sample the cs has Y to the right, Z-up and X out of the screen
+        return [0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1];
+      };
+
+      this.getFrontView = function () {
+        return [0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 1];
+      };
+
+      // getViewMatrix is called when the navlib requests the view matrix
+      this.getViewMatrix = function () {
+        return Array.prototype.slice.call(this.cameraMatrix);
+      };
+
+      // getFov is called when the navlib requests the fov
+      this.getFov = function () {
+        return this.gl.fov;
+      };
+
+      // getPerspective is called when the navlib needs to know the projection
+      this.getPerspective = function () {
+        return false;
+      };
+
+      // getModelExtents is called when the navlib requests the bounding box
+      // of the model
+      this.getModelExtents = function () {
+        var min = vec3.create();
+        vec3.transformMat4(min, this.model.extents.min, this.modelMatrix);
+        var max = vec3.create();
+        vec3.transformMat4(max, this.model.extents.max, this.modelMatrix);
+        return [min[0], min[1], min[2], max[0], max[1], max[2]];
+      };
+
+      // getPointerPosition is called when the navlib needs to know where the
+      // mouse pointer is on the projection/near plane
+      this.getPointerPosition = function () {
+        var self = this;
+
+        var canvas = document.getElementById(self.canvasId);
+        var rect = canvas.getBoundingClientRect();
+
+        // position of the mouse in the canvas (windows [0,0] is at the top-left of the screen, opengl[0,0] is at the bottom-left)
+        // the position is tracked relative to the window so we need to subtract the relative position of the canvas
+        // Setting z=0 puts the mouse on the near plane.
+        var pos = vec3.fromValues(window.mouseX - rect.left, self.gl.viewportHeight - (window.mouseY - rect.top), 0.);
+
+        var invCamera = mat4.create();
+        mat4.invert(invCamera, self.cameraMatrix);
+        // mouse pointer position in world coordinates
+        vec3.unproject(pos, invCamera, self.pMatrix, [0, 0, self.gl.viewportWidth, self.gl.viewportHeight]);
+        if (TRACE_MESSAGES)
+          console.log('PointerPosition =[' + pos[0] + ', ' + pos[1] + ', ' + pos[2] + ']');
+        return Array.prototype.slice.call(pos);
+      };
+
+      // getPivotPosition is called when the navlib needs to know where the rotation pivot is located
+      // In this demo we will return the position of the mouse cursor in the plane of the pyramid
+      this.getPivotPosition = function () {
+        var self = this;
+
+        // Calculates the distance of the camera to the place passing through the model origin
+        // parallel to the projection plane.
+        var cameraPos = vec4.fromValues(0., 0., 0., 1.);
+        vec4.transformMat4(cameraPos, cameraPos, self.cameraMatrix);
+        var modelPos = vec4.fromValues(0., 0., 0., 1.);
+        vec4.transformMat4(modelPos, modelPos, self.modelMatrix);
+        var dir = vec3.create();
+        vec3.subtract(dir, modelPos, cameraPos);
+
+        // The camera z-axis
+        var zaxis = vec3.fromValues(0., 0., 1.);
+        var frame = mat3.create();
+        mat3.fromMat4(frame, self.cameraMatrix);
+        vec3.transformMat3(zaxis, zaxis, frame);
+
+        var distance = -vec3.dot(zaxis, dir);
+
+        // converts the distance to a z-depth
+        var depth = (distance - self.gl.frustumNear) / (self.gl.frustumFar - self.gl.frustumNear);
+
+        var canvas = document.getElementById(self.canvasId);
+        var rect = canvas.getBoundingClientRect();
+        // position of the mouse in the canvas (windows [0,0] is at the top-left of the screen, opengl[0,0] is at the bottom-left)
+        // the position is tracked relative to the window so we need to subtract the relative position of the canvas
+        // Setting z=0 puts the mouse on the near plane, z=1 puts it on the far plane
+        var pos = vec3.fromValues(window.mouseX - rect.left, self.gl.viewportHeight - (window.mouseY - rect.top), depth);
+
+        var invCamera = mat4.create();
+        mat4.invert(invCamera, self.cameraMatrix);
+        // mouse pointer position in world coordinates
+        vec3.unproject(pos, invCamera, self.pMatrix, [0, 0, self.gl.viewportWidth, self.gl.viewportHeight]);
+        if (TRACE_MESSAGES)
+          console.log('PointerPosition =[' + pos[0] + ', ' + pos[1] + ', ' + pos[2] + ']');
+        return Array.prototype.slice.call(pos);
+      }
+
+      // getViewExtents is called when the navlib requests the bounding box
+      // of the view. This occurs in orthographic view projections
+      this.getViewExtents = function () {
+        return [this.gl.left, this.gl.bottom, -this.gl.frustumFar, this.gl.right, this.gl.top, -this.gl.frustumNear];
+      };
+
+      // getFrameTime is called when the navlib needs to know the time origin of the animation frame.
+      this.getFrameTime = function () {
+        return performance.now();
+      };
+
+      // setViewExtents is called when the navlib needs to zoom the view
+      // in an orthographic view projection
+      this.setViewExtents = function (data) {
+        var self = this;
+        self.gl.left = data[0];
+        self.gl.bottom = data[1];
+        self.gl.right = data[3];
+        self.gl.top = data[4];
+      };
+
+      ///////////////////////////////////////////////////////////////////////////////////////////
+      // Commands
+      // this callback is called when a command, that was exported by setting the commands property,
+      // is invoked by a button press on the 3dmouse
+      this.setActiveCommand = function (id) {
+        if (id)
+          console.log("Id of command to execute= " + id);
+      };
+
+      // setViewMatrix is called when the navlib sets the view matrix
+      this.setViewMatrix = function (data) {
+        this.cameraMatrix = data;
+      };
+
+      // setFov is called when the navlib sets the fov
+      this.setFov = function (data) {
+        this.gl.fov = data;
+      };
+
+      // setTransaction is called twice per frame
+      // transaction >0 at the beginning of a frame change
+      // transaction ===0 at the end of a frame change
+      this.setTransaction = function (transaction) {
+        if (transaction === 0) {
+          // request a redraw if not animating
+          this.updateScene();
+        }
+      };
+
+      // onStartMotion is called when the 3DMouse starts sending data
+      this.onStartMotion = function () {
+        var self = this;
+        if (!self.animating) {
+          self.animating = true;
+          window.requestAnimationFrame(self.render.bind(self));
+        }
+      };
+
+      // onStopMotion is called when the 3DMouse stops sending data
+      this.onStopMotion = function () {
+        this.animating = false;
+      };
+
+      ///////////////////////////////////////////////////////////////////////
+      // the 3dconnexion 3DMouse initialization
+      this.init3DMouse = function () {
+        var self = this;
+        self.spaceMouse = new _3Dconnexion(self);
+        if (!self.spaceMouse.connect()) {
+          if (TRACE_MESSAGES)
+            console.log("Cannot connect to 3Dconnexion NL-Proxy");
+        }
+      };
+
+      this.onConnect = function () {
+        var self = this;
+        // name is display to the user and used to identify the application
+        // for the 3D mouse property panels.
+        var name = 'OrthoWebGL Sample';
+        var canvas = document.getElementById(self.canvasId);
+        self.spaceMouse.create3dmouse(canvas, name);
+      };
+
+      this.onDisconnect = function (reason) {
+        if (TRACE_MESSAGES)
+          console.log("3Dconnexion NL-Proxy disconnected " + reason);
+      };
+
+      this.on3dmouseCreated = function () {
+        var self = this;
+        var actionTree = new _3Dconnexion.ActionTree();
+        var actionImages = new _3Dconnexion.ImageCache();
+
+        // set ourselves as the timing source for the animation frames
+        self.spaceMouse.update3dcontroller({
+          'frame': { 'timingSource': 1 }
+        });
+
+        actionImages.onload = function () {
+          self.spaceMouse.update3dcontroller({ 'images': actionImages.images });
+        };
+
+        // An actionset can also be considered to be a buttonbank, a menubar, or a set of toolbars
+        // Define a unique string for the action set to be able to specify the active action set
+        // Because we only have one action set use the 'Default' action set id to not display the label
+        var buttonBank = actionTree.push(new _3Dconnexion.ActionSet('Default', 'Custom action set'));
+        getApplicationCommands(buttonBank, actionImages);
+
+        // Expose the commands to 3Dxware and specify the active buttonbank / action set
+        self.spaceMouse.update3dcontroller({ 'commands': { 'activeSet': 'Default', 'tree': actionTree } });
+      };
+
+      this.webGLStart = function () {
+        var self = this;
+        var canvas = document.getElementById(self.canvasId);
+
+        self.initGL(canvas);
+        self.initShaders()
+        self.initBuffers();
+
+        self.gl.clearColor(0.0, 0.0, 0.0, 1.0);
+        self.gl.enable(this.gl.DEPTH_TEST);
+        self.updateScene();
+
+        self.init3DMouse();
+      };
+    }
+
+    function wndhandler(d) {
+      if (TRACE_MESSAGES)
+        console.log("WND: " + d);
+    }
+
+    function webGLStart() {
+      var webgl = new GL("webgl");
+      webgl.webGLStart();
+      var canvas = document.getElementById('webgl');
+      canvas.focus();
+    }
+
+    // this function fills the action and images structures that are exposed
+    // to the 3Dconnexion button configuration editor
+    function getApplicationCommands(buttonBank, images) {
+
+      // Add a couple of categiores / menus / tabs to the buttonbank/menubar/toolbar
+      // Use the categories to group actions so that the user can find them easily
+      var fileNode = buttonBank.push(new _3Dconnexion.Category('CAT_ID_FILE', 'File'));
+      var editNode = buttonBank.push(new _3Dconnexion.Category('CAT_ID_EDIT', 'Edit'));
+
+      // Add menu items / actions
+      fileNode.push(new _3Dconnexion.Action('ID_OPEN', 'Open', 'Open file'));
+      fileNode.push(new _3Dconnexion.Action('ID_CLOSE', 'Close', 'Close file'));
+      fileNode.push(new _3Dconnexion.Action('ID_EXIT', 'Exit', 'Exit program'));
+
+      // Add menu items / actions
+      editNode.push(new _3Dconnexion.Action('ID_UNDO', 'Undo', 'Shortcut is Ctrl + Z'));
+      editNode.push(new _3Dconnexion.Action('ID_REDO', 'Redo', 'Shortcut is Ctrl + Y'));
+      editNode.push(new _3Dconnexion.Action('ID_CUT', 'Cut', 'Shortcut is Ctrl + X'));
+      editNode.push(new _3Dconnexion.Action('ID_COPY', 'Copy', 'Shortcut is Ctrl + C'));
+      editNode.push(new _3Dconnexion.Action('ID_PASTE', 'Paste', 'Shortcut is Ctrl + V'));
+
+      // Now add the images to the cache and associate it with the menu item by using the same id as the menu item / action
+      // These images will be shown in the 3Dconnexion properties editor and in the UI elements which display the
+      // active button configuration of the 3dmouse
+      images.push(_3Dconnexion.ImageItem.fromURL('images/open.png', 'ID_OPEN'));
+      images.push(_3Dconnexion.ImageItem.fromURL('images/close.png', 'ID_CLOSE'));
+      images.push(_3Dconnexion.ImageItem.fromURL('images/exit.png', 'ID_EXIT'));
+      images.push(_3Dconnexion.ImageItem.fromURL('images/Macro_Cut.png', 'ID_CUT'));
+      images.push(_3Dconnexion.ImageItem.fromURL('images/Macro_Copy.png', 'ID_COPY'));
+      images.push(_3Dconnexion.ImageItem.fromURL('images/Macro_Paste.png', 'ID_PASTE'));
+      images.push(_3Dconnexion.ImageItem.fromURL('images/Macro_Undo.png', 'ID_UNDO'));
+      images.push(_3Dconnexion.ImageItem.fromURL('images/Macro_Redo.png', 'ID_REDO'));
+    }
+
+    // this function tracks the mouse in the window so that we can
+    // query the mouse position outside of an event. The mouse position
+    // is cached in the global window
+    document.addEventListener("mousemove", function (e) {
+      window.mouseX = e.pageX;
+      window.mouseY = e.pageY;
+      if ('TRACE_MOUSE_MESSAGES' in window && TRACE_MOUSE_MESSAGES)
+        console.log('mouse=[' + mouseX + ', ' + +mouseY + ']');
+    });
+  </script>
+
+  <style type="text/css">
+    .error {
+      color: red;
+    }
+
+    .success {
+      color: green;
+    }
+
+    #console_wrapper {
+      background-color: black;
+      color: white;
+      padding: 5px;
+    }
+
+    #console p {
+      padding: 0;
+      margin: 0;
+    }
+  </style>
+</head>
+
+<body onload="webGLStart()">
+  <h1>Orthographic WebGL 3DconnexionJS Sample</h1>
+  <canvas id="webgl" width="1024" height="768" tabindex="1"></canvas>
+</body>
+</html>

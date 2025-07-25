@@ -1,0 +1,34 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup Label="Globals">
+    <MSBuildAllProjects>$(MSBuildAllProjects);$(MSBuildThisFileFullPath)</MSBuildAllProjects>
+    <HasSharedItems>true</HasSharedItems>
+    <ItemsProjectGuid>{210f8802-2f43-49b9-a35a-0dd5c8ba17ff}</ItemsProjectGuid>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(MSBuildThisFileDirectory)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ProjectCapability Include="SourceItemsFromImports" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="$(MSBuildThisFileDirectory)base64.hpp" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)beast.hpp" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)handle_http_request.hpp" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)https_get.hpp" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)json.hpp" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)from_json.hpp" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)navlib_client_session.hpp" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)net.hpp" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)to_json.hpp" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)uniqueid.hpp" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)version.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)wamp.hpp" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)wamp_client_session.hpp" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)wamp_prefix.hpp" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)websocket_client_session.hpp" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)websocket_session.hpp" />
+  </ItemGroup>
+</Project>

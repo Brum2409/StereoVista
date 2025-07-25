@@ -1,0 +1,60 @@
+﻿<UserControl x:Class="TDx.TestNL.Views.RibbonView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:local="clr-namespace:TDx.TestNL.Views"
+             mc:Ignorable="d"
+             d:DesignHeight="30" d:DesignWidth="300"
+             Background="White">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="30" />
+        </Grid.RowDefinitions>
+        <StackPanel Grid.Row="0" Orientation="Horizontal">
+            <Button Margin="3" x:Name="btnOpenFile" Command="{Binding OpenFileCommand}" IsEnabled="{Binding ButtonsEnabled}">
+                <Button.Content>
+                    <Image Source="pack://application:,,,/Images/3dx_viewer_icon_menu_open_hover.png" />
+                </Button.Content>
+            </Button>
+            <Button Margin="3" x:Name="btnCloseFile" Command="{Binding CloseFileCommand}" IsEnabled="{Binding ButtonsEnabled}">
+                <Button.Content>
+                    <Image Source="pack://application:,,,/Images/3dx_viewer_icon_close_std.png" />
+                </Button.Content>
+            </Button>
+            <Button Margin="3" x:Name="btnQuit" Command="{Binding ExitCommand}">
+                <Button.Content>
+                    <Image Source="pack://application:,,,/Images/3dx_viewer_icon_menu_quit_hover.png" />
+                </Button.Content>
+            </Button>
+            <Separator Margin="3" />
+            <Button Margin="3" x:Name="btnSelectAll" Command="{Binding SelectAllCommand}" IsEnabled="{Binding ButtonsEnabled}">
+                <Button.Content>
+                    <Image Source="pack://application:,,,/Images/3dx_viewer_icon_select_all_std.png" />
+                </Button.Content>
+            </Button>
+            <Button Margin="3" x:Name="btnSelectNone" Command="{Binding ClearSelectionCommand}" IsEnabled="{Binding ButtonsEnabled}">
+                <Button.Content>
+                    <Image Source="pack://application:,,,/Images/3dx_viewer_icon_clear_selection_std.png" />
+                </Button.Content>
+            </Button>
+            <Separator Margin="3" />
+            <Button Margin="3" x:Name="btnParallelView" Command="{Binding ParallelViewCommand}" IsEnabled="{Binding ButtonsEnabled}">
+                <Button.Content>
+                    <Image Source="pack://application:,,,/Images/3dx_viewer_icon_parallel_view_std.png" />
+                </Button.Content>
+            </Button>
+            <Button Margin="3" x:Name="btnPerspectiveView" Command="{Binding PerspectiveViewCommand}" IsEnabled="{Binding ButtonsEnabled}">
+                <Button.Content>
+                    <Image Source="pack://application:,,,/Images/3dx_viewer_icon_perspective_view_std.png" />
+                </Button.Content>
+            </Button>
+            <Separator Margin="3" />
+            <Button Margin="3" x:Name="btnAbout" Command="{Binding AboutCommand}">
+                <Button.Content>
+                    <Image Source="pack://application:,,,/Images/3dx_viewer_icon_about_std.png" />
+                </Button.Content>
+            </Button>
+        </StackPanel>
+    </Grid>
+</UserControl>

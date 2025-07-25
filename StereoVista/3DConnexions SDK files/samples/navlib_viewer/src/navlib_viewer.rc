@@ -1,0 +1,550 @@
+// Microsoft Visual C++ generated resource script.
+//
+#include "resource.h"
+
+#define APSTUDIO_READONLY_SYMBOLS
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#include "afxres.h"
+#include "version.h"
+
+/////////////////////////////////////////////////////////////////////////////
+#undef APSTUDIO_READONLY_SYMBOLS
+
+/////////////////////////////////////////////////////////////////////////////
+// Japanese (Japan) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_JPN)
+LANGUAGE LANG_JAPANESE, SUBLANG_DEFAULT
+#pragma code_page(932)
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Menu
+//
+
+IDR_MAINFRAME MENU
+BEGIN
+    POPUP "&ÉtÉ@ÉCÉã"
+    BEGIN
+        MENUITEM "äJÇ≠",                          ID_FILE_OPEN
+        MENUITEM SEPARATOR
+        MENUITEM "èIóπ",                          ID_APP_EXIT
+    END
+    POPUP "&ÉrÉÖÅ["
+    BEGIN
+        POPUP "ìäâe"
+        BEGIN
+            MENUITEM "ìßéã",                          ID_PROJECTION_PERSPECTIVE
+            MENUITEM "ïΩçs",                          ID_PROJECTION_PARALLEL
+            MENUITEM "2D",                          ID_PROJECTION_2D
+        END
+        MENUITEM "ÉOÉäÉbÉhÇï\é¶",                     ID_VIEW_SHOWGRID, CHECKED
+    END
+    POPUP "&ÉwÉãÉv"
+    BEGIN
+        MENUITEM "&ViewerÇ…ä÷ÇµÇƒ",                 ID_APP_ABOUT
+    END
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// String Table
+//
+
+STRINGTABLE
+BEGIN
+    IDR_MAINFRAME           "3Dconnexion Viewer\nÉÇÉfÉã\nMCAD ÉÇÉfÉã \nWavefront OBJ (*.obj)\n.obj\nMCAD.ÉhÉLÉÖÉÅÉìÉg\nMCAD ÉhÉLÉÖÉÅÉìÉg"
+    IDS_About               "Ç…Ç¬Ç¢Çƒ"
+    IDS_Perspective         "ìßéã"
+    IDS_Parallel            "ïΩçs"
+    IDS_2D                  "2D"
+    IDS_ToggleGrid          "ÉOÉäÉbÉhÇêÿÇËë÷Ç¶ÇÈ"
+    IDS_OpenFile            "äJÇ≠"
+    IDS_SelectNone          "ñ≥ëIë"
+END
+
+STRINGTABLE
+BEGIN
+    AFX_IDS_APP_TITLE       "3Dconnexion Viewer"
+END
+
+STRINGTABLE
+BEGIN
+    ID_APP_ABOUT            "ÉvÉçÉOÉâÉÄèÓïÒÇï\é¶, ÉoÅ[ÉWÉáÉìÇ‚ÉRÉsÅ[ÉâÉCÉgè⁄ç◊\nè⁄ç◊"
+    ID_APP_EXIT             "ÉAÉvÉäÉPÅ[ÉVÉáÉìÇèIóπ; ÉhÉLÉÖÉÅÉìÉgÇÃï€ë∂Çç√çê\nèIóπ"
+END
+
+STRINGTABLE
+BEGIN
+    ID_PROJECTION_PERSPECTIVE "ÉrÉÖÅ[ÇìßéãìäâeÇ…ê›íË"
+    ID_PROJECTION_PARALLEL  "ÉrÉÖÅ[ÇïΩçsìäâeÇ…ê›íË"
+    ID_PROJECTION_2D        "ÉrÉÖÅ[ÇâÒì]ñ≥å¯ÇÃïΩçsìäâeÇ…ê›íË"
+END
+
+STRINGTABLE
+BEGIN
+    IDS_ABOUT_DESCRIPTION   "ìñÉTÉìÉvÉãÇÕÅAÉXÉ^ÉìÉ_Å[Éh3DÉ}ÉEÉXÇÉÅÉJÉjÉJÉãCADÉrÉÖÅ[ê›íËÇ…ì±ì¸ÇµÇΩÇ‡ÇÃÇï\é¶Ç∑ÇÈ"
+    IDS_ABOUT_TITLE         "3Dconnexion ViewerÇ…Ç¬Ç¢Çƒ"
+END
+
+#endif    // Japanese (Japan) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////////////
+// Chinese (Simplified, China) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_CHS)
+LANGUAGE LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED
+#pragma code_page(936)
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Menu
+//
+
+IDR_MAINFRAME MENU
+BEGIN
+    POPUP "&Œƒº˛"
+    BEGIN
+        MENUITEM "¥Úø™",                          ID_FILE_OPEN
+        MENUITEM SEPARATOR
+        MENUITEM "ÕÀ≥ˆ",                          ID_APP_EXIT
+    END
+    POPUP "&œ‘ æ"
+    BEGIN
+        POPUP "Õ∂”∞"
+        BEGIN
+            MENUITEM "Õ∏ ”",                          ID_PROJECTION_PERSPECTIVE
+            MENUITEM "∆Ω––",                          ID_PROJECTION_PARALLEL
+            MENUITEM "2D",                          ID_PROJECTION_2D
+        END
+        MENUITEM "œ‘ æÕ¯∏Ò",                        ID_VIEW_SHOWGRID, CHECKED
+    END
+    POPUP "&∞Ô÷˙"
+    BEGIN
+        MENUITEM "&πÿ”⁄Viewer°≠",                  ID_APP_ABOUT
+    END
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// String Table
+//
+
+STRINGTABLE
+BEGIN
+    IDR_MAINFRAME           "3Dconnexion Viewer\nƒ£–Õ\nMCADƒ£–Õ\nWavefront OBJ (*.obj)\n.obj\nMCAD.Œƒº˛\nMCADŒƒº˛"
+    IDS_About               "∞Ô÷˙"
+    IDS_Perspective         "Õ∏ ”"
+    IDS_Parallel            "∆Ω––"
+    IDS_2D                  "2D"
+    IDS_ToggleGrid          "«–ªªÕ¯∏Ò"
+    IDS_OpenFile            "¥Úø™"
+    IDS_SelectNone          "»´∂º≤ª—°"
+END
+
+STRINGTABLE
+BEGIN
+    AFX_IDS_APP_TITLE       "3Dconnexion Viewer"
+END
+
+STRINGTABLE
+BEGIN
+    ID_APP_ABOUT            "œ‘ æ≥Ã–Ú–≈œ¢°¢∞Ê±æ∫≈∫Õ∞Ê»®\nπÿ”⁄"
+    ID_APP_EXIT             "ÕÀ≥ˆ≥Ã–Ú; Ã· æ±£¥ÊŒƒº˛\nÕÀ≥ˆ"
+END
+
+STRINGTABLE
+BEGIN
+    ID_PROJECTION_PERSPECTIVE "Ω´ ”Õº…ËŒ™Õ∏ ”Õ∂”∞"
+    ID_PROJECTION_PARALLEL  "Ω´ ”Õº…ËŒ™∆Ω––Õ∂”∞"
+    ID_PROJECTION_2D        "Ω´ ”Õº…ËŒ™Œﬁ–˝◊™µƒ∆Ω––Õ∂”∞"
+END
+
+STRINGTABLE
+BEGIN
+    IDS_ABOUT_DESCRIPTION   "¥À æ¿˝—› æ¡À±Í◊º3D Û±Í‘⁄ª˙–µCAD÷–µƒ”¶”√  \n\n"
+    IDS_ABOUT_TITLE         "πÿ”⁄3Dconnexion Viewer"
+END
+
+#endif    // Chinese (Simplified, China) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////////////
+// German (Germany) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_DEU)
+LANGUAGE LANG_GERMAN, SUBLANG_GERMAN
+#pragma code_page(1252)
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Menu
+//
+
+IDR_MAINFRAME MENU
+BEGIN
+    POPUP "&Datei"
+    BEGIN
+        MENUITEM "÷ffnen",                      ID_FILE_OPEN
+        MENUITEM SEPARATOR
+        MENUITEM "Beenden",                     ID_APP_EXIT
+    END
+    POPUP "&Ansicht"
+    BEGIN
+        POPUP "Darstellung"
+        BEGIN
+            MENUITEM "Perspektiv",                  ID_PROJECTION_PERSPECTIVE
+            MENUITEM "Orthogonal",                  ID_PROJECTION_PARALLEL
+            MENUITEM "2D",                          ID_PROJECTION_2D
+        END
+        MENUITEM "Raster anzeigen",             ID_VIEW_SHOWGRID, CHECKED
+    END
+    POPUP "&Hilfe"
+    BEGIN
+        MENUITEM "&‹ber Viewer...",             ID_APP_ABOUT
+    END
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// String Table
+//
+
+STRINGTABLE
+BEGIN
+    IDR_MAINFRAME           "3Dconnexion Viewer\nModell\nMCAD Modell \nWavefront OBJ (*.obj)\n.obj\nMCAD.Dokument\nMCAD Dokument"
+    IDS_About               "‹ber"
+    IDS_Perspective         "Perspektiv"
+    IDS_Parallel            "Orthogonal"
+    IDS_2D                  "2D Ansicht"
+    IDS_ToggleGrid          "Raster ein-/ausblenden"
+    IDS_OpenFile            "÷ffnen"
+    IDS_SelectNone          "Auswahl aufheben"
+END
+
+STRINGTABLE
+BEGIN
+    AFX_IDS_APP_TITLE       "3Dconnexion Viewer"
+END
+
+STRINGTABLE
+BEGIN
+    ID_APP_ABOUT            "Zeige Programminformation, Versionsnummer und Copyright\n‹ber"
+    ID_APP_EXIT             "Anwendung beenden; fordert zum speichern der Dokumente auf\nBeenden"
+END
+
+STRINGTABLE
+BEGIN
+    ID_PROJECTION_PERSPECTIVE "Setzte Ansicht zu  Perspektiv"
+    ID_PROJECTION_PARALLEL  "Setzte Ansicht zu  Orthogonal"
+    ID_PROJECTION_2D        "Setzte Ansicht zu  Orthogonal ohne Rotationen"
+END
+
+STRINGTABLE
+BEGIN
+    IDS_ABOUT_DESCRIPTION   "Diese Anwendung zeigt das Beispiel einer standard 3D Maus Implementierung f¸r MCAD.  \n\n"
+    IDS_ABOUT_TITLE         "‹ber 3Dconnexion Viewer"
+END
+
+#endif    // German (Germany) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////////////
+// English (United States) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+#pragma code_page(1252)
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Menu
+//
+
+IDR_MAINFRAME MENU
+BEGIN
+    POPUP "&File"
+    BEGIN
+        MENUITEM "Open",                        ID_FILE_OPEN
+        MENUITEM SEPARATOR
+        MENUITEM "Exit",                        ID_APP_EXIT
+    END
+    POPUP "&View"
+    BEGIN
+        POPUP "Projection"
+        BEGIN
+            MENUITEM "Perspective",                 ID_PROJECTION_PERSPECTIVE
+            MENUITEM "Parallel",                    ID_PROJECTION_PARALLEL
+            MENUITEM "2D",                          ID_PROJECTION_2D
+        END
+        MENUITEM "Show Grid",                   ID_VIEW_SHOWGRID, CHECKED
+    END
+    POPUP "&Help"
+    BEGIN
+        MENUITEM "&About Viewer...",            ID_APP_ABOUT
+    END
+END
+
+
+#ifdef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// TEXTINCLUDE
+//
+
+1 TEXTINCLUDE 
+BEGIN
+    "resource.h\0"
+END
+
+2 TEXTINCLUDE 
+BEGIN
+    "#include ""afxres.h""\r\n"
+    "#include ""version.h""\r\n"
+    "\0"
+END
+
+3 TEXTINCLUDE 
+BEGIN
+    "#include ""res\\version.rc2""  // non-Microsoft Visual C++ edited resources\r\n"
+    "#include ""res\\navlib_viewer.rc2""  // non-Microsoft Visual C++ edited resources\r\n"
+    "\r\n"
+    "#define _AFX_NO_SPLITTER_RESOURCES\r\n"
+    "#define _AFX_NO_OLE_RESOURCES\r\n"
+    "#define _AFX_NO_TRACKER_RESOURCES\r\n"
+    "#define _AFX_NO_PROPERTY_RESOURCES\r\n"
+    "#include ""afxres.rc""  \t// Standard components\r\n"
+    "\0"
+END
+
+#endif    // APSTUDIO_INVOKED
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Accelerator
+//
+
+IDR_MAINFRAME ACCELERATORS
+BEGIN
+    VK_F6,          ID_NEXT_PANE,           VIRTKEY, NOINVERT
+    VK_F6,          ID_PREV_PANE,           VIRTKEY, SHIFT, NOINVERT
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Dialog
+//
+
+IDD_ABOUTBOX DIALOGEX 0, 0, 254, 72
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "About 3Dconnexion Viewer"
+FONT 8, "MS Sans Serif", 0, 0, 0x0
+BEGIN
+    ICON            IDR_MAINFRAME,IDC_STATIC,10,17,20,20
+    LTEXT           "3Dconnexion Viewer v3.0",IDC_STATIC,40,10,119,8
+    LTEXT           "© 2000-2025 3Dconnexion.\nAll rights reserved.",IDC_STATIC,39,26,145,17
+    DEFPUSHBUTTON   "OK",IDOK,189,18,52,14,WS_GROUP
+    LTEXT           "This sample demonstrates the implementation of a standard 3D mouse in a Mechanical CAD viewer setting.  \n\n",IDC_ABOUT_DESCRIPTION,9,45,242,22
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// DESIGNINFO
+//
+
+#ifdef APSTUDIO_INVOKED
+GUIDELINES DESIGNINFO
+BEGIN
+    IDD_ABOUTBOX, DIALOG
+    BEGIN
+        RIGHTMARGIN, 252
+        VERTGUIDE, 9
+        VERTGUIDE, 39
+        BOTTOMMARGIN, 67
+    END
+END
+#endif    // APSTUDIO_INVOKED
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Icon
+//
+
+// Icon with lowest ID value placed first to ensure application icon
+// remains consistent on all systems.
+IDR_MAINFRAME           ICON                    "res\\3Dx_App_Icon_Viewer.ico"
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// AFX_DIALOG_LAYOUT
+//
+
+IDD_ABOUTBOX AFX_DIALOG_LAYOUT
+BEGIN
+    0
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// String Table
+//
+
+STRINGTABLE
+BEGIN
+    IDR_MAINFRAME           "3Dconnexion Viewer\nModel\nMCAD Model \nWavefront OBJ (*.obj)\n.obj\nMCAD.Document\nMCAD Document"
+    IDS_About               "About"
+    IDS_Perspective         "Perspective"
+    IDS_Parallel            "Parallel"
+    IDS_2D                  "2D View"
+    IDS_ToggleGrid          "Toggle Grid"
+    IDS_OpenFile            "Open"
+    IDS_SelectNone          "Select None"
+    IDS_File                "File"
+    IDS_View                "View"
+    IDS_Projection          "Projection"
+END
+
+STRINGTABLE
+BEGIN
+    AFX_IDS_APP_TITLE       "3Dconnexion Viewer"
+END
+
+STRINGTABLE
+BEGIN
+    ID_APP_ABOUT            "Display program information, version number and copyright\nAbout"
+    ID_APP_EXIT             "Quit the application; prompts to save documents\nExit"
+END
+
+STRINGTABLE
+BEGIN
+    ID_PROJECTION_PERSPECTIVE "Set View to a Perspective Projection"
+    ID_PROJECTION_PARALLEL  "Set View to a Parallel Projection"
+    ID_PROJECTION_2D        "Set View to a Parallel Projection without Rotations"
+END
+
+STRINGTABLE
+BEGIN
+    IDS_ABOUT_DESCRIPTION   "This sample demonstrates the implementation of a standard 3D mouse in a Mechanical CAD viewer setting.  \n\n"
+    IDS_ABOUT_TITLE         "About 3Dconnexion Viewer"
+END
+
+#endif    // English (United States) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////////////
+// French (France) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_FRA)
+LANGUAGE LANG_FRENCH, SUBLANG_FRENCH
+#pragma code_page(1252)
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Menu
+//
+
+IDR_MAINFRAME MENU
+BEGIN
+    POPUP "&Fichier"
+    BEGIN
+        MENUITEM "Ouvrir",                      ID_FILE_OPEN
+        MENUITEM SEPARATOR
+        MENUITEM "Fermer",                      ID_APP_EXIT
+    END
+    POPUP "&Vue"
+    BEGIN
+        POPUP "Projection"
+        BEGIN
+            MENUITEM "Perspective",                 ID_PROJECTION_PERSPECTIVE
+            MENUITEM "Orthogonale",                 ID_PROJECTION_PARALLEL
+            MENUITEM "2D",                          ID_PROJECTION_2D
+        END
+        MENUITEM "Afficher la grille",          ID_VIEW_SHOWGRID, CHECKED
+    END
+    POPUP "&Aide"
+    BEGIN
+        MENUITEM "¿ propos de Viewer.....",     ID_APP_ABOUT
+    END
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// String Table
+//
+
+STRINGTABLE
+BEGIN
+    IDR_MAINFRAME           "3Dconnexion Viewer\nModËle\nModËle CAO \nWavefront OBJ (*.obj)\n.obj\nCAO.Document\nDocument CAO"
+    IDS_About               "¿ propos"
+    IDS_Perspective         "Perspective"
+    IDS_Parallel            "Orthogonale"
+    IDS_2D                  "Vue 2D"
+    IDS_ToggleGrid          "Basculer la grille"
+    IDS_OpenFile            "Ouvrir"
+    IDS_SelectNone          "SÈlectionner aucun"
+END
+
+STRINGTABLE
+BEGIN
+    AFX_IDS_APP_TITLE       "3Dconnexion Viewer"
+END
+
+STRINGTABLE
+BEGIN
+    ID_APP_ABOUT            "Afficher information sur le logiciel, version et droits díauteur (copyright).\n¿ propos"
+    ID_APP_EXIT             "Quitter le programme; invite ‡ enregistrer les documents\nFermer"
+END
+
+STRINGTABLE
+BEGIN
+    ID_PROJECTION_PERSPECTIVE "Change Vue en Projection en Perspective"
+    ID_PROJECTION_PARALLEL  "Change Vue en Projection Orthogonale"
+    ID_PROJECTION_2D        "Change Vue en Projection Orthogonale sans Rotations"
+END
+
+STRINGTABLE
+BEGIN
+    IDS_ABOUT_DESCRIPTION   "Cet exemple illustre líimplÈmentation d'une souris 3D standard dans un environnement de visualisation CAO.  \n\n"
+    IDS_ABOUT_TITLE         "¿ propos de 3Dconnexion Viewer"
+END
+
+#endif    // French (France) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+
+#ifndef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 3 resource.
+//
+#include "res\version.rc2"  // non-Microsoft Visual C++ edited resources
+#include "res\navlib_viewer.rc2"  // non-Microsoft Visual C++ edited resources
+
+#define _AFX_NO_SPLITTER_RESOURCES
+#define _AFX_NO_OLE_RESOURCES
+#define _AFX_NO_TRACKER_RESOURCES
+#define _AFX_NO_PROPERTY_RESOURCES
+#include "afxres.rc"  	// Standard components
+
+/////////////////////////////////////////////////////////////////////////////
+#endif    // not APSTUDIO_INVOKED
+

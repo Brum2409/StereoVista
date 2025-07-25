@@ -13,6 +13,7 @@
 #include "Cursors/Base/CursorManager.h"
 #include "Core/Voxalizer.h"
 #include "Engine/OctreePointCloudManager.h"
+#include "Engine/SpaceMouseInput.h"
 #include "Gui/Gui.h"
 #include "Gui/GuiTypes.h"
 
@@ -95,6 +96,8 @@ static char modelPathBuffer[256] = ""; // Buffer for ImGui model path input
 
 // ---- Camera Configuration ----
 Camera camera(glm::vec3(0.0f, 0.0f, 3.0f));
+std::shared_ptr<Camera> cameraPtr = std::make_shared<Camera>(camera);
+SpaceMouseInput spaceMouseInput;
 float lastX = 1920.0f / 2.0;
 float lastY = 1080.0f / 2.0;
 float aspectRatio = 1.0f;
@@ -1518,6 +1521,46 @@ int main() {
     loadPreferences();
     initializeVCTSettings();
 
+    // ---- Initialize SpaceMouse Input ----
+    // Replace the camera variable with the shared pointer and sync them
+    *cameraPtr = camera;
+    spaceMouseInput.SetCamera(cameraPtr);
+    if (spaceMouseInput.Initialize("StereoVista")) {
+        std::cout << "SpaceMouse initialized successfully" << std::endl;
+        
+        // Calculate model bounds for proper navigation
+        glm::vec3 modelMin(FLT_MAX), modelMax(-FLT_MAX);
+        for (const auto& model : currentScene.models) {
+            // Calculate bounds from mesh vertices
+            for (const auto& mesh : model.getMeshes()) {
+                for (const auto& vertex : mesh.vertices) {
+                    glm::vec3 worldPos = model.position + (glm::vec3(vertex.position) * model.scale);
+                    modelMin = glm::min(modelMin, worldPos);
+                    modelMax = glm::max(modelMax, worldPos);
+                }
+            }
+        }
+        // Fallback if no models found
+        if (modelMin.x == FLT_MAX) {
+            modelMin = glm::vec3(-5.0f);
+            modelMax = glm::vec3(5.0f);
+        }
+        spaceMouseInput.SetModelExtents(modelMin, modelMax);
+        spaceMouseInput.SetWindowSize(windowWidth, windowHeight);
+        spaceMouseInput.SetFieldOfView(camera.Zoom);
+        spaceMouseInput.SetPerspectiveMode(true);
+        
+        // Set up callbacks
+        spaceMouseInput.OnNavigationStarted = []() {
+            std::cout << "SpaceMouse navigation started" << std::endl;
+        };
+        spaceMouseInput.OnNavigationEnded = []() {
+            std::cout << "SpaceMouse navigation ended" << std::endl;
+        };
+    } else {
+        std::cout << "Failed to initialize SpaceMouse - continuing without 3D navigation" << std::endl;
+    }
+
     // ---- OpenGL Settings ----
     glEnable(GL_DEPTH_TEST);
     glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
@@ -1538,6 +1581,11 @@ int main() {
         // ---- Process Events ----
         // This will call callbacks like mouse_callback, key_callback etc.
         glfwPollEvents();
+
+        // ---- Update SpaceMouse Input ----
+        spaceMouseInput.Update(deltaTime);
+        // Sync camera back from shared pointer
+        camera = *cameraPtr;
 
         // --- Process Accumulated Mouse Input (Once Per Frame) ---
         // Check if mouse is captured and if there's any accumulated movement to process
@@ -1744,6 +1792,9 @@ void cleanup(Engine::Shader* shader) {
 
     // Delete shader
     delete shader;
+
+    // Clean up SpaceMouse input
+    spaceMouseInput.Shutdown();
 
     // Clean up GUI and GLFW resources
     CleanupGUI();
