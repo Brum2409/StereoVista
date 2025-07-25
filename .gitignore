@@ -1,11 +1,32 @@
-# Prerequisites
-*.d
+# Claude local configuration
+CLAUDE.local.md
+
+# Visual Studio
+.vs/
+*.vsidx
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.ipch
+
+# Build directories
+x64/
+Win32/
+bin/
+obj/
+Debug/
+Release/
+
+# Project specific build directories
+StereoVista/x64/
+OpenGLTemplate/x64/
 
 # Compiled Object files
 *.slo
 *.lo
 *.o
-
+*.obj
 
 # Precompiled Headers
 *.gch
@@ -16,109 +37,54 @@
 *.dylib
 *.dll
 
-# Fortran module files
-*.mod
-*.smod
-
 # Compiled Static libraries
 *.lai
 *.la
 *.a
+*.lib
 
 # Executables
 *.exe
 *.out
 *.app
 
-OpenGLTemplate\imgui.ini
-.vs/OpenGLTemplate/FileContentIndex/30fe56fa-9fef-4db8-ab93-558762c32454.vsidx
-.vs/OpenGLTemplate/FileContentIndex/9db4adfd-935f-4dc2-a816-9ed3aa630e32.vsidx
-.vs/OpenGLTemplate/FileContentIndex/9dccecd2-1023-4b43-9b04-9be979da7b51.vsidx
-.vs/OpenGLTemplate/FileContentIndex/bd31bc31-940d-42dd-931c-a2bef4866cbc.vsidx
-.vs/OpenGLTemplate/FileContentIndex/c3239b42-c80f-4d2f-830a-4c923a5d851f.vsidx
-.vs/OpenGLTemplate/v17/fileList.bin
-.vs/Stereo Demo/FileContentIndex/1836e791-477d-4463-8014-cb6afac9c1bc.vsidx
-.vs/Stereo Demo/FileContentIndex/2ec23ef8-ad47-4c39-b964-5e2dc8aedd09.vsidx
-.vs/Stereo Demo/FileContentIndex/55b11e03-ea16-486e-8b53-1d564f26a6ad.vsidx
-.vs/Stereo Demo/FileContentIndex/76652b75-7f78-4851-85ea-2d05eeb89ff2.vsidx
-.vs/Stereo Demo/v17/.suo
-.vs/Stereo Demo/v17/Browse.VC.db
-.vs/Stereo Demo/v17/Browse.VC.db-shm
-.vs/Stereo Demo/v17/Browse.VC.db-wal
-.vs/Stereo Demo/v17/Browse.VC.opendb
-.vs/Stereo Demo/v17/DocumentLayout.backup.json
-.vs/Stereo Demo/v17/DocumentLayout.json
-.vs/Stereo Demo/v17/fileList.bin
-.vs/Stereo Demo/v17/ipch/AutoPCH/1caf531514ed858d/OBJ_LOADER.ipch
-.vs/Stereo Demo/v17/ipch/AutoPCH/2153efd8c739d5c6/CORE.ipch
-.vs/Stereo Demo/v17/ipch/AutoPCH/2681603dd144e26/OPENLINKS.ipch
-.vs/Stereo Demo/v17/ipch/AutoPCH/75cd94cda25d6164/WINDOW.ipch
-.vs/Stereo Demo/v17/ipch/AutoPCH/99528195451006cb/IMGUI_DRAW.ipch
-.vs/Stereo Demo/v17/ipch/AutoPCH/b5397a84a5c9f5ea/INPUT.ipch
-.vs/Stereo Demo/v17/ipch/AutoPCH/ccec7f2bee1b5fad/MAIN.ipch
-.vs/Stereo Demo/v17/ipch/AutoPCH/cec5261aa813271a/SCENE_MANAGER.ipch
-.vs/Stereo Demo/v17/ipch/AutoPCH/d055c00705e25911/MAIN.ipch
-.vs/Stereo Demo/v17/ipch/AutoPCH/d2abeaecfd19f29f/CURSORSPHERE.ipch
-.vs/Stereo Demo/v17/ipch/AutoPCH/d42ddc9fb2bbfb01/SHADER.ipch
-.vs/Stereo Demo/v17/ipch/AutoPCH/e4d041bc7b35e031/BUFFERS.ipch
-.vs/Stereo Demo/v17/Solution.VC.db
-OpenGLTemplate/x64/Debug/window.obj
-OpenGLTemplate/x64/Debug/shader.obj
-OpenGLTemplate/x64/Debug/scene_manager.obj
-OpenGLTemplate/x64/Debug/scene_loader.obj
-OpenGLTemplate/x64/Debug/renderGui.obj
-OpenGLTemplate/x64/Debug/portable-file-dialogs.obj
-OpenGLTemplate/x64/Debug/obj_loader.obj
-OpenGLTemplate/x64/Debug/main.obj
-OpenGLTemplate/x64/Debug/input.obj
-OpenGLTemplate/x64/Debug/imgui_widgets.obj
-OpenGLTemplate/x64/Debug/imgui_tables.obj
-OpenGLTemplate/x64/Debug/imgui_render.obj
-OpenGLTemplate/x64/Debug/imgui_impl_opengl3_loader.obj
-OpenGLTemplate/x64/Debug/imgui_impl_opengl3.obj
-OpenGLTemplate/x64/Debug/imgui_impl_glfw.obj
-OpenGLTemplate/x64/Debug/imgui_draw.obj
-OpenGLTemplate/x64/Debug/imgui_demo.obj
-OpenGLTemplate/x64/Debug/imgui.obj
-OpenGLTemplate/x64/Debug/glad.obj
-OpenGLTemplate/x64/Debug/cursorSphere.obj
-OpenGLTemplate/x64/Debug/buffers.obj
-OpenGLTemplate/assets/models/Si-Fi_Freigther/Freigther_BI_Export.obj
-.vs/Stereo Demo/v17/ipch/AutoPCH/165be55ff668d63d/MAIN.ipch
-.vs/Stereo Demo/FileContentIndex/b0f0090b-4e65-416f-8764-348abd340272.vsidx
-.vs/Stereo Demo/FileContentIndex/4c38f6b2-40cd-4f60-8b9d-eaae63c7d4a2.vsidx
-.vs/Stereo Demo/v17/ipch/AutoPCH/667508edbeec9b11/SHADER.ipch
-OpenGLTemplate/imgui.ini
-OpenGLTemplate/x64/Debug/OpenGLTemplate.log
-OpenGLTemplate/x64/Debug/Stereo Demo.exe.recipe
-OpenGLTemplate/x64/Debug/Stereo Demo.ilk
-OpenGLTemplate/x64/Debug/Stereo Demo.tlog/CL.command.1.tlog
-OpenGLTemplate/x64/Debug/Stereo Demo.tlog/Cl.items.tlog
-OpenGLTemplate/x64/Debug/Stereo Demo.tlog/CL.read.1.tlog
-OpenGLTemplate/x64/Debug/Stereo Demo.tlog/CL.write.1.tlog
-OpenGLTemplate/x64/Debug/Stereo Demo.tlog/link.command.1.tlog
-OpenGLTemplate/x64/Debug/Stereo Demo.tlog/link.read.1.tlog
-OpenGLTemplate/x64/Debug/Stereo Demo.tlog/link.write.1.tlog
-OpenGLTemplate/x64/Debug/Stereo Demo.tlog/Stereo Demo.lastbuildstate
-OpenGLTemplate/x64/Debug/vc143.idb
-OpenGLTemplate/x64/Debug/vc143.pdb
-x64/Debug/Stereo Demo.pdb
-OpenGLTemplate/imgui.ini
-OpenGLTemplate/imgui.ini
-*.vsidx
+# Visual Studio database files
+*.VC.db
+*.VC.db-shm
+*.VC.db-wal
+*.opendb
+
+# Precompiled headers cache
 *.ipch
-OpenGLTemplate/x64/Debug/Stereo Demo.tlog/unsuccessfulbuild
-/OpenGLTemplate/x64/Debug
-/OpenGLTemplate/headers/libs/hdf5
-/OpenGLTemplate/headers/libs/highfive
-/OpenGLTemplate/headers/libs/zlib
-/OpenGLTemplate/headers/libs/assimp
-/OpenGLTemplate/x64
-/bin/x64
-OpenGLTemplate/preferences.json
-OpenGLTemplate/preferences.json
-OpenGLTemplate/cursor_presets.json
-OpenGLTemplate/imgui.ini
-OpenGLTemplate/preferences.json
-*.json
-/.vs/**
+
+# Log files
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Application specific files
+imgui.ini
+preferences.json
+cursor_presets.json
+
+# Build artifacts
+*.iobj
+*.ipdb
+*.idb
+*.pdb
+*.ilk
+*.tlog/
+*.recipe
+*.lastbuildstate
+unsuccessfulbuild
+
+# Do NOT ignore these important directories:
+# !assets/
+# !assets/shaders/
+# !assets/models/
+# !dependencies/
+/.claude
+StereoVista/imgui.ini
+/StereoVista/x64

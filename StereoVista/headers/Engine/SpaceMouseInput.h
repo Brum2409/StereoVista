@@ -44,6 +44,11 @@ public:
     void SetEnabled(bool enabled);
     bool IsEnabled() const { return m_enabled; }
     
+    // Check if SpaceMouse is currently navigating (blocking other input)
+    bool IsNavigating() const { return m_isNavigating; }
+    
+    
+    
     // Set perspective/orthographic view mode
     void SetPerspectiveMode(bool perspective);
     
@@ -60,6 +65,7 @@ public:
     std::function<void()> OnNavigationStarted;
     std::function<void()> OnNavigationEnded;
     std::function<void(const std::string&)> OnCommandExecuted;
+    
 
 private:
     // Internal navigation model implementation
@@ -83,6 +89,7 @@ private:
     // Navigation timing
     bool m_isNavigating;
     float m_lastUpdateTime;
+    
     
     // Helper functions
     void UpdateCameraFromNavlib();

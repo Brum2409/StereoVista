@@ -61,7 +61,21 @@ public:
         long result = navlib::NlCreate(&m_navlibHandle, appName.c_str(), accessors, 
                                        sizeof(accessors) / sizeof(accessors[0]), nullptr);
         
-        return (result == 0 && m_navlibHandle != 0);
+        if (result != 0 || m_navlibHandle == 0) {
+            return false;
+        }
+        
+        // Check if a device is actually present
+        navlib::value_t devicePresent;
+        long deviceResult = navlib::NlReadValue(m_navlibHandle, navlib::device_present_k, &devicePresent);
+        if (deviceResult != 0 || devicePresent.type != navlib::bool_type || devicePresent.b == 0) {
+            // No device present, clean up and fail
+            navlib::NlClose(m_navlibHandle);
+            m_navlibHandle = 0;
+            return false;
+        }
+        
+        return true;
     }
 
     void Shutdown() {
@@ -175,12 +189,15 @@ public:
         return navlib::make_result_code(navlib::navlib_errc::no_data_available);
     }
 
-private:
     SpaceMouseInput* m_parent;
     navlib::nlHandle_t m_navlibHandle;
+    mutable std::mutex m_mutex;
+    
+public:
     bool m_motionActive;
     bool m_transactionActive;
-    mutable std::mutex m_mutex;
+    
+private:
 
     // Implementation functions
     long GetCameraMatrixImpl(navlib::value_t* value) {
@@ -290,6 +307,9 @@ private:
         
         bool motion = (value->b != 0);
         m_motionActive = motion;
+        
+        // Update parent navigation state
+        m_parent->m_isNavigating = motion;
         
         if (motion && m_parent->OnNavigationStarted) {
             m_parent->OnNavigationStarted();

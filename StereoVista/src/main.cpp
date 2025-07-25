@@ -96,8 +96,12 @@ static char modelPathBuffer[256] = ""; // Buffer for ImGui model path input
 
 // ---- Camera Configuration ----
 Camera camera(glm::vec3(0.0f, 0.0f, 3.0f));
-std::shared_ptr<Camera> cameraPtr = std::make_shared<Camera>(camera);
+// Separate camera for SpaceMouse to prevent navlib from overriding normal input
+Camera spaceMouseCamera(glm::vec3(0.0f, 0.0f, 3.0f));
+std::shared_ptr<Camera> spaceMouseCameraPtr = std::make_shared<Camera>(spaceMouseCamera);
 SpaceMouseInput spaceMouseInput;
+bool spaceMouseInitialized = false;
+bool spaceMouseActive = false;
 float lastX = 1920.0f / 2.0;
 float lastY = 1080.0f / 2.0;
 float aspectRatio = 1.0f;
@@ -113,6 +117,7 @@ float maxConvergence = 40.0f;   // Maximum convergence
 
 double accumulatedXOffset = 0.0;
 double accumulatedYOffset = 0.0;
+
 bool windowHasFocus = true; // Assume focused initially
 bool justRegainedFocus = false; // Flag to handle the first mouse event after focus regain
 bool firstMouse = true;
@@ -1522,10 +1527,12 @@ int main() {
     initializeVCTSettings();
 
     // ---- Initialize SpaceMouse Input ----
-    // Replace the camera variable with the shared pointer and sync them
-    *cameraPtr = camera;
-    spaceMouseInput.SetCamera(cameraPtr);
-    if (spaceMouseInput.Initialize("StereoVista")) {
+    // Use separate camera for SpaceMouse to prevent navlib override
+    spaceMouseCamera = camera; // Initialize SpaceMouse camera with current camera state
+    *spaceMouseCameraPtr = spaceMouseCamera;
+    spaceMouseInput.SetCamera(spaceMouseCameraPtr);
+    spaceMouseInitialized = spaceMouseInput.Initialize("StereoVista");
+    if (spaceMouseInitialized) {
         std::cout << "SpaceMouse initialized successfully" << std::endl;
         
         // Calculate model bounds for proper navigation
@@ -1552,9 +1559,14 @@ int main() {
         
         // Set up callbacks
         spaceMouseInput.OnNavigationStarted = []() {
+            spaceMouseActive = true;
+            // Sync current camera state to SpaceMouse camera when navigation starts
+            spaceMouseCamera = camera;
+            *spaceMouseCameraPtr = spaceMouseCamera;
             std::cout << "SpaceMouse navigation started" << std::endl;
         };
         spaceMouseInput.OnNavigationEnded = []() {
+            spaceMouseActive = false;
             std::cout << "SpaceMouse navigation ended" << std::endl;
         };
     } else {
@@ -1583,13 +1595,17 @@ int main() {
         glfwPollEvents();
 
         // ---- Update SpaceMouse Input ----
-        spaceMouseInput.Update(deltaTime);
-        // Sync camera back from shared pointer
-        camera = *cameraPtr;
+        if (spaceMouseInitialized) {
+            spaceMouseInput.Update(deltaTime);
+            // Only sync camera from SpaceMouse when it's actively navigating
+            if (spaceMouseActive) {
+                camera = *spaceMouseCameraPtr;
+            }
+        }
 
         // --- Process Accumulated Mouse Input (Once Per Frame) ---
         // Check if mouse is captured and if there's any accumulated movement to process
-        if (isMouseCaptured && windowHasFocus && !ImGui::GetIO().WantCaptureMouse && (accumulatedXOffset != 0.0 || accumulatedYOffset != 0.0)) {
+        if (isMouseCaptured && windowHasFocus && !ImGui::GetIO().WantCaptureMouse) {
 
             // Use the *total* accumulated offset for this frame
             float totalXOffset = static_cast<float>(accumulatedXOffset);
@@ -3024,6 +3040,8 @@ void mouse_callback(GLFWwindow* window, double xposIn, double yposIn) {
 
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
+    // Note: This handles special keys like GUI toggle, lighting mode changes
+    // Movement keys (WASD) are handled in Input::handleKeyInput which respects SpaceMouse input blocking
     if (key == GLFW_KEY_G && action == GLFW_PRESS)
     {
         showGui = !showGui;
