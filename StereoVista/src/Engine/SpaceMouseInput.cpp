@@ -1,6 +1,7 @@
 #include "Engine/SpaceMouseInput.h"
 #include <iostream>
 #include <mutex>
+#include <algorithm>
 #include <glm/gtc/type_ptr.hpp>
 
 // Include 3DConnexion headers  
@@ -222,17 +223,33 @@ private:
         const double* matrixData = &value->matrix[0];
         glm::mat4 cameraMatrix = m_parent->ConvertNavlibMatrix(matrixData);
         
-        glm::vec3 position = glm::vec3(cameraMatrix[3]);
-        glm::vec3 forward = -glm::normalize(glm::vec3(cameraMatrix[2]));
-        glm::vec3 up = glm::normalize(glm::vec3(cameraMatrix[1]));
+        // Get current camera state for deadzone comparison
+        glm::vec3 currentPosition = m_parent->m_camera->Position;
+        glm::vec3 currentFront = m_parent->m_camera->Front;
+        glm::vec3 currentUp = m_parent->m_camera->Up;
+        
+        glm::vec3 newPosition = glm::vec3(cameraMatrix[3]);
+        glm::vec3 newForward = -glm::normalize(glm::vec3(cameraMatrix[2]));
+        glm::vec3 newUp = glm::normalize(glm::vec3(cameraMatrix[1]));
 
-        m_parent->m_camera->Position = position;
-        m_parent->m_camera->Front = forward;
-        m_parent->m_camera->Up = up;
-        m_parent->m_camera->Right = glm::normalize(glm::cross(forward, up));
+        // Apply deadzone filtering
+        glm::vec3 positionDelta = newPosition - currentPosition;
+        glm::vec3 forwardDelta = newForward - currentFront;
+        glm::vec3 upDelta = newUp - currentUp;
+        
+        float positionMagnitude = glm::length(positionDelta);
+        float rotationMagnitude = glm::length(forwardDelta) + glm::length(upDelta);
+        
+        // Only update if movement exceeds deadzone threshold
+        if (positionMagnitude > m_parent->m_deadzone || rotationMagnitude > m_parent->m_deadzone * 0.1f) {
+            m_parent->m_camera->Position = newPosition;
+            m_parent->m_camera->Front = newForward;
+            m_parent->m_camera->Up = newUp;
+            m_parent->m_camera->Right = glm::normalize(glm::cross(newForward, newUp));
 
-        m_parent->m_camera->Pitch = glm::degrees(asin(forward.y));
-        m_parent->m_camera->Yaw = glm::degrees(atan2(forward.z, forward.x));
+            m_parent->m_camera->Pitch = glm::degrees(asin(newForward.y));
+            m_parent->m_camera->Yaw = glm::degrees(atan2(newForward.z, newForward.x));
+        }
 
         return 0;
     }
@@ -372,6 +389,7 @@ SpaceMouseInput::SpaceMouseInput()
     , m_modelMax(1.0f)
     , m_translationSensitivity(1.0f)
     , m_rotationSensitivity(1.0f)
+    , m_deadzone(0.025f)
     , m_isNavigating(false)
     , m_lastUpdateTime(0.0f) {
 }
@@ -447,6 +465,10 @@ void SpaceMouseInput::SetFieldOfView(float fov) {
 void SpaceMouseInput::SetSensitivity(float translationSensitivity, float rotationSensitivity) {
     m_translationSensitivity = translationSensitivity;
     m_rotationSensitivity = rotationSensitivity;
+}
+
+void SpaceMouseInput::SetDeadzone(float deadzone) {
+    m_deadzone = std::max(0.0f, std::min(1.0f, deadzone));
 }
 
 void SpaceMouseInput::SetWindowSize(int width, int height) {

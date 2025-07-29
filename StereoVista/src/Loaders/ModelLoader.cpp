@@ -53,20 +53,19 @@ namespace Engine {
         for (unsigned int i = 0; i < textures.size(); i++) {
             glActiveTexture(GL_TEXTURE0 + i);
 
-            int textureUnit = 0;
             std::string name = textures[i].type;
 
             if (name == "texture_diffuse") {
-                textureUnit = diffuseNr++;
+                diffuseNr++;
             }
             else if (name == "texture_specular") {
-                textureUnit = specularNr++;
+                specularNr++;
             }
             else if (name == "texture_normal") {
-                textureUnit = normalNr++;
+                normalNr++;
             }
             else if (name == "texture_ao") {
-                textureUnit = aoNr++;
+                aoNr++;
             }
 
             // Set texture unit in shader
@@ -112,6 +111,8 @@ namespace Engine {
 
     void Model::loadModel(const std::string& path) {
         Assimp::Importer importer;
+        
+        // Original working flags to preserve normals and textures
         const aiScene* scene = importer.ReadFile(path,
             aiProcess_Triangulate |
             aiProcess_GenNormals |
@@ -119,13 +120,28 @@ namespace Engine {
             aiProcess_JoinIdenticalVertices |
             aiProcess_SortByPType);
 
-        if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
-            std::cerr << "Assimp error: " << importer.GetErrorString() << std::endl;
+        if (!scene) {
+            std::cerr << "ERROR: Assimp failed to load model '" << path << "'" << std::endl;
+            std::cerr << "Reason: " << importer.GetErrorString() << std::endl;
             return;
         }
+        
+        if (scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE) {
+            std::cerr << "WARNING: Model '" << path << "' loaded with incomplete data" << std::endl;
+        }
+        
+        if (!scene->mRootNode) {
+            std::cerr << "ERROR: No root node found in model '" << path << "'" << std::endl;
+            return;
+        }
+        
+        std::cout << "Successfully loaded model: " << path << std::endl;
+        std::cout << "Meshes: " << scene->mNumMeshes << ", Materials: " << scene->mNumMaterials << std::endl;
 
         directory = path.substr(0, path.find_last_of('/'));
         processNode(scene->mRootNode, scene);
+        
+        std::cout << "Model processing complete. Total meshes processed: " << meshes.size() << std::endl;
     }
 
     void Model::processNode(aiNode* node, const aiScene* scene) {
@@ -150,20 +166,30 @@ namespace Engine {
         for (unsigned int i = 0; i < mesh->mNumVertices; i++) {
             Vertex vertex;
 
+            // Position (always present)
             vertex.position.x = mesh->mVertices[i].x;
             vertex.position.y = mesh->mVertices[i].y;
             vertex.position.z = mesh->mVertices[i].z;
 
+            // Normals (check if available)
             if (mesh->HasNormals()) {
                 vertex.normal.x = mesh->mNormals[i].x;
                 vertex.normal.y = mesh->mNormals[i].y;
                 vertex.normal.z = mesh->mNormals[i].z;
+            } else {
+                vertex.normal = glm::vec3(0.0f, 1.0f, 0.0f); // Default up vector
             }
 
+            // Texture coordinates (check if available)
             if (mesh->mTextureCoords[0]) {
                 vertex.texCoords.x = mesh->mTextureCoords[0][i].x;
                 vertex.texCoords.y = mesh->mTextureCoords[0][i].y;
+            } else {
+                vertex.texCoords = glm::vec2(0.0f, 0.0f);
+            }
 
+            // Tangents and bitangents (check if available)
+            if (mesh->mTangents && mesh->mBitangents) {
                 vertex.tangent.x = mesh->mTangents[i].x;
                 vertex.tangent.y = mesh->mTangents[i].y;
                 vertex.tangent.z = mesh->mTangents[i].z;
@@ -171,9 +197,10 @@ namespace Engine {
                 vertex.bitangent.x = mesh->mBitangents[i].x;
                 vertex.bitangent.y = mesh->mBitangents[i].y;
                 vertex.bitangent.z = mesh->mBitangents[i].z;
-            }
-            else {
-                vertex.texCoords = glm::vec2(0.0f);
+            } else {
+                // Calculate default tangent and bitangent
+                vertex.tangent = glm::vec3(1.0f, 0.0f, 0.0f);
+                vertex.bitangent = glm::vec3(0.0f, 0.0f, 1.0f);
             }
 
             vertices.push_back(vertex);
@@ -243,28 +270,59 @@ namespace Engine {
 
     std::vector<Texture> Model::loadMaterialTextures(aiMaterial* mat, aiTextureType type, const std::string& typeName) {
         std::vector<Texture> textures;
-        for (unsigned int i = 0; i < mat->GetTextureCount(type); i++) {
-            aiString str;
-            mat->GetTexture(type, i, &str);
+        unsigned int textureCount = mat->GetTextureCount(type);
+        
+        if (textureCount > 0) {
+            std::cout << "Loading " << textureCount << " textures of type: " << typeName << std::endl;
+        }
+        
+        for (unsigned int i = 0; i < textureCount; i++) {
+            aiString texturePath;
+            aiTextureMapping mapping;
+            unsigned int uvIndex;
+            float blend;
+            aiTextureOp operation;
+            aiTextureMapMode mapMode[3];
+            
+            if (mat->GetTexture(type, i, &texturePath, &mapping, &uvIndex, &blend, &operation, mapMode) != AI_SUCCESS) {
+                std::cerr << "Failed to get texture " << i << " of type " << typeName << std::endl;
+                continue;
+            }
 
-            // Check if texture was loaded before
+            // Check if texture was loaded before (with path and type)
             bool skip = false;
             for (const auto& loadedTex : loadedTextures) {
-                if (std::strcmp(loadedTex.path.c_str(), str.C_Str()) == 0 &&
-                    loadedTex.type == typeName) {  // Added type check
+                if (std::strcmp(loadedTex.path.c_str(), texturePath.C_Str()) == 0 &&
+                    loadedTex.type == typeName) {
                     textures.push_back(loadedTex);
                     skip = true;
+                    std::cout << "Reusing cached texture: " << texturePath.C_Str() << std::endl;
                     break;
                 }
             }
 
             if (!skip) {
                 Texture texture;
-                texture.path = str.C_Str();
-                texture.id = TextureFromFile(str.C_Str(), directory, texture.fullPath);
+                texture.path = texturePath.C_Str();
                 texture.type = typeName;
-                textures.push_back(texture);
-                loadedTextures.push_back(texture);  // Cache for reuse
+                
+                // Check if this is an embedded texture (starts with '*')
+                std::string pathStr = texturePath.C_Str();
+                if (pathStr[0] == '*') {
+                    // Handle embedded texture
+                    texture.id = loadEmbeddedTexture(pathStr, texture.fullPath);
+                } else {
+                    // Handle file texture
+                    texture.id = TextureFromFile(texturePath.C_Str(), directory, texture.fullPath);
+                }
+                
+                if (texture.id != 0) {
+                    textures.push_back(texture);
+                    loadedTextures.push_back(texture);
+                    std::cout << "Successfully loaded texture: " << texture.path << " -> " << texture.fullPath << std::endl;
+                } else {
+                    std::cerr << "Failed to load texture: " << texture.path << std::endl;
+                }
             }
         }
         return textures;
@@ -290,9 +348,9 @@ namespace Engine {
         std::string baseName = (lastDot != std::string::npos) ?
             textureName.substr(0, lastDot) : textureName;
 
-        // Try different extensions
+        // Try different extensions in order of preference
         std::vector<std::string> extensions = {
-            ".jpg", ".jpeg", ".png", ".tga", ".bmp", ".psd", ".gif", ".hdr", ".pic"
+            ".png", ".jpg", ".jpeg", ".tga", ".bmp", ".dds", ".tiff", ".psd", ".gif", ".hdr", ".pic"
         };
 
         std::vector<std::string> pathsToTry;
@@ -301,14 +359,19 @@ namespace Engine {
         for (const auto& ext : extensions) {
             std::string textureNameWithExt = baseName + ext;
 
-            // Build list of paths to try
-            pathsToTry.push_back(directory + "/" + textureNameWithExt);
-            pathsToTry.push_back(baseDir + "/" + textureNameWithExt);
-            pathsToTry.push_back(baseDir + "/textures/" + textureNameWithExt);
-            pathsToTry.push_back("textures/" + textureNameWithExt);
-            pathsToTry.push_back("./textures/" + textureNameWithExt);
-            pathsToTry.push_back("../textures/" + textureNameWithExt);
-            pathsToTry.push_back(directory + "/textures/" + textureNameWithExt);
+            // Build comprehensive list of paths to try (common texture directory patterns)
+            pathsToTry.push_back(directory + "/" + textureNameWithExt);                    // Same directory as model
+            pathsToTry.push_back(directory + "/textures/" + textureNameWithExt);           // textures subdirectory
+            pathsToTry.push_back(directory + "/texture/" + textureNameWithExt);            // texture subdirectory 
+            pathsToTry.push_back(directory + "/materials/" + textureNameWithExt);          // materials subdirectory
+            pathsToTry.push_back(directory + "/images/" + textureNameWithExt);             // images subdirectory
+            pathsToTry.push_back(directory + "/maps/" + textureNameWithExt);               // maps subdirectory
+            pathsToTry.push_back(baseDir + "/" + textureNameWithExt);                     // Parent directory
+            pathsToTry.push_back(baseDir + "/textures/" + textureNameWithExt);            // Parent/textures
+            pathsToTry.push_back("textures/" + textureNameWithExt);                       // Relative textures
+            pathsToTry.push_back("./textures/" + textureNameWithExt);                     // Current/textures
+            pathsToTry.push_back("../textures/" + textureNameWithExt);                    // Parent/textures
+            pathsToTry.push_back("./" + textureNameWithExt);                              // Current directory
         }
 
         // Try to load the texture from each path
@@ -422,6 +485,33 @@ namespace Engine {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         }
 
+        return textureID;
+    }
+
+    GLuint Model::loadEmbeddedTexture(const std::string& embeddedPath, std::string& outFullPath) {
+        // Extract the index from the embedded path (e.g., "*0", "*1", etc.)
+        int textureIndex = std::stoi(embeddedPath.substr(1));
+        
+        std::cout << "Loading embedded texture with index: " << textureIndex << std::endl;
+        
+        // For now, return a placeholder texture since we don't have the scene context here
+        // In a complete implementation, you'd need to pass the aiScene* to access embedded textures
+        outFullPath = "embedded_texture_" + std::to_string(textureIndex);
+        
+        // Create a placeholder colored texture to indicate missing embedded texture support
+        GLuint textureID;
+        glGenTextures(1, &textureID);
+        glBindTexture(GL_TEXTURE_2D, textureID);
+        
+        unsigned char defaultColor[] = { 255, 255, 0, 255 };  // Yellow for embedded textures
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, defaultColor);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        
+        std::cout << "Warning: Embedded texture support not fully implemented. Using placeholder." << std::endl;
+        
         return textureID;
     }
 

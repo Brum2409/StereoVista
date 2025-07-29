@@ -89,3 +89,6 @@ unsuccessfulbuild
 StereoVista/imgui.ini
 /StereoVista/x64
 CLAUDE.md
+/StereoVista/x64/Debug
+/StereoVista/x64
+/StereoVista/x64

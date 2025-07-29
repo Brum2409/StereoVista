@@ -558,6 +558,19 @@ public:
     // Calculates distance to the nearest visible object using depth buffer sampling
     float getDistanceToNearestObject(const Camera& camera, const glm::mat4& projection, const glm::mat4& view,
         const float farPlane, const int windowWidth, const int windowHeight) const {
+        // Validate OpenGL context and window dimensions
+        if (windowWidth <= 0 || windowHeight <= 0) {
+            return farPlane;
+        }
+
+        // Check if OpenGL context is current (basic validation)
+        GLint currentFBO;
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &currentFBO);
+        GLenum error = glGetError();
+        if (error != GL_NO_ERROR) {
+            return farPlane; // OpenGL context issue
+        }
+
         const int numSamples = 9; // 3x3 sampling grid
         const int sampleOffset = 100; // Pixel offset from center
         float minDepth = 1.0f;
@@ -565,10 +578,23 @@ public:
         // Sample depth buffer at multiple points around screen center
         for (int i = -1; i <= 1; i++) {
             for (int j = -1; j <= 1; j++) {
-                float depth;
                 int x = windowWidth / 2 + i * sampleOffset;
                 int y = windowHeight / 2 + j * sampleOffset;
+                
+                // Bounds checking for pixel coordinates
+                if (x < 0 || x >= windowWidth || y < 0 || y >= windowHeight) {
+                    continue; // Skip out-of-bounds pixels
+                }
+
+                float depth = 1.0f; // Default to far plane
                 glReadPixels(x, y, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &depth);
+                
+                // Check for OpenGL errors after glReadPixels
+                error = glGetError();
+                if (error != GL_NO_ERROR) {
+                    continue; // Skip this sample on error
+                }
+                
                 minDepth = std::min(minDepth, depth);
             }
         }

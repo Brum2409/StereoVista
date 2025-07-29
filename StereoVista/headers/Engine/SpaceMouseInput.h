@@ -58,6 +58,10 @@ public:
     // Set navigation sensitivity
     void SetSensitivity(float translationSensitivity, float rotationSensitivity);
     
+    // Set deadzone threshold (movement below this threshold is ignored)
+    void SetDeadzone(float deadzone);
+    float GetDeadzone() const { return m_deadzone; }
+    
     // Window size for proper coordinate transformations
     void SetWindowSize(int width, int height);
     
@@ -85,6 +89,7 @@ private:
     // Sensitivity settings
     float m_translationSensitivity;
     float m_rotationSensitivity;
+    float m_deadzone;
     
     // Navigation timing
     bool m_isNavigating;

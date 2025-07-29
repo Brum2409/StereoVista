@@ -846,6 +846,12 @@ void savePreferences() {
     j["camera"]["mouseSmoothingFactor"] = preferences.mouseSmoothingFactor;
     j["camera"]["mouseSensitivity"] = preferences.mouseSensitivity;
 
+    // SpaceMouse settings
+    j["spacemouse"]["enabled"] = preferences.spaceMouseEnabled;
+    j["spacemouse"]["deadzone"] = preferences.spaceMouseDeadzone;
+    j["spacemouse"]["translationSensitivity"] = preferences.spaceMouseTranslationSensitivity;
+    j["spacemouse"]["rotationSensitivity"] = preferences.spaceMouseRotationSensitivity;
+
     // Cursor settings
     j["cursor"]["currentPreset"] = preferences.currentPresetName;
 
@@ -1071,6 +1077,14 @@ void loadPreferences() {
             preferences.orbitFollowsCursor = j["camera"].value("orbitFollowsCursor", false);
             preferences.mouseSmoothingFactor = j["camera"].value("mouseSmoothingFactor", 1.0f);
             preferences.mouseSensitivity = j["camera"].value("mouseSensitivity", 0.17f);
+        }
+
+        // SpaceMouse settings
+        if (j.contains("spacemouse")) {
+            preferences.spaceMouseEnabled = j["spacemouse"].value("enabled", true);
+            preferences.spaceMouseDeadzone = j["spacemouse"].value("deadzone", 0.025f);
+            preferences.spaceMouseTranslationSensitivity = j["spacemouse"].value("translationSensitivity", 1.0f);
+            preferences.spaceMouseRotationSensitivity = j["spacemouse"].value("rotationSensitivity", 1.0f);
         }
 
         if (j.contains("skybox")) {
@@ -1534,6 +1548,11 @@ int main() {
     spaceMouseInitialized = spaceMouseInput.Initialize("StereoVista");
     if (spaceMouseInitialized) {
         std::cout << "SpaceMouse initialized successfully" << std::endl;
+        
+        // Apply SpaceMouse preferences
+        spaceMouseInput.SetEnabled(preferences.spaceMouseEnabled);
+        spaceMouseInput.SetDeadzone(preferences.spaceMouseDeadzone);
+        spaceMouseInput.SetSensitivity(preferences.spaceMouseTranslationSensitivity, preferences.spaceMouseRotationSensitivity);
         
         // Calculate model bounds for proper navigation
         glm::vec3 modelMin(FLT_MAX), modelMax(-FLT_MAX);

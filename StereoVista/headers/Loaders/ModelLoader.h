@@ -194,6 +194,7 @@ namespace Engine {
         void processNode(aiNode* node, const aiScene* scene);
         Mesh processMesh(aiMesh* mesh, const aiScene* scene, size_t meshIndex);
         std::vector<Texture> loadMaterialTextures(aiMaterial* mat, aiTextureType type, const std::string& typeName);
+        GLuint loadEmbeddedTexture(const std::string& embeddedPath, std::string& outFullPath);
 
     };
 

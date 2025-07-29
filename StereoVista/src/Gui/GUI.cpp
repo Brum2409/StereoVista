@@ -9,6 +9,7 @@
 #include "Core/Camera.h"
 #include "Core/Voxalizer.h"
 #include "Cursors/Base/CursorManager.h"
+#include "Engine/SpaceMouseInput.h"
 #include "imgui/imgui_sytle.h"
 #include <utility>
 
@@ -31,6 +32,10 @@ extern Engine::Voxelizer* voxelizer;
 extern float ambientStrengthFromSkybox;
 extern float mouseSmoothingFactor;
 extern bool orbitFollowsCursor;
+
+// SpaceMouse variables
+extern SpaceMouseInput spaceMouseInput;
+extern bool spaceMouseInitialized;
 
 extern GUI::LightingMode currentLightingMode;
 extern bool enableShadows;
@@ -896,7 +901,7 @@ void renderSettingsWindow() {
                 }
                 ImGui::SetItemTooltip("Maximum number of ray bounces (1=direct lighting only, 2+=indirect lighting)");
                 
-                if (ImGui::SliderInt("Samples Per Pixel", &preferences.radianceSettings.samplesPerPixel, 1, 4)) {
+                if (ImGui::SliderInt("Samples Per Pixel", &preferences.radianceSettings.samplesPerPixel, 1, 100)) {
                     ::radianceSettings.samplesPerPixel = preferences.radianceSettings.samplesPerPixel;
                     settingsChanged = true;
                 }
@@ -1276,6 +1281,44 @@ void renderSettingsWindow() {
                     settingsChanged = true;
                 }
                 ImGui::SetItemTooltip("How quickly scrolling slows down");
+            }
+            ImGui::EndGroup();
+            
+            ImGui::Spacing();
+            
+            // SpaceMouse Settings
+            ImGui::BeginGroup();
+            ImGui::Text("3DConnexion SpaceMouse");
+            ImGui::Separator();
+            
+            if (spaceMouseInitialized) {
+                if (ImGui::Checkbox("Enable SpaceMouse", &preferences.spaceMouseEnabled)) {
+                    spaceMouseInput.SetEnabled(preferences.spaceMouseEnabled);
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Enable or disable 3DConnexion SpaceMouse input");
+                
+                if (preferences.spaceMouseEnabled) {
+                    if (ImGui::SliderFloat("Deadzone", &preferences.spaceMouseDeadzone, 0.0f, 0.5f)) {
+                        spaceMouseInput.SetDeadzone(preferences.spaceMouseDeadzone);
+                        settingsChanged = true;
+                    }
+                    ImGui::SetItemTooltip("Movement threshold below which SpaceMouse input is ignored");
+                    
+                    if (ImGui::SliderFloat("Translation Sensitivity", &preferences.spaceMouseTranslationSensitivity, 0.1f, 3.0f)) {
+                        spaceMouseInput.SetSensitivity(preferences.spaceMouseTranslationSensitivity, preferences.spaceMouseRotationSensitivity);
+                        settingsChanged = true;
+                    }
+                    ImGui::SetItemTooltip("Controls how sensitive translation movements are");
+                    
+                    if (ImGui::SliderFloat("Rotation Sensitivity", &preferences.spaceMouseRotationSensitivity, 0.1f, 3.0f)) {
+                        spaceMouseInput.SetSensitivity(preferences.spaceMouseTranslationSensitivity, preferences.spaceMouseRotationSensitivity);
+                        settingsChanged = true;
+                    }
+                    ImGui::SetItemTooltip("Controls how sensitive rotation movements are");
+                }
+            } else {
+                ImGui::TextDisabled("SpaceMouse device not detected");
             }
             ImGui::EndGroup();
             
