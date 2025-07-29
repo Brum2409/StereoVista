@@ -1358,7 +1358,6 @@ int main() {
 
     if (glfwRawMouseMotionSupported()) {
         glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
-        std::cout << "Raw mouse motion enabled." << std::endl;
     }
     else {
         std::cout << "Raw mouse motion not supported." << std::endl;
@@ -1586,6 +1585,8 @@ int main() {
         };
         spaceMouseInput.OnNavigationEnded = []() {
             spaceMouseActive = false;
+            // Sync SpaceMouse camera state back to main camera when navigation ends
+            camera = *spaceMouseCameraPtr;
             std::cout << "SpaceMouse navigation ended" << std::endl;
         };
     } else {
@@ -1615,16 +1616,27 @@ int main() {
 
         // ---- Update SpaceMouse Input ----
         if (spaceMouseInitialized) {
+            bool wasSpaceMouseActive = spaceMouseActive;
             spaceMouseInput.Update(deltaTime);
-            // Only sync camera from SpaceMouse when it's actively navigating
+            
+            // Handle camera synchronization for mode transitions
             if (spaceMouseActive) {
+                // SpaceMouse is active - sync from SpaceMouse camera to main camera
                 camera = *spaceMouseCameraPtr;
+            } else if (wasSpaceMouseActive && !spaceMouseActive) {
+                // Just transitioned from SpaceMouse to normal - sync is handled in OnNavigationEnded callback
+                // This ensures smooth transition without camera jump
+            } else if (!spaceMouseActive) {
+                // Normal navigation mode - sync main camera changes to SpaceMouse camera for next activation
+                spaceMouseCamera = camera;
+                *spaceMouseCameraPtr = spaceMouseCamera;
             }
         }
 
         // --- Process Accumulated Mouse Input (Once Per Frame) ---
         // Check if mouse is captured and if there's any accumulated movement to process
-        if (isMouseCaptured && windowHasFocus && !ImGui::GetIO().WantCaptureMouse) {
+        // Don't process mouse input when SpaceMouse is actively navigating
+        if (isMouseCaptured && windowHasFocus && !ImGui::GetIO().WantCaptureMouse && !spaceMouseActive) {
 
             // Use the *total* accumulated offset for this frame
             float totalXOffset = static_cast<float>(accumulatedXOffset);
@@ -1678,7 +1690,10 @@ int main() {
 
         // ---- Handle Keyboard Input ----
         // Process continuous key presses (like WASD movement) after event polling.
-        Input::handleKeyInput(camera, deltaTime); // Make sure handleKeyInput uses deltaTime
+        // Don't process keyboard movement when SpaceMouse is actively navigating
+        if (!spaceMouseActive) {
+            Input::handleKeyInput(camera, deltaTime); // Make sure handleKeyInput uses deltaTime
+        }
 
         // ---- Update Camera State ----
         // Update smooth scrolling deceleration, centering animation etc.
@@ -2782,7 +2797,7 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height)
 }
 
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
-    if (!ImGui::GetIO().WantCaptureMouse) {
+    if (!ImGui::GetIO().WantCaptureMouse && !spaceMouseActive) {
         // Update cursor info before processing scroll
         if (cursorManager.isCursorPositionValid()) {
             camera.UpdateCursorInfo(cursorManager.getCursorPosition(), true);
