@@ -652,5 +652,348 @@ namespace Engine {
         return textureID;
     }
 
+    Engine::Model createSphere(const glm::vec3& color, float shininess, float emissive, int rings, int sectors) {
+        std::vector<Vertex> vertices;
+        std::vector<unsigned int> indices;
+
+        const float PI = 3.14159265359f;
+        const float radius = 0.5f;
+
+        // Generate vertices
+        for (int r = 0; r <= rings; ++r) {
+            float theta = r * PI / rings;
+            float sinTheta = sin(theta);
+            float cosTheta = cos(theta);
+
+            for (int s = 0; s <= sectors; ++s) {
+                float phi = s * 2 * PI / sectors;
+                float sinPhi = sin(phi);
+                float cosPhi = cos(phi);
+
+                Vertex vertex;
+                vertex.position = glm::vec3(
+                    radius * sinTheta * cosPhi,
+                    radius * cosTheta,
+                    radius * sinTheta * sinPhi
+                );
+                vertex.normal = glm::normalize(vertex.position);
+                vertex.texCoords = glm::vec2((float)s / sectors, (float)r / rings);
+                vertex.tangent = glm::vec3(-sinPhi, 0, cosPhi);
+                vertex.bitangent = glm::cross(vertex.normal, vertex.tangent);
+                vertex.materialID = 0;
+
+                vertices.push_back(vertex);
+            }
+        }
+
+        // Generate indices (fixed winding order)
+        for (int r = 0; r < rings; ++r) {
+            for (int s = 0; s < sectors; ++s) {
+                int current = r * (sectors + 1) + s;
+                int next = current + sectors + 1;
+
+                // First triangle (counter-clockwise)
+                indices.push_back(current);
+                indices.push_back(current + 1);
+                indices.push_back(next);
+
+                // Second triangle (counter-clockwise)
+                indices.push_back(current + 1);
+                indices.push_back(next + 1);
+                indices.push_back(next);
+            }
+        }
+
+        Mesh sphereMesh(vertices, indices, std::vector<Texture>());
+        Model sphereModel("sphere");
+        sphereModel.meshes.push_back(sphereMesh);
+
+        static int sphereCounter = 0;
+        sphereModel.name = "Sphere_" + std::to_string(sphereCounter++);
+        sphereModel.color = color;
+        sphereModel.shininess = shininess;
+        sphereModel.emissive = emissive;
+        sphereModel.position = glm::vec3(0.0f);
+        sphereModel.scale = glm::vec3(1.0f);
+        sphereModel.rotation = glm::vec3(0.0f);
+        sphereModel.visible = true;
+        sphereModel.diffuseReflectivity = 0.8f;
+        sphereModel.specularColor = glm::vec3(1.0f);
+        sphereModel.specularDiffusion = 0.5f;
+        sphereModel.specularReflectivity = 0.0f;
+        sphereModel.refractiveIndex = 1.0f;
+        sphereModel.transparency = 0.0f;
+
+        return sphereModel;
+    }
+
+    Engine::Model createCylinder(const glm::vec3& color, float shininess, float emissive, int sectors) {
+        std::vector<Vertex> vertices;
+        std::vector<unsigned int> indices;
+
+        const float PI = 3.14159265359f;
+        const float radius = 0.5f;
+        const float height = 1.0f;
+
+        // Generate vertices for cylinder sides
+        for (int i = 0; i <= sectors; ++i) {
+            float angle = 2.0f * PI * i / sectors;
+            float x = radius * cos(angle);
+            float z = radius * sin(angle);
+
+            // Bottom vertex (for side faces)
+            Vertex bottomVertex;
+            bottomVertex.position = glm::vec3(x, -height / 2, z);
+            bottomVertex.normal = glm::normalize(glm::vec3(x, 0, z)); // Side normal
+            bottomVertex.texCoords = glm::vec2((float)i / sectors, 0.0f);
+            bottomVertex.tangent = glm::vec3(-sin(angle), 0, cos(angle));
+            bottomVertex.bitangent = glm::vec3(0, 1, 0);
+            bottomVertex.materialID = 0;
+            vertices.push_back(bottomVertex);
+
+            // Top vertex (for side faces)
+            Vertex topVertex;
+            topVertex.position = glm::vec3(x, height / 2, z);
+            topVertex.normal = glm::normalize(glm::vec3(x, 0, z)); // Side normal
+            topVertex.texCoords = glm::vec2((float)i / sectors, 1.0f);
+            topVertex.tangent = glm::vec3(-sin(angle), 0, cos(angle));
+            topVertex.bitangent = glm::vec3(0, 1, 0);
+            topVertex.materialID = 0;
+            vertices.push_back(topVertex);
+        }
+
+        // Add separate vertices for caps with proper normals
+        int bottomCapStartIndex = vertices.size();
+        
+        // Bottom cap vertices
+        for (int i = 0; i <= sectors; ++i) {
+            float angle = 2.0f * PI * i / sectors;
+            float x = radius * cos(angle);
+            float z = radius * sin(angle);
+            
+            Vertex bottomCapVertex;
+            bottomCapVertex.position = glm::vec3(x, -height / 2, z);
+            bottomCapVertex.normal = glm::vec3(0, -1, 0); // Down normal for bottom cap
+            bottomCapVertex.texCoords = glm::vec2((x + radius) / (2 * radius), (z + radius) / (2 * radius));
+            bottomCapVertex.tangent = glm::vec3(1, 0, 0);
+            bottomCapVertex.bitangent = glm::vec3(0, 0, 1);
+            bottomCapVertex.materialID = 0;
+            vertices.push_back(bottomCapVertex);
+        }
+
+        // Bottom center vertex
+        Vertex bottomCenter;
+        bottomCenter.position = glm::vec3(0, -height / 2, 0);
+        bottomCenter.normal = glm::vec3(0, -1, 0);
+        bottomCenter.texCoords = glm::vec2(0.5f, 0.5f);
+        bottomCenter.tangent = glm::vec3(1, 0, 0);
+        bottomCenter.bitangent = glm::vec3(0, 0, 1);
+        bottomCenter.materialID = 0;
+        int bottomCenterIndex = vertices.size();
+        vertices.push_back(bottomCenter);
+
+        int topCapStartIndex = vertices.size();
+        
+        // Top cap vertices
+        for (int i = 0; i <= sectors; ++i) {
+            float angle = 2.0f * PI * i / sectors;
+            float x = radius * cos(angle);
+            float z = radius * sin(angle);
+            
+            Vertex topCapVertex;
+            topCapVertex.position = glm::vec3(x, height / 2, z);
+            topCapVertex.normal = glm::vec3(0, 1, 0); // Up normal for top cap
+            topCapVertex.texCoords = glm::vec2((x + radius) / (2 * radius), (z + radius) / (2 * radius));
+            topCapVertex.tangent = glm::vec3(1, 0, 0);
+            topCapVertex.bitangent = glm::vec3(0, 0, 1);
+            topCapVertex.materialID = 0;
+            vertices.push_back(topCapVertex);
+        }
+
+        // Top center vertex
+        Vertex topCenter;
+        topCenter.position = glm::vec3(0, height / 2, 0);
+        topCenter.normal = glm::vec3(0, 1, 0);
+        topCenter.texCoords = glm::vec2(0.5f, 0.5f);
+        topCenter.tangent = glm::vec3(1, 0, 0);
+        topCenter.bitangent = glm::vec3(0, 0, 1);
+        topCenter.materialID = 0;
+        int topCenterIndex = vertices.size();
+        vertices.push_back(topCenter);
+
+        // Generate indices for cylinder sides (fixed winding order)
+        for (int i = 0; i < sectors; ++i) {
+            int current = i * 2;
+            int next = ((i + 1) % (sectors + 1)) * 2;
+
+            // Side faces (counter-clockwise when viewed from outside)
+            indices.push_back(current);
+            indices.push_back(current + 1);
+            indices.push_back(next);
+
+            indices.push_back(next);
+            indices.push_back(current + 1);
+            indices.push_back(next + 1);
+        }
+
+        // Generate indices for caps (using dedicated cap vertices)
+        for (int i = 0; i < sectors; ++i) {
+            int currentBottomCap = bottomCapStartIndex + i;
+            int nextBottomCap = bottomCapStartIndex + ((i + 1) % (sectors + 1));
+            
+            int currentTopCap = topCapStartIndex + i;
+            int nextTopCap = topCapStartIndex + ((i + 1) % (sectors + 1));
+
+            // Bottom cap (counter-clockwise when viewed from below)
+            indices.push_back(bottomCenterIndex);
+            indices.push_back(currentBottomCap);
+            indices.push_back(nextBottomCap);
+
+            // Top cap (counter-clockwise when viewed from above)
+            indices.push_back(topCenterIndex);
+            indices.push_back(nextTopCap);
+            indices.push_back(currentTopCap);
+        }
+
+        Mesh cylinderMesh(vertices, indices, std::vector<Texture>());
+        Model cylinderModel("cylinder");
+        cylinderModel.meshes.push_back(cylinderMesh);
+
+        static int cylinderCounter = 0;
+        cylinderModel.name = "Cylinder_" + std::to_string(cylinderCounter++);
+        cylinderModel.color = color;
+        cylinderModel.shininess = shininess;
+        cylinderModel.emissive = emissive;
+        cylinderModel.position = glm::vec3(0.0f);
+        cylinderModel.scale = glm::vec3(1.0f);
+        cylinderModel.rotation = glm::vec3(0.0f);
+        cylinderModel.visible = true;
+        cylinderModel.diffuseReflectivity = 0.8f;
+        cylinderModel.specularColor = glm::vec3(1.0f);
+        cylinderModel.specularDiffusion = 0.5f;
+        cylinderModel.specularReflectivity = 0.0f;
+        cylinderModel.refractiveIndex = 1.0f;
+        cylinderModel.transparency = 0.0f;
+
+        return cylinderModel;
+    }
+
+    Engine::Model createPlane(const glm::vec3& color, float shininess, float emissive) {
+        std::vector<Vertex> vertices = {
+            // Top face only (visible from above)
+            {{-0.5f, 0.0f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, 0},
+            {{ 0.5f, 0.0f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, 0},
+            {{ 0.5f, 0.0f,  0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, 0},
+            {{-0.5f, 0.0f,  0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, 0}
+        };
+
+        std::vector<unsigned int> indices = {
+            // Top face only (counter-clockwise when viewed from above)  
+            0, 3, 1, 1, 3, 2
+        };
+
+        Mesh planeMesh(vertices, indices, std::vector<Texture>());
+        Model planeModel("plane");
+        planeModel.meshes.push_back(planeMesh);
+
+        static int planeCounter = 0;
+        planeModel.name = "Plane_" + std::to_string(planeCounter++);
+        planeModel.color = color;
+        planeModel.shininess = shininess;
+        planeModel.emissive = emissive;
+        planeModel.position = glm::vec3(0.0f);
+        planeModel.scale = glm::vec3(1.0f);
+        planeModel.rotation = glm::vec3(0.0f);
+        planeModel.visible = true;
+        planeModel.diffuseReflectivity = 0.8f;
+        planeModel.specularColor = glm::vec3(1.0f);
+        planeModel.specularDiffusion = 0.5f;
+        planeModel.specularReflectivity = 0.0f;
+        planeModel.refractiveIndex = 1.0f;
+        planeModel.transparency = 0.0f;
+
+        return planeModel;
+    }
+
+    Engine::Model createTorus(const glm::vec3& color, float shininess, float emissive, int rings, int sides) {
+        std::vector<Vertex> vertices;
+        std::vector<unsigned int> indices;
+
+        const float PI = 3.14159265359f;
+        const float majorRadius = 0.4f;
+        const float minorRadius = 0.1f;
+
+        // Generate vertices
+        for (int r = 0; r < rings; ++r) {
+            float theta = 2.0f * PI * r / rings;
+            float cosTheta = cos(theta);
+            float sinTheta = sin(theta);
+
+            for (int s = 0; s < sides; ++s) {
+                float phi = 2.0f * PI * s / sides;
+                float cosPhi = cos(phi);
+                float sinPhi = sin(phi);
+
+                Vertex vertex;
+                vertex.position = glm::vec3(
+                    (majorRadius + minorRadius * cosPhi) * cosTheta,
+                    minorRadius * sinPhi,
+                    (majorRadius + minorRadius * cosPhi) * sinTheta
+                );
+                
+                glm::vec3 center = glm::vec3(majorRadius * cosTheta, 0, majorRadius * sinTheta);
+                vertex.normal = glm::normalize(vertex.position - center);
+                vertex.texCoords = glm::vec2((float)r / rings, (float)s / sides);
+                vertex.tangent = glm::vec3(-sinTheta, 0, cosTheta);
+                vertex.bitangent = glm::cross(vertex.normal, vertex.tangent);
+                vertex.materialID = 0;
+
+                vertices.push_back(vertex);
+            }
+        }
+
+        // Generate indices (fixed winding order)
+        for (int r = 0; r < rings; ++r) {
+            for (int s = 0; s < sides; ++s) {
+                int current = r * sides + s;
+                int next = ((r + 1) % rings) * sides + s;
+                int currentNext = r * sides + ((s + 1) % sides);
+                int nextNext = ((r + 1) % rings) * sides + ((s + 1) % sides);
+
+                // First triangle (counter-clockwise)
+                indices.push_back(current);
+                indices.push_back(currentNext);
+                indices.push_back(next);
+
+                // Second triangle (counter-clockwise)
+                indices.push_back(currentNext);
+                indices.push_back(nextNext);
+                indices.push_back(next);
+            }
+        }
+
+        Mesh torusMesh(vertices, indices, std::vector<Texture>());
+        Model torusModel("torus");
+        torusModel.meshes.push_back(torusMesh);
+
+        static int torusCounter = 0;
+        torusModel.name = "Torus_" + std::to_string(torusCounter++);
+        torusModel.color = color;
+        torusModel.shininess = shininess;
+        torusModel.emissive = emissive;
+        torusModel.position = glm::vec3(0.0f);
+        torusModel.scale = glm::vec3(1.0f);
+        torusModel.rotation = glm::vec3(0.0f);
+        torusModel.visible = true;
+        torusModel.diffuseReflectivity = 0.8f;
+        torusModel.specularColor = glm::vec3(1.0f);
+        torusModel.specularDiffusion = 0.5f;
+        torusModel.specularReflectivity = 0.0f;
+        torusModel.refractiveIndex = 1.0f;
+        torusModel.transparency = 0.0f;
+
+        return torusModel;
+    }
+
 
 } // namespace Engine

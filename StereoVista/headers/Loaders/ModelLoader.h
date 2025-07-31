@@ -201,5 +201,9 @@ namespace Engine {
     // Factory functions
     Model* loadModel(const std::string& filePath);
     Model createCube(const glm::vec3& color, float shininess, float emissive);
+    Model createSphere(const glm::vec3& color, float shininess, float emissive, int rings = 20, int sectors = 20);
+    Model createCylinder(const glm::vec3& color, float shininess, float emissive, int sectors = 20);
+    Model createPlane(const glm::vec3& color, float shininess, float emissive);
+    Model createTorus(const glm::vec3& color, float shininess, float emissive, int rings = 20, int sides = 20);
 
 }

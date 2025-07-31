@@ -56,7 +56,17 @@ namespace Engine {
                 modelJson["emissive"] = model.emissive;
                 modelJson["visible"] = model.visible;
 
-                if (!model.path.empty() && model.path != "cube") {
+                // Check if this is a file-based model (not a primitive)
+                bool isPrimitive = (model.path == "cube" || model.path == "sphere" || 
+                                  model.path == "cylinder" || model.path == "plane" || 
+                                  model.path == "torus" || model.path.empty());
+                
+                // Save primitive type for proper reconstruction
+                if (isPrimitive && !model.path.empty()) {
+                    modelJson["primitiveType"] = model.path;
+                }
+                
+                if (!model.path.empty() && !isPrimitive) {
                     // Create model-specific directory
                     std::filesystem::path modelDir = sceneDir / "models" / model.name;
                     std::filesystem::create_directories(modelDir);
@@ -363,23 +373,37 @@ namespace Engine {
                                 }
                             }
                         } else {
-                            // Creating a cube
-                            model = Engine::createCube(
-                                glm::vec3(
-                                    modelJson["color"][0].get<float>(),
-                                    modelJson["color"][1].get<float>(),
-                                    modelJson["color"][2].get<float>()
-                                ),
-                                modelJson.value("shininess", 1.0f),
-                                modelJson.value("emissive", 0.0f)
-                            );
-
-                            // Make sure color is explicitly set after creation
-                            model.color = glm::vec3(
+                            // Creating a primitive
+                            glm::vec3 color = glm::vec3(
                                 modelJson["color"][0].get<float>(),
                                 modelJson["color"][1].get<float>(),
                                 modelJson["color"][2].get<float>()
                             );
+                            float shininess = modelJson.value("shininess", 1.0f);
+                            float emissive = modelJson.value("emissive", 0.0f);
+                            
+                            // Check for primitiveType field first, then fall back to legacy cube detection
+                            std::string primitiveType = modelJson.value("primitiveType", "cube");
+                            
+                            if (primitiveType == "sphere") {
+                                model = Engine::createSphere(color, shininess, emissive);
+                            }
+                            else if (primitiveType == "cylinder") {
+                                model = Engine::createCylinder(color, shininess, emissive);
+                            }
+                            else if (primitiveType == "plane") {
+                                model = Engine::createPlane(color, shininess, emissive);
+                            }
+                            else if (primitiveType == "torus") {
+                                model = Engine::createTorus(color, shininess, emissive);
+                            }
+                            else {
+                                // Default to cube for legacy scenes or unknown types
+                                model = Engine::createCube(color, shininess, emissive);
+                            }
+
+                            // Make sure color is explicitly set after creation
+                            model.color = color;
                         }
 
                         // Set model properties

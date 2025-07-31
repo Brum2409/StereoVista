@@ -110,66 +110,69 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
     // Main Menu Bar
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("File")) {
-            if (ImGui::MenuItem("Open")) {
-                auto selection = pfd::open_file("Select a file to open", ".",
-                    { "All Supported Files", "*.obj *.fbx *.3ds *.gltf *.glb *.txt *.xyz *.ply *.pcb *.h5 *.hdf5 *.f5",
-                      "3D Models", "*.obj *.fbx *.3ds *.gltf *.glb",
-                      "Point Cloud Files", "*.txt *.xyz *.ply *.pcb *.h5 *.hdf5 *.f5",
-                      "All Files", "*" }).result();
+            if (ImGui::BeginMenu("Import")) {
+                if (ImGui::MenuItem("3D Model...")) {
+                    auto selection = pfd::open_file("Select a 3D model to import", ".",
+                        { "3D Models", "*.obj *.fbx *.3ds *.gltf *.glb",
+                          "All Files", "*" }).result();
 
-                if (!selection.empty()) {
-                    std::string filePath = selection[0];
-                    std::string extension = std::filesystem::path(filePath).extension().string();
-
-                    if (extension == ".obj" || extension == ".fbx" || extension == ".3ds" ||
-                        extension == ".gltf" || extension == ".glb") {
+                    if (!selection.empty()) {
+                        std::string filePath = selection[0];
                         try {
                             Engine::Model newModel = *Engine::loadModel(filePath);
                             currentScene.models.push_back(newModel);
                             currentSelectedIndex = currentScene.models.size() - 1;
+                            currentSelectedType = SelectedType::Model;
                         }
                         catch (const std::exception& e) {
                             std::cerr << "Failed to load model: " << e.what() << std::endl;
                         }
                     }
-                    else if (extension == ".txt" || extension == ".xyz" || extension == ".ply") {
-                        Engine::PointCloud newPointCloud = std::move(Engine::PointCloudLoader::loadPointCloudFile(filePath));
-                        newPointCloud.filePath = filePath;
-                        currentScene.pointClouds.emplace_back(std::move(newPointCloud));
-                    }
-                    else if (extension == ".pcb") {
-                        Engine::PointCloud newPointCloud = std::move(Engine::PointCloudLoader::loadFromBinary(filePath));
-                        // Check if octree was built successfully (points vector may be empty after octree build)
-                        if (newPointCloud.octreeRoot || !newPointCloud.points.empty()) {
+                }
+                if (ImGui::MenuItem("Point Cloud...")) {
+                    auto selection = pfd::open_file("Select a point cloud to import", ".",
+                        { "Point Cloud Files", "*.txt *.xyz *.ply *.pcb *.h5 *.hdf5 *.f5",
+                          "All Files", "*" }).result();
+
+                    if (!selection.empty()) {
+                        std::string filePath = selection[0];
+                        std::string extension = std::filesystem::path(filePath).extension().string();
+
+                        if (extension == ".txt" || extension == ".xyz" || extension == ".ply") {
+                            Engine::PointCloud newPointCloud = std::move(Engine::PointCloudLoader::loadPointCloudFile(filePath));
                             newPointCloud.filePath = filePath;
-                            newPointCloud.name = std::filesystem::path(filePath).stem().string();
                             currentScene.pointClouds.emplace_back(std::move(newPointCloud));
-                            std::cout << "[DEBUG] Successfully loaded point cloud: " << filePath << std::endl;
                         }
-                        else {
-                            std::cerr << "Failed to load point cloud from: " << filePath << std::endl;
+                        else if (extension == ".pcb") {
+                            Engine::PointCloud newPointCloud = std::move(Engine::PointCloudLoader::loadFromBinary(filePath));
+                            if (newPointCloud.octreeRoot || !newPointCloud.points.empty()) {
+                                newPointCloud.filePath = filePath;
+                                newPointCloud.name = std::filesystem::path(filePath).stem().string();
+                                currentScene.pointClouds.emplace_back(std::move(newPointCloud));
+                                std::cout << "[DEBUG] Successfully loaded point cloud: " << filePath << std::endl;
+                            }
+                            else {
+                                std::cerr << "Failed to load point cloud from: " << filePath << std::endl;
+                            }
                         }
-                    }
-                    else if (extension == ".h5" || extension == ".hdf5" || extension == ".f5") {
-                        Engine::PointCloud newPointCloud = std::move(Engine::PointCloudLoader::loadPointCloudFile(filePath));
-                        // Check if octree was built successfully (points vector may be empty after octree build)
-                        if (newPointCloud.octreeRoot || !newPointCloud.points.empty() ) {
-                            newPointCloud.filePath = filePath;
-                            newPointCloud.name = std::filesystem::path(filePath).stem().string();
-                            currentScene.pointClouds.emplace_back(std::move(newPointCloud));
-                            std::cout << "[DEBUG] Successfully loaded HDF5 point cloud: " << filePath << std::endl;
-                        }
-                        else {
-                            std::cerr << "Failed to load HDF5 point cloud from: " << filePath << std::endl;
+                        else if (extension == ".h5" || extension == ".hdf5" || extension == ".f5") {
+                            Engine::PointCloud newPointCloud = std::move(Engine::PointCloudLoader::loadPointCloudFile(filePath));
+                            if (newPointCloud.octreeRoot || !newPointCloud.points.empty()) {
+                                newPointCloud.filePath = filePath;
+                                newPointCloud.name = std::filesystem::path(filePath).stem().string();
+                                currentScene.pointClouds.emplace_back(std::move(newPointCloud));
+                                std::cout << "[DEBUG] Successfully loaded HDF5 point cloud: " << filePath << std::endl;
+                            }
+                            else {
+                                std::cerr << "Failed to load HDF5 point cloud from: " << filePath << std::endl;
+                            }
                         }
                     }
                 }
+                ImGui::EndMenu();
             }
-            ImGui::EndMenu();
-        }
-
-        if (ImGui::BeginMenu("Scene")) {
-            if (ImGui::MenuItem("Load")) {
+            ImGui::Separator();
+            if (ImGui::MenuItem("Load Scene...")) {
                 auto selection = pfd::open_file("Select a scene file to load", ".",
                     { "Scene Files", "*.scene", "All Files", "*" }).result();
                 if (!selection.empty()) {
@@ -182,12 +185,11 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                     }
                 }
             }
-            if (ImGui::MenuItem("Save")) {
+            if (ImGui::MenuItem("Save Scene...")) {
                 auto destination = pfd::save_file("Select a file to save scene", ".",
                     { "Scene Files", "*.scene", "All Files", "*" }).result();
                 if (!destination.empty()) {
                     try {
-                        // Use the global camera variable
                         Engine::saveScene(destination, currentScene, camera);
                     }
                     catch (const std::exception& e) {
@@ -195,39 +197,53 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                     }
                 }
             }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Create Cube")) {
-                Engine::Model newCube = Engine::createCube(glm::vec3(1.0f, 1.0f, 1.0f), 1.0f, 0.0f);
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Create")) {
+            if (ImGui::MenuItem("Cube")) {
+                Engine::Model newCube = Engine::createCube(glm::vec3(0.8f, 0.8f, 0.8f), 1.0f, 0.0f);
                 newCube.scale = glm::vec3(0.5f);
                 newCube.position = glm::vec3(0.0f, 0.0f, 0.0f);
                 currentScene.models.push_back(newCube);
                 currentSelectedIndex = currentScene.models.size() - 1;
                 currentSelectedType = SelectedType::Model;
             }
-            ImGui::EndMenu();
-        }
-
-        if (ImGui::BeginMenu("View")) {
-            ImGui::MenuItem("Show FPS", nullptr, &showFPS);
-            ImGui::MenuItem("Wireframe Mode", nullptr, &camera.wireframe);
-            ImGui::MenuItem("Show GUI", nullptr, &showGui);
-            if (ImGui::BeginMenu("Theme")) {
-                if (ImGui::MenuItem("Light Theme", nullptr, !isDarkTheme)) {
-                    isDarkTheme = false;
-                    SetupImGuiStyle(isDarkTheme, 1.0f);
-                    preferences.isDarkTheme = isDarkTheme;
-                    savePreferences();
-                }
-                if (ImGui::MenuItem("Dark Theme", nullptr, isDarkTheme)) {
-                    isDarkTheme = true;
-                    SetupImGuiStyle(isDarkTheme, 1.0f);
-                    preferences.isDarkTheme = isDarkTheme;
-                    savePreferences();
-                }
-                ImGui::EndMenu();
+            if (ImGui::MenuItem("Sphere")) {
+                Engine::Model newSphere = Engine::createSphere(glm::vec3(0.8f, 0.4f, 0.4f), 1.0f, 0.0f);
+                newSphere.scale = glm::vec3(0.5f);
+                newSphere.position = glm::vec3(0.0f, 0.0f, 0.0f);
+                currentScene.models.push_back(newSphere);
+                currentSelectedIndex = currentScene.models.size() - 1;
+                currentSelectedType = SelectedType::Model;
+            }
+            if (ImGui::MenuItem("Cylinder")) {
+                Engine::Model newCylinder = Engine::createCylinder(glm::vec3(0.4f, 0.8f, 0.4f), 1.0f, 0.0f);
+                newCylinder.scale = glm::vec3(0.5f);
+                newCylinder.position = glm::vec3(0.0f, 0.0f, 0.0f);
+                currentScene.models.push_back(newCylinder);
+                currentSelectedIndex = currentScene.models.size() - 1;
+                currentSelectedType = SelectedType::Model;
+            }
+            if (ImGui::MenuItem("Plane")) {
+                Engine::Model newPlane = Engine::createPlane(glm::vec3(0.6f, 0.6f, 0.8f), 1.0f, 0.0f);
+                newPlane.scale = glm::vec3(1.0f);
+                newPlane.position = glm::vec3(0.0f, 0.0f, 0.0f);
+                currentScene.models.push_back(newPlane);
+                currentSelectedIndex = currentScene.models.size() - 1;
+                currentSelectedType = SelectedType::Model;
+            }
+            if (ImGui::MenuItem("Torus (Ring)")) {
+                Engine::Model newTorus = Engine::createTorus(glm::vec3(0.8f, 0.6f, 0.2f), 1.0f, 0.0f);
+                newTorus.scale = glm::vec3(0.8f);
+                newTorus.position = glm::vec3(0.0f, 0.0f, 0.0f);
+                currentScene.models.push_back(newTorus);
+                currentSelectedIndex = currentScene.models.size() - 1;
+                currentSelectedType = SelectedType::Model;
             }
             ImGui::EndMenu();
         }
+
 
         if (ImGui::BeginMenu("Camera")) {
             // Always use new stereo method
@@ -236,17 +252,60 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                 preferences.useNewStereoMethod = true;
                 savePreferences();
             }
-            ImGui::MenuItem("Smooth Scrolling", nullptr, &camera.useSmoothScrolling);
+            
+            // Speed Multiplier Control
+            if (ImGui::SliderFloat("Speed Multiplier", &camera.speedFactor, 0.1f, 5.0f, "%.1f")) {
+                // Speed factor is automatically applied in the camera's movement calculations
+            }
+            ImGui::SetItemTooltip("Adjusts camera movement speed (default: 1.0)");
+            
+            ImGui::Separator();
+
+            // Zoom to Cursor Option
+            ImGui::MenuItem("Zoom to Cursor", nullptr, &camera.zoomToCursor);
+            ImGui::SetItemTooltip("When enabled, scroll wheel zooms toward/away from cursor position");
+            
+            ImGui::Separator();
+            ImGui::Text("Orbit Mode:");
+            
+            bool standardOrbit = !camera.orbitAroundCursor && !orbitFollowsCursor;
+            bool orbitAroundCursorOption = camera.orbitAroundCursor;
+            bool orbitFollowsCursorOption = orbitFollowsCursor;
+
+            if (ImGui::RadioButton("Standard", standardOrbit)) {
+                camera.orbitAroundCursor = false;
+                orbitFollowsCursor = false;
+                preferences.orbitAroundCursor = false;
+                preferences.orbitFollowsCursor = false;
+                savePreferences();
+            }
+            ImGui::SetItemTooltip("Orbits around the viewport center at cursor depth");
+
+            if (ImGui::RadioButton("Around Cursor", orbitAroundCursorOption)) {
+                camera.orbitAroundCursor = true;
+                orbitFollowsCursor = false;
+                preferences.orbitAroundCursor = true;
+                preferences.orbitFollowsCursor = false;
+                savePreferences();
+            }
+            ImGui::SetItemTooltip("Orbits around the 3D position of the cursor without centering the view");
+
+            if (ImGui::RadioButton("Follow Cursor", orbitFollowsCursorOption)) {
+                camera.orbitAroundCursor = false;
+                orbitFollowsCursor = true;
+                preferences.orbitAroundCursor = false;
+                preferences.orbitFollowsCursor = true;
+                savePreferences();
+            }
+            ImGui::SetItemTooltip("Centers the view on cursor position before orbiting");
             ImGui::EndMenu();
         }
 
         if (ImGui::BeginMenu("Cursor")) {
-            // Get cursor pointers for more readable code
             auto* sphereCursor = cursorManager.getSphereCursor();
             auto* fragmentCursor = cursorManager.getFragmentCursor();
             auto* planeCursor = cursorManager.getPlaneCursor();
 
-            // Cursor visibility toggles
             bool showSphereCursor = sphereCursor->isVisible();
             if (ImGui::MenuItem("Show Sphere Cursor", nullptr, &showSphereCursor)) {
                 sphereCursor->setVisible(showSphereCursor);
@@ -261,41 +320,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
             if (ImGui::MenuItem("Show Plane Cursor", nullptr, &showPlaneCursor)) {
                 planeCursor->setVisible(showPlaneCursor);
             }
-
+            
             ImGui::Separator();
-
-            bool standardOrbit = !camera.orbitAroundCursor && !orbitFollowsCursor;
-            bool orbitAroundCursorOption = camera.orbitAroundCursor;
-            bool orbitFollowsCursorOption = orbitFollowsCursor;
-
-            if (ImGui::RadioButton("Standard Orbit", standardOrbit)) {
-                camera.orbitAroundCursor = false;
-                orbitFollowsCursor = false;
-                preferences.orbitAroundCursor = false;
-                preferences.orbitFollowsCursor = false;
-                savePreferences();
-            }
-            ImGui::SetItemTooltip("Orbits around the viewport center at cursor depth");
-
-            if (ImGui::RadioButton("Orbit Around Cursor", orbitAroundCursorOption)) {
-                camera.orbitAroundCursor = true;
-                orbitFollowsCursor = false;
-                preferences.orbitAroundCursor = true;
-                preferences.orbitFollowsCursor = false;
-                savePreferences();
-            }
-            ImGui::SetItemTooltip("Orbits around the 3D position of the cursor without centering the view");
-
-            if (ImGui::RadioButton("Orbit Follows Cursor (Center)", orbitFollowsCursorOption)) {
-                camera.orbitAroundCursor = false;
-                orbitFollowsCursor = true;
-                preferences.orbitAroundCursor = false;
-                preferences.orbitFollowsCursor = true;
-                savePreferences();
-            }
-            ImGui::SetItemTooltip("Centers the view on cursor position before orbiting");
-            ImGui::Separator();
-
             if (ImGui::BeginMenu("Presets")) {
                 std::vector<std::string> presetNames = Engine::CursorPresetManager::getPresetNames();
                 for (const auto& name : presetNames) {
@@ -303,7 +329,6 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                         currentPresetName = name;
                         Engine::CursorPreset loadedPreset = Engine::CursorPresetManager::applyCursorPreset(name);
 
-                        // Apply to cursor manager
                         sphereCursor->setVisible(loadedPreset.showSphereCursor);
                         sphereCursor->setScalingMode(static_cast<GUI::CursorScalingMode>(loadedPreset.sphereScalingMode));
                         sphereCursor->setFixedRadius(loadedPreset.sphereFixedRadius);
@@ -322,7 +347,6 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                         planeCursor->setDiameter(loadedPreset.planeDiameter);
                         planeCursor->setColor(loadedPreset.planeColor);
 
-                        // Update orbit center settings if needed
                         bool showOrbitCenter = cursorManager.isShowOrbitCenter();
                         cursorManager.setShowOrbitCenter(showOrbitCenter);
 
@@ -332,7 +356,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                 }
                 ImGui::EndMenu();
             }
-            if (ImGui::MenuItem("Cursor Settings")) {
+            
+            ImGui::Separator();
+            if (ImGui::MenuItem("Cursor Settings...")) {
                 showCursorSettingsWindow = true;
             }
             ImGui::EndMenu();
@@ -341,6 +367,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
         if (ImGui::MenuItem("Settings")) {
             showSettingsWindow = true;
         }
+
         ImGui::EndMainMenuBar();
     }
 

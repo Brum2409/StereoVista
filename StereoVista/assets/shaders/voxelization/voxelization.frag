@@ -125,17 +125,26 @@ void main() {
         float alpha = 1.0 - material.transparency;
         vec4 voxelColor = vec4(finalColor, alpha);
         
-        // Write to the voxel grid
-        imageStore(texture3D, storageCoord, voxelColor);
+        // Atomic max blending for better overlapping fragment handling
+        // Read existing value and blend with new color
+        vec4 existingColor = imageLoad(texture3D, storageCoord);
+        vec4 blendedColor = max(existingColor, voxelColor);
         
-        // Fill in adjacent voxels at higher mipmap levels for better coverage
+        // Write to the voxel grid
+        imageStore(texture3D, storageCoord, blendedColor);
+        
+        
+        // Fill in additional voxels at higher mipmap levels for proper LOD
         if (mipmapLevel > 0) {
             for (int x = 0; x < stride && storageCoord.x + x < texDim.x; x++) {
                 for (int y = 0; y < stride && storageCoord.y + y < texDim.y; y++) {
                     for (int z = 0; z < stride && storageCoord.z + z < texDim.z; z++) {
                         if (x == 0 && y == 0 && z == 0) continue; // Skip the center voxel
                         ivec3 neighborCoord = storageCoord + ivec3(x, y, z);
-                        imageStore(texture3D, neighborCoord, voxelColor);
+                        
+                        vec4 existingMip = imageLoad(texture3D, neighborCoord);
+                        vec4 blendedMip = max(existingMip, voxelColor);
+                        imageStore(texture3D, neighborCoord, blendedMip);
                     }
                 }
             }

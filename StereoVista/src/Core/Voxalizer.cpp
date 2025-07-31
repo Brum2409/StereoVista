@@ -156,18 +156,24 @@ namespace Engine {
         // Bind voxel texture for writing
         glBindImageTexture(0, m_voxelTexture, 0, GL_TRUE, 0, GL_READ_WRITE, GL_RGBA8);
 
-        // Set viewport for voxelization - critical for proper fragment generation
-        glViewport(0, 0, m_resolution, m_resolution);
+        // Use standard resolution viewport
+        int voxelizationRes = m_resolution;
+        glViewport(0, 0, voxelizationRes, voxelizationRes);
 
-        // Disable depth test and enable conservative rasterization for voxelization
+        // Disable depth test and enable MSAA-based conservative approximation
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_CULL_FACE);
         glDisable(GL_BLEND);
         
-        // Enable conservative rasterization if available (OpenGL 4.3+)
-        #ifdef GL_CONSERVATIVE_RASTERIZATION_NV
-        glEnable(GL_CONSERVATIVE_RASTERIZATION_NV);
-        #endif
+        // Enable MSAA for conservative rasterization approximation
+        glEnable(GL_MULTISAMPLE);
+        glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+        
+        // Force sample shading to ensure all samples are processed
+
+            glEnable(GL_SAMPLE_SHADING);
+            glMinSampleShading(1.0f); // Force all samples to be shaded
+
 
         m_voxelShader->use();
 
@@ -264,10 +270,12 @@ namespace Engine {
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_CULL_FACE);
         
-        // Disable conservative rasterization
-        #ifdef GL_CONSERVATIVE_RASTERIZATION_NV
-        glDisable(GL_CONSERVATIVE_RASTERIZATION_NV);
-        #endif
+        // Disable MSAA
+        glDisable(GL_MULTISAMPLE);
+        glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+
+            glDisable(GL_SAMPLE_SHADING);
+        
     }
 
 
@@ -337,10 +345,20 @@ namespace Engine {
 
                             // Calculate distance from camera
                             float distanceFromCamera = glm::length(position - cameraPos);
-                            int appropriateLOD = calculateMipmapLevel(distanceFromCamera);
                             
-                            // Only show voxel if this is the appropriate LOD level for this distance
-                            if (appropriateLOD == level) {
+                            // In debug mode, use a fixed mipmap level instead of distance-based LOD
+                            bool shouldShowVoxel;
+                            if (showDebugVisualization) {
+                                // In debug mode, only show voxels from the current debug state (m_state)
+                                shouldShowVoxel = (level == m_state);
+                            } else {
+                                // Normal mode: use distance-based LOD selection
+                                int appropriateLOD = calculateMipmapLevel(distanceFromCamera);
+                                shouldShowVoxel = (appropriateLOD == level);
+                            }
+                            
+                            // Only show voxel if it meets the LOD criteria
+                            if (shouldShowVoxel) {
                                 // Add to visible voxels with LOD information
                                 VoxelData voxel;
                                 voxel.position = position;
