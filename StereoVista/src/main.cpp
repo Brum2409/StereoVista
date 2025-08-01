@@ -853,7 +853,8 @@ void savePreferences() {
     j["spacemouse"]["deadzone"] = preferences.spaceMouseDeadzone;
     j["spacemouse"]["translationSensitivity"] = preferences.spaceMouseTranslationSensitivity;
     j["spacemouse"]["rotationSensitivity"] = preferences.spaceMouseRotationSensitivity;
-    j["spacemouse"]["useCursorAnchor"] = preferences.spaceMouseUseCursorAnchor;
+    j["spacemouse"]["anchorMode"] = static_cast<int>(preferences.spaceMouseAnchorMode);
+    j["spacemouse"]["centerCursor"] = preferences.spaceMouseCenterCursor;
 
     // Cursor settings
     j["cursor"]["currentPreset"] = preferences.currentPresetName;
@@ -1088,7 +1089,16 @@ void loadPreferences() {
             preferences.spaceMouseDeadzone = j["spacemouse"].value("deadzone", 0.025f);
             preferences.spaceMouseTranslationSensitivity = j["spacemouse"].value("translationSensitivity", 1.0f);
             preferences.spaceMouseRotationSensitivity = j["spacemouse"].value("rotationSensitivity", 1.0f);
-            preferences.spaceMouseUseCursorAnchor = j["spacemouse"].value("useCursorAnchor", false);
+            
+            // Handle backward compatibility with old useCursorAnchor setting
+            if (j["spacemouse"].contains("useCursorAnchor")) {
+                bool oldUseCursorAnchor = j["spacemouse"].value("useCursorAnchor", false);
+                preferences.spaceMouseAnchorMode = oldUseCursorAnchor ? GUI::SPACEMOUSE_ANCHOR_CONTINUOUS : GUI::SPACEMOUSE_ANCHOR_DISABLED;
+            } else {
+                preferences.spaceMouseAnchorMode = static_cast<GUI::SpaceMouseAnchorMode>(j["spacemouse"].value("anchorMode", static_cast<int>(GUI::SPACEMOUSE_ANCHOR_DISABLED)));
+            }
+            
+            preferences.spaceMouseCenterCursor = j["spacemouse"].value("centerCursor", false);
         }
 
         if (j.contains("skybox")) {
@@ -1570,6 +1580,12 @@ int main() {
             // Sync current camera state to SpaceMouse camera when navigation starts
             spaceMouseCamera = camera;
             *spaceMouseCameraPtr = spaceMouseCamera;
+            
+            // Center cursor if enabled
+            if (preferences.spaceMouseCenterCursor) {
+                glfwSetCursorPos(Engine::Window::nativeWindow, windowWidth / 2.0, windowHeight / 2.0);
+            }
+            
             std::cout << "SpaceMouse navigation started" << std::endl;
         };
         spaceMouseInput.OnNavigationEnded = []() {
@@ -1745,6 +1761,11 @@ int main() {
 
         // Reset cursor position calculation flag at start of frame
         cursorManager.resetFrameCalculationFlag();
+        
+        // Center cursor during SpaceMouse navigation if enabled
+        if (spaceMouseInput.IsNavigating() && preferences.spaceMouseCenterCursor) {
+            glfwSetCursorPos(window, windowWidth * 0.5, windowHeight * 0.5);
+        }
         
         // Adjust camera movement speed based on distance
         float distanceToNearestObject = camera.getDistanceToNearestObject(camera, projection, view, currentScene.settings.farPlane, windowWidth, windowHeight);
@@ -2721,35 +2742,55 @@ void updateSpaceMouseBounds() {
 }
 
 void updateSpaceMouseCursorAnchor() {
-    // Update SpaceMouse cursor anchor if cursor is valid and option is enabled
+    // Update SpaceMouse cursor anchor based on mode
     static glm::vec3 lastCursorPosition = glm::vec3(FLT_MAX);
-    static bool lastUseCursorAnchor = false;
+    static GUI::SpaceMouseAnchorMode lastAnchorMode = GUI::SPACEMOUSE_ANCHOR_DISABLED;
     
-    bool settingChanged = (lastUseCursorAnchor != preferences.spaceMouseUseCursorAnchor);
-    lastUseCursorAnchor = preferences.spaceMouseUseCursorAnchor;
+    bool settingChanged = (lastAnchorMode != preferences.spaceMouseAnchorMode);
+    lastAnchorMode = preferences.spaceMouseAnchorMode;
+    
+    // Update anchor mode
+    spaceMouseInput.SetAnchorMode(preferences.spaceMouseAnchorMode);
+    spaceMouseInput.SetCenterCursor(preferences.spaceMouseCenterCursor);
     
     if (cursorManager.isCursorPositionValid()) {
         glm::vec3 currentCursorPosition = cursorManager.getCursorPosition();
         
-        // Update if cursor position changed or setting toggled
-        bool positionChanged = glm::distance(lastCursorPosition, currentCursorPosition) > 0.001f;
+        // For CONTINUOUS mode, always update cursor position
+        // For ON_START mode, only update when not navigating
+        // For DISABLED mode, don't update cursor anchor
+        bool shouldUpdate = false;
         
-        if (positionChanged || settingChanged) {
+        switch (preferences.spaceMouseAnchorMode) {
+            case GUI::SPACEMOUSE_ANCHOR_CONTINUOUS:
+                shouldUpdate = (glm::distance(lastCursorPosition, currentCursorPosition) > 0.001f) || settingChanged;
+                break;
+            case GUI::SPACEMOUSE_ANCHOR_ON_START:
+                shouldUpdate = !spaceMouseInput.IsNavigating() && 
+                              ((glm::distance(lastCursorPosition, currentCursorPosition) > 0.001f) || settingChanged);
+                break;
+            case GUI::SPACEMOUSE_ANCHOR_DISABLED:
+            default:
+                shouldUpdate = settingChanged;
+                break;
+        }
+        
+        if (shouldUpdate) {
             lastCursorPosition = currentCursorPosition;
-            spaceMouseInput.SetCursorAnchor(currentCursorPosition, preferences.spaceMouseUseCursorAnchor);
+            spaceMouseInput.SetCursorAnchor(currentCursorPosition, preferences.spaceMouseAnchorMode);
             
             // Force NavLib to refresh the pivot position
-            if (preferences.spaceMouseUseCursorAnchor) {
+            if (preferences.spaceMouseAnchorMode != GUI::SPACEMOUSE_ANCHOR_DISABLED) {
                 spaceMouseInput.RefreshPivotPosition();
                 std::cout << "SpaceMouse anchor updated to cursor position: (" 
                           << currentCursorPosition.x << ", " 
                           << currentCursorPosition.y << ", " 
-                          << currentCursorPosition.z << ")" << std::endl;
+                          << currentCursorPosition.z << ") Mode: " << static_cast<int>(preferences.spaceMouseAnchorMode) << std::endl;
             }
         }
     } else {
         // Always update the setting state even if cursor is not valid
-        spaceMouseInput.SetCursorAnchor(glm::vec3(0.0f), preferences.spaceMouseUseCursorAnchor);
+        spaceMouseInput.SetCursorAnchor(glm::vec3(0.0f), preferences.spaceMouseAnchorMode);
     }
 }
 

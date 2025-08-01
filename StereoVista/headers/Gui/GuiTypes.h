@@ -45,6 +45,12 @@ namespace GUI {
         CURSOR_LOGARITHMIC
     };
 
+    enum SpaceMouseAnchorMode {
+        SPACEMOUSE_ANCHOR_DISABLED,      // Use scene center (default)
+        SPACEMOUSE_ANCHOR_ON_START,      // Set anchor when navigation starts, keep it fixed
+        SPACEMOUSE_ANCHOR_CONTINUOUS     // Update anchor every frame during navigation
+    };
+
     // Structure definitions
     struct SkyboxConfig {
         SkyboxType type = SKYBOX_CUBEMAP;
@@ -134,7 +140,8 @@ namespace GUI {
         float spaceMouseDeadzone = 0.025f;
         float spaceMouseTranslationSensitivity = 1.0f;
         float spaceMouseRotationSensitivity = 1.0f;
-        bool spaceMouseUseCursorAnchor = false;
+        SpaceMouseAnchorMode spaceMouseAnchorMode = SPACEMOUSE_ANCHOR_DISABLED;
+        bool spaceMouseCenterCursor = false;
 
         int skyboxType = SKYBOX_CUBEMAP;
         glm::vec3 skyboxSolidColor = glm::vec3(0.2f, 0.3f, 0.4f);

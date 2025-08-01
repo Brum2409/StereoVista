@@ -1362,12 +1362,38 @@ void renderSettingsWindow() {
                     ImGui::SetItemTooltip("Controls how sensitive rotation movements are");
                     
                     ImGui::Spacing();
-                    if (ImGui::Checkbox("Use Cursor as Anchor Point", &preferences.spaceMouseUseCursorAnchor)) {
+                    ImGui::Text("Anchor Point Mode:");
+                    
+                    int currentMode = static_cast<int>(preferences.spaceMouseAnchorMode);
+                    bool modeChanged = false;
+                    
+                    if (ImGui::RadioButton("Scene Center", &currentMode, static_cast<int>(GUI::SPACEMOUSE_ANCHOR_DISABLED))) {
+                        modeChanged = true;
+                    }
+                    ImGui::SetItemTooltip("Use the scene center as the SpaceMouse pivot point");
+                    
+                    if (ImGui::RadioButton("Cursor on Start", &currentMode, static_cast<int>(GUI::SPACEMOUSE_ANCHOR_ON_START))) {
+                        modeChanged = true;
+                    }
+                    ImGui::SetItemTooltip("Set anchor to cursor position when SpaceMouse navigation starts, then keep it fixed");
+                    
+                    if (ImGui::RadioButton("Cursor Continuous", &currentMode, static_cast<int>(GUI::SPACEMOUSE_ANCHOR_CONTINUOUS))) {
+                        modeChanged = true;
+                    }
+                    ImGui::SetItemTooltip("Continuously update anchor to follow the cursor position");
+                    
+                    if (modeChanged) {
+                        preferences.spaceMouseAnchorMode = static_cast<GUI::SpaceMouseAnchorMode>(currentMode);
                         settingsChanged = true;
                         updateSpaceMouseCursorAnchor();
                         spaceMouseInput.RefreshPivotPosition();
                     }
-                    ImGui::SetItemTooltip("Use the last 3D cursor position as the SpaceMouse anchor/pivot point instead of the scene center");
+                    
+                    ImGui::Spacing();
+                    if (ImGui::Checkbox("Center Cursor During Navigation", &preferences.spaceMouseCenterCursor)) {
+                        settingsChanged = true;
+                    }
+                    ImGui::SetItemTooltip("Keep the mouse cursor fixed at the screen center while using SpaceMouse");
                 }
             } else {
                 ImGui::TextDisabled("SpaceMouse device not detected");

@@ -199,16 +199,30 @@ public:
     bool m_transactionActive;
     
     void RefreshPivotPosition() {
-        if (m_navlibHandle != 0 && m_parent->m_useCursorAnchor) {
+        if (m_navlibHandle != 0 && m_parent->m_anchorMode != GUI::SPACEMOUSE_ANCHOR_DISABLED) {
+            glm::vec3 pivotPoint = GetCurrentPivotPoint();
+            
             // Force NavLib to re-query the pivot position by writing the pivot position value
             navlib::value_t pivotValue;
             pivotValue.type = navlib::point_type;
-            pivotValue.point.x = m_parent->m_cursorAnchor.x;
-            pivotValue.point.y = m_parent->m_cursorAnchor.y;
-            pivotValue.point.z = m_parent->m_cursorAnchor.z;
+            pivotValue.point.x = pivotPoint.x;
+            pivotValue.point.y = pivotPoint.y;
+            pivotValue.point.z = pivotPoint.z;
             
             // Try to write the pivot position to force update
             navlib::NlWriteValue(m_navlibHandle, navlib::pivot_position_k, &pivotValue);
+        }
+    }
+    
+    glm::vec3 GetCurrentPivotPoint() const {
+        switch (m_parent->m_anchorMode) {
+            case GUI::SPACEMOUSE_ANCHOR_ON_START:
+                return m_parent->m_navigationStartAnchor;
+            case GUI::SPACEMOUSE_ANCHOR_CONTINUOUS:
+                return m_parent->m_cursorAnchor;
+            case GUI::SPACEMOUSE_ANCHOR_DISABLED:
+            default:
+                return (m_parent->m_modelMin + m_parent->m_modelMax) * 0.5f;
         }
     }
     
@@ -337,15 +351,25 @@ private:
         }
         
         bool motion = (value->b != 0);
+        bool wasNavigating = m_motionActive;
         m_motionActive = motion;
         
         // Update parent navigation state
         m_parent->m_isNavigating = motion;
         
-        if (motion && m_parent->OnNavigationStarted) {
-            m_parent->OnNavigationStarted();
-        } else if (!motion && m_parent->OnNavigationEnded) {
-            m_parent->OnNavigationEnded();
+        if (motion && !wasNavigating) {
+            // Navigation starting - capture current cursor position for ON_START mode
+            if (m_parent->m_anchorMode == GUI::SPACEMOUSE_ANCHOR_ON_START) {
+                m_parent->m_navigationStartAnchor = m_parent->m_cursorAnchor;
+            }
+            
+            if (m_parent->OnNavigationStarted) {
+                m_parent->OnNavigationStarted();
+            }
+        } else if (!motion && wasNavigating) {
+            if (m_parent->OnNavigationEnded) {
+                m_parent->OnNavigationEnded();
+            }
         }
         return 0;
     }
@@ -363,14 +387,7 @@ private:
             return navlib::make_result_code(navlib::navlib_errc::no_data_available);
         }
 
-        glm::vec3 pivotPoint;
-        if (m_parent->m_useCursorAnchor) {
-            // Use cursor anchor point if enabled
-            pivotPoint = m_parent->m_cursorAnchor;
-        } else {
-            // Use default scene center
-            pivotPoint = (m_parent->m_modelMin + m_parent->m_modelMax) * 0.5f;
-        }
+        glm::vec3 pivotPoint = GetCurrentPivotPoint();
         
         value->type = navlib::point_type;
         value->point.x = pivotPoint.x;
@@ -415,7 +432,9 @@ SpaceMouseInput::SpaceMouseInput()
     , m_isNavigating(false)
     , m_lastUpdateTime(0.0f)
     , m_cursorAnchor(0.0f)
-    , m_useCursorAnchor(false) {
+    , m_anchorMode(GUI::SPACEMOUSE_ANCHOR_DISABLED)
+    , m_centerCursor(false)
+    , m_navigationStartAnchor(0.0f) {
 }
 
 SpaceMouseInput::~SpaceMouseInput() {
@@ -500,9 +519,17 @@ void SpaceMouseInput::SetWindowSize(int width, int height) {
     m_windowHeight = height;
 }
 
-void SpaceMouseInput::SetCursorAnchor(const glm::vec3& cursorPosition, bool useCursorAnchor) {
+void SpaceMouseInput::SetCursorAnchor(const glm::vec3& cursorPosition, GUI::SpaceMouseAnchorMode anchorMode) {
     m_cursorAnchor = cursorPosition;
-    m_useCursorAnchor = useCursorAnchor;
+    m_anchorMode = anchorMode;
+}
+
+void SpaceMouseInput::SetAnchorMode(GUI::SpaceMouseAnchorMode mode) {
+    m_anchorMode = mode;
+}
+
+void SpaceMouseInput::SetCenterCursor(bool centerCursor) {
+    m_centerCursor = centerCursor;
 }
 
 void SpaceMouseInput::RefreshPivotPosition() {

@@ -3,6 +3,7 @@
 
 #include "Engine/Core.h"
 #include "Core/Camera.h"
+#include "Gui/GuiTypes.h"
 #include <memory>
 #include <functional>
 
@@ -66,10 +67,14 @@ public:
     void SetWindowSize(int width, int height);
     
     // Set cursor anchor point for navigation pivot
-    void SetCursorAnchor(const glm::vec3& cursorPosition, bool useCursorAnchor);
+    void SetCursorAnchor(const glm::vec3& cursorPosition, GUI::SpaceMouseAnchorMode anchorMode);
     
     // Force refresh of pivot position in NavLib
     void RefreshPivotPosition();
+    
+    // Set anchor mode and cursor centering options
+    void SetAnchorMode(GUI::SpaceMouseAnchorMode mode);
+    void SetCenterCursor(bool centerCursor);
     
     // Callbacks for extended functionality
     std::function<void()> OnNavigationStarted;
@@ -103,7 +108,9 @@ private:
     
     // Cursor anchor settings
     glm::vec3 m_cursorAnchor;
-    bool m_useCursorAnchor;
+    GUI::SpaceMouseAnchorMode m_anchorMode;
+    bool m_centerCursor;
+    glm::vec3 m_navigationStartAnchor;
     
     // Helper functions
     void UpdateCameraFromNavlib();
