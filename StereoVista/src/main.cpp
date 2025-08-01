@@ -3,6 +3,7 @@
 #include "Engine/Core.h"
 #include <thread>
 #include <atomic>
+#include <iostream>
 
 // ---- Project-Specific Includes ----
 #include "Loaders/ModelLoader.h"
@@ -909,6 +910,8 @@ void applyPreferencesToProgram() {
     // Apply camera preferences
     currentScene.settings.separation = preferences.separation;
     currentScene.settings.convergence = preferences.convergence;
+    currentScene.settings.autoConvergence = preferences.autoConvergence;
+    currentScene.settings.convergenceDistanceFactor = preferences.convergenceDistanceFactor;
     currentScene.settings.nearPlane = preferences.nearPlane;
     currentScene.settings.farPlane = preferences.farPlane;
     camera.useNewMethod = preferences.useNewStereoMethod;
@@ -1236,6 +1239,8 @@ void InitializeDefaults() {
     // Apply to scene settings
     currentScene.settings.separation = preferences.separation;
     currentScene.settings.convergence = preferences.convergence;
+    currentScene.settings.autoConvergence = preferences.autoConvergence;
+    currentScene.settings.convergenceDistanceFactor = preferences.convergenceDistanceFactor;
     currentScene.settings.nearPlane = preferences.nearPlane;
     currentScene.settings.farPlane = preferences.farPlane;
 
@@ -1426,78 +1431,7 @@ int main() {
         radianceShader = nullptr;
     }
 
-    // ---- Load Default cube ----
-    // ---- Create Temp Default scene
-
-    Engine::Model basePlatform = Engine::createCube(glm::vec3(0.3f, 0.3f, 0.3f), 32.0f, 0.0f);
-    basePlatform.scale = glm::vec3(4.0f, 0.2f, 4.0f);
-    basePlatform.name = "Base_Platform";
-    basePlatform.position = glm::vec3(0.0f, -1.0f, 0.0f);
-    currentScene.models.push_back(basePlatform);
-
-
-    Engine::Model centralCube = Engine::createCube(glm::vec3(1.0f, 0.2f, 0.2f), 64.0f, 0.8f);
-    centralCube.scale = glm::vec3(0.8f, 0.8f, 0.8f);
-    centralCube.name = "Central_Light_Cube";
-    centralCube.position = glm::vec3(0.0f, 0.0f, 0.0f);
-    currentScene.models.push_back(centralCube);
-
-
-    Engine::Model blueCube = Engine::createCube(glm::vec3(0.2f, 0.4f, 1.0f), 16.0f, 0.0f);
-    blueCube.scale = glm::vec3(0.6f, 0.6f, 0.6f);
-    blueCube.name = "Blue_Cube";
-    blueCube.position = glm::vec3(-1.5f, 0.2f, 1.5f);
-    currentScene.models.push_back(blueCube);
-
-
-    Engine::Model greenCube = Engine::createCube(glm::vec3(0.2f, 1.0f, 0.3f), 8.0f, 0.0f);
-    greenCube.scale = glm::vec3(0.5f, 1.2f, 0.5f); 
-    greenCube.name = "Green_Tower";
-    greenCube.position = glm::vec3(1.2f, 0.6f, 1.0f);
-    currentScene.models.push_back(greenCube);
-
-
-    Engine::Model yellowCube = Engine::createCube(glm::vec3(1.0f, 1.0f, 0.3f), 128.0f, 0.4f);
-    yellowCube.scale = glm::vec3(0.4f, 0.4f, 0.4f);
-    yellowCube.name = "Yellow_Light";
-    yellowCube.position = glm::vec3(-1.8f, 0.5f, -1.8f);
-    currentScene.models.push_back(yellowCube);
-
-
-    Engine::Model purpleCube = Engine::createCube(glm::vec3(0.8f, 0.2f, 0.9f), 64.0f, 0.0f);
-    purpleCube.scale = glm::vec3(0.7f, 0.7f, 0.7f);
-    purpleCube.name = "Purple_Cube";
-    purpleCube.position = glm::vec3(1.5f, 0.35f, -1.5f);
-    currentScene.models.push_back(purpleCube);
-
-
-    Engine::Model orangeCube = Engine::createCube(glm::vec3(1.0f, 0.6f, 0.1f), 256.0f, 0.0f);
-    orangeCube.scale = glm::vec3(0.3f, 0.3f, 0.3f);
-    orangeCube.name = "Orange_Small";
-    orangeCube.position = glm::vec3(0.5f, 1.5f, 0.5f); 
-    currentScene.models.push_back(orangeCube);
-
-
-    Engine::Model cyanCube = Engine::createCube(glm::vec3(0.2f, 0.9f, 0.9f), 32.0f, 0.1f);
-    cyanCube.scale = glm::vec3(0.4f, 0.8f, 0.4f);
-    cyanCube.name = "Cyan_Pillar";
-    cyanCube.position = glm::vec3(-2.5f, 0.4f, 0.0f);
-    currentScene.models.push_back(cyanCube);
-
-
-    Engine::Model whiteCube = Engine::createCube(glm::vec3(0.9f, 0.9f, 0.9f), 512.0f, 0.0f);
-    whiteCube.scale = glm::vec3(0.5f, 0.5f, 0.5f);
-    whiteCube.name = "White_Reflective";
-    whiteCube.position = glm::vec3(2.5f, 0.25f, 0.5f);
-    currentScene.models.push_back(whiteCube);
-
-    for (int i = 0; i < 3; i++) {
-        Engine::Model smallCube = Engine::createCube(glm::vec3(0.6f + i * 0.3f, 0.4f, 0.7f - i * 0.3f), 16.0f, 0.0f);
-        smallCube.scale = glm::vec3(0.2f, 0.2f, 0.2f);
-        smallCube.name = "Small_Detail_" + std::to_string(i);
-        smallCube.position = glm::vec3(-0.5f + i * 0.3f, -0.7f, -0.8f + i * 0.6f);
-        currentScene.models.push_back(smallCube);
-    }
+    
     currentModelIndex = 0;
 
     camera.centeringCompletedCallback = [&]() {
@@ -1766,13 +1700,6 @@ int main() {
         if (spaceMouseInput.IsNavigating() && preferences.spaceMouseCenterCursor) {
             glfwSetCursorPos(window, windowWidth * 0.5, windowHeight * 0.5);
         }
-        
-        // Adjust camera movement speed based on distance
-        float distanceToNearestObject = camera.getDistanceToNearestObject(camera, projection, view, currentScene.settings.farPlane, windowWidth, windowHeight);
-        // Update camera's internal distance info AFTER getting it
-        camera.UpdateDistanceToObject(distanceToNearestObject);
-        // Now adjust speed using the updated internal value
-        camera.AdjustMovementSpeed(distanceToNearestObject, largestDimension, currentScene.settings.farPlane); // Assuming largestDimension is calculated elsewhere
 
         // ---- Shader Selection ----
         Engine::Shader* activeShader = shader;  // Default to standard shader
@@ -2136,7 +2063,41 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     renderModels(shader);
     renderPointClouds(shader);
     
-    // Render zero plane if enabled
+    // Calculate distance to nearest object AFTER scene rendering but BEFORE zero plane
+    // This ensures zero plane doesn't interfere with distance calculation
+    // Only calculate once per frame (left eye for stereo, or single eye for mono)
+    static bool distanceCalculatedThisFrame = false;
+    static double lastFrameTime = 0.0;
+    double currentFrameTime = glfwGetTime();
+    
+    if (currentFrameTime != lastFrameTime) {
+        distanceCalculatedThisFrame = false;
+        lastFrameTime = currentFrameTime;
+    }
+    
+    if (!distanceCalculatedThisFrame) {
+        float distanceToNearestObject = camera.getDistanceToNearestObject(camera, projection, view, currentScene.settings.farPlane, windowWidth, windowHeight);
+        camera.UpdateDistanceToObject(distanceToNearestObject);
+        float largestDimension = calculateLargestModelDimension();
+        camera.AdjustMovementSpeed(distanceToNearestObject, largestDimension, currentScene.settings.farPlane);
+        
+        // Update convergence automatically if enabled
+        if (currentScene.settings.autoConvergence) {
+            float cameraDistance = camera.distanceToNearestObject;
+            if (cameraDistance < currentScene.settings.farPlane * 0.95f && camera.distanceUpdated) {
+                float autoConvergenceValue = cameraDistance * currentScene.settings.convergenceDistanceFactor;
+                float minSafeConvergence = cameraDistance + 0.5f;
+                autoConvergenceValue = glm::max(autoConvergenceValue, minSafeConvergence);
+                autoConvergenceValue = glm::clamp(autoConvergenceValue, 0.5f, 40.0f);
+                currentScene.settings.convergence = autoConvergenceValue;
+                preferences.convergence = autoConvergenceValue;
+            }
+            // If looking at empty space, keep previous convergence value
+        }
+        distanceCalculatedThisFrame = true;
+    }
+    
+    // Render zero plane if enabled (AFTER distance calculation)
     if (currentScene.settings.showZeroPlane) {
         renderZeroPlane(shader, projection, view, currentScene.settings.convergence);
     }
@@ -2782,10 +2743,6 @@ void updateSpaceMouseCursorAnchor() {
             // Force NavLib to refresh the pivot position
             if (preferences.spaceMouseAnchorMode != GUI::SPACEMOUSE_ANCHOR_DISABLED) {
                 spaceMouseInput.RefreshPivotPosition();
-                std::cout << "SpaceMouse anchor updated to cursor position: (" 
-                          << currentCursorPosition.x << ", " 
-                          << currentCursorPosition.y << ", " 
-                          << currentCursorPosition.z << ") Mode: " << static_cast<int>(preferences.spaceMouseAnchorMode) << std::endl;
             }
         }
     } else {
@@ -3322,7 +3279,24 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
     // Handle Delete key
     if (key == GLFW_KEY_DELETE && action == GLFW_PRESS)
     {
-        std::cout << "Deleted selected model" << std::endl;
+        if (currentModelIndex >= 0 && currentModelIndex < currentScene.models.size()) {
+            std::cout << "Deleting model: " << currentScene.models[currentModelIndex].name << std::endl;
+            
+            // Remove the selected model from the scene
+            currentScene.models.erase(currentScene.models.begin() + currentModelIndex);
+            
+            // Adjust currentModelIndex after deletion
+            if (currentScene.models.empty()) {
+                currentModelIndex = -1; // No models left
+            } else if (currentModelIndex >= currentScene.models.size()) {
+                currentModelIndex = currentScene.models.size() - 1; // Select last model if we deleted the last one
+            }
+            // If currentModelIndex < currentScene.models.size(), it stays the same (next model takes the same index)
+            
+            std::cout << "Model deleted successfully. Remaining models: " << currentScene.models.size() << std::endl;
+        } else {
+            std::cout << "No model selected or invalid model index" << std::endl;
+        }
     }
 }
 #pragma endregion

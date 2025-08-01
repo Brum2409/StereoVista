@@ -15,6 +15,10 @@ namespace Engine {
         float farPlane = 200.0f;
         int msaaSamples = 2;
         
+        // Automatic convergence settings
+        bool autoConvergence = false;
+        float convergenceDistanceFactor = 1.0f;  // Multiplier for distance to nearest object
+        
         // Added radar fields:
         bool radarEnabled = false;
         glm::vec2 radarPos = glm::vec2(0.8f, -0.8f);

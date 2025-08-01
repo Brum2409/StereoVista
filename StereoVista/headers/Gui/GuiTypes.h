@@ -95,6 +95,10 @@ namespace GUI {
         bool show3DCursor = true;
         bool useNewStereoMethod = true;
         float fov = 45.0f;
+        
+        // Automatic convergence settings
+        bool autoConvergence = false;
+        float convergenceDistanceFactor = 1.0f;
 
         // Lighting settings
         LightingMode lightingMode = LIGHTING_SHADOW_MAPPING;

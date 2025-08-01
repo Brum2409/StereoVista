@@ -620,11 +620,29 @@ void renderSettingsWindow() {
             }
             ImGui::SetItemTooltip("Adjusts the distance between stereo views. Higher values increase 3D effect");
 
-            if (ImGui::SliderFloat("Convergence", &currentScene.settings.convergence, 0.0f, 40.0f)) {
-                preferences.convergence = currentScene.settings.convergence;
+            if (ImGui::Checkbox("Auto Convergence", &currentScene.settings.autoConvergence)) {
+                preferences.autoConvergence = currentScene.settings.autoConvergence;
                 settingsChanged = true;
             }
-            ImGui::SetItemTooltip("Sets the focal point distance where left and right views converge");
+            ImGui::SetItemTooltip("Automatically sets convergence based on distance to nearest object");
+
+            if (currentScene.settings.autoConvergence) {
+                if (ImGui::SliderFloat("Distance Factor", &currentScene.settings.convergenceDistanceFactor, 0.1f, 2.0f)) {
+                    preferences.convergenceDistanceFactor = currentScene.settings.convergenceDistanceFactor;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Multiplier for the distance to nearest object used for convergence");
+                
+                // Display current auto-calculated convergence value
+                ImGui::Text("Current Convergence: %.2f", currentScene.settings.convergence);
+                ImGui::SetItemTooltip("Auto-calculated convergence distance based on nearest object");
+            } else {
+                if (ImGui::SliderFloat("Convergence", &currentScene.settings.convergence, 0.0f, 40.0f)) {
+                    preferences.convergence = currentScene.settings.convergence;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Sets the focal point distance where left and right views converge");
+            }
             ImGui::EndGroup();
             
             ImGui::Spacing();
