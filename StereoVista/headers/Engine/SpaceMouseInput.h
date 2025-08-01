@@ -65,6 +65,12 @@ public:
     // Window size for proper coordinate transformations
     void SetWindowSize(int width, int height);
     
+    // Set cursor anchor point for navigation pivot
+    void SetCursorAnchor(const glm::vec3& cursorPosition, bool useCursorAnchor);
+    
+    // Force refresh of pivot position in NavLib
+    void RefreshPivotPosition();
+    
     // Callbacks for extended functionality
     std::function<void()> OnNavigationStarted;
     std::function<void()> OnNavigationEnded;
@@ -95,6 +101,9 @@ private:
     bool m_isNavigating;
     float m_lastUpdateTime;
     
+    // Cursor anchor settings
+    glm::vec3 m_cursorAnchor;
+    bool m_useCursorAnchor;
     
     // Helper functions
     void UpdateCameraFromNavlib();

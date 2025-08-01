@@ -134,6 +134,7 @@ namespace GUI {
         float spaceMouseDeadzone = 0.025f;
         float spaceMouseTranslationSensitivity = 1.0f;
         float spaceMouseRotationSensitivity = 1.0f;
+        bool spaceMouseUseCursorAnchor = false;
 
         int skyboxType = SKYBOX_CUBEMAP;
         glm::vec3 skyboxSolidColor = glm::vec3(0.2f, 0.3f, 0.4f);

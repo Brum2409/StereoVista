@@ -72,6 +72,7 @@ glm::vec4 divw(glm::vec4 vec);
 // ---- Update Functions ----
 void updatePointLights();
 void updateSpaceMouseBounds();
+void updateSpaceMouseCursorAnchor();
 
 PointCloud loadPointCloudFile(const std::string& filePath, size_t downsampleFactor = 1);
 
@@ -852,6 +853,7 @@ void savePreferences() {
     j["spacemouse"]["deadzone"] = preferences.spaceMouseDeadzone;
     j["spacemouse"]["translationSensitivity"] = preferences.spaceMouseTranslationSensitivity;
     j["spacemouse"]["rotationSensitivity"] = preferences.spaceMouseRotationSensitivity;
+    j["spacemouse"]["useCursorAnchor"] = preferences.spaceMouseUseCursorAnchor;
 
     // Cursor settings
     j["cursor"]["currentPreset"] = preferences.currentPresetName;
@@ -1086,6 +1088,7 @@ void loadPreferences() {
             preferences.spaceMouseDeadzone = j["spacemouse"].value("deadzone", 0.025f);
             preferences.spaceMouseTranslationSensitivity = j["spacemouse"].value("translationSensitivity", 1.0f);
             preferences.spaceMouseRotationSensitivity = j["spacemouse"].value("rotationSensitivity", 1.0f);
+            preferences.spaceMouseUseCursorAnchor = j["spacemouse"].value("useCursorAnchor", false);
         }
 
         if (j.contains("skybox")) {
@@ -1556,6 +1559,7 @@ int main() {
         
         // Initialize SpaceMouse bounds with current scene content
         updateSpaceMouseBounds();
+        updateSpaceMouseCursorAnchor();
         spaceMouseInput.SetWindowSize(windowWidth, windowHeight);
         spaceMouseInput.SetFieldOfView(camera.Zoom);
         spaceMouseInput.SetPerspectiveMode(true);
@@ -2119,6 +2123,9 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     // Calculate cursor position (only once per frame for stereo consistency)
     // For stereo: first call (left eye) calculates, second call (right eye) uses cached value
     cursorManager.updateCursorPosition(window, projection, view, shader, false);
+    
+    // Update SpaceMouse cursor anchor when cursor position changes
+    updateSpaceMouseCursorAnchor();
 
     // Update shader uniforms for cursors (use active shader, not original shader)
     cursorManager.updateShaderUniforms(shader);
@@ -2711,6 +2718,39 @@ void updateSpaceMouseBounds() {
     
     // Update SpaceMouse with new bounds
     spaceMouseInput.SetModelExtents(modelMin, modelMax);
+}
+
+void updateSpaceMouseCursorAnchor() {
+    // Update SpaceMouse cursor anchor if cursor is valid and option is enabled
+    static glm::vec3 lastCursorPosition = glm::vec3(FLT_MAX);
+    static bool lastUseCursorAnchor = false;
+    
+    bool settingChanged = (lastUseCursorAnchor != preferences.spaceMouseUseCursorAnchor);
+    lastUseCursorAnchor = preferences.spaceMouseUseCursorAnchor;
+    
+    if (cursorManager.isCursorPositionValid()) {
+        glm::vec3 currentCursorPosition = cursorManager.getCursorPosition();
+        
+        // Update if cursor position changed or setting toggled
+        bool positionChanged = glm::distance(lastCursorPosition, currentCursorPosition) > 0.001f;
+        
+        if (positionChanged || settingChanged) {
+            lastCursorPosition = currentCursorPosition;
+            spaceMouseInput.SetCursorAnchor(currentCursorPosition, preferences.spaceMouseUseCursorAnchor);
+            
+            // Force NavLib to refresh the pivot position
+            if (preferences.spaceMouseUseCursorAnchor) {
+                spaceMouseInput.RefreshPivotPosition();
+                std::cout << "SpaceMouse anchor updated to cursor position: (" 
+                          << currentCursorPosition.x << ", " 
+                          << currentCursorPosition.y << ", " 
+                          << currentCursorPosition.z << ")" << std::endl;
+            }
+        }
+    } else {
+        // Always update the setting state even if cursor is not valid
+        spaceMouseInput.SetCursorAnchor(glm::vec3(0.0f), preferences.spaceMouseUseCursorAnchor);
+    }
 }
 
 #pragma endregion

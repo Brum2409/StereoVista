@@ -198,6 +198,20 @@ public:
     bool m_motionActive;
     bool m_transactionActive;
     
+    void RefreshPivotPosition() {
+        if (m_navlibHandle != 0 && m_parent->m_useCursorAnchor) {
+            // Force NavLib to re-query the pivot position by writing the pivot position value
+            navlib::value_t pivotValue;
+            pivotValue.type = navlib::point_type;
+            pivotValue.point.x = m_parent->m_cursorAnchor.x;
+            pivotValue.point.y = m_parent->m_cursorAnchor.y;
+            pivotValue.point.z = m_parent->m_cursorAnchor.z;
+            
+            // Try to write the pivot position to force update
+            navlib::NlWriteValue(m_navlibHandle, navlib::pivot_position_k, &pivotValue);
+        }
+    }
+    
 private:
 
     // Implementation functions
@@ -349,11 +363,19 @@ private:
             return navlib::make_result_code(navlib::navlib_errc::no_data_available);
         }
 
-        glm::vec3 center = (m_parent->m_modelMin + m_parent->m_modelMax) * 0.5f;
+        glm::vec3 pivotPoint;
+        if (m_parent->m_useCursorAnchor) {
+            // Use cursor anchor point if enabled
+            pivotPoint = m_parent->m_cursorAnchor;
+        } else {
+            // Use default scene center
+            pivotPoint = (m_parent->m_modelMin + m_parent->m_modelMax) * 0.5f;
+        }
+        
         value->type = navlib::point_type;
-        value->point.x = center.x;
-        value->point.y = center.y;
-        value->point.z = center.z;
+        value->point.x = pivotPoint.x;
+        value->point.y = pivotPoint.y;
+        value->point.z = pivotPoint.z;
         return 0;
     }
 
@@ -391,7 +413,9 @@ SpaceMouseInput::SpaceMouseInput()
     , m_rotationSensitivity(1.0f)
     , m_deadzone(0.025f)
     , m_isNavigating(false)
-    , m_lastUpdateTime(0.0f) {
+    , m_lastUpdateTime(0.0f)
+    , m_cursorAnchor(0.0f)
+    , m_useCursorAnchor(false) {
 }
 
 SpaceMouseInput::~SpaceMouseInput() {
@@ -474,6 +498,17 @@ void SpaceMouseInput::SetDeadzone(float deadzone) {
 void SpaceMouseInput::SetWindowSize(int width, int height) {
     m_windowWidth = width;
     m_windowHeight = height;
+}
+
+void SpaceMouseInput::SetCursorAnchor(const glm::vec3& cursorPosition, bool useCursorAnchor) {
+    m_cursorAnchor = cursorPosition;
+    m_useCursorAnchor = useCursorAnchor;
+}
+
+void SpaceMouseInput::RefreshPivotPosition() {
+    if (m_navigationModel) {
+        m_navigationModel->RefreshPivotPosition();
+    }
 }
 
 // Helper functions for coordinate system conversion

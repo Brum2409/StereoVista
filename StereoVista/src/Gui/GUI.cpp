@@ -17,6 +17,7 @@ using namespace GUI;
 
 // Forward declarations
 void updateSpaceMouseBounds();
+void updateSpaceMouseCursorAnchor();
 
 // Application globals used throughout the GUI system
 extern int windowWidth;
@@ -39,6 +40,9 @@ extern bool orbitFollowsCursor;
 // SpaceMouse variables
 extern SpaceMouseInput spaceMouseInput;
 extern bool spaceMouseInitialized;
+
+// Cursor variables
+extern Cursor::CursorManager cursorManager;
 
 extern GUI::LightingMode currentLightingMode;
 extern bool enableShadows;
@@ -1356,6 +1360,14 @@ void renderSettingsWindow() {
                         settingsChanged = true;
                     }
                     ImGui::SetItemTooltip("Controls how sensitive rotation movements are");
+                    
+                    ImGui::Spacing();
+                    if (ImGui::Checkbox("Use Cursor as Anchor Point", &preferences.spaceMouseUseCursorAnchor)) {
+                        settingsChanged = true;
+                        updateSpaceMouseCursorAnchor();
+                        spaceMouseInput.RefreshPivotPosition();
+                    }
+                    ImGui::SetItemTooltip("Use the last 3D cursor position as the SpaceMouse anchor/pivot point instead of the scene center");
                 }
             } else {
                 ImGui::TextDisabled("SpaceMouse device not detected");
