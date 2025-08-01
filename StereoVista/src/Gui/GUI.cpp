@@ -15,6 +15,9 @@
 
 using namespace GUI;
 
+// Forward declarations
+void updateSpaceMouseBounds();
+
 // Application globals used throughout the GUI system
 extern int windowWidth;
 extern int windowHeight;
@@ -123,6 +126,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                             currentScene.models.push_back(newModel);
                             currentSelectedIndex = currentScene.models.size() - 1;
                             currentSelectedType = SelectedType::Model;
+                            updateSpaceMouseBounds();
                         }
                         catch (const std::exception& e) {
                             std::cerr << "Failed to load model: " << e.what() << std::endl;
@@ -142,6 +146,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                             Engine::PointCloud newPointCloud = std::move(Engine::PointCloudLoader::loadPointCloudFile(filePath));
                             newPointCloud.filePath = filePath;
                             currentScene.pointClouds.emplace_back(std::move(newPointCloud));
+                            updateSpaceMouseBounds();
                         }
                         else if (extension == ".pcb") {
                             Engine::PointCloud newPointCloud = std::move(Engine::PointCloudLoader::loadFromBinary(filePath));
@@ -150,6 +155,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                                 newPointCloud.name = std::filesystem::path(filePath).stem().string();
                                 currentScene.pointClouds.emplace_back(std::move(newPointCloud));
                                 std::cout << "[DEBUG] Successfully loaded point cloud: " << filePath << std::endl;
+                                updateSpaceMouseBounds();
                             }
                             else {
                                 std::cerr << "Failed to load point cloud from: " << filePath << std::endl;
@@ -162,6 +168,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                                 newPointCloud.name = std::filesystem::path(filePath).stem().string();
                                 currentScene.pointClouds.emplace_back(std::move(newPointCloud));
                                 std::cout << "[DEBUG] Successfully loaded HDF5 point cloud: " << filePath << std::endl;
+                                updateSpaceMouseBounds();
                             }
                             else {
                                 std::cerr << "Failed to load HDF5 point cloud from: " << filePath << std::endl;
@@ -179,6 +186,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                     try {
                         currentScene = Engine::loadScene(selection[0], camera);
                         currentSelectedIndex = currentScene.models.empty() ? -1 : 0;
+                        updateSpaceMouseBounds();
                     }
                     catch (const std::exception& e) {
                         std::cerr << "Failed to load scene: " << e.what() << std::endl;
@@ -208,6 +216,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                 currentScene.models.push_back(newCube);
                 currentSelectedIndex = currentScene.models.size() - 1;
                 currentSelectedType = SelectedType::Model;
+                updateSpaceMouseBounds();
             }
             if (ImGui::MenuItem("Sphere")) {
                 Engine::Model newSphere = Engine::createSphere(glm::vec3(0.8f, 0.4f, 0.4f), 1.0f, 0.0f);
@@ -216,6 +225,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                 currentScene.models.push_back(newSphere);
                 currentSelectedIndex = currentScene.models.size() - 1;
                 currentSelectedType = SelectedType::Model;
+                updateSpaceMouseBounds();
             }
             if (ImGui::MenuItem("Cylinder")) {
                 Engine::Model newCylinder = Engine::createCylinder(glm::vec3(0.4f, 0.8f, 0.4f), 1.0f, 0.0f);
@@ -224,6 +234,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                 currentScene.models.push_back(newCylinder);
                 currentSelectedIndex = currentScene.models.size() - 1;
                 currentSelectedType = SelectedType::Model;
+                updateSpaceMouseBounds();
             }
             if (ImGui::MenuItem("Plane")) {
                 Engine::Model newPlane = Engine::createPlane(glm::vec3(0.6f, 0.6f, 0.8f), 1.0f, 0.0f);
@@ -232,6 +243,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                 currentScene.models.push_back(newPlane);
                 currentSelectedIndex = currentScene.models.size() - 1;
                 currentSelectedType = SelectedType::Model;
+                updateSpaceMouseBounds();
             }
             if (ImGui::MenuItem("Torus (Ring)")) {
                 Engine::Model newTorus = Engine::createTorus(glm::vec3(0.8f, 0.6f, 0.2f), 1.0f, 0.0f);
@@ -240,6 +252,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                 currentScene.models.push_back(newTorus);
                 currentSelectedIndex = currentScene.models.size() - 1;
                 currentSelectedType = SelectedType::Model;
+                updateSpaceMouseBounds();
             }
             ImGui::EndMenu();
         }
@@ -1880,9 +1893,15 @@ void renderModelManipulationPanel(Engine::Model& model, Engine::Shader* shader) 
 
     // Transform
     if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::DragFloat3("Position", glm::value_ptr(model.position), 0.1f);
-        ImGui::DragFloat3("Scale", glm::value_ptr(model.scale), 0.01f, 0.01f, 100.0f);
-        ImGui::DragFloat3("Rotation", glm::value_ptr(model.rotation), 1.0f, -360.0f, 360.0f);
+        bool transformChanged = false;
+        transformChanged |= ImGui::DragFloat3("Position", glm::value_ptr(model.position), 0.1f);
+        transformChanged |= ImGui::DragFloat3("Scale", glm::value_ptr(model.scale), 0.01f, 0.01f, 100.0f);
+        transformChanged |= ImGui::DragFloat3("Rotation", glm::value_ptr(model.rotation), 1.0f, -360.0f, 360.0f);
+        
+        // Update SpaceMouse bounds only when transform changes
+        if (transformChanged) {
+            updateSpaceMouseBounds();
+        }
     }
 
     // Material
@@ -2100,9 +2119,15 @@ void renderPointCloudManipulationPanel(Engine::PointCloud& pointCloud) {
 
     // Transform
     if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::DragFloat3("Position", glm::value_ptr(pointCloud.position), 0.1f);
-        ImGui::DragFloat3("Rotation", glm::value_ptr(pointCloud.rotation), 1.0f, -360.0f, 360.0f);
-        ImGui::DragFloat3("Scale", glm::value_ptr(pointCloud.scale), 0.01f, 0.01f, 100.0f);
+        bool transformChanged = false;
+        transformChanged |= ImGui::DragFloat3("Position", glm::value_ptr(pointCloud.position), 0.1f);
+        transformChanged |= ImGui::DragFloat3("Rotation", glm::value_ptr(pointCloud.rotation), 1.0f, -360.0f, 360.0f);
+        transformChanged |= ImGui::DragFloat3("Scale", glm::value_ptr(pointCloud.scale), 0.01f, 0.01f, 100.0f);
+        
+        // Update SpaceMouse bounds only when transform changes
+        if (transformChanged) {
+            updateSpaceMouseBounds();
+        }
     }
 
     // Point Cloud specific settings
@@ -2211,6 +2236,7 @@ void deleteSelectedModel() {
         currentScene.models.erase(currentScene.models.begin() + currentSelectedIndex);
         currentSelectedIndex = -1;
         currentSelectedType = SelectedType::None;
+        updateSpaceMouseBounds();
     }
 }
 
@@ -2224,6 +2250,7 @@ void deleteSelectedPointCloud() {
         currentScene.pointClouds.erase(currentScene.pointClouds.begin() + currentSelectedIndex);
         currentSelectedIndex = -1;
         currentSelectedType = SelectedType::None;
+        updateSpaceMouseBounds();
     }
 }
 

@@ -71,6 +71,7 @@ glm::vec4 divw(glm::vec4 vec);
 
 // ---- Update Functions ----
 void updatePointLights();
+void updateSpaceMouseBounds();
 
 PointCloud loadPointCloudFile(const std::string& filePath, size_t downsampleFactor = 1);
 
@@ -980,9 +981,9 @@ void applyPreferencesToProgram() {
                 spherePreset.sphereScalingMode = static_cast<int>(GUI::CURSOR_CONSTRAINED_DYNAMIC);
                 spherePreset.sphereFixedRadius = 0.05f;
                 spherePreset.sphereTransparency = 0.7f;
-                spherePreset.showInnerSphere = false;
-                spherePreset.cursorColor = glm::vec4(1.0f, 0.0f, 0.0f, 0.7f);
-                spherePreset.innerSphereColor = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
+                spherePreset.showInnerSphere = true;
+                spherePreset.cursorColor = glm::vec4(0.656f, 0.183f, 0.183f, 0.7f);
+                spherePreset.innerSphereColor = glm::vec4(0.309f, 1.0f, 0.011f, 1.0f);
                 spherePreset.innerSphereFactor = 0.1f;
                 spherePreset.cursorEdgeSoftness = 0.8f;
                 spherePreset.cursorCenterTransparency = 0.2f;
@@ -1237,9 +1238,9 @@ void InitializeDefaults() {
         spherePreset.sphereScalingMode = static_cast<int>(GUI::CURSOR_CONSTRAINED_DYNAMIC);
         spherePreset.sphereFixedRadius = 0.05f;
         spherePreset.sphereTransparency = 0.7f;
-        spherePreset.showInnerSphere = false;
-        spherePreset.cursorColor = glm::vec4(1.0f, 0.0f, 0.0f, 0.7f);
-        spherePreset.innerSphereColor = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
+        spherePreset.showInnerSphere = true;
+        spherePreset.cursorColor = glm::vec4(0.656f, 0.183f, 0.183f, 0.7f);
+        spherePreset.innerSphereColor = glm::vec4(0.309f, 1.0f, 0.011f, 1.0f);
         spherePreset.innerSphereFactor = 0.1f;
         spherePreset.cursorEdgeSoftness = 0.8f;
         spherePreset.cursorCenterTransparency = 0.2f;
@@ -1553,24 +1554,8 @@ int main() {
         spaceMouseInput.SetDeadzone(preferences.spaceMouseDeadzone);
         spaceMouseInput.SetSensitivity(preferences.spaceMouseTranslationSensitivity, preferences.spaceMouseRotationSensitivity);
         
-        // Calculate model bounds for proper navigation
-        glm::vec3 modelMin(FLT_MAX), modelMax(-FLT_MAX);
-        for (const auto& model : currentScene.models) {
-            // Calculate bounds from mesh vertices
-            for (const auto& mesh : model.getMeshes()) {
-                for (const auto& vertex : mesh.vertices) {
-                    glm::vec3 worldPos = model.position + (glm::vec3(vertex.position) * model.scale);
-                    modelMin = glm::min(modelMin, worldPos);
-                    modelMax = glm::max(modelMax, worldPos);
-                }
-            }
-        }
-        // Fallback if no models found
-        if (modelMin.x == FLT_MAX) {
-            modelMin = glm::vec3(-5.0f);
-            modelMax = glm::vec3(5.0f);
-        }
-        spaceMouseInput.SetModelExtents(modelMin, modelMax);
+        // Initialize SpaceMouse bounds with current scene content
+        updateSpaceMouseBounds();
         spaceMouseInput.SetWindowSize(windowWidth, windowHeight);
         spaceMouseInput.SetFieldOfView(camera.Zoom);
         spaceMouseInput.SetPerspectiveMode(true);
@@ -2679,6 +2664,55 @@ void updatePointLights() {
         }
     }
 }
+
+void updateSpaceMouseBounds() {
+    // Calculate combined bounding box for models and point clouds
+    // This function is called when:
+    // - Models or point clouds are loaded/deleted
+    // - Model/point cloud transforms (position, scale, rotation) change
+    // - Scenes are loaded
+    // This ensures SpaceMouse navigation bounds stay accurate without per-frame updates
+    glm::vec3 modelMin(FLT_MAX), modelMax(-FLT_MAX);
+    
+    // Include models in bounding box calculation
+    for (const auto& model : currentScene.models) {
+        for (const auto& mesh : model.getMeshes()) {
+            for (const auto& vertex : mesh.vertices) {
+                glm::vec3 worldPos = model.position + (glm::vec3(vertex.position) * model.scale);
+                modelMin = glm::min(modelMin, worldPos);
+                modelMax = glm::max(modelMax, worldPos);
+            }
+        }
+    }
+    
+    // Include point clouds in bounding box calculation
+    for (const auto& pointCloud : currentScene.pointClouds) {
+        if (pointCloud.octreeRoot) {
+            // Use octree bounds if available
+            glm::vec3 pcMin = pointCloud.position + (pointCloud.octreeBoundsMin * pointCloud.scale);
+            glm::vec3 pcMax = pointCloud.position + (pointCloud.octreeBoundsMax * pointCloud.scale);
+            modelMin = glm::min(modelMin, pcMin);
+            modelMax = glm::max(modelMax, pcMax);
+        } else if (!pointCloud.points.empty()) {
+            // Fall back to calculating bounds from points
+            for (const auto& point : pointCloud.points) {
+                glm::vec3 worldPos = pointCloud.position + (point.position * pointCloud.scale);
+                modelMin = glm::min(modelMin, worldPos);
+                modelMax = glm::max(modelMax, worldPos);
+            }
+        }
+    }
+    
+    // Fallback if no content found
+    if (modelMin.x == FLT_MAX) {
+        modelMin = glm::vec3(-5.0f);
+        modelMax = glm::vec3(5.0f);
+    }
+    
+    // Update SpaceMouse with new bounds
+    spaceMouseInput.SetModelExtents(modelMin, modelMax);
+}
+
 #pragma endregion
 
 
