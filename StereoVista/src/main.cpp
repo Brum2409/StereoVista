@@ -1431,6 +1431,78 @@ int main() {
         radianceShader = nullptr;
     }
 
+
+    // ---- Create Temp Default scene
+
+    Engine::Model basePlatform = Engine::createCube(glm::vec3(0.3f, 0.3f, 0.3f), 1.0f, 0.0f);
+    basePlatform.scale = glm::vec3(4.0f, 0.2f, 4.0f);
+    basePlatform.name = "Base_Platform";
+    basePlatform.position = glm::vec3(0.0f, -1.0f, 0.0f);
+    currentScene.models.push_back(basePlatform);
+
+
+    Engine::Model centralCube = Engine::createCube(glm::vec3(1.0f, 0.2f, 0.2f), 1.0f, 0.8f);
+    centralCube.scale = glm::vec3(0.8f, 0.8f, 0.8f);
+    centralCube.name = "Central_Light_Cube";
+    centralCube.position = glm::vec3(0.0f, 0.0f, 0.0f);
+    currentScene.models.push_back(centralCube);
+
+
+    Engine::Model blueCube = Engine::createCube(glm::vec3(0.2f, 0.4f, 1.0f), 1.0f, 0.0f);
+    blueCube.scale = glm::vec3(0.6f, 0.6f, 0.6f);
+    blueCube.name = "Blue_Cube";
+    blueCube.position = glm::vec3(-1.5f, 0.2f, 1.5f);
+    currentScene.models.push_back(blueCube);
+
+
+    Engine::Model greenCube = Engine::createCube(glm::vec3(0.2f, 1.0f, 0.3f), 1.0f, 0.0f);
+    greenCube.scale = glm::vec3(0.5f, 1.2f, 0.5f);
+    greenCube.name = "Green_Tower";
+    greenCube.position = glm::vec3(1.2f, 0.6f, 1.0f);
+    currentScene.models.push_back(greenCube);
+
+
+    Engine::Model yellowCube = Engine::createCube(glm::vec3(1.0f, 1.0f, 0.3f), 1.0f, 0.4f);
+    yellowCube.scale = glm::vec3(0.4f, 0.4f, 0.4f);
+    yellowCube.name = "Yellow_Light";
+    yellowCube.position = glm::vec3(-1.8f, 0.5f, -1.8f);
+    currentScene.models.push_back(yellowCube);
+
+
+    Engine::Model purpleCube = Engine::createCube(glm::vec3(0.8f, 0.2f, 0.9f), 1.0f, 0.0f);
+    purpleCube.scale = glm::vec3(0.7f, 0.7f, 0.7f);
+    purpleCube.name = "Purple_Cube";
+    purpleCube.position = glm::vec3(1.5f, 0.35f, -1.5f);
+    currentScene.models.push_back(purpleCube);
+
+
+    Engine::Model orangeCube = Engine::createCube(glm::vec3(1.0f, 0.6f, 0.1f), 1.0f, 0.0f);
+    orangeCube.scale = glm::vec3(0.3f, 0.3f, 0.3f);
+    orangeCube.name = "Orange_Small";
+    orangeCube.position = glm::vec3(0.5f, 1.5f, 0.5f);
+    currentScene.models.push_back(orangeCube);
+
+
+    Engine::Model cyanCube = Engine::createCube(glm::vec3(0.2f, 0.9f, 0.9f), 1.0f, 0.1f);
+    cyanCube.scale = glm::vec3(0.4f, 0.8f, 0.4f);
+    cyanCube.name = "Cyan_Pillar";
+    cyanCube.position = glm::vec3(-2.5f, 0.4f, 0.0f);
+    currentScene.models.push_back(cyanCube);
+
+
+    Engine::Model whiteCube = Engine::createCube(glm::vec3(0.9f, 0.9f, 0.9f), 1.0f, 0.0f);
+    whiteCube.scale = glm::vec3(0.5f, 0.5f, 0.5f);
+    whiteCube.name = "White_Reflective";
+    whiteCube.position = glm::vec3(2.5f, 0.25f, 0.5f);
+    currentScene.models.push_back(whiteCube);
+
+    for (int i = 0; i < 3; i++) {
+        Engine::Model smallCube = Engine::createCube(glm::vec3(0.6f + i * 0.3f, 0.4f, 0.7f - i * 0.3f), 1.0f, 0.0f);
+        smallCube.scale = glm::vec3(0.2f, 0.2f, 0.2f);
+        smallCube.name = "Small_Detail_" + std::to_string(i);
+        smallCube.position = glm::vec3(-0.5f + i * 0.3f, -0.7f, -0.8f + i * 0.6f);
+        currentScene.models.push_back(smallCube);
+    }
     
     currentModelIndex = 0;
 
@@ -2892,9 +2964,10 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 
     if (button == GLFW_MOUSE_BUTTON_LEFT) {
         if (action == GLFW_PRESS) {
-            // Check if Ctrl is held down
+            // Check if Ctrl or Alt is held down
             bool ctrlPressed = (mods & GLFW_MOD_CONTROL);
-            if (ctrlPressed) {
+            bool altPressed = (mods & GLFW_MOD_ALT);
+            if (ctrlPressed || altPressed) {
                 glm::vec3 rayOrigin, rayDirection, rayNear, rayFar;
                 calculateMouseRay(lastX, lastY, rayOrigin, rayDirection, rayNear, rayFar, (float)windowWidth / (float)windowHeight);
 
@@ -2927,8 +3000,22 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                 }
 
                 if (closestModelIndex != -1) {
+                    // Handle Alt+drag duplication
+                    if (altPressed) {
+                        // Duplicate the model at the same position
+                        Engine::Model duplicatedModel = currentScene.models[closestModelIndex];
+                        duplicatedModel.name += "_Copy";
+                        currentScene.models.push_back(duplicatedModel);
+                        
+                        // Select the new duplicated model for moving
+                        currentSelectedIndex = currentScene.models.size() - 1;
+                        std::cout << "Model duplicated: " << duplicatedModel.name << std::endl;
+                    } else {
+                        // Normal Ctrl+drag - select existing model
+                        currentSelectedIndex = closestModelIndex;
+                    }
+                    
                     currentSelectedType = SelectedType::Model;
-                    currentSelectedIndex = closestModelIndex;
                     currentSelectedMeshIndex = -1;
 
                     if (!isMouseCaptured) {
@@ -2937,7 +3024,7 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
                     }
 
-                    if (ctrlPressed) {
+                    if (ctrlPressed || altPressed) {
                         selectionMode = true;
                         isMovingModel = true;
                     }
@@ -3279,23 +3366,31 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
     // Handle Delete key
     if (key == GLFW_KEY_DELETE && action == GLFW_PRESS)
     {
-        if (currentModelIndex >= 0 && currentModelIndex < currentScene.models.size()) {
-            std::cout << "Deleting model: " << currentScene.models[currentModelIndex].name << std::endl;
+        if (currentSelectedType == SelectedType::Model && currentSelectedIndex >= 0 && currentSelectedIndex < currentScene.models.size()) {
+            std::cout << "Deleting selected model: " << currentScene.models[currentSelectedIndex].name << std::endl;
             
             // Remove the selected model from the scene
-            currentScene.models.erase(currentScene.models.begin() + currentModelIndex);
+            currentScene.models.erase(currentScene.models.begin() + currentSelectedIndex);
             
-            // Adjust currentModelIndex after deletion
+            // Adjust selection indices after deletion
             if (currentScene.models.empty()) {
-                currentModelIndex = -1; // No models left
-            } else if (currentModelIndex >= currentScene.models.size()) {
-                currentModelIndex = currentScene.models.size() - 1; // Select last model if we deleted the last one
+                currentSelectedIndex = -1; // No models left
+                currentSelectedType = SelectedType::None;
+            } else if (currentSelectedIndex >= currentScene.models.size()) {
+                currentSelectedIndex = currentScene.models.size() - 1; // Select last model if we deleted the last one
             }
-            // If currentModelIndex < currentScene.models.size(), it stays the same (next model takes the same index)
+            // If currentSelectedIndex < currentScene.models.size(), it stays the same (next model takes the same index)
+            
+            // Also update currentModelIndex if it was pointing to the deleted model
+            if (currentModelIndex == currentSelectedIndex) {
+                currentModelIndex = currentSelectedIndex;
+            } else if (currentModelIndex > currentSelectedIndex) {
+                currentModelIndex--; // Adjust if it was pointing to a model after the deleted one
+            }
             
             std::cout << "Model deleted successfully. Remaining models: " << currentScene.models.size() << std::endl;
         } else {
-            std::cout << "No model selected or invalid model index" << std::endl;
+            std::cout << "No model selected or invalid selection" << std::endl;
         }
     }
 }
