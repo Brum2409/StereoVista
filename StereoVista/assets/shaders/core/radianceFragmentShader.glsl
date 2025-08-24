@@ -505,15 +505,16 @@ vec3 rayColor(Ray initialRay, int maxDepth) {
         vec2 seed = hit.point.xy + float(depth) * 123.456;
         vec2 rand = random2(seed);
         
-        // Implement proper BRDF sampling with correct probability handling
+        // Implement proper BRDF sampling with consistent weighting
         vec3 scatterDir;
+        float brdfWeight = 1.0;
         
         // Use hit.shininess to determine material behavior
-        // Instead of probabilistic sampling, blend the BRDFs properly
         float specularAmount = clamp(hit.shininess / 128.0, 0.0, 1.0);
+        float diffuseAmount = 1.0 - specularAmount;
         
-        // Always sample both diffuse and specular components, weighted by material properties
-        // This avoids the complexity of MIS while maintaining correctness
+        // Use consistent sampling strategy based on material properties
+        // This avoids variance from probabilistic sampling without MIS
         
         if (specularAmount > 0.8) {
             // Highly specular material - use reflection with roughness
@@ -527,24 +528,27 @@ vec3 rayColor(Ray initialRay, int maxDepth) {
                 // Perfect mirror reflection
                 scatterDir = reflectedDir;
             }
+            // Full specular weight for highly specular materials
+            brdfWeight = 1.0;
             
         } else if (specularAmount < 0.2) {
             // Highly diffuse material - use cosine-weighted hemisphere sampling
             scatterDir = sampleCosineHemisphere(hit.normal, rand);
+            // Full diffuse weight for highly diffuse materials
+            brdfWeight = 1.0;
             
         } else {
-            // Mixed material - probabilistic sampling without complex MIS
-            if (rand.x < specularAmount) {
-                // Sample specular lobe
-                vec3 reflectedDir = reflect(currentRay.direction, hit.normal);
-                vec3 roughnessOffset = sampleCosineHemisphere(hit.normal, random2(rand)) * hit.roughness;
-                scatterDir = normalize(reflectedDir + roughnessOffset);
-            } else {
-                // Sample diffuse lobe  
-                scatterDir = sampleCosineHemisphere(hit.normal, rand);
-            }
-            // No additional weighting - the probabilistic choice naturally handles the BRDF balance
+            // Mixed material - use consistent weighting instead of probabilistic sampling
+            // Sample diffuse direction and weight by material balance
+            scatterDir = sampleCosineHemisphere(hit.normal, rand);
+            
+            // Apply consistent weighting based on material properties
+            // This maintains energy conservation without variance from probabilistic choices
+            brdfWeight = diffuseAmount + specularAmount * max(0.0, dot(scatterDir, reflect(currentRay.direction, hit.normal)));
         }
+        
+        // Apply BRDF weighting to attenuation
+        attenuation *= brdfWeight;
         
         currentRay.origin = hit.point + 0.001 * hit.normal;
         currentRay.direction = scatterDir;
