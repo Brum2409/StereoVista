@@ -232,6 +232,10 @@ GLuint skyboxVAO, skyboxVBO, cubemapTexture;
 float ambientStrengthFromSkybox = 0.1f;
 Engine::Shader* skyboxShader = nullptr;
 
+// ---- Raytracing Triangle Buffer ----
+GLuint triangleSSBO = 0;
+std::vector<float> triangleData;
+
 // ---- Zero Plane Rendering ----
 Engine::Shader* zeroPlaneShader = nullptr;
 GLuint zeroPlaneVAO, zeroPlaneVBO, zeroPlaneEBO;
@@ -562,6 +566,31 @@ void cleanupSkybox() {
     if (skyboxShader) {
         delete skyboxShader;
         skyboxShader = nullptr;
+    }
+}
+
+// ---- Triangle Buffer Setup for Raytracing ----
+void setupTriangleBuffer() {
+    if (triangleSSBO == 0) {
+        glGenBuffers(1, &triangleSSBO);
+    }
+}
+
+void updateTriangleBuffer(const std::vector<float>& data) {
+    if (triangleSSBO == 0) {
+        setupTriangleBuffer();
+    }
+    
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, triangleSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, data.size() * sizeof(float), data.data(), GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, triangleSSBO);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+}
+
+void cleanupTriangleBuffer() {
+    if (triangleSSBO != 0) {
+        glDeleteBuffers(1, &triangleSSBO);
+        triangleSSBO = 0;
     }
 }
 
@@ -1831,6 +1860,9 @@ void cleanup(Engine::Shader* shader) {
         glDeleteBuffers(1, &pointCloud.vbo);
     }
 
+    // Delete triangle buffer resources
+    cleanupTriangleBuffer();
+
     // Delete skybox resources
     glDeleteVertexArrays(1, &skyboxVAO);
     glDeleteBuffers(1, &skyboxVBO);
@@ -2075,16 +2107,12 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
         shader->setVec3("sun.color", sun.color);
         shader->setFloat("sun.intensity", sun.intensity);
         
-        // Extract triangle data from scene models (simplified for performance)
+        // Extract triangle data from scene models and pack into SSBO
+        triangleData.clear();
         int triangleCount = 0;
-        const int MAX_TRIANGLES = 64; // Match shader constant
         
         for (const auto& model : currentScene.models) {
-            if (triangleCount >= MAX_TRIANGLES) break;
-            
             for (const auto& mesh : model.getMeshes()) {
-                if (triangleCount >= MAX_TRIANGLES) break;
-                
                 // Calculate model matrix for this model
                 glm::mat4 modelMatrix = glm::mat4(1.0f);
                 modelMatrix = glm::translate(modelMatrix, model.position);
@@ -2097,8 +2125,8 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
                 const auto& vertices = mesh.vertices;
                 const auto& indices = mesh.indices;
                 
-                // Extract triangles (simplified - sample every few triangles for performance)
-                for (size_t i = 0; i < indices.size() && triangleCount < MAX_TRIANGLES; i += 9) { // Skip triangles for performance
+                // Extract ALL triangles (no more skipping for performance)
+                for (size_t i = 0; i < indices.size(); i += 3) {
                     if (i + 2 < indices.size()) {
                         // Get triangle vertices
                         glm::vec3 v0 = glm::vec3(modelMatrix * glm::vec4(vertices[indices[i]].position, 1.0f));
@@ -2108,21 +2136,35 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
                         // Calculate triangle normal
                         glm::vec3 normal = normalize(cross(v1 - v0, v2 - v0));
                         
-                        // Set triangle data
-                        std::string triPrefix = "triangles[" + std::to_string(triangleCount) + "]";
-                        shader->setVec3(triPrefix + ".v0", v0);
-                        shader->setVec3(triPrefix + ".v1", v1);
-                        shader->setVec3(triPrefix + ".v2", v2);
-                        shader->setVec3(triPrefix + ".normal", normal);
-                        shader->setVec3(triPrefix + ".color", model.color);
-                        shader->setFloat(triPrefix + ".emissiveness", model.emissive);
-                        shader->setFloat(triPrefix + ".shininess", model.shininess);
-                        shader->setInt(triPrefix + ".materialId", triangleCount);
+                        // Pack triangle data into buffer (matches shader Triangle struct layout)
+                        // struct Triangle { vec3 v0, v1, v2; vec3 normal; vec3 color; float emissiveness; float shininess; int materialId; }
+                        // std430 layout: vec3 takes 3 floats, then next vec3 starts at next 4-float boundary
+                        triangleData.insert(triangleData.end(), {v0.x, v0.y, v0.z}); // vec3 v0
+                        triangleData.push_back(0.0f); // padding for vec3 alignment
+                        triangleData.insert(triangleData.end(), {v1.x, v1.y, v1.z}); // vec3 v1  
+                        triangleData.push_back(0.0f); // padding for vec3 alignment
+                        triangleData.insert(triangleData.end(), {v2.x, v2.y, v2.z}); // vec3 v2
+                        triangleData.push_back(0.0f); // padding for vec3 alignment
+                        triangleData.insert(triangleData.end(), {normal.x, normal.y, normal.z}); // vec3 normal
+                        triangleData.push_back(0.0f); // padding for vec3 alignment
+                        triangleData.insert(triangleData.end(), {model.color.x, model.color.y, model.color.z}); // vec3 color
+                        triangleData.push_back(model.emissive); // float emissiveness (no padding needed, fills vec3 slot)
+                        triangleData.push_back(model.shininess); // float shininess
+                        // For int materialId, we need to use reinterpret_cast to pack as float bits
+                        int materialId = triangleCount;
+                        triangleData.push_back(*reinterpret_cast<float*>(&materialId)); // int materialId packed as float
+                        triangleData.push_back(0.0f); // padding for next struct alignment
+                        triangleData.push_back(0.0f); // padding for next struct alignment
                         
                         triangleCount++;
                     }
                 }
             }
+        }
+        
+        // Update the SSBO with triangle data
+        if (!triangleData.empty()) {
+            updateTriangleBuffer(triangleData);
         }
         
         shader->setInt("numTriangles", triangleCount);

@@ -124,9 +124,10 @@ struct Triangle {
     int materialId;     // Material identifier
 };
 
-// Scene geometry setup
-const int MAX_TRIANGLES = 64; // Limited for performance
-uniform Triangle triangles[MAX_TRIANGLES];
+// Scene geometry setup using Storage Buffer Objects for large triangle counts
+layout(std430, binding = 0) readonly buffer TriangleBuffer {
+    Triangle triangles[];
+};
 uniform int numTriangles;
 
 // Simple ground plane for basic scene setup
@@ -203,7 +204,7 @@ HitInfo castRay(Ray ray) {
     hit.distance = rayMaxDistance;
     
     // Check intersection with triangles (actual scene geometry)
-    for (int i = 0; i < numTriangles && i < MAX_TRIANGLES; i++) {
+    for (int i = 0; i < numTriangles; i++) {
         float t;
         if (intersectTriangle(ray, triangles[i], t) && t < hit.distance) {
             hit.hit = true;
@@ -306,14 +307,17 @@ vec3 evaluateDirectLighting(HitInfo hit, vec3 viewDir) {
 
 // Cosine-weighted hemisphere sampling
 vec3 sampleCosineHemisphere(vec3 normal, vec2 rand) {
-    float cosTheta = sqrt(1.0 - rand.x);
-    float sinTheta = sqrt(rand.x);
-    float phi = 2.0 * 3.14159 * rand.y;
+    // Correct cosine-weighted hemisphere sampling formula
+    float cosTheta = sqrt(rand.x);        // sqrt(r1) for cosine distribution
+    float sinTheta = sqrt(1.0 - rand.x);  // sqrt(1 - r1) 
+    float phi = 2.0 * 3.14159 * rand.y;   // 2π * r2
     
+    // Build orthonormal basis around normal
     vec3 w = normal;
     vec3 u = normalize(cross(abs(w.x) > 0.1 ? vec3(0, 1, 0) : vec3(1, 0, 0), w));
     vec3 v = cross(w, u);
     
+    // Convert spherical coordinates to Cartesian in local basis
     return normalize(u * sinTheta * cos(phi) + v * sinTheta * sin(phi) + w * cosTheta);
 }
 
@@ -346,6 +350,7 @@ vec3 rayColor(Ray initialRay, int maxDepth) {
         
         // Add emissive contribution (controlled by enableEmissiveLighting)
         if (enableEmissiveLighting && hit.emissiveness > 0.0) {
+            // Emissive surfaces emit light in their surface color
             finalColor += attenuation * hit.albedo * hit.emissiveness * emissiveIntensity;
         }
         
@@ -355,25 +360,82 @@ vec3 rayColor(Ray initialRay, int maxDepth) {
             break;
         }
         
-        // Update attenuation for next bounce with indirect intensity control
-        attenuation *= hit.albedo * 0.5 * indirectIntensity;
+        // Update attenuation using proper BRDF and Monte Carlo integration
+        // For Lambertian BRDF: f_r = albedo/π
+        // For cosine-weighted sampling: PDF = cos(θ)/π  
+        // Monte Carlo: (f_r * cos(θ)) / PDF = (albedo/π * cos(θ)) / (cos(θ)/π) = albedo
+        // This simplification occurs because cos(θ) terms cancel out
+        
+        // Ensure energy conservation: clamp albedo to [0,1] to prevent energy gain
+        vec3 conservativeAlbedo = clamp(hit.albedo, 0.0, 1.0);
+        attenuation *= conservativeAlbedo * indirectIntensity;
         
         // Set up next ray with material roughness affecting scatter
         vec2 seed = hit.point.xy + float(depth) * 123.456;
-        vec3 randomDir = randomUnitVector(seed);
-        // Blend between perfect reflection and Lambert based on roughness
-        vec3 reflectedDir = reflect(currentRay.direction, hit.normal);
-        vec3 lambertDir = hit.normal + randomDir;
-        vec3 scatterDir = mix(reflectedDir, lambertDir, materialRoughness);
-        vec3 target = hit.point + normalize(scatterDir);
+        vec2 rand = random2(seed);
+        
+        // Implement proper BRDF sampling with correct probability handling
+        vec3 scatterDir;
+        
+        // Use hit.shininess to determine material behavior
+        // Instead of probabilistic sampling, blend the BRDFs properly
+        float specularAmount = clamp(hit.shininess / 128.0, 0.0, 1.0);
+        
+        // Always sample both diffuse and specular components, weighted by material properties
+        // This avoids the complexity of MIS while maintaining correctness
+        
+        if (specularAmount > 0.8) {
+            // Highly specular material - use reflection with roughness
+            vec3 reflectedDir = reflect(currentRay.direction, hit.normal);
+            
+            if (hit.roughness > 0.01) {
+                // Add roughness to reflection
+                vec3 roughnessOffset = sampleCosineHemisphere(hit.normal, random2(rand)) * hit.roughness;
+                scatterDir = normalize(reflectedDir + roughnessOffset);
+            } else {
+                // Perfect mirror reflection
+                scatterDir = reflectedDir;
+            }
+            
+        } else if (specularAmount < 0.2) {
+            // Highly diffuse material - use cosine-weighted hemisphere sampling
+            scatterDir = sampleCosineHemisphere(hit.normal, rand);
+            
+        } else {
+            // Mixed material - probabilistic sampling without complex MIS
+            if (rand.x < specularAmount) {
+                // Sample specular lobe
+                vec3 reflectedDir = reflect(currentRay.direction, hit.normal);
+                vec3 roughnessOffset = sampleCosineHemisphere(hit.normal, random2(rand)) * hit.roughness;
+                scatterDir = normalize(reflectedDir + roughnessOffset);
+            } else {
+                // Sample diffuse lobe  
+                scatterDir = sampleCosineHemisphere(hit.normal, rand);
+            }
+            // No additional weighting - the probabilistic choice naturally handles the BRDF balance
+        }
         
         currentRay.origin = hit.point + 0.001 * hit.normal;
-        currentRay.direction = normalize(scatterDir);
+        currentRay.direction = scatterDir;
         
-        // Russian roulette termination for performance
+        // Russian Roulette termination for performance (unbiased)
+        // Calculate survival probability based on attenuation strength
         float maxComponent = max(max(attenuation.r, attenuation.g), attenuation.b);
-        if (maxComponent < 0.1) {
-            break;
+        float survivalProbability = min(maxComponent, 0.95); // Cap at 95% to ensure some termination
+        
+        // Only apply Russian Roulette after a few bounces to avoid terminating important paths
+        if (depth >= 3) {
+            // Use a new random number for termination decision
+            vec2 rrSeed = hit.point.yz + float(depth) * 456.789;
+            float rrRandom = random(rrSeed);
+            
+            if (rrRandom > survivalProbability) {
+                // Terminate path
+                break;
+            } else {
+                // Path survives - compensate for termination probability to remain unbiased
+                attenuation /= survivalProbability;
+            }
         }
     }
     
@@ -386,13 +448,13 @@ vec3 calculateRadianceLighting(vec3 worldPos, vec3 normal, vec3 materialColor, f
     
     // Sample multiple rays from this point for anti-aliasing and noise reduction
     for (int i = 0; i < samplesPerPixel; i++) {
-        // Create a ray from this fragment position
+        // Create a ray from this fragment position using cosine-weighted sampling
         vec2 seed = worldPos.xy + float(i) * 0.1;
-        vec3 target = worldPos + normal + randomUnitVector(seed);
+        vec2 rand = random2(seed);
         
         Ray rayBounce;
         rayBounce.origin = worldPos + 0.001 * normal;
-        rayBounce.direction = normalize(target - worldPos);
+        rayBounce.direction = sampleCosineHemisphere(normal, rand);
         
         // Trace the ray and accumulate color
         color += materialColor * rayColor(rayBounce, maxBounces);
