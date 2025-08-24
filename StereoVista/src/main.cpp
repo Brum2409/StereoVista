@@ -17,6 +17,7 @@
 #include "Engine/SpaceMouseInput.h"
 #include "Gui/Gui.h"
 #include "Gui/GuiTypes.h"
+#include "../headers/Engine/BVH.h"
 
 // ---- GUI and Dialog ----
 #include "imgui/imgui_incl.h"
@@ -235,6 +236,52 @@ Engine::Shader* skyboxShader = nullptr;
 // ---- Raytracing Triangle Buffer ----
 GLuint triangleSSBO = 0;
 std::vector<float> triangleData;
+
+// ---- BVH System ----
+Engine::BVHBuilder bvhBuilder;
+GLuint bvhNodeSSBO = 0;
+GLuint triangleIndexSSBO = 0;
+std::vector<Engine::GPUBVHNode> gpuBVHNodes;
+std::vector<uint32_t> gpuTriangleIndices;
+std::vector<Engine::GPUTriangle> gpuTriangles;
+bool bvhBuilt = false;
+bool bvhBuffersUploaded = false;
+bool enableBVH = true; // BVH toggle
+
+// BVH invalidation tracking
+struct SceneState {
+    size_t modelCount = 0;
+    std::vector<glm::vec3> modelPositions;
+    std::vector<glm::vec3> modelRotations;
+    std::vector<glm::vec3> modelScales;
+    
+    bool hasChanged(const Engine::Scene& scene) const {
+        if (modelCount != scene.models.size()) return true;
+        
+        for (size_t i = 0; i < scene.models.size() && i < modelPositions.size(); i++) {
+            if (modelPositions[i] != scene.models[i].position ||  
+                modelRotations[i] != scene.models[i].rotation ||
+                modelScales[i] != scene.models[i].scale) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    void update(const Engine::Scene& scene) {
+        modelCount = scene.models.size();
+        modelPositions.clear();
+        modelRotations.clear();
+        modelScales.clear();
+        
+        for (const auto& model : scene.models) {
+            modelPositions.push_back(model.position);
+            modelRotations.push_back(model.rotation);
+            modelScales.push_back(model.scale);
+        }
+    }
+};
+static SceneState lastSceneState;
 
 // ---- Zero Plane Rendering ----
 Engine::Shader* zeroPlaneShader = nullptr;
@@ -592,6 +639,106 @@ void cleanupTriangleBuffer() {
         glDeleteBuffers(1, &triangleSSBO);
         triangleSSBO = 0;
     }
+}
+
+// ---- BVH Buffer Setup ----
+void setupBVHBuffers() {
+    if (bvhNodeSSBO == 0) {
+        glGenBuffers(1, &bvhNodeSSBO);
+    }
+    if (triangleIndexSSBO == 0) {
+        glGenBuffers(1, &triangleIndexSSBO);
+    }
+}
+
+void updateBVHBuffers() {
+    if (!bvhBuilt) return;
+    
+    setupBVHBuffers();
+    
+    // Upload BVH nodes to SSBO binding 1
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, bvhNodeSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, gpuBVHNodes.size() * sizeof(Engine::GPUBVHNode), 
+                 gpuBVHNodes.data(), GL_STATIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, bvhNodeSSBO);
+    
+    // Upload triangle indices to SSBO binding 2
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, triangleIndexSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, gpuTriangleIndices.size() * sizeof(uint32_t), 
+                 gpuTriangleIndices.data(), GL_STATIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, triangleIndexSSBO);
+    
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    
+    std::cout << "BVH buffers updated: " << gpuBVHNodes.size() << " nodes, " 
+              << gpuTriangleIndices.size() << " triangle indices" << std::endl;
+}
+
+void cleanupBVHBuffers() {
+    if (bvhNodeSSBO != 0) {
+        glDeleteBuffers(1, &bvhNodeSSBO);
+        bvhNodeSSBO = 0;
+    }
+    if (triangleIndexSSBO != 0) {
+        glDeleteBuffers(1, &triangleIndexSSBO);
+        triangleIndexSSBO = 0;
+    }
+}
+
+void buildBVH(const std::vector<Engine::BVHTriangle>& triangles) {
+    if (triangles.empty()) {
+        bvhBuilt = false;
+        return;
+    }
+    
+    std::cout << "Building BVH for " << triangles.size() << " triangles..." << std::endl;
+    
+    // Build BVH
+    bvhBuilder.build(triangles);
+    
+    // Convert to GPU format
+    const auto& nodes = bvhBuilder.getNodes();
+    const auto& indices = bvhBuilder.getTriangleIndices();
+    const auto& bvhTriangles = bvhBuilder.getTriangles();
+    
+    // Convert BVH nodes to GPU format
+    gpuBVHNodes.clear();
+    gpuBVHNodes.reserve(nodes.size());
+    for (const auto& node : nodes) {
+        Engine::GPUBVHNode gpuNode;
+        gpuNode.minX = node.minBounds.x;
+        gpuNode.minY = node.minBounds.y;
+        gpuNode.minZ = node.minBounds.z;
+        gpuNode.leftFirst = node.leftFirst;
+        gpuNode.maxX = node.maxBounds.x;
+        gpuNode.maxY = node.maxBounds.y;
+        gpuNode.maxZ = node.maxBounds.z;
+        gpuNode.triCount = node.triCount;
+        gpuBVHNodes.push_back(gpuNode);
+    }
+    
+    // Copy triangle indices
+    gpuTriangleIndices = indices;
+    
+    // Convert triangles to GPU format (reordered according to BVH)
+    gpuTriangles.clear();
+    gpuTriangles.reserve(bvhTriangles.size());
+    for (const auto& tri : bvhTriangles) {
+        Engine::GPUTriangle gpuTri;
+        gpuTri.v0[0] = tri.v0.x; gpuTri.v0[1] = tri.v0.y; gpuTri.v0[2] = tri.v0.z; gpuTri.v0[3] = 0.0f;
+        gpuTri.v1[0] = tri.v1.x; gpuTri.v1[1] = tri.v1.y; gpuTri.v1[2] = tri.v1.z; gpuTri.v1[3] = 0.0f;
+        gpuTri.v2[0] = tri.v2.x; gpuTri.v2[1] = tri.v2.y; gpuTri.v2[2] = tri.v2.z; gpuTri.v2[3] = 0.0f;
+        gpuTri.normal[0] = tri.normal.x; gpuTri.normal[1] = tri.normal.y; gpuTri.normal[2] = tri.normal.z; gpuTri.normal[3] = 0.0f;
+        gpuTri.color[0] = tri.color.x; gpuTri.color[1] = tri.color.y; gpuTri.color[2] = tri.color.z; gpuTri.color[3] = tri.emissiveness;
+        gpuTri.shininess = tri.shininess;
+        gpuTri.materialId = static_cast<uint32_t>(tri.materialId);
+        gpuTri.padding[0] = 0.0f; gpuTri.padding[1] = 0.0f;
+        gpuTriangles.push_back(gpuTri);
+    }
+    
+    bvhBuilt = true;
+    bvhBuffersUploaded = false;  // Mark that buffers need to be uploaded
+    std::cout << "BVH built successfully" << std::endl;
 }
 
 void updateSkybox() {
@@ -1862,6 +2009,7 @@ void cleanup(Engine::Shader* shader) {
 
     // Delete triangle buffer resources
     cleanupTriangleBuffer();
+    cleanupBVHBuffers();
 
     // Delete skybox resources
     glDeleteVertexArrays(1, &skyboxVAO);
@@ -2109,6 +2257,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
         
         // Extract triangle data from scene models and pack into SSBO
         triangleData.clear();
+        std::vector<Engine::BVHTriangle> bvhTriangles;
         int triangleCount = 0;
         
         for (const auto& model : currentScene.models) {
@@ -2156,6 +2305,11 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
                         triangleData.push_back(0.0f); // padding for next struct alignment
                         triangleData.push_back(0.0f); // padding for next struct alignment
                         
+                        // Create BVH triangle
+                        Engine::BVHTriangle bvhTri(v0, v1, v2, normal, model.color, 
+                                                  model.emissive, model.shininess, materialId);
+                        bvhTriangles.push_back(bvhTri);
+                        
                         triangleCount++;
                     }
                 }
@@ -2167,7 +2321,23 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
             updateTriangleBuffer(triangleData);
         }
         
+        // Build BVH only if scene has changed and we have triangles and BVH is enabled
+        bool sceneChanged = lastSceneState.hasChanged(currentScene);
+        if (!bvhTriangles.empty() && enableBVH && (sceneChanged || !bvhBuilt)) {
+            std::cout << "Scene changed, rebuilding BVH..." << std::endl;
+            buildBVH(bvhTriangles);
+            updateBVHBuffers();
+            bvhBuffersUploaded = true;
+            lastSceneState.update(currentScene);
+        } else if (bvhBuilt && enableBVH && !bvhBuffersUploaded) {
+            // BVH built but buffers not uploaded yet (e.g., BVH was just enabled)
+            updateBVHBuffers();
+            bvhBuffersUploaded = true;
+        }
+        
         shader->setInt("numTriangles", triangleCount);
+        shader->setInt("numBVHNodes", static_cast<int>(gpuBVHNodes.size()));
+        shader->setBool("enableBVH", enableBVH && bvhBuilt);
         
         // Disable ground plane for pure raytracing (was causing unwanted lighting)
         shader->setBool("hasGroundPlane", false);

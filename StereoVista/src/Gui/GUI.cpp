@@ -48,6 +48,7 @@ extern GUI::LightingMode currentLightingMode;
 extern bool enableShadows;
 extern GUI::VCTSettings vctSettings;
 extern GUI::ApplicationPreferences::RadianceSettings radianceSettings;
+extern bool enableBVH;
 
 // Selection state for object interaction
 extern enum class SelectedType {
@@ -1019,6 +1020,15 @@ void renderSettingsWindow() {
                     settingsChanged = true;
                 }
                 ImGui::SetItemTooltip("Global material roughness (0=mirror, 1=diffuse)");
+                
+                ImGui::Separator();
+                ImGui::Text("Acceleration Structure");
+                if (ImGui::Checkbox("Enable BVH", &preferences.radianceSettings.enableBVH)) {
+                    ::enableBVH = preferences.radianceSettings.enableBVH;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Enable Bounding Volume Hierarchy for faster ray-triangle intersection");
+                
                 ImGui::EndGroup();
             }
 

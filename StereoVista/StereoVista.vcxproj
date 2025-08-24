@@ -170,6 +170,7 @@
   <ItemGroup>
     <ClCompile Include="headers\libs\glad.c" />
     <ClCompile Include="src\Cursors\CursorPresets.cpp" />
+    <ClCompile Include="src\Engine\BVH.cpp" />
     <ClCompile Include="src\Engine\Buffers.cpp" />
     <ClCompile Include="src\Engine\Input.cpp" />
     <ClCompile Include="src\Engine\OctreePointCloudManager.cpp" />
@@ -202,6 +203,7 @@
     <ClInclude Include="headers\Core\SceneManager.h" />
     <ClInclude Include="headers\cursor_presets.h" />
     <ClInclude Include="headers\engine\buffers.h" />
+    <ClInclude Include="headers\Engine\BVH.h" />
     <ClInclude Include="headers\engine\data.h" />
     <ClInclude Include="headers\engine\input.h" />
     <ClInclude Include="headers\Engine\OctreePointCloudManager.h" />

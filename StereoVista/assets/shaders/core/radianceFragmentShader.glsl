@@ -124,11 +124,28 @@ struct Triangle {
     int materialId;     // Material identifier
 };
 
-// Scene geometry setup using Storage Buffer Objects for large triangle counts
+// BVH Node structure for acceleration
+struct BVHNode {
+    vec3 minBounds;     // AABB minimum bounds
+    uint leftFirst;     // Left child index or first triangle index
+    vec3 maxBounds;     // AABB maximum bounds  
+    uint triCount;      // Triangle count (0 for interior nodes)
+};
+
+// Scene geometry setup using Storage Buffer Objects
 layout(std430, binding = 0) readonly buffer TriangleBuffer {
     Triangle triangles[];
 };
+layout(std430, binding = 1) readonly buffer BVHNodeBuffer {
+    BVHNode bvhNodes[];
+};
+layout(std430, binding = 2) readonly buffer TriangleIndexBuffer {
+    uint triangleIndices[];
+};
+
 uniform int numTriangles;
+uniform int numBVHNodes;
+uniform bool enableBVH;
 
 // Simple ground plane for basic scene setup
 struct GroundPlane {
@@ -197,8 +214,99 @@ bool intersectGroundPlane(Ray ray, GroundPlane plane, out float t) {
     return t > 0.001;
 }
 
-// Cast ray into scene and find closest hit
-HitInfo castRay(Ray ray) {
+// Ray-AABB intersection test with improved robustness
+bool rayAABBIntersect(Ray ray, vec3 minBounds, vec3 maxBounds) {
+    const float EPSILON = 1e-8;
+    
+    // Handle near-zero direction components
+    vec3 invDir;
+    for (int i = 0; i < 3; i++) {
+        if (abs(ray.direction[i]) < EPSILON) {
+            invDir[i] = (ray.direction[i] >= 0.0) ? 1e8 : -1e8;
+        } else {
+            invDir[i] = 1.0 / ray.direction[i];
+        }
+    }
+    
+    vec3 t1 = (minBounds - ray.origin) * invDir;
+    vec3 t2 = (maxBounds - ray.origin) * invDir;
+    
+    vec3 tMin = min(t1, t2);
+    vec3 tMax = max(t1, t2);
+    
+    float tNear = max(max(tMin.x, tMin.y), tMin.z);
+    float tFar = min(min(tMax.x, tMax.y), tMax.z);
+    
+    return tNear <= tFar && tFar > EPSILON;
+}
+
+// BVH traversal for ray intersection
+HitInfo castRayBVH(Ray ray) {
+    HitInfo hit;
+    hit.hit = false;
+    hit.distance = rayMaxDistance;
+    
+    if (numBVHNodes == 0) return hit;
+    
+    // Stack for BVH traversal (using array since GLSL doesn't have dynamic stacks)
+    // Stack size of 64 should handle most reasonable BVH depths
+    uint nodeStack[64];
+    int stackPtr = 0;
+    
+    // Start with root node (index 0)
+    nodeStack[0] = 0u;
+    stackPtr = 1;
+    
+    while (stackPtr > 0) {
+        // Pop node from stack
+        stackPtr--;
+        uint nodeIdx = nodeStack[stackPtr];
+        
+        if (nodeIdx >= numBVHNodes) continue; // Safety check
+        
+        BVHNode node = bvhNodes[nodeIdx];
+        
+        // Test ray against node's AABB
+        if (!rayAABBIntersect(ray, node.minBounds, node.maxBounds)) {
+            continue; // Ray misses this node
+        }
+        
+        if (node.triCount > 0u) {
+            // Leaf node - test triangles
+            for (uint i = 0u; i < node.triCount; i++) {
+                uint triIdx = triangleIndices[node.leftFirst + i];
+                if (triIdx >= numTriangles) continue; // Safety check
+                
+                float t;
+                if (intersectTriangle(ray, triangles[triIdx], t) && t < hit.distance) {
+                    hit.hit = true;
+                    hit.distance = t;
+                    hit.point = ray.origin + ray.direction * t;
+                    hit.normal = triangles[triIdx].normal;
+                    hit.albedo = triangles[triIdx].color;
+                    hit.emissiveness = triangles[triIdx].emissiveness;
+                    hit.shininess = triangles[triIdx].shininess;
+                    hit.roughness = 1.0 - clamp(triangles[triIdx].shininess / 256.0, 0.0, 1.0);
+                    hit.materialId = triangles[triIdx].materialId;
+                }
+            }
+        } else {
+            // Interior node - add children to stack
+            if (stackPtr < 62) { // Leave room for both children
+                nodeStack[stackPtr++] = node.leftFirst;        // Left child
+                nodeStack[stackPtr++] = node.leftFirst + 1u;   // Right child
+            } else {
+                // Stack overflow protection - this shouldn't happen with reasonable BVH depth
+                break;
+            }
+        }
+    }
+    
+    return hit;
+}
+
+// Legacy linear traversal for comparison/fallback
+HitInfo castRayLinear(Ray ray) {
     HitInfo hit;
     hit.hit = false;
     hit.distance = rayMaxDistance;
@@ -218,6 +326,22 @@ HitInfo castRay(Ray ray) {
             hit.materialId = triangles[i].materialId;
         }
     }
+    
+    return hit;
+}
+
+// Cast ray into scene and find closest hit
+HitInfo castRay(Ray ray) {
+    HitInfo hit;
+    
+    // Use BVH traversal if enabled and available, otherwise fall back to linear
+    if (enableBVH && numBVHNodes > 0) {
+        hit = castRayBVH(ray);
+    } else {
+        hit = castRayLinear(ray);
+    }
+    
+    // Continue with existing ground plane logic...
     
     // Check intersection with ground plane
     if (hasGroundPlane) {

@@ -117,6 +117,7 @@ namespace GUI {
             float skyIntensity = 1.0f;
             float emissiveIntensity = 1.0f;
             float materialRoughness = 0.5f;
+            bool enableBVH = true;
         } radianceSettings;
 
         // Scroll and movement settings
