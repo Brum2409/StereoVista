@@ -1,5 +1,9 @@
 #pragma once
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <algorithm>
 #include <glm/glm.hpp>
 #include <vector>
 #include <array>
@@ -18,13 +22,17 @@ namespace Engine {
             : minBounds(min), maxBounds(max) {}
         
         void expand(const glm::vec3& point) {
-            minBounds = glm::min(minBounds, point);
-            maxBounds = glm::max(maxBounds, point);
+            for (int i = 0; i < 3; i++) {
+                if (point[i] < minBounds[i]) minBounds[i] = point[i];
+                if (point[i] > maxBounds[i]) maxBounds[i] = point[i];
+            }
         }
         
         void expand(const AABB& other) {
-            minBounds = glm::min(minBounds, other.minBounds);
-            maxBounds = glm::max(maxBounds, other.maxBounds);
+            for (int i = 0; i < 3; i++) {
+                if (other.minBounds[i] < minBounds[i]) minBounds[i] = other.minBounds[i];
+                if (other.maxBounds[i] > maxBounds[i]) maxBounds[i] = other.maxBounds[i];
+            }
         }
         
         glm::vec3 getCenter() const {

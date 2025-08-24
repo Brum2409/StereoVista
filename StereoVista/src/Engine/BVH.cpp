@@ -1,3 +1,6 @@
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include "../../headers/Engine/BVH.h"
 #include <algorithm>
 #include <numeric>
@@ -151,7 +154,8 @@ namespace Engine {
                 float centroid = tri.centroid[axis];
                 
                 int binIdx = static_cast<int>((centroid - boundsMin) * scale);
-                binIdx = std::max(0, std::min(static_cast<int>(SAH_BINS - 1), binIdx));
+                if (binIdx < 0) binIdx = 0;
+                if (binIdx >= static_cast<int>(SAH_BINS)) binIdx = static_cast<int>(SAH_BINS - 1);
                 
                 bins[binIdx].count++;
                 bins[binIdx].bounds.expand(tri.bounds);

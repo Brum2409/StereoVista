@@ -18,6 +18,7 @@
 #include "Gui/Gui.h"
 #include "Gui/GuiTypes.h"
 #include "../headers/Engine/BVH.h"
+#include "../headers/Engine/BVHDebug.h"
 
 // ---- GUI and Dialog ----
 #include "imgui/imgui_incl.h"
@@ -247,6 +248,10 @@ std::vector<Engine::GPUTriangle> gpuTriangles;
 bool bvhBuilt = false;
 bool bvhBuffersUploaded = false;
 bool enableBVH = true; // BVH toggle
+
+// BVH Debug Renderer
+Engine::BVHDebugRenderer bvhDebugRenderer;
+bool showBVHDebug = false;
 
 // BVH invalidation tracking
 struct SceneState {
@@ -2010,6 +2015,9 @@ void cleanup(Engine::Shader* shader) {
     // Delete triangle buffer resources
     cleanupTriangleBuffer();
     cleanupBVHBuffers();
+    
+    // Cleanup BVH debug renderer
+    bvhDebugRenderer.cleanup();
 
     // Delete skybox resources
     glDeleteVertexArrays(1, &skyboxVAO);
@@ -2328,11 +2336,55 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
             buildBVH(bvhTriangles);
             updateBVHBuffers();
             bvhBuffersUploaded = true;
+            
+            // Update debug renderer if debug is enabled
+            if (showBVHDebug) {
+                // Get max depth from GUI settings
+                int maxDepth = preferences.radianceSettings.bvhDebugMaxDepth;
+                bvhDebugRenderer.updateFromBVH(bvhBuilder.getNodes(), maxDepth);
+                bvhDebugRenderer.setEnabled(true); // Enable rendering
+            }
+            
             lastSceneState.update(currentScene);
         } else if (bvhBuilt && enableBVH && !bvhBuffersUploaded) {
             // BVH built but buffers not uploaded yet (e.g., BVH was just enabled)
             updateBVHBuffers();
             bvhBuffersUploaded = true;
+        }
+        
+        // Update debug renderer if user toggled debug and BVH is already built
+        static bool lastShowBVHDebug = false;
+        if (showBVHDebug != lastShowBVHDebug) {
+            if (showBVHDebug && bvhBuilt) {
+                std::cout << "Enabling BVH debug visualization..." << std::endl;
+                int maxDepth = preferences.radianceSettings.bvhDebugMaxDepth;
+                bvhDebugRenderer.updateFromBVH(bvhBuilder.getNodes(), maxDepth);
+                bvhDebugRenderer.setEnabled(true); // Enable rendering
+                
+                // Set render mode from GUI
+                Engine::BVHDebugRenderer::RenderMode mode = static_cast<Engine::BVHDebugRenderer::RenderMode>(preferences.radianceSettings.bvhDebugRenderMode);
+                bvhDebugRenderer.setRenderMode(mode);
+            } else {
+                bvhDebugRenderer.setEnabled(false); // Disable rendering
+            }
+            lastShowBVHDebug = showBVHDebug;
+        }
+        
+        // Update debug renderer settings if they changed
+        static int lastMaxDepth = 3;
+        static int lastRenderMode = 1;
+        if (showBVHDebug && bvhBuilt && 
+            (preferences.radianceSettings.bvhDebugMaxDepth != lastMaxDepth)) {
+            // Max depth changed - rebuild debug geometry
+            bvhDebugRenderer.updateFromBVH(bvhBuilder.getNodes(), preferences.radianceSettings.bvhDebugMaxDepth);
+            lastMaxDepth = preferences.radianceSettings.bvhDebugMaxDepth;
+        }
+        if (showBVHDebug && 
+            (preferences.radianceSettings.bvhDebugRenderMode != lastRenderMode)) {
+            // Render mode changed - update renderer
+            Engine::BVHDebugRenderer::RenderMode mode = static_cast<Engine::BVHDebugRenderer::RenderMode>(preferences.radianceSettings.bvhDebugRenderMode);
+            bvhDebugRenderer.setRenderMode(mode);
+            lastRenderMode = preferences.radianceSettings.bvhDebugRenderMode;
         }
         
         shader->setInt("numTriangles", triangleCount);
@@ -2346,6 +2398,12 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     // Render scene
     renderModels(shader);
     renderPointClouds(shader);
+    
+    // Render BVH debug visualization (after main scene rendering)
+    if (showBVHDebug && bvhBuilt) {
+        // BVH debug lines are now rendering
+        bvhDebugRenderer.render(view, projection);
+    }
     
     // Calculate distance to nearest object AFTER scene rendering but BEFORE zero plane
     // This ensures zero plane doesn't interfere with distance calculation

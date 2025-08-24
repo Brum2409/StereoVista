@@ -1,6 +1,7 @@
 #include "Gui/Gui.h"
 #include "Gui/GUITypes.h"
 #include "Engine/Core.h"
+#include "Engine/BVHDebug.h"
 #include <json.h>
 #include <fstream>
 #include <sstream>
@@ -49,6 +50,8 @@ extern bool enableShadows;
 extern GUI::VCTSettings vctSettings;
 extern GUI::ApplicationPreferences::RadianceSettings radianceSettings;
 extern bool enableBVH;
+extern bool showBVHDebug;
+extern Engine::BVHDebugRenderer bvhDebugRenderer;
 
 // Selection state for object interaction
 extern enum class SelectedType {
@@ -1028,6 +1031,35 @@ void renderSettingsWindow() {
                     settingsChanged = true;
                 }
                 ImGui::SetItemTooltip("Enable Bounding Volume Hierarchy for faster ray-triangle intersection");
+                
+                if (ImGui::Checkbox("Show BVH Debug", &preferences.radianceSettings.showBVHDebug)) {
+                    ::showBVHDebug = preferences.radianceSettings.showBVHDebug;
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Visualize BVH bounding boxes with color-coded depth levels:\nLevel 0: Red, Level 1: Orange, Level 2: Yellow, Level 3: Green\nLevel 4: Cyan, Level 5: Blue, Level 6: Purple, Level 7: Magenta");
+                
+                // BVH Debug options (only show when debug is enabled)
+                if (preferences.radianceSettings.showBVHDebug) {
+                    ImGui::Indent();
+                    
+                    // Max depth slider
+                    if (ImGui::SliderInt("Max Depth", &preferences.radianceSettings.bvhDebugMaxDepth, 1, 8)) {
+                        settingsChanged = true;
+                    }
+                    ImGui::SetItemTooltip("Maximum BVH depth levels to display (1=root only, higher=more detail)\nEach level has a distinct color: Red→Orange→Yellow→Green→Cyan→Blue→Purple→Magenta");
+                    
+                    // Render mode combo
+                    const char* renderModeNames[] = {"Depth Tested", "Always On Top", "Depth Biased"};
+                    if (ImGui::Combo("Render Mode", &preferences.radianceSettings.bvhDebugRenderMode, renderModeNames, 3)) {
+                        // Update the renderer immediately
+                        Engine::BVHDebugRenderer::RenderMode mode = static_cast<Engine::BVHDebugRenderer::RenderMode>(preferences.radianceSettings.bvhDebugRenderMode);
+                        ::bvhDebugRenderer.setRenderMode(mode);
+                        settingsChanged = true;
+                    }
+                    ImGui::SetItemTooltip("Depth Tested: lines behind geometry hidden\nAlways On Top: lines always visible\nDepth Biased: lines slightly in front");
+                    
+                    ImGui::Unindent();
+                }
                 
                 ImGui::EndGroup();
             }

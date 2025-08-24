@@ -214,22 +214,26 @@ bool intersectGroundPlane(Ray ray, GroundPlane plane, out float t) {
     return t > 0.001;
 }
 
-// Ray-AABB intersection test with improved robustness
-bool rayAABBIntersect(Ray ray, vec3 minBounds, vec3 maxBounds) {
+// Pre-compute safe inverse direction to avoid division by zero
+vec3 computeInverseDirection(vec3 direction) {
     const float EPSILON = 1e-8;
-    
-    // Handle near-zero direction components
     vec3 invDir;
     for (int i = 0; i < 3; i++) {
-        if (abs(ray.direction[i]) < EPSILON) {
-            invDir[i] = (ray.direction[i] >= 0.0) ? 1e8 : -1e8;
+        if (abs(direction[i]) < EPSILON) {
+            invDir[i] = (direction[i] >= 0.0) ? 1e8 : -1e8;
         } else {
-            invDir[i] = 1.0 / ray.direction[i];
+            invDir[i] = 1.0 / direction[i];
         }
     }
+    return invDir;
+}
+
+// Ray-AABB intersection test with pre-computed inverse direction
+bool rayAABBIntersect(vec3 origin, vec3 invDir, vec3 minBounds, vec3 maxBounds) {
+    const float EPSILON = 1e-8;
     
-    vec3 t1 = (minBounds - ray.origin) * invDir;
-    vec3 t2 = (maxBounds - ray.origin) * invDir;
+    vec3 t1 = (minBounds - origin) * invDir;
+    vec3 t2 = (maxBounds - origin) * invDir;
     
     vec3 tMin = min(t1, t2);
     vec3 tMax = max(t1, t2);
@@ -248,9 +252,12 @@ HitInfo castRayBVH(Ray ray) {
     
     if (numBVHNodes == 0) return hit;
     
+    // Pre-compute inverse direction once for all AABB tests
+    vec3 invDir = computeInverseDirection(ray.direction);
+    
     // Stack for BVH traversal (using array since GLSL doesn't have dynamic stacks)
-    // Stack size of 64 should handle most reasonable BVH depths
-    uint nodeStack[64];
+    // Stack size of 128 should handle deep BVH structures (log2(1M triangles) ≈ 20 depth)
+    uint nodeStack[128];
     int stackPtr = 0;
     
     // Start with root node (index 0)
@@ -267,7 +274,7 @@ HitInfo castRayBVH(Ray ray) {
         BVHNode node = bvhNodes[nodeIdx];
         
         // Test ray against node's AABB
-        if (!rayAABBIntersect(ray, node.minBounds, node.maxBounds)) {
+        if (!rayAABBIntersect(ray.origin, invDir, node.minBounds, node.maxBounds)) {
             continue; // Ray misses this node
         }
         
@@ -292,7 +299,7 @@ HitInfo castRayBVH(Ray ray) {
             }
         } else {
             // Interior node - add children to stack
-            if (stackPtr < 62) { // Leave room for both children
+            if (stackPtr < 126) { // Leave room for both children
                 nodeStack[stackPtr++] = node.leftFirst;        // Left child
                 nodeStack[stackPtr++] = node.leftFirst + 1u;   // Right child
             } else {
@@ -556,10 +563,10 @@ vec3 rayColor(Ray initialRay, int maxDepth) {
             if (rrRandom > survivalProbability) {
                 // Terminate path
                 break;
-            } else {
-                // Path survives - compensate for termination probability to remain unbiased
-                attenuation /= survivalProbability;
             }
+            // Path survives - compensate for termination probability to remain unbiased
+            // Only divide when path continues (outside the else block)
+            attenuation /= survivalProbability;
         }
     }
     

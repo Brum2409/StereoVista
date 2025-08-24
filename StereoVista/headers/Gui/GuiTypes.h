@@ -118,6 +118,9 @@ namespace GUI {
             float emissiveIntensity = 1.0f;
             float materialRoughness = 0.5f;
             bool enableBVH = true;
+            bool showBVHDebug = false;
+            int bvhDebugMaxDepth = 3;
+            int bvhDebugRenderMode = 1; // 0=DEPTH_TESTED, 1=ALWAYS_ON_TOP, 2=DEPTH_BIASED
         } radianceSettings;
 
         // Scroll and movement settings
