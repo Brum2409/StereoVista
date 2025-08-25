@@ -141,7 +141,7 @@ namespace Engine {
         
     private:
         // Recursive BVH construction
-        void subdivide(uint32_t nodeIdx);
+        void subdivide(uint32_t nodeIdx, uint32_t depth = 0);
         
         // Calculate node bounds from triangle indices
         AABB calculateBounds(uint32_t first, uint32_t count);

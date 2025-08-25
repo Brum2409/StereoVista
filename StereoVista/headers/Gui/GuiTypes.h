@@ -156,5 +156,9 @@ namespace GUI {
         glm::vec3 skyboxGradientTop = glm::vec3(0.1f, 0.1f, 0.3f);
         glm::vec3 skyboxGradientBottom = glm::vec3(0.7f, 0.7f, 1.0f);
         int selectedCubemap = 0;
+
+        // Startup scene settings
+        bool loadStartupScene = false;
+        std::string startupScenePath = "";
     };
 }

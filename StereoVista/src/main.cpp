@@ -1059,6 +1059,10 @@ void savePreferences() {
     };
     j["skybox"]["selectedCubemap"] = skyboxConfig.selectedCubemap;
 
+    // Startup scene settings
+    j["startup"]["loadScene"] = preferences.loadStartupScene;
+    j["startup"]["scenePath"] = preferences.startupScenePath;
+
     // Save lighting settings
     j["lighting"]["mode"] = static_cast<int>(preferences.lightingMode);
     j["lighting"]["enableShadows"] = preferences.enableShadows;
@@ -1316,6 +1320,12 @@ void loadPreferences() {
             }
 
             preferences.selectedCubemap = j["skybox"].value("selectedCubemap", 0);
+        }
+
+        // Startup scene settings
+        if (j.contains("startup")) {
+            preferences.loadStartupScene = j["startup"].value("loadScene", false);
+            preferences.startupScenePath = j["startup"].value("scenePath", "");
         }
 
         // Cursor settings
@@ -1739,6 +1749,20 @@ int main() {
 
     loadPreferences();
     initializeVCTSettings();
+
+    // ---- Load Startup Scene ----
+    if (preferences.loadStartupScene && !preferences.startupScenePath.empty()) {
+        try {
+            std::cout << "Loading startup scene: " << preferences.startupScenePath << std::endl;
+            currentScene = Engine::loadScene(preferences.startupScenePath, camera);
+            currentModelIndex = currentScene.models.empty() ? -1 : 0;
+            updateSpaceMouseBounds();
+            std::cout << "Startup scene loaded successfully" << std::endl;
+        }
+        catch (const std::exception& e) {
+            std::cerr << "Failed to load startup scene '" << preferences.startupScenePath << "': " << e.what() << std::endl;
+        }
+    }
 
     // ---- Initialize SpaceMouse Input ----
     // Use separate camera for SpaceMouse to prevent navlib override

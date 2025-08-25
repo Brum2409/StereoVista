@@ -100,6 +100,7 @@ uniform Sun sun;
 struct Ray {
     vec3 origin;
     vec3 direction;
+    vec3 invDir;  // Precomputed inverse direction for AABB tests
 };
 
 struct HitInfo {
@@ -159,20 +160,36 @@ uniform bool hasGroundPlane;
 
 // ---- RAYTRACING FUNCTIONS ----
 
-// Enhanced random function for sampling
-float random(vec2 co) {
-    return fract(sin(dot(co.xy, vec2(12.9898, 78.233))) * 43758.5453);
+// ---- RNG Functions (PCG - fast performance) ----
+
+// PCG (permuted congruential generator) - much faster than sin()
+uint nextRandom(inout uint state) {
+    state = state * 747796405u + 2891336453u;
+    uint result = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    result = (result >> 22u) ^ result;
+    return result;
 }
 
-vec2 random2(vec2 co) {
+float randomValue(inout uint state) {
+    return float(nextRandom(state)) / 4294967295.0; // 2^32 - 1
+}
+
+// Legacy wrapper functions for compatibility with existing BRDF sampling
+float random(vec2 co, inout uint state) {
+    // Use the co as additional entropy but rely on PCG state
+    state ^= uint(dot(co, vec2(12.9898, 78.233)) * 43758.5453);
+    return randomValue(state);
+}
+
+vec2 random2(vec2 co, inout uint state) {
     return vec2(
-        fract(sin(dot(co.xy, vec2(12.9898, 78.233))) * 43758.5453),
-        fract(sin(dot(co.yx, vec2(39.9898, 58.233))) * 43758.5453)
+        random(co, state),
+        randomValue(state)
     );
 }
 
 
-// Ray-triangle intersection using Möller-Trumbore algorithm
+// Optimized ray-triangle intersection (like sample project)
 bool intersectTriangle(Ray ray, Triangle tri, out float t) {
     const float EPSILON = 0.0000001;
     vec3 edge1 = tri.v1 - tri.v0;
@@ -180,24 +197,21 @@ bool intersectTriangle(Ray ray, Triangle tri, out float t) {
     vec3 h = cross(ray.direction, edge2);
     float a = dot(edge1, h);
     
-    if (a > -EPSILON && a < EPSILON) {
-        return false; // Ray is parallel to triangle
-    }
+    // Early exit for parallel rays
+    if (abs(a) < EPSILON) return false;
     
     float f = 1.0 / a;
     vec3 s = ray.origin - tri.v0;
     float u = f * dot(s, h);
     
-    if (u < 0.0 || u > 1.0) {
-        return false;
-    }
+    // Early exit for u out of bounds
+    if (u < 0.0 || u > 1.0) return false;
     
     vec3 q = cross(s, edge1);
     float v = f * dot(ray.direction, q);
     
-    if (v < 0.0 || u + v > 1.0) {
-        return false;
-    }
+    // Early exit for v out of bounds  
+    if (v < 0.0 || u + v > 1.0) return false;
     
     t = f * dot(edge2, q);
     return t > EPSILON;
@@ -214,102 +228,122 @@ bool intersectGroundPlane(Ray ray, GroundPlane plane, out float t) {
     return t > 0.001;
 }
 
-// Pre-compute safe inverse direction to avoid division by zero
-vec3 computeInverseDirection(vec3 direction) {
-    const float EPSILON = 1e-8;
-    vec3 invDir;
-    for (int i = 0; i < 3; i++) {
-        if (abs(direction[i]) < EPSILON) {
-            invDir[i] = (direction[i] >= 0.0) ? 1e8 : -1e8;
-        } else {
-            invDir[i] = 1.0 / direction[i];
-        }
-    }
-    return invDir;
+// Create ray with precomputed inverse direction (like sample project)
+Ray createRay(vec3 origin, vec3 direction) {
+    Ray ray;
+    ray.origin = origin;
+    ray.direction = direction;
+    // Precompute inverse direction with safe division
+    ray.invDir = 1.0 / direction;
+    return ray;
 }
 
-// Ray-AABB intersection test with pre-computed inverse direction
-bool rayAABBIntersect(vec3 origin, vec3 invDir, vec3 minBounds, vec3 maxBounds) {
-    const float EPSILON = 1e-8;
+// Fast ray-AABB intersection test (boolean only - like sample project)
+bool rayAABBIntersect(Ray ray, vec3 boxMin, vec3 boxMax) {
+    vec3 tMin = (boxMin - ray.origin) * ray.invDir;
+    vec3 tMax = (boxMax - ray.origin) * ray.invDir;
+    vec3 t1 = min(tMin, tMax);
+    vec3 t2 = max(tMin, tMax);
+    float tNear = max(max(t1.x, t1.y), t1.z);
+    float tFar = min(min(t2.x, t2.y), t2.z);
     
-    vec3 t1 = (minBounds - origin) * invDir;
-    vec3 t2 = (maxBounds - origin) * invDir;
-    
-    vec3 tMin = min(t1, t2);
-    vec3 tMax = max(t1, t2);
-    
-    float tNear = max(max(tMin.x, tMin.y), tMin.z);
-    float tFar = min(min(tMax.x, tMax.y), tMax.z);
-    
-    return tNear <= tFar && tFar > EPSILON;
+    return tFar >= tNear && tFar > 0.0;
 }
 
-// BVH traversal for ray intersection
+// Ray-AABB intersection that returns distance (only when needed)
+float rayBoundingBoxDistance(Ray ray, vec3 boxMin, vec3 boxMax) {
+    vec3 tMin = (boxMin - ray.origin) * ray.invDir;
+    vec3 tMax = (boxMax - ray.origin) * ray.invDir;
+    vec3 t1 = min(tMin, tMax);
+    vec3 t2 = max(tMin, tMax);
+    float tNear = max(max(t1.x, t1.y), t1.z);
+    float tFar = min(min(t2.x, t2.y), t2.z);
+    
+    bool hit = tFar >= tNear && tFar > 0.0;
+    return hit ? (tNear > 0.0 ? tNear : 0.0) : 1.0e30;
+}
+
+// Optimized BVH traversal matching sample project
 HitInfo castRayBVH(Ray ray) {
-    HitInfo hit;
-    hit.hit = false;
-    hit.distance = rayMaxDistance;
+    HitInfo result;
+    result.hit = false;
+    result.distance = rayMaxDistance;
     
-    if (numBVHNodes == 0) return hit;
+    if (numBVHNodes == 0) return result;
     
-    // Pre-compute inverse direction once for all AABB tests
-    vec3 invDir = computeInverseDirection(ray.direction);
-    
-    // Stack for BVH traversal (using array since GLSL doesn't have dynamic stacks)
-    // Stack size of 128 should handle deep BVH structures (log2(1M triangles) ≈ 20 depth)
-    uint nodeStack[128];
-    int stackPtr = 0;
+    // Smaller stack like in sample project (32 elements is usually sufficient)
+    uint stack[32];
+    int stackIndex = 0;
     
     // Start with root node (index 0)
-    nodeStack[0] = 0u;
-    stackPtr = 1;
+    stack[stackIndex++] = 0u;
     
-    while (stackPtr > 0) {
+    while (stackIndex > 0) {
         // Pop node from stack
-        stackPtr--;
-        uint nodeIdx = nodeStack[stackPtr];
+        BVHNode node = bvhNodes[stack[--stackIndex]];
+        bool isLeaf = node.triCount > 0u;
         
-        if (nodeIdx >= numBVHNodes) continue; // Safety check
-        
-        BVHNode node = bvhNodes[nodeIdx];
-        
-        // Test ray against node's AABB
-        if (!rayAABBIntersect(ray.origin, invDir, node.minBounds, node.maxBounds)) {
-            continue; // Ray misses this node
-        }
-        
-        if (node.triCount > 0u) {
+        if (isLeaf) {
             // Leaf node - test triangles
             for (uint i = 0u; i < node.triCount; i++) {
                 uint triIdx = triangleIndices[node.leftFirst + i];
                 if (triIdx >= numTriangles) continue; // Safety check
                 
                 float t;
-                if (intersectTriangle(ray, triangles[triIdx], t) && t < hit.distance) {
-                    hit.hit = true;
-                    hit.distance = t;
-                    hit.point = ray.origin + ray.direction * t;
-                    hit.normal = triangles[triIdx].normal;
-                    hit.albedo = triangles[triIdx].color;
-                    hit.emissiveness = triangles[triIdx].emissiveness;
-                    hit.shininess = triangles[triIdx].shininess;
-                    hit.roughness = 1.0 - clamp(triangles[triIdx].shininess / 256.0, 0.0, 1.0);
-                    hit.materialId = triangles[triIdx].materialId;
+                if (intersectTriangle(ray, triangles[triIdx], t) && t < result.distance) {
+                    result.hit = true;
+                    result.distance = t;
+                    result.point = ray.origin + ray.direction * t;
+                    result.normal = triangles[triIdx].normal;
+                    result.albedo = triangles[triIdx].color;
+                    result.emissiveness = triangles[triIdx].emissiveness;
+                    result.shininess = triangles[triIdx].shininess;
+                    result.roughness = 1.0 - clamp(triangles[triIdx].shininess / 256.0, 0.0, 1.0);
+                    result.materialId = triangles[triIdx].materialId;
                 }
             }
         } else {
-            // Interior node - add children to stack
-            if (stackPtr < 126) { // Leave room for both children
-                nodeStack[stackPtr++] = node.leftFirst;        // Left child
-                nodeStack[stackPtr++] = node.leftFirst + 1u;   // Right child
-            } else {
-                // Stack overflow protection - this shouldn't happen with reasonable BVH depth
-                break;
+            // Interior node - test children with early rejection (like sample project)
+            uint childIndexA = node.leftFirst + 0u;
+            uint childIndexB = node.leftFirst + 1u;
+            
+            if (childIndexA >= numBVHNodes || childIndexB >= numBVHNodes) continue; // Safety check
+            
+            BVHNode childA = bvhNodes[childIndexA];
+            BVHNode childB = bvhNodes[childIndexB];
+            
+            // Fast intersection test first (cheap early rejection)
+            bool hitA = rayAABBIntersect(ray, childA.minBounds, childA.maxBounds);
+            bool hitB = rayAABBIntersect(ray, childB.minBounds, childB.maxBounds);
+            
+            // Only compute distances for children that actually intersect
+            if (hitA && hitB) {
+                // Both intersect - compute distances for priority ordering
+                float dstA = rayBoundingBoxDistance(ray, childA.minBounds, childA.maxBounds);
+                float dstB = rayBoundingBoxDistance(ray, childB.minBounds, childB.maxBounds);
+                
+                // Push farther child first (LIFO stack means closer gets processed first)
+                if (dstA <= dstB) {
+                    // A is closer, push B first then A
+                    if (dstB < result.distance && stackIndex < 31) stack[stackIndex++] = childIndexB;
+                    if (dstA < result.distance && stackIndex < 31) stack[stackIndex++] = childIndexA;
+                } else {
+                    // B is closer, push A first then B
+                    if (dstA < result.distance && stackIndex < 31) stack[stackIndex++] = childIndexA;
+                    if (dstB < result.distance && stackIndex < 31) stack[stackIndex++] = childIndexB;
+                }
+            } else if (hitA) {
+                // Only A intersects
+                if (stackIndex < 31) stack[stackIndex++] = childIndexA;
+            } else if (hitB) {
+                // Only B intersects
+                if (stackIndex < 31) stack[stackIndex++] = childIndexB;
             }
+            // If neither intersects, skip both (major optimization!)
         }
     }
     
-    return hit;
+    return result;
 }
 
 // Legacy linear traversal for comparison/fallback
@@ -344,8 +378,12 @@ HitInfo castRay(Ray ray) {
     // Use BVH traversal if enabled and available, otherwise fall back to linear
     if (enableBVH && numBVHNodes > 0) {
         hit = castRayBVH(ray);
+        // Debug: If you want to see if BVH is being used, uncomment next line
+        // hit.albedo = vec3(0, 1, 0); // Green tint means BVH is active
     } else {
         hit = castRayLinear(ray);
+        // Debug: If you want to see if linear is being used, uncomment next line
+        // hit.albedo = vec3(1, 0, 0); // Red tint means linear fallback
     }
     
     // Continue with existing ground plane logic...
@@ -371,9 +409,7 @@ HitInfo castRay(Ray ray) {
 
 // Test for shadow occlusion
 bool isInShadow(vec3 point, vec3 normal, vec3 lightDir, float lightDistance) {
-    Ray shadowRay;
-    shadowRay.origin = point + 0.001 * normal; // Offset to avoid self-intersection
-    shadowRay.direction = lightDir;
+    Ray shadowRay = createRay(point + 0.001 * normal, lightDir); // Offset to avoid self-intersection
     
     HitInfo shadowHit = castRay(shadowRay);
     return shadowHit.hit && shadowHit.distance < lightDistance;
@@ -436,33 +472,31 @@ vec3 evaluateDirectLighting(HitInfo hit, vec3 viewDir) {
     return directLight;
 }
 
-// Cosine-weighted hemisphere sampling
+// Cosine-weighted hemisphere sampling (optimized)
 vec3 sampleCosineHemisphere(vec3 normal, vec2 rand) {
-    // Correct cosine-weighted hemisphere sampling formula
-    float cosTheta = sqrt(rand.x);        // sqrt(r1) for cosine distribution
-    float sinTheta = sqrt(1.0 - rand.x);  // sqrt(1 - r1) 
-    float phi = 2.0 * 3.14159 * rand.y;   // 2π * r2
+    float cosTheta = sqrt(rand.x);
+    float sinTheta = sqrt(1.0 - rand.x);
+    float phi = 2.0 * 3.14159 * rand.y;
     
     // Build orthonormal basis around normal
     vec3 w = normal;
     vec3 u = normalize(cross(abs(w.x) > 0.1 ? vec3(0, 1, 0) : vec3(1, 0, 0), w));
     vec3 v = cross(w, u);
     
-    // Convert spherical coordinates to Cartesian in local basis
     return normalize(u * sinTheta * cos(phi) + v * sinTheta * sin(phi) + w * cosTheta);
 }
 
 // Generate random unit vector for Lambert scattering  
-vec3 randomUnitVector(vec2 seed) {
-    vec2 rand = random2(seed);
+vec3 randomUnitVector(vec2 seed, inout uint state) {
+    vec2 rand = random2(seed, state);
     float a = rand.x * 2.0 * 3.14159265;
     float z = rand.y * 2.0 - 1.0;
     float r = sqrt(1.0 - z * z);
     return vec3(r * cos(a), r * sin(a), z);
 }
 
-// Iterative ray color calculation with proper GUI setting support
-vec3 rayColor(Ray initialRay, int maxDepth) {
+// Iterative ray color calculation with PCG RNG state
+vec3 rayColor(Ray initialRay, int maxDepth, inout uint rngState) {
     vec3 finalColor = vec3(0.0);
     vec3 attenuation = vec3(1.0);
     Ray currentRay = initialRay;
@@ -501,9 +535,9 @@ vec3 rayColor(Ray initialRay, int maxDepth) {
         vec3 conservativeAlbedo = clamp(hit.albedo, 0.0, 1.0);
         attenuation *= conservativeAlbedo * indirectIntensity;
         
-        // Set up next ray with material roughness affecting scatter
+        // Set up next ray with material roughness affecting scatter - use PCG RNG
         vec2 seed = hit.point.xy + float(depth) * 123.456;
-        vec2 rand = random2(seed);
+        vec2 rand = random2(seed, rngState);
         
         // Implement proper BRDF sampling with consistent weighting
         vec3 scatterDir;
@@ -522,7 +556,7 @@ vec3 rayColor(Ray initialRay, int maxDepth) {
             
             if (hit.roughness > 0.01) {
                 // Add roughness to reflection
-                vec3 roughnessOffset = sampleCosineHemisphere(hit.normal, random2(rand)) * hit.roughness;
+                vec3 roughnessOffset = sampleCosineHemisphere(hit.normal, random2(rand, rngState)) * hit.roughness;
                 scatterDir = normalize(reflectedDir + roughnessOffset);
             } else {
                 // Perfect mirror reflection
@@ -550,19 +584,18 @@ vec3 rayColor(Ray initialRay, int maxDepth) {
         // Apply BRDF weighting to attenuation
         attenuation *= brdfWeight;
         
-        currentRay.origin = hit.point + 0.001 * hit.normal;
-        currentRay.direction = scatterDir;
+        currentRay = createRay(hit.point + 0.001 * hit.normal, scatterDir);
         
-        // Russian Roulette termination for performance (unbiased)
+        // Russian Roulette termination for performance (unbiased) - use PCG RNG
         // Calculate survival probability based on attenuation strength
         float maxComponent = max(max(attenuation.r, attenuation.g), attenuation.b);
         float survivalProbability = min(maxComponent, 0.95); // Cap at 95% to ensure some termination
         
         // Only apply Russian Roulette after a few bounces to avoid terminating important paths
         if (depth >= 3) {
-            // Use a new random number for termination decision
+            // Use PCG RNG for termination decision
             vec2 rrSeed = hit.point.yz + float(depth) * 456.789;
-            float rrRandom = random(rrSeed);
+            float rrRandom = random(rrSeed, rngState);
             
             if (rrRandom > survivalProbability) {
                 // Terminate path
@@ -577,22 +610,20 @@ vec3 rayColor(Ray initialRay, int maxDepth) {
     return finalColor;
 }
 
-// Main lighting calculation function
-vec3 calculateRadianceLighting(vec3 worldPos, vec3 normal, vec3 materialColor, float shininess, vec3 viewDir) {
+// Main lighting calculation function with PCG RNG state
+vec3 calculateRadianceLighting(vec3 worldPos, vec3 normal, vec3 materialColor, float shininess, vec3 viewDir, inout uint rngState) {
     vec3 color = vec3(0.0);
     
     // Sample multiple rays from this point for anti-aliasing and noise reduction
     for (int i = 0; i < samplesPerPixel; i++) {
         // Create a ray from this fragment position using cosine-weighted sampling
         vec2 seed = worldPos.xy + float(i) * 0.1;
-        vec2 rand = random2(seed);
+        vec2 rand = random2(seed, rngState);
         
-        Ray rayBounce;
-        rayBounce.origin = worldPos + 0.001 * normal;
-        rayBounce.direction = sampleCosineHemisphere(normal, rand);
+        vec3 rayDir = sampleCosineHemisphere(normal, rand);
         
         // Trace the ray and accumulate color
-        color += materialColor * rayColor(rayBounce, maxBounces);
+        color += materialColor * rayColor(createRay(worldPos + 0.001 * normal, rayDir), maxBounces, rngState);
     }
     
     // Average the samples
@@ -600,13 +631,8 @@ vec3 calculateRadianceLighting(vec3 worldPos, vec3 normal, vec3 materialColor, f
     
     // Add emissive component from this fragment itself
     if (material.emissive > 0.0) {
-        color += materialColor * material.emissive;
+        color += materialColor * material.emissive * emissiveIntensity;
     }
-    
-    // Pure raytracing - no direct sun lighting, light only comes from:
-    // 1. Emissive objects hit by rays
-    // 2. Sky light from rays that miss geometry
-    // 3. This fragment's own emissive contribution
     
     return color;
 }
@@ -636,8 +662,13 @@ void main() {
     vec3 result = vec3(0.0);
     
     if (enableRaytracing) {
+        // Create RNG state for PCG (like sample project)
+        ivec2 pixelCoord = ivec2(gl_FragCoord.xy);
+        uint pixelIndex = uint(pixelCoord.y * 1920 + pixelCoord.x); // Approximate screen width
+        uint rngState = pixelIndex + uint(gl_FragCoord.x * gl_FragCoord.y) * 719393u;
+        
         // Raytracing for lighting calculation starting from the rasterized fragment
-        result = calculateRadianceLighting(worldPos, normal, materialColor, material.shininess, viewDir);
+        result = calculateRadianceLighting(worldPos, normal, materialColor, material.shininess, viewDir, rngState);
     } else {
         // When raytracing is disabled, just show material color with minimal ambient
         result = materialColor * 0.3; // Just ambient material color

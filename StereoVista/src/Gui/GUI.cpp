@@ -1284,6 +1284,47 @@ void renderSettingsWindow() {
             }
             ImGui::SetItemTooltip("Display the zero plane in the visualization");
             ImGui::EndGroup();
+            
+            ImGui::Spacing();
+            
+            // Startup Scene Configuration
+            ImGui::BeginGroup();
+            ImGui::Text("Startup Scene");
+            ImGui::Separator();
+            
+            if (ImGui::Checkbox("Load Scene on Startup", &preferences.loadStartupScene)) {
+                settingsChanged = true;
+            }
+            ImGui::SetItemTooltip("Automatically load the specified scene file when the application starts");
+            
+            // Scene Path Input
+            if (preferences.loadStartupScene) {
+                static char scenePathBuffer[1024];
+                
+                // Copy current path to buffer if not already done
+                if (strlen(scenePathBuffer) == 0 && !preferences.startupScenePath.empty()) {
+                    strncpy_s(scenePathBuffer, preferences.startupScenePath.c_str(), sizeof(scenePathBuffer) - 1);
+                }
+                
+                if (ImGui::InputText("Scene Path", scenePathBuffer, sizeof(scenePathBuffer))) {
+                    preferences.startupScenePath = std::string(scenePathBuffer);
+                    settingsChanged = true;
+                }
+                ImGui::SetItemTooltip("Path to the .scene file to load on startup");
+                
+                // Browse button
+                ImGui::SameLine();
+                if (ImGui::Button("Browse...")) {
+                    auto result = pfd::open_file("Select Scene File", "", { "Scene Files", "*.scene" });
+                    if (!result.result().empty()) {
+                        std::string selectedPath = result.result()[0];
+                        strncpy_s(scenePathBuffer, selectedPath.c_str(), sizeof(scenePathBuffer) - 1);
+                        preferences.startupScenePath = selectedPath;
+                        settingsChanged = true;
+                    }
+                }
+            }
+            ImGui::EndGroup();
 
             ImGui::EndTabItem();
         }

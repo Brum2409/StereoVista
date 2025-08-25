@@ -45,11 +45,11 @@ namespace Engine {
         std::cout << "BVH built with " << nodesUsed << " nodes for " << triangles.size() << " triangles" << std::endl;
     }
 
-    void BVHBuilder::subdivide(uint32_t nodeIdx) {
+    void BVHBuilder::subdivide(uint32_t nodeIdx, uint32_t depth) {
         BVHNode& node = nodes[nodeIdx];
         
-        // Stop subdivision if we have few triangles
-        if (node.triCount <= MAX_TRIANGLES_PER_LEAF) {
+        // Stop subdivision if we have few triangles or reached max depth
+        if (node.triCount <= MAX_TRIANGLES_PER_LEAF || depth >= 20) { // Limit depth to 20 for GPU efficiency
             return;
         }
         
@@ -105,8 +105,8 @@ namespace Engine {
         node.triCount = 0;  // Mark as interior node
         
         // Recursively subdivide children
-        subdivide(leftChildIdx);
-        subdivide(rightChildIdx);
+        subdivide(leftChildIdx, depth + 1);
+        subdivide(rightChildIdx, depth + 1);
     }
 
     AABB BVHBuilder::calculateBounds(uint32_t first, uint32_t count) {
