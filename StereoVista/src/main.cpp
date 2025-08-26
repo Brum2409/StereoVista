@@ -181,6 +181,13 @@ bool ctrlPressed = false;
 double lastClickTime = 0.0;
 const double doubleClickTime = 0.3; // 300 ms double-click threshold
 
+// ---- Model Movement Physics ----
+float modelScrollVelocity = 0.0f;      // Current velocity for model depth movement
+float modelScrollMomentum = 0.5f;      // Momentum factor (same as camera)
+float modelMaxScrollVelocity = 3.0f;   // Maximum velocity (same as camera)
+float modelScrollDeceleration = 5.0f;  // Deceleration rate (same as camera)
+float lastModelScrollTime = 0.0f;      // Last time model scroll was processed
+
 // ---- Timing ----
 float deltaTime = 0.0f;
 float lastFrame = 0.0f;
@@ -1860,6 +1867,33 @@ int main() {
             model.updateAnimation(deltaTime);
         }
 
+        // ---- Update Model Depth Movement Physics ----
+        // Apply smooth scrolling physics to model depth movement when dragging
+        if (isMovingModel && currentSelectedType == SelectedType::Model && currentSelectedIndex != -1 && modelScrollVelocity != 0.0f) {
+            // Calculate distance-based sensitivity for consistent feel
+            float distanceToModel = glm::distance(camera.Position, currentScene.models[currentSelectedIndex].position);
+            distanceToModel = glm::max(distanceToModel, 0.1f); // Prevent sensitivity from becoming zero
+            
+            // Apply movement with physics-based velocity
+            float scrollSensitivity = 1.0f;  // Base sensitivity factor (increased from 0.1f)
+            float adjustedVelocity = modelScrollVelocity * scrollSensitivity * distanceToModel;
+            
+            // Move model along camera's front direction
+            currentScene.models[currentSelectedIndex].position += camera.Front * adjustedVelocity * deltaTime;
+
+            // Apply deceleration
+            float deceleration = modelScrollDeceleration * deltaTime;
+            if (abs(modelScrollVelocity) <= deceleration) {
+                modelScrollVelocity = 0.0f;
+            } else {
+                modelScrollVelocity -= glm::sign(modelScrollVelocity) * deceleration;
+            }
+        }
+        // Reset velocity when not moving a model
+        else if (!isMovingModel) {
+            modelScrollVelocity = 0.0f;
+        }
+
         // --- Process Accumulated Mouse Input (Once Per Frame) ---
         // Check if mouse is captured and if there's any accumulated movement to process
         // Don't process mouse input when SpaceMouse is actively navigating
@@ -3262,17 +3296,14 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
     if (!ImGui::GetIO().WantCaptureMouse && !spaceMouseActive) {
         // Check if we're currently moving a model with Ctrl+drag
         if (isMovingModel && currentSelectedType == SelectedType::Model && currentSelectedIndex != -1) {
-            // Move model along camera's front/back direction
-            float scrollSensitivity = 0.1f;  // Adjust this value to control movement speed
-            
-            // Calculate distance-based sensitivity for consistent feel
-            float distanceToModel = glm::distance(camera.Position, currentScene.models[currentSelectedIndex].position);
-            distanceToModel = glm::max(distanceToModel, 0.1f); // Prevent sensitivity from becoming zero
-            
-            float depthMovement = static_cast<float>(yoffset) * scrollSensitivity * distanceToModel * 0.1f;
-            
-            // Move model along camera's front direction (positive = away from camera, negative = toward camera)
-            currentScene.models[currentSelectedIndex].position += camera.Front * depthMovement;
+            // Apply physics-based smooth scrolling to model depth movement
+            float currentTime = static_cast<float>(glfwGetTime());
+            float deltaTime = currentTime - lastModelScrollTime;
+            lastModelScrollTime = currentTime;
+
+            // Add momentum to velocity (similar to camera scrolling)
+            modelScrollVelocity += static_cast<float>(yoffset) * modelScrollMomentum;
+            modelScrollVelocity = glm::clamp(modelScrollVelocity, -modelMaxScrollVelocity, modelMaxScrollVelocity);
         }
         else {
             // Normal camera zoom behavior
