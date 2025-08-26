@@ -3260,17 +3260,34 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height)
 
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
     if (!ImGui::GetIO().WantCaptureMouse && !spaceMouseActive) {
-        // Update cursor info before processing scroll
-        if (cursorManager.isCursorPositionValid()) {
-            camera.UpdateCursorInfo(cursorManager.getCursorPosition(), true);
+        // Check if we're currently moving a model with Ctrl+drag
+        if (isMovingModel && currentSelectedType == SelectedType::Model && currentSelectedIndex != -1) {
+            // Move model along camera's front/back direction
+            float scrollSensitivity = 0.1f;  // Adjust this value to control movement speed
+            
+            // Calculate distance-based sensitivity for consistent feel
+            float distanceToModel = glm::distance(camera.Position, currentScene.models[currentSelectedIndex].position);
+            distanceToModel = glm::max(distanceToModel, 0.1f); // Prevent sensitivity from becoming zero
+            
+            float depthMovement = static_cast<float>(yoffset) * scrollSensitivity * distanceToModel * 0.1f;
+            
+            // Move model along camera's front direction (positive = away from camera, negative = toward camera)
+            currentScene.models[currentSelectedIndex].position += camera.Front * depthMovement;
         }
         else {
-            camera.UpdateCursorInfo(glm::vec3(0.0f), false);
+            // Normal camera zoom behavior
+            // Update cursor info before processing scroll
+            if (cursorManager.isCursorPositionValid()) {
+                camera.UpdateCursorInfo(cursorManager.getCursorPosition(), true);
+            }
+            else {
+                camera.UpdateCursorInfo(glm::vec3(0.0f), false);
+            }
+            // Pass background cursor info to camera for zoom functionality
+            camera.ProcessMouseScroll(yoffset, 
+                cursorManager.getBackgroundCursorPosition(), 
+                cursorManager.hasBackgroundCursorPosition());
         }
-        // Pass background cursor info to camera for zoom functionality
-        camera.ProcessMouseScroll(yoffset, 
-            cursorManager.getBackgroundCursorPosition(), 
-            cursorManager.hasBackgroundCursorPosition());
     }
 }
 
