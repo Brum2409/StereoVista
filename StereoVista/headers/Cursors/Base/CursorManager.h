@@ -54,6 +54,10 @@ namespace Cursor {
         // Cursor position getters
         const glm::vec3& getCursorPosition() const { return m_cursorPosition; }
         bool isCursorPositionValid() const { return m_cursorPositionValid; }
+        
+        // Background cursor position getters (for when cursor is over empty space)
+        const glm::vec3& getBackgroundCursorPosition() const { return m_backgroundCursorPosition; }
+        bool hasBackgroundCursorPosition() const { return m_hasBackgroundCursorPosition; }
 
     private:
         std::unique_ptr<SphereCursor> m_sphereCursor;
@@ -64,6 +68,10 @@ namespace Cursor {
         glm::vec3 m_cursorPosition;
         bool m_cursorPositionValid;
         bool m_cursorPositionCalculatedThisFrame;
+        
+        // Background cursor position (for when cursor is over empty space)
+        glm::vec3 m_backgroundCursorPosition;
+        bool m_hasBackgroundCursorPosition;
 
         // Orbit center properties
         bool m_showOrbitCenter;
@@ -77,5 +85,8 @@ namespace Cursor {
         // Mouse position
         float m_lastX;
         float m_lastY;
+        
+        // Helper function to calculate background cursor position
+        glm::vec3 calculateBackgroundCursorPosition(GLFWwindow* window, const glm::mat4& projection, const glm::mat4& view);
     };
 }

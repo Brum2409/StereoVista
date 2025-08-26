@@ -326,8 +326,8 @@ public:
                 Pitch += yoffset;
 
                 if (constrainPitch) {
-                    if (Pitch > 89.0f) Pitch = 89.0f;
-                    if (Pitch < -89.0f) Pitch = -89.0f;
+                    if (Pitch > 88.5f) Pitch = 88.5f;
+                    if (Pitch < -88.5f) Pitch = -88.5f;
                 }
             }
             else {
@@ -348,8 +348,8 @@ public:
                 Pitch += yoffset;
 
                 if (constrainPitch) {
-                    if (Pitch > 89.0f) Pitch = 89.0f;
-                    if (Pitch < -89.0f) Pitch = -89.0f;
+                    if (Pitch > 88.5f) Pitch = 88.5f;
+                    if (Pitch < -88.5f) Pitch = -88.5f;
                 }
 
                 Right = glm::normalize(glm::cross(Front, WorldUp));
@@ -375,8 +375,8 @@ public:
             Pitch += yoffset;
 
             if (constrainPitch) {
-                if (Pitch > 89.0f) Pitch = 89.0f;
-                if (Pitch < -89.0f) Pitch = -89.0f;
+                if (Pitch > 88.5f) Pitch = 88.5f;
+                if (Pitch < -88.5f) Pitch = -88.5f;
             }
 
             updateCameraVectors();
@@ -386,7 +386,7 @@ public:
     }
 
     // Processes mouse scroll for zooming
-    void ProcessMouseScroll(float yoffset) {
+    void ProcessMouseScroll(float yoffset, const glm::vec3& backgroundCursorPos = glm::vec3(0.0f), bool hasBackgroundCursor = false) {
         if (IsAnimating) return;
 
         float modelSize = 1.0f;
@@ -395,14 +395,28 @@ public:
 
         if (!useSmoothScrolling) {
             // Direct movement without momentum
+            glm::vec3 targetPosition;
+            bool hasValidTarget = false;
+
             if (zoomToCursor && cursorValid) {
-                // Zoom toward/away from cursor point
-                glm::vec3 dirToCursor = cursorPosition - Position;
-                float distance = glm::length(dirToCursor);
+                // Use valid 3D cursor position
+                targetPosition = cursorPosition;
+                hasValidTarget = true;
+            }
+            else if (zoomToCursor && !cursorValid && hasBackgroundCursor) {
+                // Use background cursor position from cursor manager when over empty space
+                targetPosition = backgroundCursorPos;
+                hasValidTarget = true;
+            }
+
+            if (hasValidTarget) {
+                // Zoom toward/away from target point
+                glm::vec3 dirToTarget = targetPosition - Position;
+                float distance = glm::length(dirToTarget);
 
                 if (distance > 0.01f) {
-                    dirToCursor = glm::normalize(dirToCursor);
-                    Position += dirToCursor * scaledYOffset * MovementSpeed * 0.1f;
+                    dirToTarget = glm::normalize(dirToTarget);
+                    Position += dirToTarget * scaledYOffset * MovementSpeed * 0.1f;
                 }
                 else {
                     Position += Front * scaledYOffset * MovementSpeed * 0.1f;
@@ -429,6 +443,11 @@ public:
 
         if (zoomToCursor && cursorValid) {
             scrollTargetPos = cursorPosition;
+            isScrollingToCursor = true;
+        }
+        else if (zoomToCursor && !cursorValid && hasBackgroundCursor) {
+            // Use background cursor position from cursor manager when over empty space
+            scrollTargetPos = backgroundCursorPos;
             isScrollingToCursor = true;
         }
         else {

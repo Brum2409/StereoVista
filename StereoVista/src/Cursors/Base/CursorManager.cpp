@@ -13,6 +13,8 @@ namespace Cursor {
         m_cursorPosition(0.0f),
         m_cursorPositionValid(false),
         m_cursorPositionCalculatedThisFrame(false),
+        m_backgroundCursorPosition(0.0f),
+        m_hasBackgroundCursorPosition(false),
         m_showOrbitCenter(false),
         m_orbitCenterColor(0.0f, 1.0f, 0.0f, 0.7f),
         m_orbitCenterSphereRadius(0.2f),
@@ -108,6 +110,9 @@ namespace Cursor {
             // Update radius for sphere cursor based on camera distance
             m_sphereCursor->calculateRadius(camera.Position);
 
+            // Clear background cursor when we have a valid 3D cursor
+            m_hasBackgroundCursorPosition = false;
+
             if (camera.IsPanning || (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS)) {
                 m_cursorPositionCalculatedThisFrame = true;
                 return;
@@ -120,6 +125,10 @@ namespace Cursor {
             m_sphereCursor->setPositionValid(false);
             m_fragmentCursor->setPositionValid(false);
             m_planeCursor->setPositionValid(false);
+
+            // Calculate background cursor position when cursor is over empty space
+            m_backgroundCursorPosition = calculateBackgroundCursorPosition(window, projection, view);
+            m_hasBackgroundCursorPosition = true;
 
             if (camera.IsPanning || (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS)) {
                 m_cursorPositionCalculatedThisFrame = true;
@@ -218,5 +227,34 @@ namespace Cursor {
         m_sphereCursor->cleanup();
         m_fragmentCursor->cleanup();
         m_planeCursor->cleanup();
+    }
+
+    // Calculate background cursor position when cursor is over empty space
+    glm::vec3 CursorManager::calculateBackgroundCursorPosition(GLFWwindow* window, const glm::mat4& projection, const glm::mat4& view) {
+        // Use already stored mouse position from updateCursorPosition
+        float mouseX = m_lastX;
+        float mouseY = m_lastY;
+        
+        // Convert to normalized device coordinates
+        float x = (2.0f * mouseX) / (float)m_windowWidth - 1.0f;
+        float y = 1.0f - (2.0f * mouseY) / (float)m_windowHeight;
+        
+        // Project to a reasonable distance from camera (middle of view frustum)
+        float targetDepth = 0.5f; // NDC depth between near (0) and far (1)
+        glm::vec4 nearPoint = glm::vec4(x, y, -1.0f, 1.0f); // Near plane
+        glm::vec4 farPoint = glm::vec4(x, y, 1.0f, 1.0f);   // Far plane
+        
+        // Transform to world space
+        glm::mat4 invViewProj = glm::inverse(projection * view);
+        glm::vec4 nearWorld = invViewProj * nearPoint;
+        glm::vec4 farWorld = invViewProj * farPoint;
+        
+        nearWorld /= nearWorld.w;
+        farWorld /= farWorld.w;
+        
+        // Interpolate between near and far points at the target depth
+        glm::vec3 worldPos = glm::mix(glm::vec3(nearWorld), glm::vec3(farWorld), targetDepth);
+        
+        return worldPos;
     }
 }

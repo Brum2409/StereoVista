@@ -131,6 +131,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                         std::string filePath = selection[0];
                         try {
                             Engine::Model newModel = *Engine::loadModel(filePath);
+                            // Start spawn animation for loaded model - use the model's current scale as target
+                            glm::vec3 targetScale = newModel.scale;
+                            newModel.startSpawnAnimation(targetScale, 0.27f);  // Animate over 0.27 seconds
                             currentScene.models.push_back(newModel);
                             currentSelectedIndex = currentScene.models.size() - 1;
                             currentSelectedType = SelectedType::Model;
@@ -193,6 +196,11 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                 if (!selection.empty()) {
                     try {
                         currentScene = Engine::loadScene(selection[0], camera);
+                        // Start spawn animation for all loaded models
+                        for (auto& model : currentScene.models) {
+                            glm::vec3 targetScale = model.scale;
+                            model.startSpawnAnimation(targetScale, 0.27f);  // Animate over 0.27 seconds
+                        }
                         currentSelectedIndex = currentScene.models.empty() ? -1 : 0;
                         updateSpaceMouseBounds();
                     }
@@ -219,8 +227,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
         if (ImGui::BeginMenu("Create")) {
             if (ImGui::MenuItem("Cube")) {
                 Engine::Model newCube = Engine::createCube(glm::vec3(0.8f, 0.8f, 0.8f), 1.0f, 0.0f);
-                newCube.scale = glm::vec3(0.5f);
                 newCube.position = glm::vec3(0.0f, 0.0f, 0.0f);
+                newCube.startSpawnAnimation(glm::vec3(0.5f), 0.27f);  // Animate to 0.5 scale over 0.27 seconds
                 currentScene.models.push_back(newCube);
                 currentSelectedIndex = currentScene.models.size() - 1;
                 currentSelectedType = SelectedType::Model;
@@ -228,8 +236,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
             }
             if (ImGui::MenuItem("Sphere")) {
                 Engine::Model newSphere = Engine::createSphere(glm::vec3(0.8f, 0.4f, 0.4f), 1.0f, 0.0f);
-                newSphere.scale = glm::vec3(0.5f);
                 newSphere.position = glm::vec3(0.0f, 0.0f, 0.0f);
+                newSphere.startSpawnAnimation(glm::vec3(0.5f), 0.27f);  // Animate to 0.5 scale over 0.27 seconds
                 currentScene.models.push_back(newSphere);
                 currentSelectedIndex = currentScene.models.size() - 1;
                 currentSelectedType = SelectedType::Model;
@@ -237,8 +245,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
             }
             if (ImGui::MenuItem("Cylinder")) {
                 Engine::Model newCylinder = Engine::createCylinder(glm::vec3(0.4f, 0.8f, 0.4f), 1.0f, 0.0f);
-                newCylinder.scale = glm::vec3(0.5f);
                 newCylinder.position = glm::vec3(0.0f, 0.0f, 0.0f);
+                newCylinder.startSpawnAnimation(glm::vec3(0.5f), 0.27f);  // Animate to 0.5 scale over 0.27 seconds
                 currentScene.models.push_back(newCylinder);
                 currentSelectedIndex = currentScene.models.size() - 1;
                 currentSelectedType = SelectedType::Model;
@@ -246,8 +254,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
             }
             if (ImGui::MenuItem("Plane")) {
                 Engine::Model newPlane = Engine::createPlane(glm::vec3(0.6f, 0.6f, 0.8f), 1.0f, 0.0f);
-                newPlane.scale = glm::vec3(1.0f);
                 newPlane.position = glm::vec3(0.0f, 0.0f, 0.0f);
+                newPlane.startSpawnAnimation(glm::vec3(1.0f), 0.27f);  // Animate to 1.0 scale over 0.27 seconds
                 currentScene.models.push_back(newPlane);
                 currentSelectedIndex = currentScene.models.size() - 1;
                 currentSelectedType = SelectedType::Model;
@@ -255,8 +263,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
             }
             if (ImGui::MenuItem("Torus (Ring)")) {
                 Engine::Model newTorus = Engine::createTorus(glm::vec3(0.8f, 0.6f, 0.2f), 1.0f, 0.0f);
-                newTorus.scale = glm::vec3(0.8f);
                 newTorus.position = glm::vec3(0.0f, 0.0f, 0.0f);
+                newTorus.startSpawnAnimation(glm::vec3(0.8f), 0.27f);  // Animate to 0.8 scale over 0.27 seconds
                 currentScene.models.push_back(newTorus);
                 currentSelectedIndex = currentScene.models.size() - 1;
                 currentSelectedType = SelectedType::Model;
@@ -678,7 +686,7 @@ void renderSettingsWindow() {
                 preferences.zoomToCursor = camera.zoomToCursor;
                 settingsChanged = true;
             }
-            ImGui::SetItemTooltip("When enabled, scrolling zooms toward or away from the 3D cursor position");
+            ImGui::SetItemTooltip("When enabled, scrolling zooms toward the cursor position (including background areas)");
             
             ImGui::Text("Orbiting Behavior");
             bool standardOrbit = !camera.orbitAroundCursor && !orbitFollowsCursor;

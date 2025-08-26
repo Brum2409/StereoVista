@@ -1755,6 +1755,11 @@ int main() {
         try {
             std::cout << "Loading startup scene: " << preferences.startupScenePath << std::endl;
             currentScene = Engine::loadScene(preferences.startupScenePath, camera);
+            // Start spawn animation for all loaded models
+            for (auto& model : currentScene.models) {
+                glm::vec3 targetScale = model.scale;
+                model.startSpawnAnimation(targetScale, 0.27f);  // Animate over 0.27 seconds
+            }
             currentModelIndex = currentScene.models.empty() ? -1 : 0;
             updateSpaceMouseBounds();
             std::cout << "Startup scene loaded successfully" << std::endl;
@@ -1849,6 +1854,12 @@ int main() {
             }
         }
 
+        // ---- Update Model Animations ----
+        // Update spawn animations for all models
+        for (auto& model : currentScene.models) {
+            model.updateAnimation(deltaTime);
+        }
+
         // --- Process Accumulated Mouse Input (Once Per Frame) ---
         // Check if mouse is captured and if there's any accumulated movement to process
         // Don't process mouse input when SpaceMouse is actively navigating
@@ -1861,29 +1872,42 @@ int main() {
             // --- Process Movement Based on Active Mode ---
             if (isMovingModel && currentSelectedType == SelectedType::Model && currentSelectedIndex != -1)
             {
-                // Calculate sensitivity based on distance to the model
-                float distanceToModel = glm::distance(camera.Position, currentScene.models[currentSelectedIndex].position);
-                distanceToModel = glm::max(distanceToModel, 0.1f); // Prevent sensitivity from becoming zero or negative
-
-                // Normalize the raw accumulated offset relative to window size for consistent feel
-                // This makes the movement speed less dependent on raw pixel offset values
-                float normalizedXOffset = totalXOffset / static_cast<float>(windowWidth);
-                float normalizedYOffset = totalYOffset / static_cast<float>(windowHeight);
-
-                // Define base sensitivity for model dragging (tune this value)
-                float baseSensitivity = 0.71f; // Increased base sensitivity might feel better for normalized input
-                float sensitivityFactor = baseSensitivity * distanceToModel; // Scale sensitivity by distance
-
-                // Adjust horizontal movement by aspect ratio
-                normalizedXOffset *= aspectRatio;
-
-                // Determine movement directions based on camera's current orientation
-                glm::vec3 rightDir = glm::normalize(glm::cross(camera.Front, camera.Up));
-                glm::vec3 upDir = camera.Up; // Use camera's up vector for vertical movement
-
-                // Apply the movement to the selected model's position
-                currentScene.models[currentSelectedIndex].position += rightDir * normalizedXOffset * sensitivityFactor;
-                currentScene.models[currentSelectedIndex].position += upDir * normalizedYOffset * sensitivityFactor;
+                // Use proper screen-to-world space conversion for model dragging
+                // This ensures the cursor stays exactly on the model where it started
+                
+                glm::vec3 modelPos = currentScene.models[currentSelectedIndex].position;
+                float distanceToModel = glm::distance(camera.Position, modelPos);
+                
+                // Project model position to screen space
+                glm::mat4 view = camera.GetViewMatrix();
+                glm::mat4 projection = camera.GetProjectionMatrix(aspectRatio, currentScene.settings.nearPlane, currentScene.settings.farPlane);
+                glm::mat4 viewProj = projection * view;
+                
+                // Convert world space position to screen space
+                glm::vec4 modelScreenPos = viewProj * glm::vec4(modelPos, 1.0f);
+                modelScreenPos /= modelScreenPos.w; // Perspective divide
+                
+                // Convert to screen coordinates
+                float screenX = (modelScreenPos.x + 1.0f) * 0.5f * windowWidth;
+                float screenY = (1.0f - modelScreenPos.y) * 0.5f * windowHeight; // Flip Y
+                
+                // Apply mouse offset in screen space
+                screenX += totalXOffset;
+                screenY -= totalYOffset;  // Invert Y to match cursor movement direction
+                
+                // Convert back to NDC
+                glm::vec2 newNDC = glm::vec2(
+                    (screenX / windowWidth) * 2.0f - 1.0f,
+                    1.0f - (screenY / windowHeight) * 2.0f
+                );
+                
+                // Project the new screen position back to world space at the same depth
+                glm::vec4 newWorldPos = glm::vec4(newNDC.x, newNDC.y, modelScreenPos.z, 1.0f);
+                newWorldPos = glm::inverse(viewProj) * newWorldPos;
+                newWorldPos /= newWorldPos.w;
+                
+                // Update model position
+                currentScene.models[currentSelectedIndex].position = glm::vec3(newWorldPos);
             }
             else if ((camera.IsOrbiting || camera.IsPanning || rightMousePressed) && !camera.IsAnimating)
             {
@@ -2468,8 +2492,10 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
         renderZeroPlane(shader, projection, view, currentScene.settings.convergence);
     }
 
-    // Calculate cursor position (only once per frame for stereo consistency)
-    // For stereo: first call (left eye) calculates, second call (right eye) uses cached value
+    renderSkybox(projection, view, shader);
+
+    // Calculate cursor position AFTER scene rendering but BEFORE cursor rendering
+    // This ensures we read scene depth, not cursor depth from the buffer
     cursorManager.updateCursorPosition(window, projection, view, shader, false);
     
     // Update SpaceMouse cursor anchor when cursor position changes
@@ -2482,8 +2508,6 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     if (!orbitFollowsCursor && cursorManager.isShowOrbitCenter() && camera.IsOrbiting) {
         cursorManager.renderOrbitCenter(projection, view, camera.OrbitPoint);
     }
-
-    renderSkybox(projection, view, shader);
 
     if (camera.IsPanning == false) {
         cursorManager.renderCursors(projection, view);
@@ -3243,7 +3267,10 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
         else {
             camera.UpdateCursorInfo(glm::vec3(0.0f), false);
         }
-        camera.ProcessMouseScroll(yoffset);
+        // Pass background cursor info to camera for zoom functionality
+        camera.ProcessMouseScroll(yoffset, 
+            cursorManager.getBackgroundCursorPosition(), 
+            cursorManager.hasBackgroundCursorPosition());
     }
 }
 

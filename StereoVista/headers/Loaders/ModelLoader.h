@@ -88,6 +88,13 @@ namespace Engine {
         float boundingSphereRadius = 0.0f;
         std::string directory;
         std::vector<bool> selectedMeshes;
+
+        // Animation properties for spawn animation
+        bool isAnimating = false;
+        float animationProgress = 0.0f;
+        float animationDuration = 1.0f;  // Duration in seconds
+        glm::vec3 targetScale = glm::vec3(1.0f);  // Final scale after animation
+        glm::vec3 animationStartScale = glm::vec3(0.0f);  // Start scale (small)
         static GLuint TextureFromFile(const char* path, const std::string& directory, std::string& outFullPath);
         const std::vector<Mesh>& getMeshes() const { return meshes; }
         std::vector<Mesh>& getMeshes() { return meshes; }
@@ -104,6 +111,39 @@ namespace Engine {
 
         void initializeMeshSelection() {
             selectedMeshes.resize(meshes.size(), false);
+        }
+
+        // Start spawn animation with specified target scale
+        void startSpawnAnimation(const glm::vec3& finalScale, float duration = 1.0f) {
+            isAnimating = true;
+            animationProgress = 0.0f;
+            animationDuration = duration;
+            targetScale = finalScale;
+            animationStartScale = glm::vec3(0.0f);
+            scale = animationStartScale;  // Start at zero scale
+        }
+
+        // Update animation (call once per frame with deltaTime)
+        void updateAnimation(float deltaTime) {
+            if (!isAnimating) return;
+
+            animationProgress += deltaTime / animationDuration;
+
+            if (animationProgress >= 1.0f) {
+                // Animation complete
+                animationProgress = 1.0f;
+                isAnimating = false;
+                scale = targetScale;
+            } else {
+                // Apply easing function (ease out cubic)
+                float t = easeOutCubic(animationProgress);
+                scale = glm::mix(animationStartScale, targetScale, t);
+            }
+        }
+
+        // Cubic easing function for smooth animation
+        float easeOutCubic(float t) {
+            return 1.0f - pow(1.0f - t, 3.0f);
         }
 
         bool hasSpecularMap() const {
