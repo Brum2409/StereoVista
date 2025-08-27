@@ -1800,6 +1800,8 @@ int main() {
         // Set up callbacks
         spaceMouseInput.OnNavigationStarted = []() {
             spaceMouseActive = true;
+            // Ensure Euler angles are up-to-date from quaternion before SpaceMouse takes over
+            camera.SynchronizeEulerFromQuaternion();
             // Sync current camera state to SpaceMouse camera when navigation starts
             spaceMouseCamera = camera;
             *spaceMouseCameraPtr = spaceMouseCamera;
@@ -1815,6 +1817,11 @@ int main() {
             spaceMouseActive = false;
             // Sync SpaceMouse camera state back to main camera when navigation ends
             camera = *spaceMouseCameraPtr;
+            // Instead of converting Euler->Quaternion, derive quaternion from the Front/Up vectors
+            // This avoids Euler angle conversion issues
+            glm::mat4 lookMatrix = glm::lookAt(glm::vec3(0), camera.Front, camera.Up);
+            glm::mat4 rotationMatrix = glm::inverse(lookMatrix);
+            camera.Orientation = glm::normalize(glm::quat_cast(rotationMatrix));
             std::cout << "SpaceMouse navigation ended" << std::endl;
         };
     } else {
@@ -1851,6 +1858,8 @@ int main() {
             if (spaceMouseActive) {
                 // SpaceMouse is active - sync from SpaceMouse camera to main camera
                 camera = *spaceMouseCameraPtr;
+                // Don't synchronize quaternion during active SpaceMouse navigation
+                // This prevents conflicts between quaternion and Euler-based input
             } else if (wasSpaceMouseActive && !spaceMouseActive) {
                 // Just transitioned from SpaceMouse to normal - sync is handled in OnNavigationEnded callback
                 // This ensures smooth transition without camera jump
@@ -3489,14 +3498,14 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                 }
             }
 
-            // Only reset cursor position if we were NOT moving a model
-            // AND if orbit around cursor is false
-            if (!wasMovingModel && camera.orbitAroundCursor == false) {
-                glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
-            }
-
             leftMousePressed = false;
             camera.StopOrbiting();
+            
+            // Reset cursor position based on orbit mode (after StopOrbiting)
+            if (!wasMovingModel) {
+                // Both standard orbit and cursor orbit: center cursor on screen
+                glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
+            }
             isMovingModel = false;
             selectionMode = false;
         }

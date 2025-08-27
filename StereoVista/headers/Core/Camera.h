@@ -7,6 +7,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/rotate_vector.hpp>
+#include <glm/gtc/quaternion.hpp>
+#include <glm/gtx/quaternion.hpp>
 
 enum Camera_Movement {
     FORWARD,
@@ -34,6 +36,7 @@ public:
         float yaw;
         float pitch;
         float zoom;
+        glm::quat orientation;  // Quaternion representation
     };
 
     // Camera attributes
@@ -44,6 +47,9 @@ public:
     glm::vec3 WorldUp;
     float Yaw;
     float Pitch;
+    
+    // Quaternion-based orientation (eliminates gimbal lock)
+    glm::quat Orientation;
     float MovementSpeed;
     float MouseSensitivity;
     float Zoom;
@@ -72,8 +78,8 @@ public:
     bool IsAnimating;
     glm::vec3 AnimationStartPosition;
     glm::vec3 AnimationEndPosition;
-    glm::vec3 AnimationStartFront;
-    glm::vec3 AnimationEndFront;
+    glm::quat AnimationStartOrientation;
+    glm::quat AnimationEndOrientation;
     float AnimationProgress;
     float AnimationDuration;
 
@@ -106,7 +112,9 @@ public:
         OrbitPoint = Position + Front;
         OrbitDistance = 1.0f;
 
-        updateCameraVectors();
+        // Initialize quaternion from Euler angles
+        initializeQuaternionFromEuler();
+        updateCameraVectorsFromQuaternion();
     }
 
     // Returns the view matrix calculated using Euler Angles and the LookAt Matrix
@@ -139,7 +147,8 @@ public:
         Yaw = state.yaw;
         Pitch = state.pitch;
         Zoom = state.zoom;
-        updateCameraVectors();
+        initializeQuaternionFromEuler();
+        updateCameraVectorsFromQuaternion();
     }
 
     // Updates the cursor information for cursor-based navigation
@@ -152,6 +161,17 @@ public:
     void UpdateDistanceToObject(float distance) {
         distanceToNearestObject = distance;
         distanceUpdated = true;
+    }
+
+    // Synchronize quaternion with current Euler angles (SpaceMouse -> Normal transition)
+    void SynchronizeQuaternionFromEuler() {
+        initializeQuaternionFromEuler();
+        updateCameraVectorsFromQuaternion();
+    }
+    
+    // Synchronize Euler angles with current quaternion (Normal -> SpaceMouse transition)  
+    void SynchronizeEulerFromQuaternion() {
+        updateEulerFromQuaternion();
     }
 
     // Creates an offset projection matrix for stereo rendering (This version of stereo is not correct. AsymFrustrum should be used instead)
@@ -299,87 +319,108 @@ public:
 
         if (IsOrbiting) {
             if (orbitAroundCursor) {
-                // Orbit around cursor position using quaternion rotation
-                glm::vec3 initialPosition = Position;
-                glm::vec3 initialFront = Front;
-                glm::vec3 initialRight = Right;
-                glm::vec3 initialUp = Up;
-
+                // Orbit around cursor position using pure quaternion rotation
                 glm::vec3 orbitToCamera = Position - OrbitPoint;
                 float distance = glm::length(orbitToCamera);
 
-                glm::quat yawQuat = glm::angleAxis(-glm::radians(xoffset), WorldUp);
+                // Create rotation quaternions for orbit movement
+                glm::quat yawRotation = glm::angleAxis(-glm::radians(xoffset), WorldUp);
                 glm::vec3 rightAxis = glm::normalize(glm::cross(orbitToCamera, WorldUp));
-                glm::quat pitchQuat = glm::angleAxis(-glm::radians(yoffset), rightAxis);
+                glm::quat pitchRotation = glm::angleAxis(-glm::radians(yoffset), rightAxis);
 
-                orbitToCamera = pitchQuat * (yawQuat * orbitToCamera);
+                // Apply orbit rotation to position
+                orbitToCamera = pitchRotation * (yawRotation * orbitToCamera);
                 orbitToCamera = glm::normalize(orbitToCamera) * distance;
-
                 Position = OrbitPoint + orbitToCamera;
 
-                // Preserve orientation relative to orbit path
-                Front = glm::normalize(pitchQuat * (yawQuat * initialFront));
-                Right = glm::normalize(pitchQuat * (yawQuat * initialRight));
-                Up = glm::normalize(pitchQuat * (yawQuat * initialUp));
-
-                Yaw += xoffset;
-                Pitch += yoffset;
-
-                if (constrainPitch) {
-                    if (Pitch > 88.5f) Pitch = 88.5f;
-                    if (Pitch < -88.5f) Pitch = -88.5f;
-                }
+                // Apply same rotation to camera orientation
+                Orientation = pitchRotation * yawRotation * Orientation;
+                Orientation = glm::normalize(Orientation);
+                updateCameraVectorsFromQuaternion();
             }
             else {
-                // Standard orbit mode - rotate around OrbitPoint
-                float yawRad = glm::radians(xoffset);
-                float pitchRad = glm::radians(yoffset);
-
+                // Standard orbit mode using quaternions
                 glm::vec3 toCamera = Position - OrbitPoint;
-                toCamera = glm::rotate(toCamera, -yawRad, WorldUp);
+                float distance = glm::length(toCamera);
 
-                glm::vec3 right = glm::normalize(glm::cross(toCamera, WorldUp));
-                toCamera = glm::rotate(toCamera, -pitchRad, right);
+                // Create rotation quaternions
+                glm::quat yawRotation = glm::angleAxis(-glm::radians(xoffset), WorldUp);
+                glm::vec3 rightAxis = glm::normalize(glm::cross(toCamera, WorldUp));
+                glm::quat pitchRotation = glm::angleAxis(-glm::radians(yoffset), rightAxis);
 
+                // Apply rotation to camera position
+                toCamera = pitchRotation * (yawRotation * toCamera);
                 Position = OrbitPoint + toCamera;
-                Front = glm::normalize(OrbitPoint - Position);
 
-                Yaw += xoffset;
-                Pitch += yoffset;
-
-                if (constrainPitch) {
-                    if (Pitch > 88.5f) Pitch = 88.5f;
-                    if (Pitch < -88.5f) Pitch = -88.5f;
-                }
-
-                Right = glm::normalize(glm::cross(Front, WorldUp));
-                Up = glm::normalize(glm::cross(Right, Front));
+                // Calculate orientation to look at orbit point
+                glm::vec3 lookDirection = glm::normalize(OrbitPoint - Position);
+                glm::vec3 rightDir = glm::normalize(glm::cross(lookDirection, WorldUp));
+                glm::vec3 upDir = glm::normalize(glm::cross(rightDir, lookDirection));
+                
+                // Create rotation matrix and convert to quaternion
+                glm::mat3 rotMatrix = glm::mat3(rightDir, upDir, -lookDirection);
+                Orientation = glm::normalize(glm::quat_cast(rotMatrix));
+                updateCameraVectorsFromQuaternion();
             }
         }
         else if (IsPanning) {
-            // Pan camera in view plane
+            // Pan camera in view plane using quaternion-derived vectors
             float panFactor = OrbitDistance * 0.01f;
             panFactor = glm::max(panFactor, 0.001f);
 
-            glm::vec3 right = glm::normalize(glm::cross(Front, WorldUp));
-            glm::vec3 up = WorldUp;
-
-            Position -= right * xoffset * panFactor;
-            Position -= up * yoffset * panFactor;
+            // Use Right and Up vectors directly from quaternion
+            Position -= Right * xoffset * panFactor;
+            Position -= Up * yoffset * panFactor;
 
             OrbitPoint = Position + Front * OrbitDistance;
         }
         else {
-            // Standard free camera rotation
-            Yaw += xoffset;
-            Pitch += yoffset;
-
+            // Standard free camera rotation using quaternions (eliminates gimbal lock)
+            // Create rotation quaternions for yaw and pitch
+            glm::quat yawRotation = glm::angleAxis(glm::radians(-xoffset), WorldUp);
+            // Use local X axis for pitch to maintain consistent up/down movement
+            glm::vec3 localRight = glm::vec3(1.0f, 0.0f, 0.0f);
+            glm::quat pitchRotation = glm::angleAxis(glm::radians(yoffset), localRight);
+            
+            // Apply yaw rotation first
+            Orientation = yawRotation * Orientation;
+            
+            // For pitch, check constraint and apply partial rotation if needed
             if (constrainPitch) {
-                if (Pitch > 88.5f) Pitch = 88.5f;
-                if (Pitch < -88.5f) Pitch = -88.5f;
+                // Get current pitch
+                glm::mat4 currentRotationMatrix = glm::mat4_cast(Orientation);
+                glm::vec3 currentFront = -glm::vec3(currentRotationMatrix[2]);
+                float currentPitch = glm::degrees(asin(-currentFront.y));
+                
+                // Test the full pitch rotation
+                glm::quat testOrientation = Orientation * pitchRotation;
+                glm::mat4 testRotationMatrix = glm::mat4_cast(testOrientation);
+                glm::vec3 testFront = -glm::vec3(testRotationMatrix[2]);
+                float testPitch = glm::degrees(asin(-testFront.y));
+                
+                if (testPitch > 88.5f || testPitch < -88.5f) {
+                    // Calculate how much rotation we can apply to reach exactly 88.5 degrees
+                    float targetPitch = (testPitch > 88.5f) ? 88.5f : -88.5f;
+                    float remainingPitch = targetPitch - currentPitch;
+                    
+                    if (abs(remainingPitch) > 0.01f) { // Only apply if there's meaningful rotation left
+                        glm::quat constrainedPitchRotation = glm::angleAxis(glm::radians(remainingPitch), localRight);
+                        Orientation = Orientation * constrainedPitchRotation;
+                    }
+                } else {
+                    // Safe to apply full pitch rotation
+                    Orientation = Orientation * pitchRotation;
+                }
+            } else {
+                // No constraint, apply pitch rotation normally
+                Orientation = Orientation * pitchRotation;
             }
-
-            updateCameraVectors();
+            
+            // Normalize to prevent drift
+            Orientation = glm::normalize(Orientation);
+            
+            // Update camera vectors from quaternion
+            updateCameraVectorsFromQuaternion();
 
             OrbitPoint = Position + Front * OrbitDistance;
         }
@@ -512,13 +553,20 @@ public:
     void StartCenteringAnimation(const glm::vec3& targetPoint) {
         IsAnimating = true;
         AnimationStartPosition = Position;
+        AnimationStartOrientation = Orientation;
 
         float initialDistance = glm::length(Position - targetPoint);
         glm::vec3 directionToCamera = glm::normalize(Position - targetPoint);
         AnimationEndPosition = targetPoint + directionToCamera * initialDistance;
 
-        AnimationStartFront = Front;
-        AnimationEndFront = glm::normalize(targetPoint - AnimationEndPosition);
+        // Calculate target orientation to look at the target point
+        glm::vec3 targetFront = glm::normalize(targetPoint - AnimationEndPosition);
+        glm::vec3 targetRight = glm::normalize(glm::cross(targetFront, WorldUp));
+        glm::vec3 targetUp = glm::normalize(glm::cross(targetRight, targetFront));
+        
+        // Create rotation matrix and convert to quaternion
+        glm::mat3 targetRotMatrix = glm::mat3(targetRight, targetUp, -targetFront);
+        AnimationEndOrientation = glm::normalize(glm::quat_cast(targetRotMatrix));
 
         AnimationProgress = 0.0f;
         OrbitDistance = initialDistance;
@@ -533,9 +581,9 @@ public:
         if (AnimationProgress >= 1.0f) {
             // Animation complete
             Position = AnimationEndPosition;
-            Front = AnimationEndFront;
+            Orientation = AnimationEndOrientation;
             IsAnimating = false;
-            updateCameraVectors();
+            updateCameraVectorsFromQuaternion();
 
             OrbitPoint = Position + Front * OrbitDistance;
 
@@ -547,18 +595,13 @@ public:
             // Apply cubic easing function
             float t = easeOutCubic(AnimationProgress);
 
-            // Interpolate position and direction
+            // Interpolate position and orientation using SLERP for smooth rotation
             Position = glm::mix(AnimationStartPosition, AnimationEndPosition, t);
-            Front = glm::normalize(glm::mix(AnimationStartFront, AnimationEndFront, t));
+            Orientation = glm::normalize(glm::slerp(AnimationStartOrientation, AnimationEndOrientation, t));
+            
+            // Update camera vectors from interpolated quaternion
+            updateCameraVectorsFromQuaternion();
         }
-
-        // Update other vectors
-        Right = glm::normalize(glm::cross(Front, WorldUp));
-        Up = glm::normalize(glm::cross(Right, Front));
-
-        // Update Yaw and Pitch angles
-        Pitch = glm::degrees(asin(Front.y));
-        Yaw = glm::degrees(atan2(Front.z, Front.x));
     }
 
     // Starts orbit mode, optionally around cursor
@@ -634,14 +677,13 @@ public:
     }
 
     // Calculates the Front, Right and Up vectors from the Yaw and Pitch angles
+    // Legacy function - now uses quaternion-based approach
+    // Deprecated: Use updateCameraVectorsFromQuaternion() instead
     void updateCameraVectors() {
-        glm::vec3 front;
-        front.x = cos(glm::radians(Yaw)) * cos(glm::radians(Pitch));
-        front.y = sin(glm::radians(Pitch));
-        front.z = sin(glm::radians(Yaw)) * cos(glm::radians(Pitch));
-        Front = glm::normalize(front);
-        Right = glm::normalize(glm::cross(Front, WorldUp));
-        Up = glm::normalize(glm::cross(Right, Front));
+        // For backward compatibility, update quaternion from Euler angles
+        initializeQuaternionFromEuler();
+        // Use quaternion-based vector calculation
+        updateCameraVectorsFromQuaternion();
     }
 
 private:
@@ -650,6 +692,37 @@ private:
     // Cubic easing function for smooth animation
     float easeOutCubic(float t) {
         return 1 - pow(1 - t, 3);
+    }
+
+    // Initialize quaternion from current Euler angles
+    void initializeQuaternionFromEuler() {
+        glm::quat yawQuat = glm::angleAxis(glm::radians(Yaw), glm::vec3(0.0f, 1.0f, 0.0f));
+        glm::quat pitchQuat = glm::angleAxis(glm::radians(Pitch), glm::vec3(1.0f, 0.0f, 0.0f));
+        Orientation = yawQuat * pitchQuat;
+    }
+
+    // Update camera vectors from quaternion orientation
+    void updateCameraVectorsFromQuaternion() {
+        // Convert quaternion to direction vectors
+        glm::mat4 rotationMatrix = glm::mat4_cast(Orientation);
+        Front = -glm::vec3(rotationMatrix[2]); // Negative Z axis
+        Right = glm::vec3(rotationMatrix[0]);  // X axis
+        Up = glm::vec3(rotationMatrix[1]);     // Y axis
+        
+        // Update Euler angles for backward compatibility
+        updateEulerFromQuaternion();
+    }
+
+    // Update Euler angles from quaternion (for backward compatibility)
+    void updateEulerFromQuaternion() {
+        // Extract Euler angles from quaternion
+        glm::vec3 euler = glm::eulerAngles(Orientation);
+        Yaw = glm::degrees(euler.y);
+        Pitch = glm::degrees(euler.x);
+        
+        // Normalize yaw to -180 to 180 range
+        while (Yaw > 180.0f) Yaw -= 360.0f;
+        while (Yaw < -180.0f) Yaw += 360.0f;
     }
 };
 
