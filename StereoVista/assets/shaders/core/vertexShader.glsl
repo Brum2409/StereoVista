@@ -22,6 +22,7 @@ uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
 uniform mat4 lightSpaceMatrix;
+uniform mat3 normalMatrix;
 
 // Lighting mode constants
 const int LIGHTING_SHADOW_MAPPING = 0;
@@ -33,8 +34,7 @@ uniform int lightingMode;
 uniform int currentMeshIndex;
 
 void main() {
-    // Use the model matrix directly
-    mat3 normalMatrix = transpose(inverse(mat3(model)));
+    // Normal matrix is now passed as a uniform from C++ for efficiency
     
     // Calculate fragment position in world space
     vs_out.FragPos = vec3(model * vec4(aPos, 1.0));
@@ -48,7 +48,7 @@ void main() {
         vs_out.TBN = mat3(1.0);               // Not used for point clouds
     } else {
         // Regular model attributes
-        vs_out.Normal = normalMatrix * aNormal;
+        vs_out.Normal = normalize(normalMatrix * aNormal);
         vs_out.TexCoords = aTexCoords;
         
         // Calculate tangent space basis vectors for normal mapping

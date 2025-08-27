@@ -87,6 +87,9 @@ uniform sampler3D voxelGrid;
 uniform float voxelSize;
 uniform VCTSettings vctSettings;
 
+// Emissive lighting uniform
+uniform float emissiveIntensity;
+
 // Lighting configuration
 uniform int lightingMode;
 uniform bool enableShadows;
@@ -149,7 +152,7 @@ float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir) {
         return 0.0;
         
     float currentDepth = projCoords.z;
-    float bias = max(0.001 * (1.0 - abs(dot(normal, lightDir))), 0.0005);    
+    float bias = max(0.001 * (1.0 - dot(normal, lightDir)), 0.0005);    
     
     float shadow = 0.0;
     vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
@@ -167,7 +170,7 @@ float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir) {
 }
 
 // ---- TRADITIONAL LIGHTING FUNCTIONS ----
-vec3 calculatePointLight(PointLight light, vec3 normal, vec3 viewDir, float specularStrength) {
+vec3 calculatePointLight(PointLight light, vec3 normal, vec3 viewDir, float specularStrength, vec3 baseColor) {
    vec3 lightDir = normalize(light.position - fs_in.FragPos);
    float diff = max(dot(normal, lightDir), 0.0);
    
@@ -177,14 +180,14 @@ vec3 calculatePointLight(PointLight light, vec3 normal, vec3 viewDir, float spec
    float distance = length(light.position - fs_in.FragPos);
    float attenuation = 1.0 / (1.0 + 0.09 * distance + 0.032 * (distance * distance));
    
-   vec3 ambient = 0.1 * light.color * light.intensity;
-   vec3 diffuse = diff * light.color * light.intensity;
+   vec3 ambient = 0.1 * light.color * light.intensity * baseColor;
+   vec3 diffuse = diff * light.color * light.intensity * baseColor;
    vec3 specular = specularStrength * spec * light.color * light.intensity;
    
    return (ambient + diffuse + specular) * attenuation;
 }
 
-vec3 calculateSunLight(Sun sun, vec3 normal, vec3 viewDir, float specularStrength, float shadow) {
+vec3 calculateSunLight(Sun sun, vec3 normal, vec3 viewDir, float specularStrength, float shadow, vec3 baseColor) {
    if (!sun.enabled) return vec3(0.0);
    
    vec3 lightDir = normalize(-sun.direction);
@@ -193,8 +196,8 @@ vec3 calculateSunLight(Sun sun, vec3 normal, vec3 viewDir, float specularStrengt
    vec3 reflectDir = reflect(-lightDir, normal);
    float spec = pow(max(dot(viewDir, reflectDir), 0.0), material.shininess);
    
-   vec3 ambient = 0.1 * sun.color * sun.intensity;
-   vec3 diffuse = diff * sun.color * sun.intensity;
+   vec3 ambient = 0.1 * sun.color * sun.intensity * baseColor;
+   vec3 diffuse = diff * sun.color * sun.intensity * baseColor;
    vec3 specular = specularStrength * spec * sun.color * sun.intensity;
    
    return ambient + (1.0 - shadow) * (diffuse + specular);
@@ -709,6 +712,9 @@ void main() {
     if (isPointCloud) {
         FragColor = vec4(fs_in.VertexColor * fs_in.Intensity, 1.0);
         
+        // Apply gamma correction to point cloud colors
+        FragColor.rgb = pow(FragColor.rgb, vec3(1.0 / 2.2));
+        
         // Handle cursor for point clouds
         if (showFragmentCursor) {
             float distanceToCursor = length(cursorPos.xyz - fs_in.FragPos);
@@ -751,6 +757,7 @@ void main() {
         normal = texture(material.textures[2], fs_in.TexCoords).rgb;
         normal = normalize(fs_in.TBN * (normal * 2.0 - 1.0));
     } else {
+        // Normalize the interpolated normal (interpolation can denormalize it)
         normal = normalize(fs_in.Normal);
     }
     
@@ -769,12 +776,12 @@ void main() {
         }
         
         // Calculate ambient lighting from skybox
-        vec3 ambientLight = calculateAmbientFromSkybox(normal) * 0.1;
-        result += ambientLight * baseColor;
+        vec3 ambientLight = calculateAmbientFromSkybox(normal) * 0.1 * baseColor;
+        result += ambientLight;
         
         // Sun lighting
         if (sun.enabled) {
-            result += calculateSunLight(sun, normal, viewDir, specularStrength, shadow);
+            result += calculateSunLight(sun, normal, viewDir, specularStrength, shadow, baseColor);
         }
         
         // Point lights - limit the number of lights processed based on distance
@@ -784,18 +791,19 @@ void main() {
             float lightDistance = distance(lights[i].position, fs_in.FragPos);
             if (lightDistance > 50.0) continue; 
             
-            result += calculatePointLight(lights[i], normal, viewDir, specularStrength);
+            result += calculatePointLight(lights[i], normal, viewDir, specularStrength, baseColor);
         }
         
-        // Apply base color to all accumulated lighting
-        result *= baseColor;
+        // Base color is already applied in individual lighting calculations
         
         // Add environment reflection
         vec3 reflectionColor = calculateEnvironmentReflection(normal, material.shininess / 128.0);
         result += reflectionColor * specularStrength;
         
         // Add emissive contribution
-        result += material.emissive * baseColor;
+        if (material.emissive > 0.0) {
+            result += baseColor * material.emissive * emissiveIntensity;
+        }
     }
     else if (lightingMode == LIGHTING_VOXEL_CONE_TRACING) {
         // ------ VOXEL CONE TRACING LIGHTING ------
@@ -880,7 +888,9 @@ void main() {
             }
             
             // Add emissive contribution
-            result += material.emissive * baseColor;
+            if (material.emissive > 0.0) {
+                result += baseColor * material.emissive * emissiveIntensity;
+            }
         }
     }
     
@@ -893,8 +903,11 @@ void main() {
         }
     }
     
-    // Final output
+    // Final output with gamma correction applied early
     FragColor = vec4(result, 1.0);
+    
+    // Apply gamma correction to main result
+    FragColor.rgb = pow(FragColor.rgb, vec3(1.0 / 2.2));
     
     // Apply cursor effect
     if (showFragmentCursor) {
@@ -915,7 +928,4 @@ void main() {
         vec4 inner = mix(FragColor, innerCursorColor, tInner);
         FragColor = mix(inner, outerCursorColor, tOuter * step(0.5, cursorPos.w));
     }
-    
-    // Apply gamma correction
-    FragColor.rgb = pow(FragColor.rgb, vec3(1.0 / 2.2));
 }

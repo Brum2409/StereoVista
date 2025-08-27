@@ -2662,6 +2662,10 @@ void renderModels(Engine::Shader* shader) {
 
         // Set model matrix in shader
         shader->setMat4("model", modelMatrix);
+        
+        // Calculate and set normal matrix for proper normal transformation
+        glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(modelMatrix)));
+        shader->setMat3("normalMatrix", normalMatrix);
 
         // Set standard material properties
         shader->setBool("material.hasNormalMap", model.hasNormalMap());
@@ -2671,6 +2675,9 @@ void renderModels(Engine::Shader* shader) {
         shader->setVec3("material.objectColor", model.color);
         shader->setFloat("material.shininess", model.shininess);
         shader->setFloat("material.emissive", model.emissive);
+        
+        // Set emissive intensity for all lighting modes
+        shader->setFloat("emissiveIntensity", radianceSettings.emissiveIntensity);
 
         // For VCT, set additional material properties
         if (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
@@ -2712,6 +2719,11 @@ void renderPointClouds(Engine::Shader* shader) {
         modelMatrix = glm::scale(modelMatrix, pointCloud.scale);
 
         shader->setMat4("model", modelMatrix);
+        
+        // Calculate and set normal matrix for consistency
+        glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(modelMatrix)));
+        shader->setMat3("normalMatrix", normalMatrix);
+        
         shader->setBool("isPointCloud", true);
 
         // Always use octree-based rendering (legacy system removed)
