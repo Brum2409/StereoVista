@@ -1570,6 +1570,101 @@ void renderSettingsWindow() {
 
             ImGui::EndTabItem();
         }
+        
+        // =====================
+        // TAB 6: MODEL IMPORT SETTINGS
+        // =====================
+        if (ImGui::BeginTabItem("Model Import")) {
+            
+            // Import Processing Options
+            ImGui::BeginGroup();
+            ImGui::Text("Import Processing Options");
+            ImGui::Separator();
+            
+            if (ImGui::Checkbox("Flip UV Coordinates", &preferences.modelImportSettings.flipUVs)) {
+                settingsChanged = true;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Flips the V (Y) coordinate of UV maps. Enable if textures appear upside down.");
+            }
+            
+            if (ImGui::Checkbox("Generate Normals", &preferences.modelImportSettings.generateNormals)) {
+                settingsChanged = true;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Automatically generate vertex normals for models that don't have them.");
+            }
+            
+            if (ImGui::Checkbox("Calculate Tangent Space", &preferences.modelImportSettings.calculateTangentSpace)) {
+                settingsChanged = true;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Calculate tangent and bitangent vectors for normal mapping.");
+            }
+            
+            if (ImGui::Checkbox("Join Identical Vertices", &preferences.modelImportSettings.joinIdenticalVertices)) {
+                settingsChanged = true;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Merge vertices that share the same position, normal, and UV coordinates.");
+            }
+            
+            ImGui::EndGroup();
+            
+            ImGui::Spacing();
+            
+            // Advanced Options
+            ImGui::BeginGroup();
+            ImGui::Text("Advanced Options");
+            ImGui::Separator();
+            
+            if (ImGui::Checkbox("Sort by Primitive Type", &preferences.modelImportSettings.sortByPrimitiveType)) {
+                settingsChanged = true;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Sort faces by primitive type for better rendering performance.");
+            }
+            
+            if (ImGui::Checkbox("Fix Inward-Facing Normals", &preferences.modelImportSettings.fixInfacingNormals)) {
+                settingsChanged = true;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Automatically fix normals that face inward instead of outward.");
+            }
+            
+            if (ImGui::Checkbox("Remove Redundant Materials", &preferences.modelImportSettings.removeRedundantMaterials)) {
+                settingsChanged = true;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Remove duplicate materials to reduce memory usage.");
+            }
+            
+            if (ImGui::Checkbox("Optimize Meshes", &preferences.modelImportSettings.optimizeMeshes)) {
+                settingsChanged = true;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Optimize mesh data for better rendering performance.");
+            }
+            
+            if (ImGui::Checkbox("Pre-transform Vertices", &preferences.modelImportSettings.pretransformVertices)) {
+                settingsChanged = true;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Apply node transformations directly to vertices. Use for static models only.");
+            }
+            
+            ImGui::EndGroup();
+            
+            ImGui::Spacing();
+            
+            // Reset to Defaults
+            if (ImGui::Button("Reset to Defaults")) {
+                preferences.modelImportSettings = GUI::ApplicationPreferences::ModelImportSettings{};
+                settingsChanged = true;
+            }
+            
+            ImGui::EndTabItem();
+        }
 
         ImGui::EndTabBar();
     }
@@ -2053,54 +2148,66 @@ void renderModelManipulationPanel(Engine::Model& model, Engine::Shader* shader) 
 
     // Material
     if (ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen)) {
-        // Basic material properties
+        // Basic material properties - shown in all lighting modes
+        ImGui::Text("Basic Material Properties:");
         ImGui::ColorEdit3("Diffuse Color", glm::value_ptr(model.color));
         ImGui::SliderFloat("Shininess", &model.shininess, 1.0f, 90.0f);
         ImGui::SliderFloat("Emissive", &model.emissive, 0.0f, 1.0f);
 
-        // Add VCT specific material properties
-        ImGui::Separator();
-        ImGui::Text("Voxel Cone Tracing Properties:");
+        // Show VCT specific properties only in VCT mode
+        if (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
+            ImGui::Separator();
+            ImGui::Text("Voxel Cone Tracing Properties:");
 
-        // Material preset selection
-        static const char* material_types[] = { "Concrete", "Metal", "Plastic", "Glass", "Wood", "Marble", "Custom" };
-        int current_type = static_cast<int>(model.materialType);
+            // Material preset selection
+            static const char* material_types[] = { "Concrete", "Metal", "Plastic", "Glass", "Wood", "Marble", "Custom" };
+            int current_type = static_cast<int>(model.materialType);
 
-        if (ImGui::Combo("Material Preset", &current_type, material_types, IM_ARRAYSIZE(material_types))) {
-            // Apply preset when changed
-            model.applyMaterialPreset(static_cast<MaterialType>(current_type));
+            if (ImGui::Combo("Material Preset", &current_type, material_types, IM_ARRAYSIZE(material_types))) {
+                // Apply preset when changed
+                model.applyMaterialPreset(static_cast<MaterialType>(current_type));
+            }
+            ImGui::SetItemTooltip("Select a material preset to quickly configure VCT material properties");
+
+            if (ImGui::Button("Apply Concrete (Default)")) {
+                model.applyMaterialPreset(MaterialType::CONCRETE);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Apply Metal")) {
+                model.applyMaterialPreset(MaterialType::METAL);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Apply Glass")) {
+                model.applyMaterialPreset(MaterialType::GLASS);
+            }
+
+            ImGui::SliderFloat("Diffuse Reflectivity", &model.diffuseReflectivity, 0.0f, 1.0f);
+            ImGui::SetItemTooltip("Controls how much diffuse light is reflected in VCT");
+
+            ImGui::ColorEdit3("Specular Color", glm::value_ptr(model.specularColor));
+            ImGui::SetItemTooltip("Color of specular reflections (highlights) in VCT");
+
+            ImGui::SliderFloat("Specular Reflectivity", &model.specularReflectivity, 0.0f, 1.0f);
+            ImGui::SetItemTooltip("Controls strength of specular reflections in VCT");
+
+            ImGui::SliderFloat("Specular Diffusion", &model.specularDiffusion, 0.0f, 1.0f);
+            ImGui::SetItemTooltip("Controls glossiness - lower values = sharper reflections in VCT");
+
+            ImGui::SliderFloat("Refractive Index", &model.refractiveIndex, 1.0f, 3.0f);
+            ImGui::SetItemTooltip("Refractive index for VCT transparency (1.0=air, 1.33=water, 1.5=glass, 2.4=diamond)");
+
+            ImGui::SliderFloat("Transparency", &model.transparency, 0.0f, 1.0f);
+            ImGui::SetItemTooltip("VCT transparency: 0=opaque, 1=fully transparent");
         }
-        ImGui::SetItemTooltip("Select a material preset to quickly configure material properties");
-
-        if (ImGui::Button("Apply Concrete (Default)")) {
-            model.applyMaterialPreset(MaterialType::CONCRETE);
+        else {
+            // Show current lighting mode info for non-VCT modes
+            ImGui::Separator();
+            ImGui::TextDisabled("Current Lighting Mode: %s", 
+                currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING ? "Shadow Mapping" :
+                currentLightingMode == GUI::LIGHTING_RADIANCE ? "Radiance Raytracing" : "Unknown");
+            ImGui::TextDisabled("VCT material properties are hidden in this mode.");
+            ImGui::TextDisabled("Switch to VCT mode to access advanced material settings.");
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Apply Metal")) {
-            model.applyMaterialPreset(MaterialType::METAL);
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Apply Glass")) {
-            model.applyMaterialPreset(MaterialType::GLASS);
-        }
-
-        ImGui::SliderFloat("Diffuse Reflectivity", &model.diffuseReflectivity, 0.0f, 1.0f);
-        ImGui::SetItemTooltip("Controls how much diffuse light is reflected");
-
-        ImGui::ColorEdit3("Specular Color", glm::value_ptr(model.specularColor));
-        ImGui::SetItemTooltip("Color of specular reflections (highlights)");
-
-        ImGui::SliderFloat("Specular Reflectivity", &model.specularReflectivity, 0.0f, 1.0f);
-        ImGui::SetItemTooltip("Controls strength of specular reflections");
-
-        ImGui::SliderFloat("Specular Diffusion", &model.specularDiffusion, 0.0f, 1.0f);
-        ImGui::SetItemTooltip("Controls glossiness - lower values = sharper reflections");
-
-        ImGui::SliderFloat("Refractive Index", &model.refractiveIndex, 1.0f, 3.0f);
-        ImGui::SetItemTooltip("Refractive index (1.0=air, 1.33=water, 1.5=glass, 2.4=diamond)");
-
-        ImGui::SliderFloat("Transparency", &model.transparency, 0.0f, 1.0f);
-        ImGui::SetItemTooltip("0=opaque, 1=fully transparent");
     }
 
     // Textures

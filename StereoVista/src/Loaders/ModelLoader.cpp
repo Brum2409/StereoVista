@@ -3,6 +3,10 @@
 #include <stb_image.h>
 #include <map>
 #include <filesystem>
+#include "Gui/GuiTypes.h"
+
+// Access to application preferences for import settings
+extern GUI::ApplicationPreferences preferences;
 
 namespace Engine {
 
@@ -44,34 +48,23 @@ namespace Engine {
     void Mesh::Draw(Shader& shader) {
         if (!visible) return;
 
+        // Bind textures following your current shader's array-based approach
         unsigned int diffuseNr = 0;
         unsigned int specularNr = 0;
         unsigned int normalNr = 0;
         unsigned int aoNr = 0;
 
-        // Bind appropriate textures
         for (unsigned int i = 0; i < textures.size(); i++) {
             glActiveTexture(GL_TEXTURE0 + i);
 
             std::string name = textures[i].type;
+            if (name == "texture_diffuse") diffuseNr++;
+            else if (name == "texture_specular") specularNr++;
+            else if (name == "texture_normal") normalNr++;
+            else if (name == "texture_ao") aoNr++;
 
-            if (name == "texture_diffuse") {
-                diffuseNr++;
-            }
-            else if (name == "texture_specular") {
-                specularNr++;
-            }
-            else if (name == "texture_normal") {
-                normalNr++;
-            }
-            else if (name == "texture_ao") {
-                aoNr++;
-            }
-
-            // Set texture unit in shader
+            // Use your existing array-based texture binding
             shader.setInt("material.textures[" + std::to_string(i) + "]", i);
-
-            // Bind texture
             glBindTexture(GL_TEXTURE_2D, textures[i].id);
         }
 
@@ -84,6 +77,9 @@ namespace Engine {
         glBindVertexArray(VAO);
         glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
+        
+        // Reset to default
+        glActiveTexture(GL_TEXTURE0);
     }
 
     Model::Model(const std::string& path) {
@@ -112,13 +108,38 @@ namespace Engine {
     void Model::loadModel(const std::string& path) {
         Assimp::Importer importer;
         
-        // Original working flags to preserve normals and textures
-        const aiScene* scene = importer.ReadFile(path,
-            aiProcess_Triangulate |
-            aiProcess_GenNormals |
-            aiProcess_CalcTangentSpace |
-            aiProcess_JoinIdenticalVertices |
-            aiProcess_SortByPType);
+        // Build processing flags based on import settings
+        unsigned int processFlags = aiProcess_Triangulate; // Always triangulate
+        
+        if (preferences.modelImportSettings.flipUVs) {
+            processFlags |= aiProcess_FlipUVs;
+        }
+        if (preferences.modelImportSettings.generateNormals) {
+            processFlags |= aiProcess_GenNormals;
+        }
+        if (preferences.modelImportSettings.calculateTangentSpace) {
+            processFlags |= aiProcess_CalcTangentSpace;
+        }
+        if (preferences.modelImportSettings.joinIdenticalVertices) {
+            processFlags |= aiProcess_JoinIdenticalVertices;
+        }
+        if (preferences.modelImportSettings.sortByPrimitiveType) {
+            processFlags |= aiProcess_SortByPType;
+        }
+        if (preferences.modelImportSettings.fixInfacingNormals) {
+            processFlags |= aiProcess_FixInfacingNormals;
+        }
+        if (preferences.modelImportSettings.removeRedundantMaterials) {
+            processFlags |= aiProcess_RemoveRedundantMaterials;
+        }
+        if (preferences.modelImportSettings.optimizeMeshes) {
+            processFlags |= aiProcess_OptimizeMeshes;
+        }
+        if (preferences.modelImportSettings.pretransformVertices) {
+            processFlags |= aiProcess_PreTransformVertices;
+        }
+        
+        const aiScene* scene = importer.ReadFile(path, processFlags);
 
         if (!scene) {
             std::cerr << "ERROR: Assimp failed to load model '" << path << "'" << std::endl;
@@ -522,10 +543,13 @@ namespace Engine {
         shader.setBool("material.hasAOMap", hasAOMap());
         shader.setFloat("material.hasTexture", !meshes.empty() && !meshes[0].textures.empty() ? 1.0f : 0.0f);
 
-        // Explicitly set the object color before drawing
-        shader.setVec3("material.objectColor", color);  // Make sure this is called
+        // Explicitly set material properties before drawing
+        shader.setVec3("material.objectColor", color);
+        shader.setVec3("material.specularColor", specularColor);
         shader.setFloat("material.shininess", shininess);
         shader.setFloat("material.emissive", emissive);
+        shader.setFloat("material.diffuseReflectivity", diffuseReflectivity);
+        shader.setFloat("material.specularReflectivity", specularReflectivity);
 
         for (unsigned int i = 0; i < meshes.size(); i++) {
             if (meshes[i].visible) {  // Only draw if mesh is visible

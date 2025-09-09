@@ -160,5 +160,18 @@ namespace GUI {
         // Startup scene settings
         bool loadStartupScene = false;
         std::string startupScenePath = "";
+        
+        // Model Import Settings
+        struct ModelImportSettings {
+            bool flipUVs = false;                    // Toggle UV coordinate flipping
+            bool generateNormals = true;             // Generate normals if missing
+            bool calculateTangentSpace = true;       // Calculate tangent and bitangent vectors
+            bool joinIdenticalVertices = true;       // Join identical vertices to reduce redundancy
+            bool sortByPrimitiveType = true;         // Sort by primitive type for better performance
+            bool fixInfacingNormals = false;         // Fix inward-facing normals
+            bool removeRedundantMaterials = true;    // Remove redundant materials
+            bool optimizeMeshes = false;             // Optimize meshes for better performance
+            bool pretransformVertices = false;      // Pre-transform vertices by node hierarchy
+        } modelImportSettings;
     };
 }

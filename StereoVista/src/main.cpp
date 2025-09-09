@@ -1073,6 +1073,17 @@ void savePreferences() {
     // Save lighting settings
     j["lighting"]["mode"] = static_cast<int>(preferences.lightingMode);
     j["lighting"]["enableShadows"] = preferences.enableShadows;
+    
+    // Save model import settings
+    j["modelImport"]["flipUVs"] = preferences.modelImportSettings.flipUVs;
+    j["modelImport"]["generateNormals"] = preferences.modelImportSettings.generateNormals;
+    j["modelImport"]["calculateTangentSpace"] = preferences.modelImportSettings.calculateTangentSpace;
+    j["modelImport"]["joinIdenticalVertices"] = preferences.modelImportSettings.joinIdenticalVertices;
+    j["modelImport"]["sortByPrimitiveType"] = preferences.modelImportSettings.sortByPrimitiveType;
+    j["modelImport"]["fixInfacingNormals"] = preferences.modelImportSettings.fixInfacingNormals;
+    j["modelImport"]["removeRedundantMaterials"] = preferences.modelImportSettings.removeRedundantMaterials;
+    j["modelImport"]["optimizeMeshes"] = preferences.modelImportSettings.optimizeMeshes;
+    j["modelImport"]["pretransformVertices"] = preferences.modelImportSettings.pretransformVertices;
 
     // Update preferences struct
     preferences.skyboxType = static_cast<int>(skyboxConfig.type);
@@ -1348,6 +1359,19 @@ void loadPreferences() {
             // Update the global lighting mode
             currentLightingMode = preferences.lightingMode;
             enableShadows = preferences.enableShadows;
+        }
+        
+        // Model import settings
+        if (j.contains("modelImport")) {
+            preferences.modelImportSettings.flipUVs = j["modelImport"].value("flipUVs", false);
+            preferences.modelImportSettings.generateNormals = j["modelImport"].value("generateNormals", true);
+            preferences.modelImportSettings.calculateTangentSpace = j["modelImport"].value("calculateTangentSpace", true);
+            preferences.modelImportSettings.joinIdenticalVertices = j["modelImport"].value("joinIdenticalVertices", true);
+            preferences.modelImportSettings.sortByPrimitiveType = j["modelImport"].value("sortByPrimitiveType", true);
+            preferences.modelImportSettings.fixInfacingNormals = j["modelImport"].value("fixInfacingNormals", false);
+            preferences.modelImportSettings.removeRedundantMaterials = j["modelImport"].value("removeRedundantMaterials", true);
+            preferences.modelImportSettings.optimizeMeshes = j["modelImport"].value("optimizeMeshes", false);
+            preferences.modelImportSettings.pretransformVertices = j["modelImport"].value("pretransformVertices", false);
         }
 
         // Apply loaded preferences

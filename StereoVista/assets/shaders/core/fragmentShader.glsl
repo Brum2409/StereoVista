@@ -141,66 +141,91 @@ vec3 orthogonal(vec3 u) {
     return abs(dot(u, v)) > 0.99999f ? cross(u, vec3(0, 1, 0)) : cross(u, v);
 }
 
-// ---- SHADOW MAPPING FUNCTIONS ----
+// ---- LEARNOPENGL SHADOW MAPPING FUNCTIONS ----
 float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir) {
     if (!enableShadows) return 0.0;
     
+    // Perform perspective divide
     vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
+    
+    // Transform to [0,1] range
     projCoords = projCoords * 0.5 + 0.5;
     
+    // Check if outside frustum
     if(projCoords.z > 1.0)
         return 0.0;
         
-    float currentDepth = projCoords.z;
-    float bias = max(0.001 * (1.0 - dot(normal, lightDir)), 0.0005);    
+    // Get closest depth value from light's perspective (using [0,1] range fragPosLight as coords)
+    float closestDepth = texture(shadowMap, projCoords.xy).r;
     
+    // Get depth of current fragment from light's perspective
+    float currentDepth = projCoords.z;
+    
+    // Calculate bias (based on depth map resolution and slope)
+    float bias = max(0.05 * (1.0 - dot(normal, lightDir)), 0.005);
+    
+    // PCF
     float shadow = 0.0;
     vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
-    const int halfKernel = 2;
-    
-    for(int x = -halfKernel; x <= halfKernel; ++x) {
-        for(int y = -halfKernel; y <= halfKernel; ++y) {
-            float pcfDepth = texture(shadowMap, projCoords.xy + vec2(x, y) * texelSize).r;
-            shadow += currentDepth - bias > pcfDepth ? 1.0 : 0.0;
-        }
+    for(int x = -1; x <= 1; ++x) {
+        for(int y = -1; y <= 1; ++y) {
+            float pcfDepth = texture(shadowMap, projCoords.xy + vec2(x, y) * texelSize).r; 
+            shadow += currentDepth - bias > pcfDepth  ? 1.0 : 0.0;        
+        }    
     }
+    shadow /= 9.0;
     
-    const float sampleCount = pow(2 * halfKernel + 1, 2);
-    return shadow / sampleCount;
+    return shadow;
 }
 
-// ---- TRADITIONAL LIGHTING FUNCTIONS ----
-vec3 calculatePointLight(PointLight light, vec3 normal, vec3 viewDir, float specularStrength, vec3 baseColor) {
-   vec3 lightDir = normalize(light.position - fs_in.FragPos);
-   float diff = max(dot(normal, lightDir), 0.0);
-   
-   vec3 reflectDir = reflect(-lightDir, normal);
-   float spec = pow(max(dot(viewDir, reflectDir), 0.0), material.shininess);
-   
-   float distance = length(light.position - fs_in.FragPos);
-   float attenuation = 1.0 / (1.0 + 0.09 * distance + 0.032 * (distance * distance));
-   
-   vec3 ambient = 0.1 * light.color * light.intensity * baseColor;
-   vec3 diffuse = diff * light.color * light.intensity * baseColor;
-   vec3 specular = specularStrength * spec * light.color * light.intensity;
-   
-   return (ambient + diffuse + specular) * attenuation;
+// ---- LEARNOPENGL LIGHTING FUNCTIONS ----
+vec3 CalcDirLight(Sun dirLight, vec3 normal, vec3 viewDir, vec3 diffuseTexColor, vec3 specularTexColor) {
+    vec3 lightDir = normalize(-dirLight.direction);
+    
+    // Diffuse shading
+    float diff = max(dot(normal, lightDir), 0.0);
+    
+    // Specular shading (Blinn-Phong) with shininess clamping
+    vec3 halfwayDir = normalize(lightDir + viewDir);
+    float clampedShininess = max(material.shininess, 4.0); // Prevent extremely low shininess
+    float spec = pow(max(dot(normal, halfwayDir), 0.0), clampedShininess);
+    
+    // Energy-conserving lighting with shininess compensation  
+    vec3 ambient = dirLight.color * diffuseTexColor * 0.05;  
+    vec3 diffuse = dirLight.color * diff * diffuseTexColor;
+    
+    // Scale specular contribution based on shininess to prevent washout
+    float specularScale = clampedShininess / (clampedShininess + 16.0); // Normalize specular intensity
+    vec3 specular = dirLight.color * spec * specularTexColor * specularScale;
+    
+    return (ambient + diffuse + specular) * dirLight.intensity;
 }
 
-vec3 calculateSunLight(Sun sun, vec3 normal, vec3 viewDir, float specularStrength, float shadow, vec3 baseColor) {
-   if (!sun.enabled) return vec3(0.0);
-   
-   vec3 lightDir = normalize(-sun.direction);
-   float diff = max(dot(normal, lightDir), 0.0);
-   
-   vec3 reflectDir = reflect(-lightDir, normal);
-   float spec = pow(max(dot(viewDir, reflectDir), 0.0), material.shininess);
-   
-   vec3 ambient = 0.1 * sun.color * sun.intensity * baseColor;
-   vec3 diffuse = diff * sun.color * sun.intensity * baseColor;
-   vec3 specular = specularStrength * spec * sun.color * sun.intensity;
-   
-   return ambient + (1.0 - shadow) * (diffuse + specular);
+vec3 CalcPointLight(PointLight light, vec3 normal, vec3 fragPos, vec3 viewDir, vec3 diffuseTexColor, vec3 specularTexColor) {
+    vec3 lightDir = normalize(light.position - fragPos);
+    
+    // Diffuse shading
+    float diff = max(dot(normal, lightDir), 0.0);
+    
+    // Specular shading (Blinn-Phong) with shininess clamping
+    vec3 halfwayDir = normalize(lightDir + viewDir);
+    float clampedShininess = max(material.shininess, 4.0); // Prevent extremely low shininess
+    float spec = pow(max(dot(normal, halfwayDir), 0.0), clampedShininess);
+    
+    // Attenuation
+    float distance = length(light.position - fragPos);
+    float attenuation = 1.0 / (1.0 + 0.09 * distance + 0.032 * (distance * distance));
+    
+    // Energy-conserving point light with shininess compensation
+    vec3 ambient = light.color * diffuseTexColor * 0.02;  
+    vec3 diffuse = light.color * diff * diffuseTexColor;
+    
+    // Scale specular contribution based on shininess to prevent washout  
+    float specularScale = clampedShininess / (clampedShininess + 16.0);
+    vec3 specular = light.color * spec * specularTexColor * specularScale;
+    
+    // Apply attenuation and intensity
+    return (ambient + diffuse + specular) * attenuation * light.intensity;
 }
 
 vec3 calculateEnvironmentReflection(vec3 normal, float reflectivity) {
@@ -743,13 +768,17 @@ void main() {
     }
     
     // --- COMMON CALCULATIONS - Calculate once, use many times ---
-    // Get base color and material properties
-    vec3 baseColor = material.hasTexture > 0.5 ? 
-                    texture(material.textures[0], fs_in.TexCoords).rgb : 
-                    material.objectColor;
+    // Get base color - temporarily disable gamma correction to fix texture issues
+    vec3 baseColor;
+    if (material.hasTexture > 0.5) {
+        // Use texture as-is to avoid double gamma correction
+        baseColor = texture(material.textures[0], fs_in.TexCoords).rgb;
+    } else {
+        baseColor = material.objectColor;
+    }
     
     float specularStrength = material.hasSpecularMap ? 
-                           texture(material.textures[1], fs_in.TexCoords).r : 0.5;
+                           texture(material.textures[1], fs_in.TexCoords).r : 0.2;
     
     // Calculate normal - do this once
     vec3 normal;
@@ -767,42 +796,60 @@ void main() {
     
     // --- LIGHTING CALCULATION BASED ON MODE ---
     if (lightingMode == LIGHTING_SHADOW_MAPPING) {
-        // ------ SHADOW MAPPING LIGHTING ------
+        // ------ LEARNOPENGL SHADOW MAPPING LIGHTING ------
         
-        // Calculate shadow factor (only if shadows enabled and sun is active)
-        float shadow = 0.0;
-        if (enableShadows && sun.enabled) {
-            shadow = ShadowCalculation(fs_in.FragPosLightSpace, normal, normalize(-sun.direction));
+        // Get material diffuse and specular colors (gamma-correct)
+        vec3 diffuseColor = baseColor;
+        vec3 specularColor = vec3(1.0); // Default white specular
+        
+        if (material.hasSpecularMap && material.numSpecularTextures > 0) {
+            // For specular maps, use the red channel for intensity and keep white color
+            // This prevents red tinting from single-channel specular maps
+            float specIntensity = texture(material.textures[1], fs_in.TexCoords).r;
+            specularColor = vec3(specIntensity); // Use intensity across all channels
         }
         
-        // Calculate ambient lighting from skybox
-        vec3 ambientLight = calculateAmbientFromSkybox(normal) * 0.1 * baseColor;
-        result += ambientLight;
+        result = vec3(0.0);
         
-        // Sun lighting
+        // Calculate directional light (sun) with shadows
         if (sun.enabled) {
-            result += calculateSunLight(sun, normal, viewDir, specularStrength, shadow, baseColor);
+            // Apply shadows properly following LearnOpenGL approach
+            if (enableShadows) {
+                float shadow = ShadowCalculation(fs_in.FragPosLightSpace, normal, normalize(-sun.direction));
+                
+                // Calculate lighting components separately
+                vec3 lightDir = normalize(-sun.direction);
+                float diff = max(dot(normal, lightDir), 0.0);
+                vec3 halfwayDir = normalize(lightDir + viewDir);
+                float clampedShininess = max(material.shininess, 4.0);
+                float spec = pow(max(dot(normal, halfwayDir), 0.0), clampedShininess);
+                
+                // Energy-conserving shadow mapping lighting
+                vec3 ambient = sun.color * diffuseColor * 0.05;
+                vec3 diffuse = sun.color * diff * diffuseColor;
+                
+                // Scale specular contribution based on shininess
+                float specularScale = clampedShininess / (clampedShininess + 16.0);
+                vec3 specular = sun.color * spec * specularColor * specularScale;
+                
+                // Apply shadow only to diffuse and specular
+                result += (ambient + (1.0 - shadow) * (diffuse + specular)) * sun.intensity;
+            } else {
+                result += CalcDirLight(sun, normal, viewDir, diffuseColor, specularColor);
+            }
         }
         
-        // Point lights - limit the number of lights processed based on distance
-        int processedLights = min(numLights, MAX_LIGHTS);
-        for(int i = 0; i < processedLights; i++) {
-            // Skip distant lights for performance
-            float lightDistance = distance(lights[i].position, fs_in.FragPos);
-            if (lightDistance > 50.0) continue; 
+        // Calculate point lights
+        for(int i = 0; i < min(numLights, MAX_LIGHTS); i++) {
+            float lightDistance = length(lights[i].position - fs_in.FragPos);
+            if (lightDistance > 50.0) continue; // Skip distant lights for performance
             
-            result += calculatePointLight(lights[i], normal, viewDir, specularStrength, baseColor);
+            result += CalcPointLight(lights[i], normal, fs_in.FragPos, viewDir, diffuseColor, specularColor);
         }
-        
-        // Base color is already applied in individual lighting calculations
-        
-        // Add environment reflection
-        vec3 reflectionColor = calculateEnvironmentReflection(normal, material.shininess / 128.0);
-        result += reflectionColor * specularStrength;
         
         // Add emissive contribution
         if (material.emissive > 0.0) {
-            result += baseColor * material.emissive * emissiveIntensity;
+            result += diffuseColor * material.emissive * emissiveIntensity;
         }
     }
     else if (lightingMode == LIGHTING_VOXEL_CONE_TRACING) {
@@ -866,8 +913,9 @@ void main() {
                 // Apply smoother transition
                 result = mix(result, refractedResult, smoothstep(0.0, 1.0, blendFactor));
                 
-                // Add a subtle fresnel highlight at edges
-                result += fresnelFactor * material.specularColor * 0.1;
+                // Add a subtle fresnel highlight at edges - limit color tinting
+                vec3 safeSpecularColor = clamp(material.specularColor, vec3(0.5), vec3(1.0));
+                result += fresnelFactor * safeSpecularColor * 0.05;
             }
             
             // Add direct lighting with shadows
@@ -903,11 +951,12 @@ void main() {
         }
     }
     
-    // Final output with gamma correction applied early
+    // LearnOpenGL proper gamma correction - apply at the very end
     FragColor = vec4(result, 1.0);
     
-    // Apply gamma correction to main result
-    FragColor.rgb = pow(FragColor.rgb, vec3(1.0 / 2.2));
+    // Apply gamma correction as final step (standard gamma = 2.2)
+    const float gamma = 2.2;
+    FragColor.rgb = pow(FragColor.rgb, vec3(1.0 / gamma));
     
     // Apply cursor effect
     if (showFragmentCursor) {

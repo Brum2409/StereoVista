@@ -47,8 +47,8 @@ void main() {
         vs_out.TexCoords = vec2(0.0);         // Not used for point clouds
         vs_out.TBN = mat3(1.0);               // Not used for point clouds
     } else {
-        // Regular model attributes
-        vs_out.Normal = normalize(normalMatrix * aNormal);
+        // Regular model attributes (LearnOpenGL style)
+        vs_out.Normal = normalMatrix * aNormal;
         vs_out.TexCoords = aTexCoords;
         
         // Calculate tangent space basis vectors for normal mapping
@@ -56,11 +56,10 @@ void main() {
         vec3 B = normalize(normalMatrix * aBitangent);
         vec3 N = normalize(vs_out.Normal);
         
-        // Re-orthogonalize T with respect to N
+        // Re-orthogonalize T with respect to N using Gram-Schmidt process
         T = normalize(T - dot(T, N) * N);
-        
-        // Calculate B as cross product to ensure orthogonal basis
-        B = cross(N, T);
+        // Then re-orthogonalize B with respect to N and T
+        B = normalize(B - dot(B, N) * N - dot(B, T) * T);
         
         vs_out.TBN = mat3(T, B, N);
         vs_out.VertexColor = vec3(1.0);
