@@ -151,29 +151,35 @@ float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir) {
     // Transform to [0,1] range
     projCoords = projCoords * 0.5 + 0.5;
     
-    // Check if outside frustum
-    if(projCoords.z > 1.0)
+    // Check if outside shadow map frustum
+    if(projCoords.z > 1.0 || projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0)
         return 0.0;
         
-    // Get closest depth value from light's perspective (using [0,1] range fragPosLight as coords)
-    float closestDepth = texture(shadowMap, projCoords.xy).r;
-    
     // Get depth of current fragment from light's perspective
     float currentDepth = projCoords.z;
     
-    // Calculate bias (based on depth map resolution and slope)
-    float bias = max(0.05 * (1.0 - dot(normal, lightDir)), 0.005);
+    // Calculate minimal bias since we're using polygon offset
+    float cosTheta = clamp(dot(normal, lightDir), 0.0, 1.0);
+    float bias = 0.0005 * (1.0 - cosTheta);
+    bias = clamp(bias, 0.00005, 0.001);
     
-    // PCF
+    // PCF (Percentage-Closer Filtering) for soft shadows
     float shadow = 0.0;
     vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
+    
+    // Sample in a 3x3 grid around the projected coordinates
     for(int x = -1; x <= 1; ++x) {
         for(int y = -1; y <= 1; ++y) {
-            float pcfDepth = texture(shadowMap, projCoords.xy + vec2(x, y) * texelSize).r; 
-            shadow += currentDepth - bias > pcfDepth  ? 1.0 : 0.0;        
+            vec2 sampleCoords = projCoords.xy + vec2(x, y) * texelSize;
+            float pcfDepth = texture(shadowMap, sampleCoords).r; 
+            shadow += (currentDepth - bias) > pcfDepth ? 1.0 : 0.0;        
         }    
     }
     shadow /= 9.0;
+    
+    // Apply distance-based shadow fade out
+    float fadeFactor = 1.0 - smoothstep(0.8, 1.0, projCoords.z);
+    shadow *= fadeFactor;
     
     return shadow;
 }

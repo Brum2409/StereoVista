@@ -800,30 +800,40 @@ void updateSkybox() {
 }
 
 void setupShadowMapping() {
-    // Create multisampled depth map FBO
-
+    // Create shadow map framebuffer and texture
     glGenFramebuffers(1, &depthMapFBO);
     glGenTextures(1, &depthMap);
+    
     glBindTexture(GL_TEXTURE_2D, depthMap);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24,
         SHADOW_WIDTH, SHADOW_HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    
+    // Use LINEAR filtering for smoother PCF sampling
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    
+    // Set texture wrap mode to clamp to border
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    
+    // Set border color to white (no shadow outside shadow map)
     float borderColor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
     glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
 
+    // Attach depth texture to framebuffer
     glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
     glDrawBuffer(GL_NONE);
     glReadBuffer(GL_NONE);
 
+    // Check if framebuffer is complete
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-        std::cout << "Shadow framebuffer is not complete!" << std::endl;
+        std::cout << "ERROR: Shadow framebuffer is not complete!" << std::endl;
     }
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    
+    std::cout << "Shadow mapping initialized with " << SHADOW_WIDTH << "x" << SHADOW_HEIGHT << " resolution" << std::endl;
 
     // Load shadow mapping shaders
     try {
@@ -1002,6 +1012,69 @@ void renderSkybox(const glm::mat4& projection, const glm::mat4& view, Engine::Sh
 void bindSkyboxUniforms(Engine::Shader* shader) {
     shader->setFloat("skyboxIntensity", ambientStrengthFromSkybox);
     shader->setInt("skybox", 6);  // Skybox texture unit
+}
+
+glm::mat4 calculateLightSpaceMatrix() {
+    // Calculate scene bounds for shadow mapping
+    glm::vec3 sceneMin = glm::vec3(1e6f);
+    glm::vec3 sceneMax = glm::vec3(-1e6f);
+    
+    // Include camera position in the shadow calculation to ensure visible area is covered
+    sceneMin = glm::min(sceneMin, camera.Position - glm::vec3(5.0f));
+    sceneMax = glm::max(sceneMax, camera.Position + glm::vec3(5.0f));
+    
+    // Calculate actual scene bounds from all models
+    for (const auto& model : currentScene.models) {
+        glm::vec3 modelMin = model.position - glm::vec3(model.scale * model.boundingSphereRadius);
+        glm::vec3 modelMax = model.position + glm::vec3(model.scale * model.boundingSphereRadius);
+        
+        sceneMin = glm::min(sceneMin, modelMin);
+        sceneMax = glm::max(sceneMax, modelMax);
+    }
+    
+    // If no models, use camera-centered bounds
+    if (currentScene.models.empty()) {
+        sceneMin = camera.Position - glm::vec3(10.0f);
+        sceneMax = camera.Position + glm::vec3(10.0f);
+    }
+    
+    // Calculate scene properties
+    glm::vec3 sceneCenter = (sceneMin + sceneMax) * 0.5f;
+    glm::vec3 sceneSize = sceneMax - sceneMin;
+    float sceneRadius = glm::length(sceneSize) * 0.5f;
+    
+    // Ensure minimum size
+    sceneRadius = std::max(sceneRadius, 5.0f);
+    
+    // Position light from sun direction
+    glm::vec3 lightDir = glm::normalize(sun.direction);
+    
+    // Place light far enough to cover the entire scene
+    float lightDistance = sceneRadius * 2.5f;
+    glm::vec3 lightPos = sceneCenter - lightDir * lightDistance;
+
+    // Create orthographic projection with proper bounds
+    float orthoSize = sceneRadius * 1.5f; // More generous padding
+    glm::mat4 lightProjection = glm::ortho(
+        -orthoSize, orthoSize,      // left, right
+        -orthoSize, orthoSize,      // bottom, top
+        0.1f, lightDistance * 2.0f // near, far
+    );
+
+    // Create light view matrix
+    glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
+    // Ensure up vector is not parallel to light direction
+    if (abs(glm::dot(lightDir, up)) > 0.99f) {
+        up = glm::vec3(1.0f, 0.0f, 0.0f);
+    }
+    
+    glm::mat4 lightView = glm::lookAt(
+        lightPos,
+        sceneCenter,
+        up
+    );
+    
+    return lightProjection * lightView;
 }
 
 void savePreferences() {
@@ -2212,31 +2285,24 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
         glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
         glClear(GL_DEPTH_BUFFER_BIT);
 
-        // Calculate light's view and projection matrices
-        float sceneRadius = 10.0f;  // Adjust based on your scene size
-        glm::vec3 sceneCenter = glm::vec3(0.0f);
-        glm::vec3 lightDir = glm::normalize(sun.direction);
-        glm::vec3 lightPos = sceneCenter - lightDir * (sceneRadius * 2.0f);
-
-        glm::mat4 lightProjection = glm::ortho(
-            -sceneRadius, sceneRadius,
-            -sceneRadius, sceneRadius,
-            0.0f, sceneRadius * 4.0f);
-
-        glm::mat4 lightView = glm::lookAt(
-            lightPos,
-            sceneCenter,
-            glm::vec3(0.0f, 1.0f, 0.0f));
-        glm::mat4 lightSpaceMatrix = lightProjection * lightView;
+        // Calculate light space matrix based on actual scene bounds
+        glm::mat4 lightSpaceMatrix = calculateLightSpaceMatrix();
 
         // Use depth shader for shadow map generation
         simpleDepthShader->use();
         simpleDepthShader->setMat4("lightSpaceMatrix", lightSpaceMatrix);
 
-        // Render scene to depth buffer
+        // Enable polygon offset to reduce peter panning - fine-tuned values
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(1.1f, 4.0f);  // Reduced factor for tighter attachment
+        
+        // Render scene to depth buffer - disable culling to avoid issues with complex geometry
         glDisable(GL_CULL_FACE);
         renderModels(simpleDepthShader);
         glEnable(GL_CULL_FACE);
+        
+        // Disable polygon offset
+        glDisable(GL_POLYGON_OFFSET_FILL);
     }
 
     // 3. Regular rendering pass
@@ -2260,22 +2326,8 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
 
     // Shadow mapping specific setup
     if (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING) {
-        // Calculate light space matrix for shadow mapping
-        float sceneRadius = 10.0f;
-        glm::vec3 sceneCenter = glm::vec3(0.0f);
-        glm::vec3 lightDir = glm::normalize(sun.direction);
-        glm::vec3 lightPos = sceneCenter - lightDir * (sceneRadius * 2.0f);
-
-        glm::mat4 lightProjection = glm::ortho(
-            -sceneRadius, sceneRadius,
-            -sceneRadius, sceneRadius,
-            0.0f, sceneRadius * 4.0f);
-
-        glm::mat4 lightView = glm::lookAt(
-            lightPos,
-            sceneCenter,
-            glm::vec3(0.0f, 1.0f, 0.0f));
-        glm::mat4 lightSpaceMatrix = lightProjection * lightView;
+        // Calculate light space matrix based on actual scene bounds (same as depth pass)
+        glm::mat4 lightSpaceMatrix = calculateLightSpaceMatrix();
 
         shader->setMat4("lightSpaceMatrix", lightSpaceMatrix);
 
