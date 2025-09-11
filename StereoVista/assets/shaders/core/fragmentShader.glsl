@@ -68,6 +68,15 @@ struct PointLight {
    float intensity;
 };
 
+struct SpotLight {
+   vec3 position;
+   vec3 direction;
+   vec3 color;
+   float intensity;
+   float innerCutOff;
+   float outerCutOff;
+};
+
 struct Sun {
    vec3 direction;
    vec3 color;
@@ -95,9 +104,11 @@ uniform float emissiveIntensity;
 uniform int lightingMode;
 uniform bool enableShadows;
 
-#define MAX_LIGHTS 180
+#define MAX_LIGHTS 16
 uniform PointLight lights[MAX_LIGHTS];
 uniform int numLights;
+uniform SpotLight spotLights[MAX_LIGHTS];
+uniform int numSpotLights;
 uniform Sun sun;
 uniform vec3 viewPos;
 
@@ -273,6 +284,42 @@ vec3 CalcPointLight(PointLight light, vec3 normal, vec3 fragPos, vec3 viewDir, v
     specular *= (1.0 - shadow);
     
     // Apply attenuation and intensity
+    return (ambient + diffuse + specular) * attenuation * light.intensity;
+}
+
+vec3 CalcSpotLight(SpotLight light, vec3 normal, vec3 fragPos, vec3 viewDir, vec3 diffuseTexColor, vec3 specularTexColor) {
+    vec3 lightDir = normalize(light.position - fragPos);
+    
+    // Diffuse shading
+    float diff = max(dot(normal, lightDir), 0.0);
+    
+    // Specular shading (Blinn-Phong) with shininess clamping
+    vec3 halfwayDir = normalize(lightDir + viewDir);
+    float clampedShininess = max(material.shininess, 4.0);
+    float spec = pow(max(dot(normal, halfwayDir), 0.0), clampedShininess);
+    
+    // Attenuation
+    float distance = length(light.position - fragPos);
+    float attenuation = 1.0 / (1.0 + 0.09 * distance + 0.032 * (distance * distance));
+    
+    // Spotlight (soft edges)
+    float theta = dot(lightDir, normalize(-light.direction));
+    float epsilon = light.innerCutOff - light.outerCutOff;
+    float intensity = clamp((theta - light.outerCutOff) / epsilon, 0.0, 1.0);
+    
+    // Energy-conserving spot light with shininess compensation
+    vec3 ambient = light.color * diffuseTexColor * 0.02;  
+    vec3 diffuse = light.color * diff * diffuseTexColor;
+    
+    // Scale specular contribution based on shininess
+    float specularScale = clampedShininess / (clampedShininess + 16.0);
+    vec3 specular = light.color * spec * specularTexColor * specularScale;
+    
+    // Apply spotlight intensity to diffuse and specular (but not ambient)
+    diffuse *= intensity;
+    specular *= intensity;
+    
+    // Apply attenuation and light intensity
     return (ambient + diffuse + specular) * attenuation * light.intensity;
 }
 
@@ -779,6 +826,66 @@ vec3 calculateVCTDirectLight(PointLight light, vec3 viewDirection) {
     return attenuation * light.intensity * light.color * (diff + spec);
 }
 
+vec3 calculateVCTSpotLight(SpotLight light, vec3 viewDirection) {
+    vec3 normal = normalize(fs_in.Normal);
+    vec3 lightDir = light.position - fs_in.FragPos;
+    float distanceToLight = length(lightDir);
+    lightDir = normalize(lightDir);
+    
+    // Spotlight intensity calculation
+    float theta = dot(lightDir, normalize(-light.direction));
+    float epsilon = light.innerCutOff - light.outerCutOff;
+    float spotlightIntensity = clamp((theta - light.outerCutOff) / epsilon, 0.0, 1.0);
+    
+    if (spotlightIntensity <= 0.0) {
+        return vec3(0.0); // Outside spotlight cone
+    }
+    
+    // Diffuse lighting (Lambertian)
+    float diffuseAngle = max(dot(normal, lightDir), 0.0);
+    
+    // Specular lighting
+    vec3 halfwayDir = normalize(lightDir + (-viewDirection));
+    float specAngle = pow(max(dot(normal, halfwayDir), 0.0), material.shininess);
+    
+    // Refraction
+    float refractiveAngle = 0.0;
+    if (material.transparency > 0.01) {
+        vec3 refraction = refract(viewDirection, normal, 1.0/material.refractiveIndex);
+        if (length(refraction) > 0.01) {
+            refractiveAngle = max(0.0, material.transparency * dot(refraction, lightDir));
+        }
+    }
+    
+    // Shadow calculation
+    float shadow = 1.0;
+    if (vctSettings.shadows && diffuseAngle * (1.0 - material.transparency) > 0.0) {
+        shadow = traceShadowCone(fs_in.FragPos, lightDir, distanceToLight);
+    }
+    
+    // Apply shadow to lighting
+    diffuseAngle = min(shadow, diffuseAngle);
+    specAngle = min(shadow, max(specAngle, refractiveAngle));
+    
+    // Get base color
+    vec3 baseColor = material.hasTexture > 0.5 ? 
+                    texture(material.textures[0], fs_in.TexCoords).rgb : 
+                    material.objectColor;
+    
+    // Calculate final lighting with material properties
+    float df = 1.0 / (1.0 + 0.25 * material.specularDiffusion);
+    float diffuse = diffuseAngle * (1.0 - material.transparency);
+    float specular = SPECULAR_FACTOR * pow(specAngle, df * SPECULAR_POWER);
+    
+    vec3 diff = material.diffuseReflectivity * baseColor * diffuse;
+    vec3 spec = material.specularReflectivity * material.specularColor * specular;
+    
+    // Apply attenuation and spotlight intensity
+    float attenuation = 1.0 / (1.0 + 0.09 * distanceToLight + 0.032 * distanceToLight * distanceToLight);
+    
+    return attenuation * spotlightIntensity * light.intensity * light.color * (diff + spec);
+}
+
 void main() {
     // --- EARLY EXITS for special rendering modes ---
     // Check for point cloud rendering first - quick exit path
@@ -895,6 +1002,14 @@ void main() {
             result += CalcPointLight(lights[i], normal, fs_in.FragPos, viewDir, diffuseColor, specularColor);
         }
         
+        // Calculate spot lights
+        for(int i = 0; i < min(numSpotLights, MAX_LIGHTS); i++) {
+            float lightDistance = length(spotLights[i].position - fs_in.FragPos);
+            if (lightDistance > 50.0) continue; // Skip distant lights for performance
+            
+            result += CalcSpotLight(spotLights[i], normal, fs_in.FragPos, viewDir, diffuseColor, specularColor);
+        }
+        
         // Add emissive contribution
         if (material.emissive > 0.0) {
             result += diffuseColor * material.emissive * emissiveIntensity;
@@ -980,6 +1095,15 @@ void main() {
                     if (lightDistance > 30.0) continue;
                     
                     result += calculateVCTDirectLight(lights[i], viewDir);
+                }
+                
+                // Add spot light contributions
+                for (int i = 0; i < numSpotLights && i < MAX_LIGHTS; i++) {
+                    // Skip distant lights
+                    float lightDistance = distance(spotLights[i].position, fs_in.FragPos);
+                    if (lightDistance > 30.0) continue;
+                    
+                    result += calculateVCTSpotLight(spotLights[i], viewDir);
                 }
             }
             

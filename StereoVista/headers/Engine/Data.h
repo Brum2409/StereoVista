@@ -277,11 +277,21 @@ namespace Engine {
         bool enabled;
     };
 
-    const int MAX_LIGHTS = 180;
+    const int MAX_LIGHTS = 16;
     struct PointLight {
         glm::vec3 position;
         glm::vec3 color;
         float intensity;
+        glm::mat4 lightSpaceMatrix;
+    };
+
+    struct SpotLight {
+        glm::vec3 position;
+        glm::vec3 direction;
+        glm::vec3 color;
+        float intensity;
+        float innerCutOff;  // Inner cone angle (cosine)
+        float outerCutOff;  // Outer cone angle (cosine)
         glm::mat4 lightSpaceMatrix;
     };
 

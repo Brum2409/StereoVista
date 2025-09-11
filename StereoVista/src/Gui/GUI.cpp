@@ -19,6 +19,8 @@ using namespace GUI;
 // Forward declarations
 void updateSpaceMouseBounds();
 void updateSpaceMouseCursorAnchor();
+void renderPointLightManipulationPanel();
+void renderSpotLightManipulationPanel();
 
 // Application globals used throughout the GUI system
 extern int windowWidth;
@@ -58,12 +60,16 @@ extern enum class SelectedType {
     None,
     Model,
     PointCloud,
-    Sun
+    Sun,
+    PointLight,
+    SpotLight
 } currentSelectedType;
 extern int currentSelectedIndex;
 extern int currentSelectedMeshIndex;
 
-extern Sun sun;
+extern Engine::Sun sun;
+extern std::vector<Engine::PointLight> pointLights;
+extern std::vector<Engine::SpotLight> spotLights;
 
 // Skybox configuration
 extern GUI::SkyboxConfig skyboxConfig;
@@ -270,6 +276,34 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                 currentSelectedType = SelectedType::Model;
                 updateSpaceMouseBounds();
             }
+            
+            ImGui::Separator();
+            
+            if (ImGui::MenuItem("Point Light")) {
+                Engine::PointLight newPointLight;
+                newPointLight.position = glm::vec3(0.0f, 2.0f, 0.0f);  // Default position above origin
+                newPointLight.color = glm::vec3(1.0f, 1.0f, 1.0f);     // White light
+                newPointLight.intensity = 1.0f;                        // Default intensity
+                newPointLight.lightSpaceMatrix = glm::mat4(1.0f);      // Identity matrix
+                pointLights.push_back(newPointLight);
+                currentSelectedIndex = pointLights.size() - 1;
+                currentSelectedType = SelectedType::PointLight;
+            }
+            
+            if (ImGui::MenuItem("Spot Light")) {
+                Engine::SpotLight newSpotLight;
+                newSpotLight.position = glm::vec3(0.0f, 3.0f, 0.0f);     // Default position above origin
+                newSpotLight.direction = glm::vec3(0.0f, -1.0f, 0.0f);   // Pointing downward
+                newSpotLight.color = glm::vec3(1.0f, 1.0f, 1.0f);        // White light
+                newSpotLight.intensity = 1.0f;                           // Default intensity
+                newSpotLight.innerCutOff = glm::cos(glm::radians(12.5f)); // Inner cone (25 degrees)
+                newSpotLight.outerCutOff = glm::cos(glm::radians(17.5f)); // Outer cone (35 degrees)
+                newSpotLight.lightSpaceMatrix = glm::mat4(1.0f);          // Identity matrix
+                spotLights.push_back(newSpotLight);
+                currentSelectedIndex = spotLights.size() - 1;
+                currentSelectedType = SelectedType::SpotLight;
+            }
+            
             ImGui::EndMenu();
         }
 
@@ -504,6 +538,46 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
             ImGui::PopID();
         }
 
+        // Point Lights List
+        for (int i = 0; i < pointLights.size(); i++) {
+            ImGui::PushID(i + currentScene.models.size() + 1000); // Offset to avoid ID conflicts
+            bool isSelected = (currentSelectedIndex == i && currentSelectedType == SelectedType::PointLight);
+
+            ImGui::AlignTextToFramePadding();
+            ImGui::Text("💡"); // Light bulb emoji as icon
+            ImGui::NextColumn();
+
+            ImGui::AlignTextToFramePadding();
+            std::string lightName = "Point Light " + std::to_string(i + 1);
+            if (ImGui::Selectable(lightName.c_str(), isSelected, ImGuiSelectableFlags_SpanAllColumns)) {
+                currentSelectedType = SelectedType::PointLight;
+                currentSelectedIndex = i;
+                currentSelectedMeshIndex = -1;
+            }
+            ImGui::NextColumn();
+            ImGui::PopID();
+        }
+
+        // Spot Lights List
+        for (int i = 0; i < spotLights.size(); i++) {
+            ImGui::PushID(i + currentScene.models.size() + 2000); // Offset to avoid ID conflicts
+            bool isSelected = (currentSelectedIndex == i && currentSelectedType == SelectedType::SpotLight);
+
+            ImGui::AlignTextToFramePadding();
+            ImGui::Text("🔦"); // Flashlight emoji as icon
+            ImGui::NextColumn();
+
+            ImGui::AlignTextToFramePadding();
+            std::string lightName = "Spot Light " + std::to_string(i + 1);
+            if (ImGui::Selectable(lightName.c_str(), isSelected, ImGuiSelectableFlags_SpanAllColumns)) {
+                currentSelectedType = SelectedType::SpotLight;
+                currentSelectedIndex = i;
+                currentSelectedMeshIndex = -1;
+            }
+            ImGui::NextColumn();
+            ImGui::PopID();
+        }
+
         // Point Clouds List
         for (int i = 0; i < currentScene.pointClouds.size(); i++) {
             ImGui::PushID(i + currentScene.models.size());
@@ -553,6 +627,14 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
     }
     else if (currentSelectedType == SelectedType::Sun) {
         renderSunManipulationPanel();
+    }
+    else if (currentSelectedType == SelectedType::PointLight && currentSelectedIndex >= 0 &&
+        currentSelectedIndex < pointLights.size()) {
+        renderPointLightManipulationPanel();
+    }
+    else if (currentSelectedType == SelectedType::SpotLight && currentSelectedIndex >= 0 &&
+        currentSelectedIndex < spotLights.size()) {
+        renderSpotLightManipulationPanel();
     }
 
     ImGui::End();
@@ -2637,3 +2719,116 @@ void renderStereoCameraVisualization(const Camera& camera, const Engine::SceneSe
     ImGui::Dummy(squareSize);
 }
 */
+
+void renderPointLightManipulationPanel() {
+    if (currentSelectedIndex >= pointLights.size()) {
+        ImGui::Text("Error: Invalid point light selection (index %d, size %d)", currentSelectedIndex, (int)pointLights.size());
+        return;
+    }
+    
+    auto& light = pointLights[currentSelectedIndex];
+    
+    ImGui::Text("Point Light %d", currentSelectedIndex + 1);
+    ImGui::Separator();
+    
+    // Position controls
+    if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::DragFloat3("Position", glm::value_ptr(light.position), 0.1f);
+    }
+    
+    // Light properties
+    if (ImGui::CollapsingHeader("Light Properties", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::ColorEdit3("Color", glm::value_ptr(light.color));
+        ImGui::SliderFloat("Intensity", &light.intensity, 0.0f, 5.0f);
+    }
+    
+    ImGui::Separator();
+    
+    // Delete button
+    if (ImGui::Button("Delete Point Light", ImVec2(-1, 0))) {
+        ImGui::OpenPopup("Delete Point Light?");
+    }
+    
+    if (ImGui::BeginPopupModal("Delete Point Light?", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Are you sure you want to delete this point light?\nThis operation cannot be undone!\n\n");
+        ImGui::Separator();
+        
+        if (ImGui::Button("Yes", ImVec2(120, 0))) {
+            pointLights.erase(pointLights.begin() + currentSelectedIndex);
+            currentSelectedIndex = -1;
+            currentSelectedType = SelectedType::None;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SetItemDefaultFocus();
+        ImGui::SameLine();
+        if (ImGui::Button("No", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+void renderSpotLightManipulationPanel() {
+    auto& light = spotLights[currentSelectedIndex];
+    
+    ImGui::Text("Spot Light %d", currentSelectedIndex + 1);
+    ImGui::Separator();
+    
+    // Position controls
+    if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::DragFloat3("Position", glm::value_ptr(light.position), 0.1f);
+        ImGui::DragFloat3("Direction", glm::value_ptr(light.direction), 0.01f, -1.0f, 1.0f);
+        
+        // Normalize direction vector
+        if (ImGui::Button("Normalize Direction")) {
+            light.direction = glm::normalize(light.direction);
+        }
+    }
+    
+    // Light properties
+    if (ImGui::CollapsingHeader("Light Properties", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::ColorEdit3("Color", glm::value_ptr(light.color));
+        ImGui::SliderFloat("Intensity", &light.intensity, 0.0f, 5.0f);
+        
+        // Cone angles (convert from cosine to degrees for UI)
+        float innerAngle = glm::degrees(glm::acos(light.innerCutOff));
+        float outerAngle = glm::degrees(glm::acos(light.outerCutOff));
+        
+        if (ImGui::SliderFloat("Inner Cone Angle", &innerAngle, 0.0f, 89.0f, "%.1f°")) {
+            light.innerCutOff = glm::cos(glm::radians(innerAngle));
+        }
+        if (ImGui::SliderFloat("Outer Cone Angle", &outerAngle, 0.0f, 89.0f, "%.1f°")) {
+            light.outerCutOff = glm::cos(glm::radians(outerAngle));
+        }
+        
+        // Ensure inner angle is always smaller than outer angle
+        if (innerAngle > outerAngle) {
+            light.outerCutOff = light.innerCutOff;
+        }
+    }
+    
+    ImGui::Separator();
+    
+    // Delete button
+    if (ImGui::Button("Delete Spot Light", ImVec2(-1, 0))) {
+        ImGui::OpenPopup("Delete Spot Light?");
+    }
+    
+    if (ImGui::BeginPopupModal("Delete Spot Light?", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Are you sure you want to delete this spot light?\nThis operation cannot be undone!\n\n");
+        ImGui::Separator();
+        
+        if (ImGui::Button("Yes", ImVec2(120, 0))) {
+            spotLights.erase(spotLights.begin() + currentSelectedIndex);
+            currentSelectedIndex = -1;
+            currentSelectedType = SelectedType::None;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SetItemDefaultFocus();
+        ImGui::SameLine();
+        if (ImGui::Button("No", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}

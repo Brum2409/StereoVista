@@ -140,7 +140,9 @@ enum class SelectedType {
     None,
     Model,
     PointCloud,
-    Sun
+    Sun,
+    PointLight,
+    SpotLight
 };
 
 std::atomic<bool> isRecalculatingChunks(false);
@@ -203,9 +205,10 @@ int windowWidth = 1920;
 int windowHeight = 1080;
 
 // ---- Lighting ----
-std::vector<PointLight> pointLights;
+std::vector<Engine::PointLight> pointLights;
+std::vector<Engine::SpotLight> spotLights;
 float zOffset = 0.5f;
-Sun sun = {
+Engine::Sun sun = {
     glm::normalize(glm::vec3(-1.0f, -2.0f, -1.0f)), // More vertical angle
     glm::vec3(1.0f, 0.95f, 0.8f),                   // Warmer color
     0.16f,                                          // Higher intensity
@@ -2371,7 +2374,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
         glm::vec3 lightPos = pointLights[0].position;
         
         // Create shadow matrices for all 6 directions of the cubemap
-        float near_plane = 0.1f;
+        float near_plane = 0.01f;  // Decreased for closer shadows
         glm::mat4 shadowProj = glm::perspective(glm::radians(90.0f), 1.0f, near_plane, far_plane);
         std::vector<glm::mat4> shadowMatrices;
         shadowMatrices.push_back(shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f)));
@@ -2436,9 +2439,9 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
             shader->setInt("shadowMap", 4);
             
             // Bind point shadow cubemap
-            glActiveTexture(GL_TEXTURE5);  // Using texture unit 5 for point shadow cubemap
+            glActiveTexture(GL_TEXTURE6);  // Using texture unit 6 for point shadow cubemap
             glBindTexture(GL_TEXTURE_CUBE_MAP, depthCubemap);
-            shader->setInt("depthMap", 5);
+            shader->setInt("depthMap", 6);
             
             // Set point shadow uniforms
             if (pointLights.size() > 0) {
@@ -2459,6 +2462,18 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
             shader->setFloat(lightName + ".intensity", pointLights[i].intensity);
         }
         shader->setInt("numLights", std::min((int)pointLights.size(), MAX_LIGHTS));
+        
+        // Set spot light uniforms
+        for (int i = 0; i < spotLights.size() && i < MAX_LIGHTS; i++) {
+            std::string lightName = "spotLights[" + std::to_string(i) + "]";
+            shader->setVec3(lightName + ".position", spotLights[i].position);
+            shader->setVec3(lightName + ".direction", spotLights[i].direction);
+            shader->setVec3(lightName + ".color", spotLights[i].color);
+            shader->setFloat(lightName + ".intensity", spotLights[i].intensity);
+            shader->setFloat(lightName + ".innerCutOff", spotLights[i].innerCutOff);
+            shader->setFloat(lightName + ".outerCutOff", spotLights[i].outerCutOff);
+        }
+        shader->setInt("numSpotLights", std::min((int)spotLights.size(), MAX_LIGHTS));
     }
     // Voxel cone tracing specific setup
     else if (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
@@ -2479,6 +2494,10 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
         shader->setInt("vctSettings.shadowSampleCount", vctSettings.shadowSampleCount);
         shader->setFloat("vctSettings.shadowStepMultiplier", vctSettings.shadowStepMultiplier);
 
+        // Set default values for point shadow uniforms (not used in VCT but need to be defined)
+        shader->setVec3("lightPos", glm::vec3(0.0f));
+        shader->setFloat("far_plane", 50.0f);
+        
         // Bind voxel 3D texture - using texture unit 5
         glActiveTexture(GL_TEXTURE5);
         glBindTexture(GL_TEXTURE_3D, voxelizer->getVoxelTexture());
@@ -2505,6 +2524,18 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
             shader->setFloat(lightName + ".intensity", pointLights[i].intensity);
         }
         shader->setInt("numLights", std::min((int)pointLights.size(), MAX_LIGHTS));
+        
+        // Set spot light uniforms
+        for (int i = 0; i < spotLights.size() && i < MAX_LIGHTS; i++) {
+            std::string lightName = "spotLights[" + std::to_string(i) + "]";
+            shader->setVec3(lightName + ".position", spotLights[i].position);
+            shader->setVec3(lightName + ".direction", spotLights[i].direction);
+            shader->setVec3(lightName + ".color", spotLights[i].color);
+            shader->setFloat(lightName + ".intensity", spotLights[i].intensity);
+            shader->setFloat(lightName + ".innerCutOff", spotLights[i].innerCutOff);
+            shader->setFloat(lightName + ".outerCutOff", spotLights[i].outerCutOff);
+        }
+        shader->setInt("numSpotLights", std::min((int)spotLights.size(), MAX_LIGHTS));
     }
     // Radiance rendering specific setup
     else if (currentLightingMode == GUI::LIGHTING_RADIANCE) {
@@ -2538,6 +2569,17 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
             shader->setVec3(lightName + ".position", pointLights[i].position);
             shader->setVec3(lightName + ".color", pointLights[i].color);
             shader->setFloat(lightName + ".intensity", pointLights[i].intensity);
+        }
+        
+        // Set spot light uniforms
+        for (int i = 0; i < spotLights.size() && i < MAX_LIGHTS; i++) {
+            std::string lightName = "spotLights[" + std::to_string(i) + "]";
+            shader->setVec3(lightName + ".position", spotLights[i].position);
+            shader->setVec3(lightName + ".direction", spotLights[i].direction);
+            shader->setVec3(lightName + ".color", spotLights[i].color);
+            shader->setFloat(lightName + ".intensity", spotLights[i].intensity);
+            shader->setFloat(lightName + ".innerCutOff", spotLights[i].innerCutOff);
+            shader->setFloat(lightName + ".outerCutOff", spotLights[i].outerCutOff);
         }
         shader->setInt("numPointLights", std::min((int)pointLights.size(), MAX_LIGHTS));
         
@@ -3264,45 +3306,8 @@ void DrawRadar(bool isStereoWindow, Camera camera, GLfloat focaldist,
 }
 
 void updatePointLights() {
-    pointLights.clear();
-    for (const auto& model : currentScene.models) {
-        if (model.emissive > 0.0f) {
-            // Calculate rotation matrix for the model
-            glm::mat4 rotX = glm::rotate(glm::mat4(1.0f), glm::radians(model.rotation.x), glm::vec3(1, 0, 0));
-            glm::mat4 rotY = glm::rotate(glm::mat4(1.0f), glm::radians(model.rotation.y), glm::vec3(0, 1, 0));
-            glm::mat4 rotZ = glm::rotate(glm::mat4(1.0f), glm::radians(model.rotation.z), glm::vec3(0, 0, 1));
-            glm::mat4 rotationMatrix = rotZ * rotY * rotX;
-
-            // Calculate the model's bounding box in world space
-            glm::vec3 minBounds(std::numeric_limits<float>::max());
-            glm::vec3 maxBounds(std::numeric_limits<float>::lowest());
-
-            // Iterate through all meshes in the model
-            for (const auto& mesh : model.getMeshes()) {
-                for (const auto& vertex : mesh.vertices) {
-                    glm::vec4 rotatedPos = rotationMatrix * glm::vec4(vertex.position, 1.0f);
-                    glm::vec3 worldPos = model.position + model.scale * glm::vec3(rotatedPos);
-                    minBounds = glm::min(minBounds, worldPos);
-                    maxBounds = glm::max(maxBounds, worldPos);
-                }
-            }
-
-            // Create multiple point lights distributed across the model's bounding box
-            int numLightsPerDimension = 2; // Adjust this for more or fewer lights
-            glm::vec3 step = (maxBounds - minBounds) / float(numLightsPerDimension - 1);
-            for (int x = 0; x < numLightsPerDimension; ++x) {
-                for (int y = 0; y < numLightsPerDimension; ++y) {
-                    for (int z = 0; z < numLightsPerDimension; ++z) {
-                        PointLight light;
-                        light.position = minBounds + glm::vec3(x * step.x, y * step.y, z * step.z);
-                        light.color = model.color;
-                        light.intensity = model.emissive / float(numLightsPerDimension * numLightsPerDimension * numLightsPerDimension);
-                        pointLights.push_back(light);
-                    }
-                }
-            }
-        }
-    }
+    // Point lights are now only manually created, no auto-generation from emissive objects
+    // This function is kept for compatibility but does nothing
 }
 
 void updateSpaceMouseBounds() {
