@@ -79,6 +79,7 @@ struct Sun {
 // Material and texture uniforms
 uniform Material material;
 uniform sampler2D shadowMap;
+uniform samplerCube depthMap;
 uniform samplerCube skybox;
 uniform float skyboxIntensity;
 
@@ -99,6 +100,10 @@ uniform PointLight lights[MAX_LIGHTS];
 uniform int numLights;
 uniform Sun sun;
 uniform vec3 viewPos;
+
+// Point shadow uniforms
+uniform vec3 lightPos;
+uniform float far_plane;
 
 // Voxel grid bounds
 uniform vec3 gridMin;
@@ -158,10 +163,8 @@ float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir) {
     // Get depth of current fragment from light's perspective
     float currentDepth = projCoords.z;
     
-    // Calculate minimal bias since we're using polygon offset
-    float cosTheta = clamp(dot(normal, lightDir), 0.0, 1.0);
-    float bias = 0.0005 * (1.0 - cosTheta);
-    bias = clamp(bias, 0.00005, 0.001);
+    // Use very small bias since polygon offset handles most issues
+    float bias = 0.00005;
     
     // PCF (Percentage-Closer Filtering) for soft shadows
     float shadow = 0.0;
@@ -179,6 +182,38 @@ float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir) {
     
     // Apply distance-based shadow fade out
     float fadeFactor = 1.0 - smoothstep(0.8, 1.0, projCoords.z);
+    shadow *= fadeFactor;
+    
+    return shadow;
+}
+
+// ---- POINT SHADOW CALCULATION ----
+float PointShadowCalculation(vec3 fragPos, vec3 lightPosition) {
+    if (!enableShadows) return 0.0;
+    
+    // Apply normal offset to reduce self-shadowing (move sample point along normal)
+    vec3 normal = normalize(fs_in.Normal);
+    float normalOffset = 0.05;
+    vec3 offsetPos = fragPos + normal * normalOffset;
+    
+    // Get vector between offset position and light position
+    vec3 fragToLight = offsetPos - lightPosition;
+    
+    // Sample from the depth map using the offset position
+    float closestDepth = texture(depthMap, fragToLight).r;
+    
+    // It is currently in linear range between [0,1], let's re-transform it back to original depth value
+    closestDepth *= far_plane;
+    
+    // Now get current linear depth as the length between the offset position and light position
+    float currentDepth = length(fragToLight);
+    
+    // Use minimal bias since we're using normal offset
+    float bias = 0.01;
+    float shadow = currentDepth - bias > closestDepth ? 1.0 : 0.0;
+    
+    // Simple fade near far plane
+    float fadeFactor = 1.0 - smoothstep(far_plane * 0.9, far_plane, currentDepth);
     shadow *= fadeFactor;
     
     return shadow;
@@ -222,6 +257,9 @@ vec3 CalcPointLight(PointLight light, vec3 normal, vec3 fragPos, vec3 viewDir, v
     float distance = length(light.position - fragPos);
     float attenuation = 1.0 / (1.0 + 0.09 * distance + 0.032 * (distance * distance));
     
+    // Calculate point shadow
+    float shadow = PointShadowCalculation(fragPos, light.position);
+    
     // Energy-conserving point light with shininess compensation
     vec3 ambient = light.color * diffuseTexColor * 0.02;  
     vec3 diffuse = light.color * diff * diffuseTexColor;
@@ -229,6 +267,10 @@ vec3 CalcPointLight(PointLight light, vec3 normal, vec3 fragPos, vec3 viewDir, v
     // Scale specular contribution based on shininess to prevent washout  
     float specularScale = clampedShininess / (clampedShininess + 16.0);
     vec3 specular = light.color * spec * specularTexColor * specularScale;
+    
+    // Apply shadow to diffuse and specular (but not ambient)
+    diffuse *= (1.0 - shadow);
+    specular *= (1.0 - shadow);
     
     // Apply attenuation and intensity
     return (ambient + diffuse + specular) * attenuation * light.intensity;

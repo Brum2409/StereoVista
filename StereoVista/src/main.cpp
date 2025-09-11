@@ -81,6 +81,7 @@ PointCloud loadPointCloudFile(const std::string& filePath, size_t downsampleFact
 
 void createDefaultCubemap();
 void initSkybox();
+void setupPointShadowMapping();
 
 void cleanup(Engine::Shader* shader);
 
@@ -215,6 +216,13 @@ unsigned int depthMapFBO;
 unsigned int depthMap;
 const unsigned int SHADOW_WIDTH = 4096, SHADOW_HEIGHT = 4096;
 Engine::Shader* simpleDepthShader = nullptr;
+
+// Point shadow mapping variables
+unsigned int depthCubemap;
+unsigned int depthMapFBO_point;
+const unsigned int SHADOW_WIDTH_POINT = 1024, SHADOW_HEIGHT_POINT = 1024;
+Engine::Shader* pointShadowShader = nullptr;
+float far_plane = 50.0f;
 Engine::Shader* radianceShader = nullptr;
 
 GUI::LightingMode currentLightingMode = GUI::LIGHTING_SHADOW_MAPPING;
@@ -843,6 +851,46 @@ void setupShadowMapping() {
     }
     catch (const std::exception& e) {
         std::cerr << "Error loading depth shader: " << e.what() << std::endl;
+    }
+}
+
+void setupPointShadowMapping() {
+    // Generate depth cubemap texture
+    glGenTextures(1, &depthCubemap);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, depthCubemap);
+    
+    for (unsigned int i = 0; i < 6; ++i) {
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_DEPTH_COMPONENT,
+            SHADOW_WIDTH_POINT, SHADOW_HEIGHT_POINT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+    }
+    
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    
+    // Create framebuffer for point shadows
+    glGenFramebuffers(1, &depthMapFBO_point);
+    glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO_point);
+    glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, depthCubemap, 0);
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
+    
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        std::cout << "ERROR: Point shadow framebuffer is not complete!" << std::endl;
+    }
+    
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    
+    std::cout << "Point shadow mapping initialized with " << SHADOW_WIDTH_POINT << "x" << SHADOW_HEIGHT_POINT << " cubemap resolution" << std::endl;
+    
+    // Load point shadow shaders
+    try {
+        pointShadowShader = Engine::loadShader("core/pointShadowVertexShader.glsl", "core/pointShadowFragmentShader.glsl", "core/pointShadowGeometryShader.glsl");
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error loading point shadow shader: " << e.what() << std::endl;
     }
 }
 
@@ -1824,6 +1872,7 @@ int main() {
     cursorManager.initialize();
 
     setupShadowMapping();
+    setupPointShadowMapping();
     setupSkyboxVAO(skyboxVAO, skyboxVBO);
 
     // ---- Calculate Largest Model Dimension ----
@@ -2225,6 +2274,11 @@ void cleanup(Engine::Shader* shader) {
     glDeleteFramebuffers(1, &depthMapFBO);
     glDeleteTextures(1, &depthMap);
     delete simpleDepthShader;
+    
+    // Cleanup point shadow resources
+    glDeleteFramebuffers(1, &depthMapFBO_point);
+    glDeleteTextures(1, &depthCubemap);
+    delete pointShadowShader;
     delete radianceShader;
 
     // Delete shader
@@ -2307,6 +2361,48 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
         glDisable(GL_POLYGON_OFFSET_FILL);
     }
 
+    // 2.5. Point shadow mapping pass for first point light
+    if (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING && enableShadows && pointLights.size() > 0) {
+        glViewport(0, 0, SHADOW_WIDTH_POINT, SHADOW_HEIGHT_POINT);
+        glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO_point);
+        glClear(GL_DEPTH_BUFFER_BIT);
+        
+        // Use the first point light for shadows
+        glm::vec3 lightPos = pointLights[0].position;
+        
+        // Create shadow matrices for all 6 directions of the cubemap
+        float near_plane = 0.1f;
+        glm::mat4 shadowProj = glm::perspective(glm::radians(90.0f), 1.0f, near_plane, far_plane);
+        std::vector<glm::mat4> shadowMatrices;
+        shadowMatrices.push_back(shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f)));
+        shadowMatrices.push_back(shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(-1.0f, 0.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f)));
+        shadowMatrices.push_back(shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f)));
+        shadowMatrices.push_back(shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(0.0f, -1.0f, 0.0f), glm::vec3(0.0f, 0.0f, -1.0f)));
+        shadowMatrices.push_back(shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f, -1.0f, 0.0f)));
+        shadowMatrices.push_back(shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(0.0f, 0.0f, -1.0f), glm::vec3(0.0f, -1.0f, 0.0f)));
+        
+        // Use point shadow shader
+        if (pointShadowShader) {
+            pointShadowShader->use();
+            for (unsigned int i = 0; i < 6; ++i) {
+                pointShadowShader->setMat4("shadowMatrices[" + std::to_string(i) + "]", shadowMatrices[i]);
+            }
+            std::string lightPosStr = "lightPos";
+            pointShadowShader->setVec3(lightPosStr, lightPos);
+            pointShadowShader->setFloat("far_plane", far_plane);
+            
+            // Enable polygon offset to reduce peter panning
+            glEnable(GL_POLYGON_OFFSET_FILL);
+            glPolygonOffset(0.5f, 1.0f);  // Smaller values than directional shadows
+            
+            // Render scene to cubemap
+            renderModels(pointShadowShader);
+            
+            // Disable polygon offset
+            glDisable(GL_POLYGON_OFFSET_FILL);
+        }
+    }
+
     // 3. Regular rendering pass
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, windowWidth, windowHeight);
@@ -2338,6 +2434,18 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
             glActiveTexture(GL_TEXTURE4);  // Using texture unit 4 for shadow map
             glBindTexture(GL_TEXTURE_2D, depthMap);
             shader->setInt("shadowMap", 4);
+            
+            // Bind point shadow cubemap
+            glActiveTexture(GL_TEXTURE5);  // Using texture unit 5 for point shadow cubemap
+            glBindTexture(GL_TEXTURE_CUBE_MAP, depthCubemap);
+            shader->setInt("depthMap", 5);
+            
+            // Set point shadow uniforms
+            if (pointLights.size() > 0) {
+                std::string lightPosStr = "lightPos";
+                shader->setVec3(lightPosStr, pointLights[0].position);
+                shader->setFloat("far_plane", far_plane);
+            }
         }
 
         // Update point lights (for shadow mapping mode)
