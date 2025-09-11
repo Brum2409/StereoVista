@@ -254,6 +254,7 @@ std::vector<uint32_t> gpuTriangleIndices;
 std::vector<Engine::GPUTriangle> gpuTriangles;
 bool bvhBuilt = false;
 bool bvhBuffersUploaded = false;
+bool triangleDataUploaded = false;
 bool enableBVH = true; // BVH toggle
 
 // BVH Debug Renderer
@@ -750,6 +751,7 @@ void buildBVH(const std::vector<Engine::BVHTriangle>& triangles) {
     
     bvhBuilt = true;
     bvhBuffersUploaded = false;  // Mark that buffers need to be uploaded
+    triangleDataUploaded = false;  // Mark that triangle data needs to be uploaded
     std::cout << "BVH built successfully" << std::endl;
 }
 
@@ -2398,6 +2400,13 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     }
     // Radiance rendering specific setup
     else if (currentLightingMode == GUI::LIGHTING_RADIANCE) {
+        // Check if we just switched to radiance mode
+        static GUI::LightingMode lastLightingMode = GUI::LIGHTING_SHADOW_MAPPING;
+        if (lastLightingMode != GUI::LIGHTING_RADIANCE) {
+            triangleDataUploaded = false; // Force triangle data upload when switching to radiance mode
+        }
+        lastLightingMode = currentLightingMode;
+        
         // Set raytracing parameters from GUI settings
         shader->setBool("enableRaytracing", radianceSettings.enableRaytracing);
         shader->setInt("maxBounces", radianceSettings.maxBounces);
@@ -2430,90 +2439,103 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
         shader->setVec3("sun.color", sun.color);
         shader->setFloat("sun.intensity", sun.intensity);
         
-        // Extract triangle data from scene models and pack into SSBO
-        triangleData.clear();
-        std::vector<Engine::BVHTriangle> bvhTriangles;
-        int triangleCount = 0;
+        // Check if scene has changed to determine if we need to recalculate triangle data
+        bool sceneChanged = lastSceneState.hasChanged(currentScene);
         
-        for (const auto& model : currentScene.models) {
-            for (const auto& mesh : model.getMeshes()) {
-                // Calculate model matrix for this model
-                glm::mat4 modelMatrix = glm::mat4(1.0f);
-                modelMatrix = glm::translate(modelMatrix, model.position);
-                modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.x), glm::vec3(1, 0, 0));
-                modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.y), glm::vec3(0, 1, 0));
-                modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.z), glm::vec3(0, 0, 1));
-                modelMatrix = glm::scale(modelMatrix, model.scale);
-                
-                // Get mesh vertices and indices directly (they are public members)
-                const auto& vertices = mesh.vertices;
-                const auto& indices = mesh.indices;
-                
-                // Extract ALL triangles (no more skipping for performance)
-                for (size_t i = 0; i < indices.size(); i += 3) {
-                    if (i + 2 < indices.size()) {
-                        // Get triangle vertices
-                        glm::vec3 v0 = glm::vec3(modelMatrix * glm::vec4(vertices[indices[i]].position, 1.0f));
-                        glm::vec3 v1 = glm::vec3(modelMatrix * glm::vec4(vertices[indices[i+1]].position, 1.0f));
-                        glm::vec3 v2 = glm::vec3(modelMatrix * glm::vec4(vertices[indices[i+2]].position, 1.0f));
-                        
-                        // Calculate triangle normal
-                        glm::vec3 normal = normalize(cross(v1 - v0, v2 - v0));
-                        
-                        // Pack triangle data into buffer (matches shader Triangle struct layout)
-                        // struct Triangle { vec3 v0, v1, v2; vec3 normal; vec3 color; float emissiveness; float shininess; int materialId; }
-                        // std430 layout: vec3 takes 3 floats, then next vec3 starts at next 4-float boundary
-                        triangleData.insert(triangleData.end(), {v0.x, v0.y, v0.z}); // vec3 v0
-                        triangleData.push_back(0.0f); // padding for vec3 alignment
-                        triangleData.insert(triangleData.end(), {v1.x, v1.y, v1.z}); // vec3 v1  
-                        triangleData.push_back(0.0f); // padding for vec3 alignment
-                        triangleData.insert(triangleData.end(), {v2.x, v2.y, v2.z}); // vec3 v2
-                        triangleData.push_back(0.0f); // padding for vec3 alignment
-                        triangleData.insert(triangleData.end(), {normal.x, normal.y, normal.z}); // vec3 normal
-                        triangleData.push_back(0.0f); // padding for vec3 alignment
-                        triangleData.insert(triangleData.end(), {model.color.x, model.color.y, model.color.z}); // vec3 color
-                        triangleData.push_back(model.emissive); // float emissiveness (no padding needed, fills vec3 slot)
-                        triangleData.push_back(model.shininess); // float shininess
-                        // For int materialId, we need to use reinterpret_cast to pack as float bits
-                        int materialId = triangleCount;
-                        triangleData.push_back(*reinterpret_cast<float*>(&materialId)); // int materialId packed as float
-                        triangleData.push_back(0.0f); // padding for next struct alignment
-                        triangleData.push_back(0.0f); // padding for next struct alignment
-                        
-                        // Create BVH triangle
-                        Engine::BVHTriangle bvhTri(v0, v1, v2, normal, model.color, 
-                                                  model.emissive, model.shininess, materialId);
-                        bvhTriangles.push_back(bvhTri);
-                        
-                        triangleCount++;
+        // Declare triangle count outside conditional to use in shader uniforms
+        static int triangleCount = 0;
+        
+        // Only extract and upload triangle data if scene changed or data hasn't been uploaded
+        if (sceneChanged || !triangleDataUploaded) {
+            // Extract triangle data from scene models and pack into SSBO
+            triangleData.clear();
+            std::vector<Engine::BVHTriangle> bvhTriangles;
+            triangleCount = 0;
+            
+            for (const auto& model : currentScene.models) {
+                for (const auto& mesh : model.getMeshes()) {
+                    // Calculate model matrix for this model
+                    glm::mat4 modelMatrix = glm::mat4(1.0f);
+                    modelMatrix = glm::translate(modelMatrix, model.position);
+                    modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.x), glm::vec3(1, 0, 0));
+                    modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.y), glm::vec3(0, 1, 0));
+                    modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.z), glm::vec3(0, 0, 1));
+                    modelMatrix = glm::scale(modelMatrix, model.scale);
+                    
+                    // Get mesh vertices and indices directly (they are public members)
+                    const auto& vertices = mesh.vertices;
+                    const auto& indices = mesh.indices;
+                    
+                    // Extract ALL triangles (no more skipping for performance)
+                    for (size_t i = 0; i < indices.size(); i += 3) {
+                        if (i + 2 < indices.size()) {
+                            // Get triangle vertices
+                            glm::vec3 v0 = glm::vec3(modelMatrix * glm::vec4(vertices[indices[i]].position, 1.0f));
+                            glm::vec3 v1 = glm::vec3(modelMatrix * glm::vec4(vertices[indices[i+1]].position, 1.0f));
+                            glm::vec3 v2 = glm::vec3(modelMatrix * glm::vec4(vertices[indices[i+2]].position, 1.0f));
+                            
+                            // Calculate triangle normal
+                            glm::vec3 normal = normalize(cross(v1 - v0, v2 - v0));
+                            
+                            // Pack triangle data into buffer (matches shader Triangle struct layout)
+                            // struct Triangle { vec3 v0, v1, v2; vec3 normal; vec3 color; float emissiveness; float shininess; int materialId; }
+                            // std430 layout: vec3 takes 3 floats, then next vec3 starts at next 4-float boundary
+                            triangleData.insert(triangleData.end(), {v0.x, v0.y, v0.z}); // vec3 v0
+                            triangleData.push_back(0.0f); // padding for vec3 alignment
+                            triangleData.insert(triangleData.end(), {v1.x, v1.y, v1.z}); // vec3 v1  
+                            triangleData.push_back(0.0f); // padding for vec3 alignment
+                            triangleData.insert(triangleData.end(), {v2.x, v2.y, v2.z}); // vec3 v2
+                            triangleData.push_back(0.0f); // padding for vec3 alignment
+                            triangleData.insert(triangleData.end(), {normal.x, normal.y, normal.z}); // vec3 normal
+                            triangleData.push_back(0.0f); // padding for vec3 alignment
+                            triangleData.insert(triangleData.end(), {model.color.x, model.color.y, model.color.z}); // vec3 color
+                            triangleData.push_back(model.emissive); // float emissiveness (no padding needed, fills vec3 slot)
+                            triangleData.push_back(model.shininess); // float shininess
+                            // For int materialId, we need to use reinterpret_cast to pack as float bits
+                            int materialId = triangleCount;
+                            triangleData.push_back(*reinterpret_cast<float*>(&materialId)); // int materialId packed as float
+                            triangleData.push_back(0.0f); // padding for next struct alignment
+                            triangleData.push_back(0.0f); // padding for next struct alignment
+                            
+                            // Create BVH triangle
+                            Engine::BVHTriangle bvhTri(v0, v1, v2, normal, model.color, 
+                                                      model.emissive, model.shininess, materialId);
+                            bvhTriangles.push_back(bvhTri);
+                            
+                            triangleCount++;
+                        }
                     }
                 }
             }
-        }
-        
-        // Update the SSBO with triangle data
-        if (!triangleData.empty()) {
-            updateTriangleBuffer(triangleData);
-        }
-        
-        // Build BVH only if scene has changed and we have triangles and BVH is enabled
-        bool sceneChanged = lastSceneState.hasChanged(currentScene);
-        if (!bvhTriangles.empty() && enableBVH && (sceneChanged || !bvhBuilt)) {
-            std::cout << "Scene changed, rebuilding BVH..." << std::endl;
-            buildBVH(bvhTriangles);
-            updateBVHBuffers();
-            bvhBuffersUploaded = true;
             
-            // Update debug renderer if debug is enabled
-            if (showBVHDebug) {
-                // Get max depth from GUI settings
-                int maxDepth = preferences.radianceSettings.bvhDebugMaxDepth;
-                bvhDebugRenderer.updateFromBVH(bvhBuilder.getNodes(), maxDepth);
-                bvhDebugRenderer.setEnabled(true); // Enable rendering
+            // Update the SSBO with triangle data
+            if (!triangleData.empty()) {
+                updateTriangleBuffer(triangleData);
+                triangleDataUploaded = true;
+                std::cout << "Triangle data updated: " << triangleCount << " triangles" << std::endl;
             }
             
-            lastSceneState.update(currentScene);
-        } else if (bvhBuilt && enableBVH && !bvhBuffersUploaded) {
+            // Build BVH if we have triangles and BVH is enabled
+            if (!bvhTriangles.empty() && enableBVH && (sceneChanged || !bvhBuilt)) {
+                std::cout << "Scene changed, rebuilding BVH..." << std::endl;
+                buildBVH(bvhTriangles);
+                updateBVHBuffers();
+                bvhBuffersUploaded = true;
+                
+                // Update debug renderer if debug is enabled
+                if (showBVHDebug) {
+                    // Get max depth from GUI settings
+                    int maxDepth = preferences.radianceSettings.bvhDebugMaxDepth;
+                    bvhDebugRenderer.updateFromBVH(bvhBuilder.getNodes(), maxDepth);
+                    bvhDebugRenderer.setEnabled(true); // Enable rendering
+                }
+                
+                lastSceneState.update(currentScene);
+            }
+        }
+        
+        // Handle cases where BVH is built but buffers not uploaded yet
+        if (bvhBuilt && enableBVH && !bvhBuffersUploaded) {
             // BVH built but buffers not uploaded yet (e.g., BVH was just enabled)
             updateBVHBuffers();
             bvhBuffersUploaded = true;
