@@ -63,6 +63,7 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& view, Engine::Shader* shader, ImGuiViewportP* viewport, ImGuiWindowFlags windowFlags, GLFWwindow* window);
 void renderModels(Engine::Shader* shader);
 void renderPointClouds(Engine::Shader* shader);
+void renderLightVisualizations(Engine::Shader* shader);
 void renderZeroPlane(Engine::Shader* shader, const glm::mat4& projection, const glm::mat4& view, float convergence);
 void DrawRadar(bool isStereoWindow, Camera camera, GLfloat focaldist, 
     glm::mat4 view, glm::mat4 projection, 
@@ -1913,6 +1914,11 @@ int main() {
         try {
             std::cout << "Loading startup scene: " << preferences.startupScenePath << std::endl;
             currentScene = Engine::loadScene(preferences.startupScenePath, camera);
+            
+            // Sync lights from scene to global variables
+            pointLights = currentScene.pointLights;
+            spotLights = currentScene.spotLights;
+            
             // Start spawn animation for all loaded models
             for (auto& model : currentScene.models) {
                 glm::vec3 targetScale = model.scale;
@@ -2049,7 +2055,49 @@ int main() {
                 modelScrollVelocity -= glm::sign(modelScrollVelocity) * deceleration;
             }
         }
-        // Reset velocity when not moving a model
+        // Apply smooth scrolling physics to point light depth movement when dragging
+        else if (isMovingModel && currentSelectedType == SelectedType::PointLight && currentSelectedIndex != -1 && modelScrollVelocity != 0.0f) {
+            // Calculate distance-based sensitivity for consistent feel
+            float distanceToLight = glm::distance(camera.Position, pointLights[currentSelectedIndex].position);
+            distanceToLight = glm::max(distanceToLight, 0.1f); // Prevent sensitivity from becoming zero
+            
+            // Apply movement with physics-based velocity
+            float scrollSensitivity = 1.0f;  // Base sensitivity factor
+            float adjustedVelocity = modelScrollVelocity * scrollSensitivity * distanceToLight;
+            
+            // Move point light along camera's front direction
+            pointLights[currentSelectedIndex].position += camera.Front * adjustedVelocity * deltaTime;
+
+            // Apply deceleration
+            float deceleration = modelScrollDeceleration * deltaTime;
+            if (abs(modelScrollVelocity) <= deceleration) {
+                modelScrollVelocity = 0.0f;
+            } else {
+                modelScrollVelocity -= glm::sign(modelScrollVelocity) * deceleration;
+            }
+        }
+        // Apply smooth scrolling physics to spot light depth movement when dragging
+        else if (isMovingModel && currentSelectedType == SelectedType::SpotLight && currentSelectedIndex != -1 && modelScrollVelocity != 0.0f) {
+            // Calculate distance-based sensitivity for consistent feel
+            float distanceToLight = glm::distance(camera.Position, spotLights[currentSelectedIndex].position);
+            distanceToLight = glm::max(distanceToLight, 0.1f); // Prevent sensitivity from becoming zero
+            
+            // Apply movement with physics-based velocity
+            float scrollSensitivity = 1.0f;  // Base sensitivity factor
+            float adjustedVelocity = modelScrollVelocity * scrollSensitivity * distanceToLight;
+            
+            // Move spot light along camera's front direction
+            spotLights[currentSelectedIndex].position += camera.Front * adjustedVelocity * deltaTime;
+
+            // Apply deceleration
+            float deceleration = modelScrollDeceleration * deltaTime;
+            if (abs(modelScrollVelocity) <= deceleration) {
+                modelScrollVelocity = 0.0f;
+            } else {
+                modelScrollVelocity -= glm::sign(modelScrollVelocity) * deceleration;
+            }
+        }
+        // Reset velocity when not moving any object
         else if (!isMovingModel) {
             modelScrollVelocity = 0.0f;
         }
@@ -2102,6 +2150,62 @@ int main() {
                 
                 // Update model position
                 currentScene.models[currentSelectedIndex].position = glm::vec3(newWorldPos);
+            }
+            else if (isMovingModel && currentSelectedType == SelectedType::PointLight && currentSelectedIndex != -1)
+            {
+                // Point light dragging using same screen-to-world conversion as models
+                glm::vec3 lightPos = pointLights[currentSelectedIndex].position;
+                float distanceToLight = glm::distance(camera.Position, lightPos);
+                
+                // Project light position to screen space
+                glm::mat4 view = camera.GetViewMatrix();
+                glm::mat4 projection = camera.GetProjectionMatrix(aspectRatio, currentScene.settings.nearPlane, currentScene.settings.farPlane);
+                glm::mat4 viewProj = projection * view;
+                
+                // Convert world space position to screen space
+                glm::vec4 lightScreenPos = viewProj * glm::vec4(lightPos, 1.0f);
+                lightScreenPos /= lightScreenPos.w; // Perspective divide
+                
+                // Convert to NDC and add mouse offset
+                glm::vec2 currentNDC = glm::vec2(lightScreenPos.x, lightScreenPos.y);
+                glm::vec2 mouseOffsetNDC = glm::vec2(totalXOffset / (windowWidth * 0.5f), totalYOffset / (windowHeight * 0.5f));
+                glm::vec2 newNDC = currentNDC + mouseOffsetNDC;
+                
+                // Convert back to world space
+                glm::vec4 newWorldPos = glm::vec4(newNDC.x, newNDC.y, lightScreenPos.z, 1.0f);
+                newWorldPos = glm::inverse(viewProj) * newWorldPos;
+                newWorldPos /= newWorldPos.w;
+                
+                // Update point light position
+                pointLights[currentSelectedIndex].position = glm::vec3(newWorldPos);
+            }
+            else if (isMovingModel && currentSelectedType == SelectedType::SpotLight && currentSelectedIndex != -1)
+            {
+                // Spot light dragging using same screen-to-world conversion as models
+                glm::vec3 lightPos = spotLights[currentSelectedIndex].position;
+                float distanceToLight = glm::distance(camera.Position, lightPos);
+                
+                // Project light position to screen space
+                glm::mat4 view = camera.GetViewMatrix();
+                glm::mat4 projection = camera.GetProjectionMatrix(aspectRatio, currentScene.settings.nearPlane, currentScene.settings.farPlane);
+                glm::mat4 viewProj = projection * view;
+                
+                // Convert world space position to screen space
+                glm::vec4 lightScreenPos = viewProj * glm::vec4(lightPos, 1.0f);
+                lightScreenPos /= lightScreenPos.w; // Perspective divide
+                
+                // Convert to NDC and add mouse offset
+                glm::vec2 currentNDC = glm::vec2(lightScreenPos.x, lightScreenPos.y);
+                glm::vec2 mouseOffsetNDC = glm::vec2(totalXOffset / (windowWidth * 0.5f), totalYOffset / (windowHeight * 0.5f));
+                glm::vec2 newNDC = currentNDC + mouseOffsetNDC;
+                
+                // Convert back to world space
+                glm::vec4 newWorldPos = glm::vec4(newNDC.x, newNDC.y, lightScreenPos.z, 1.0f);
+                newWorldPos = glm::inverse(viewProj) * newWorldPos;
+                newWorldPos /= newWorldPos.w;
+                
+                // Update spot light position
+                spotLights[currentSelectedIndex].position = glm::vec3(newWorldPos);
             }
             else if ((camera.IsOrbiting || camera.IsPanning || rightMousePressed) && !camera.IsAnimating)
             {
@@ -2738,6 +2842,11 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     renderModels(shader);
     renderPointClouds(shader);
     
+    // Render light visualizations when Ctrl is pressed
+    if (ctrlPressed) {
+        renderLightVisualizations(shader);
+    }
+    
     // Render BVH debug visualization (after main scene rendering)
     if (showBVHDebug && bvhBuilt) {
         // BVH debug lines are now rendering
@@ -3305,6 +3414,88 @@ void DrawRadar(bool isStereoWindow, Camera camera, GLfloat focaldist,
     glDeleteBuffers(1, &vbo);
 }
 
+void renderLightVisualizations(Engine::Shader* shader) {
+    // Render spheres for point lights
+    for (size_t i = 0; i < pointLights.size(); i++) {
+        const auto& light = pointLights[i];
+        
+        // Create a small sphere to represent the point light
+        Engine::Model lightSphere = Engine::createSphere(light.color, 1.0f, light.intensity, 8, 8);
+        lightSphere.position = light.position;
+        lightSphere.scale = glm::vec3(0.1f); // Small sphere
+        
+        // Set shader uniforms for this light visualization
+        glm::mat4 model = glm::mat4(1.0f);
+        model = glm::translate(model, lightSphere.position);
+        model = glm::scale(model, lightSphere.scale);
+        
+        shader->setMat4("model", model);
+        shader->setBool("isPointCloud", false);
+        
+        // Set light color and emissive properties
+        shader->setVec3("material.objectColor", light.color);
+        shader->setFloat("material.emissive", light.intensity * 0.5f);
+        shader->setFloat("material.shininess", 1.0f);
+        shader->setFloat("material.hasTexture", 0.0f);
+        
+        // Render the sphere
+        auto& meshes = const_cast<std::vector<Engine::Mesh>&>(lightSphere.getMeshes());
+        for (auto& mesh : meshes) {
+            mesh.Draw(*shader);
+        }
+    }
+    
+    // Render cylinders (as cones) for spot lights
+    for (size_t i = 0; i < spotLights.size(); i++) {
+        const auto& light = spotLights[i];
+        
+        // Create a cylinder to represent the spot light cone
+        Engine::Model lightCone = Engine::createCylinder(light.color, 1.0f, light.intensity, 8);
+        lightCone.position = light.position;
+        
+        // Scale to make it cone-like and orient it in the light direction
+        lightCone.scale = glm::vec3(0.05f, 0.2f, 0.05f); // Thin cone
+        
+        // Calculate rotation to align with light direction
+        glm::vec3 defaultDirection = glm::vec3(0.0f, 1.0f, 0.0f); // Cylinder default up direction
+        glm::vec3 lightDirection = glm::normalize(light.direction);
+        
+        glm::vec3 axis = glm::cross(defaultDirection, lightDirection);
+        float angle = glm::acos(glm::dot(defaultDirection, lightDirection));
+        
+        if (glm::length(axis) > 0.001f) {
+            axis = glm::normalize(axis);
+            lightCone.rotation = glm::degrees(angle) * axis;
+        }
+        
+        // Set shader uniforms for this light visualization
+        glm::mat4 model = glm::mat4(1.0f);
+        model = glm::translate(model, lightCone.position);
+        
+        // Apply rotation
+        if (glm::length(axis) > 0.001f) {
+            model = glm::rotate(model, angle, axis);
+        }
+        
+        model = glm::scale(model, lightCone.scale);
+        
+        shader->setMat4("model", model);
+        shader->setBool("isPointCloud", false);
+        
+        // Set light color and emissive properties
+        shader->setVec3("material.objectColor", light.color);
+        shader->setFloat("material.emissive", light.intensity * 0.5f);
+        shader->setFloat("material.shininess", 1.0f);
+        shader->setFloat("material.hasTexture", 0.0f);
+        
+        // Render the cylinder (cone)
+        auto& meshes = const_cast<std::vector<Engine::Mesh>&>(lightCone.getMeshes());
+        for (auto& mesh : meshes) {
+            mesh.Draw(*shader);
+        }
+    }
+}
+
 void updatePointLights() {
     // Point lights are now only manually created, no auto-generation from emissive objects
     // This function is kept for compatibility but does nothing
@@ -3537,6 +3728,28 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
             modelScrollVelocity += static_cast<float>(yoffset) * modelScrollMomentum;
             modelScrollVelocity = glm::clamp(modelScrollVelocity, -modelMaxScrollVelocity, modelMaxScrollVelocity);
         }
+        // Check if we're currently moving a point light with Ctrl+drag
+        else if (isMovingModel && currentSelectedType == SelectedType::PointLight && currentSelectedIndex != -1) {
+            // Apply physics-based smooth scrolling to point light depth movement
+            float currentTime = static_cast<float>(glfwGetTime());
+            float deltaTime = currentTime - lastModelScrollTime;
+            lastModelScrollTime = currentTime;
+
+            // Add momentum to velocity (same as models)
+            modelScrollVelocity += static_cast<float>(yoffset) * modelScrollMomentum;
+            modelScrollVelocity = glm::clamp(modelScrollVelocity, -modelMaxScrollVelocity, modelMaxScrollVelocity);
+        }
+        // Check if we're currently moving a spot light with Ctrl+drag
+        else if (isMovingModel && currentSelectedType == SelectedType::SpotLight && currentSelectedIndex != -1) {
+            // Apply physics-based smooth scrolling to spot light depth movement
+            float currentTime = static_cast<float>(glfwGetTime());
+            float deltaTime = currentTime - lastModelScrollTime;
+            lastModelScrollTime = currentTime;
+
+            // Add momentum to velocity (same as models)
+            modelScrollVelocity += static_cast<float>(yoffset) * modelScrollMomentum;
+            modelScrollVelocity = glm::clamp(modelScrollVelocity, -modelMaxScrollVelocity, modelMaxScrollVelocity);
+        }
         else {
             // Normal camera zoom behavior
             // Update cursor info before processing scroll
@@ -3599,6 +3812,59 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                         closestModelIndex = -1;
                     }
                 }
+                
+                int closestPointLightIndex = -1;
+                int closestSpotLightIndex = -1;
+                
+                // Check intersection with point light spheres (when Ctrl is pressed)
+                for (int i = 0; i < pointLights.size(); i++) {
+                    const auto& light = pointLights[i];
+                    float sphereRadius = 0.1f; // Same as visualization sphere
+                    
+                    // Ray-sphere intersection
+                    glm::vec3 oc = rayOrigin - light.position;
+                    float a = glm::dot(rayDirection, rayDirection);
+                    float b = 2.0f * glm::dot(oc, rayDirection);
+                    float c = glm::dot(oc, oc) - sphereRadius * sphereRadius;
+                    float discriminant = b * b - 4 * a * c;
+                    
+                    if (discriminant >= 0) {
+                        float t = (-b - sqrt(discriminant)) / (2.0f * a);
+                        if (t > 0 && t < closestDistance) {
+                            closestDistance = t;
+                            closestPointLightIndex = i;
+                            closestSpotLightIndex = -1;
+                            closestModelIndex = -1;
+                            closestPointCloudIndex = -1;
+                        }
+                    }
+                }
+                
+                // Check intersection with spot light cones (simplified as cylinders)
+                for (int i = 0; i < spotLights.size(); i++) {
+                    const auto& light = spotLights[i];
+                    float cylinderRadius = 0.05f; // Same as visualization cone
+                    float cylinderHeight = 0.2f;
+                    
+                    // Simplified ray-cylinder intersection (treat as sphere for now)
+                    glm::vec3 oc = rayOrigin - light.position;
+                    float effectiveRadius = cylinderRadius + cylinderHeight * 0.5f; // Approximate
+                    float a = glm::dot(rayDirection, rayDirection);
+                    float b = 2.0f * glm::dot(oc, rayDirection);
+                    float c = glm::dot(oc, oc) - effectiveRadius * effectiveRadius;
+                    float discriminant = b * b - 4 * a * c;
+                    
+                    if (discriminant >= 0) {
+                        float t = (-b - sqrt(discriminant)) / (2.0f * a);
+                        if (t > 0 && t < closestDistance) {
+                            closestDistance = t;
+                            closestSpotLightIndex = i;
+                            closestPointLightIndex = -1;
+                            closestModelIndex = -1;
+                            closestPointCloudIndex = -1;
+                        }
+                    }
+                }
 
                 if (closestModelIndex != -1) {
                     // Handle Alt+drag duplication
@@ -3617,6 +3883,38 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                     }
                     
                     currentSelectedType = SelectedType::Model;
+                    currentSelectedMeshIndex = -1;
+
+                    if (!isMouseCaptured) {
+                        isMouseCaptured = true;
+                        firstMouse = true; // Reset flag for delta calculation
+                        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                    }
+
+                    if (ctrlPressed || altPressed) {
+                        selectionMode = true;
+                        isMovingModel = true;
+                    }
+                }
+                else if (closestPointLightIndex != -1) {
+                    currentSelectedType = SelectedType::PointLight;
+                    currentSelectedIndex = closestPointLightIndex;
+                    currentSelectedMeshIndex = -1;
+
+                    if (!isMouseCaptured) {
+                        isMouseCaptured = true;
+                        firstMouse = true; // Reset flag for delta calculation
+                        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                    }
+
+                    if (ctrlPressed || altPressed) {
+                        selectionMode = true;
+                        isMovingModel = true;
+                    }
+                }
+                else if (closestSpotLightIndex != -1) {
+                    currentSelectedType = SelectedType::SpotLight;
+                    currentSelectedIndex = closestSpotLightIndex;
                     currentSelectedMeshIndex = -1;
 
                     if (!isMouseCaptured) {

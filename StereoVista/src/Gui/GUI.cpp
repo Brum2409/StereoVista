@@ -202,6 +202,11 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                 if (!selection.empty()) {
                     try {
                         currentScene = Engine::loadScene(selection[0], camera);
+                        
+                        // Sync lights from scene to global variables
+                        pointLights = currentScene.pointLights;
+                        spotLights = currentScene.spotLights;
+                        
                         // Start spawn animation for all loaded models
                         for (auto& model : currentScene.models) {
                             glm::vec3 targetScale = model.scale;
@@ -220,6 +225,10 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                     { "Scene Files", "*.scene", "All Files", "*" }).result();
                 if (!destination.empty()) {
                     try {
+                        // Sync lights from global variables to scene before saving
+                        currentScene.pointLights = pointLights;
+                        currentScene.spotLights = spotLights;
+                        
                         Engine::saveScene(destination, currentScene, camera);
                     }
                     catch (const std::exception& e) {

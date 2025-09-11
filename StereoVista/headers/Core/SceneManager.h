@@ -4,6 +4,7 @@
 #include <string>
 #include "Loaders/ModelLoader.h"
 #include "Core/Camera.h"
+#include "Engine/Data.h"
 #include <glm/glm.hpp> // Added glm header for glm::vec2
 
 namespace Engine {
@@ -32,6 +33,8 @@ namespace Engine {
     struct Scene {
         std::vector<Model> models;
         std::vector<PointCloud> pointClouds;
+        std::vector<PointLight> pointLights;
+        std::vector<SpotLight> spotLights;
         SceneSettings settings;
         Camera::CameraState cameraState;
         

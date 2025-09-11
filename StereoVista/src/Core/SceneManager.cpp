@@ -159,6 +159,31 @@ namespace Engine {
             }
             sceneJson["pointClouds"] = pointCloudsJson;
 
+            // Save point lights
+            json pointLightsJson = json::array();
+            for (const auto& pointLight : scene.pointLights) {
+                json pointLightJson;
+                pointLightJson["position"] = { pointLight.position.x, pointLight.position.y, pointLight.position.z };
+                pointLightJson["color"] = { pointLight.color.x, pointLight.color.y, pointLight.color.z };
+                pointLightJson["intensity"] = pointLight.intensity;
+                pointLightsJson.push_back(pointLightJson);
+            }
+            sceneJson["pointLights"] = pointLightsJson;
+
+            // Save spot lights
+            json spotLightsJson = json::array();
+            for (const auto& spotLight : scene.spotLights) {
+                json spotLightJson;
+                spotLightJson["position"] = { spotLight.position.x, spotLight.position.y, spotLight.position.z };
+                spotLightJson["direction"] = { spotLight.direction.x, spotLight.direction.y, spotLight.direction.z };
+                spotLightJson["color"] = { spotLight.color.x, spotLight.color.y, spotLight.color.z };
+                spotLightJson["intensity"] = spotLight.intensity;
+                spotLightJson["innerCutOff"] = spotLight.innerCutOff;
+                spotLightJson["outerCutOff"] = spotLight.outerCutOff;
+                spotLightsJson.push_back(spotLightJson);
+            }
+            sceneJson["spotLights"] = spotLightsJson;
+
             // Write scene file with chunking support
             std::string jsonStr = sceneJson.dump(4);
             const size_t maxChunkSize = 100 * 1024 * 1024; // 100MB chunks
@@ -476,6 +501,63 @@ namespace Engine {
                     }
                     catch (const std::exception& e) {
                         std::cerr << "Failed to load point cloud: " << e.what() << std::endl;
+                    }
+                }
+            }
+
+            // Load point lights
+            if (sceneJson.contains("pointLights")) {
+                for (const auto& pointLightJson : sceneJson["pointLights"]) {
+                    try {
+                        PointLight pointLight;
+                        pointLight.position = glm::vec3(
+                            pointLightJson["position"][0].get<float>(),
+                            pointLightJson["position"][1].get<float>(),
+                            pointLightJson["position"][2].get<float>()
+                        );
+                        pointLight.color = glm::vec3(
+                            pointLightJson["color"][0].get<float>(),
+                            pointLightJson["color"][1].get<float>(),
+                            pointLightJson["color"][2].get<float>()
+                        );
+                        pointLight.intensity = pointLightJson.value("intensity", 1.0f);
+                        
+                        scene.pointLights.push_back(pointLight);
+                    }
+                    catch (const std::exception& e) {
+                        std::cerr << "Failed to load point light: " << e.what() << std::endl;
+                    }
+                }
+            }
+
+            // Load spot lights
+            if (sceneJson.contains("spotLights")) {
+                for (const auto& spotLightJson : sceneJson["spotLights"]) {
+                    try {
+                        SpotLight spotLight;
+                        spotLight.position = glm::vec3(
+                            spotLightJson["position"][0].get<float>(),
+                            spotLightJson["position"][1].get<float>(),
+                            spotLightJson["position"][2].get<float>()
+                        );
+                        spotLight.direction = glm::vec3(
+                            spotLightJson["direction"][0].get<float>(),
+                            spotLightJson["direction"][1].get<float>(),
+                            spotLightJson["direction"][2].get<float>()
+                        );
+                        spotLight.color = glm::vec3(
+                            spotLightJson["color"][0].get<float>(),
+                            spotLightJson["color"][1].get<float>(),
+                            spotLightJson["color"][2].get<float>()
+                        );
+                        spotLight.intensity = spotLightJson.value("intensity", 1.0f);
+                        spotLight.innerCutOff = spotLightJson.value("innerCutOff", 0.9f);
+                        spotLight.outerCutOff = spotLightJson.value("outerCutOff", 0.82f);
+                        
+                        scene.spotLights.push_back(spotLight);
+                    }
+                    catch (const std::exception& e) {
+                        std::cerr << "Failed to load spot light: " << e.what() << std::endl;
                     }
                 }
             }
