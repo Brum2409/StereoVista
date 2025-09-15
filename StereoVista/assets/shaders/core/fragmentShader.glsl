@@ -88,7 +88,7 @@ struct Sun {
 // Material and texture uniforms
 uniform Material material;
 uniform sampler2D shadowMap;
-uniform samplerCube depthMap;
+uniform samplerCubeArray pointShadowMaps;
 uniform samplerCube skybox;
 uniform float skyboxIntensity;
 
@@ -113,7 +113,6 @@ uniform Sun sun;
 uniform vec3 viewPos;
 
 // Point shadow uniforms
-uniform vec3 lightPos;
 uniform float far_plane;
 
 // Voxel grid bounds
@@ -199,7 +198,7 @@ float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir) {
 }
 
 // ---- POINT SHADOW CALCULATION ----
-float PointShadowCalculation(vec3 fragPos, vec3 lightPosition) {
+float PointShadowCalculation(vec3 fragPos, vec3 lightPosition, int lightIndex) {
     if (!enableShadows) return 0.0;
 
     // Get vector between fragment and light position (without offset first)
@@ -227,7 +226,7 @@ float PointShadowCalculation(vec3 fragPos, vec3 lightPosition) {
     vec3 offsetFragToLight = offsetPos - lightPosition;
 
     // Sample from the depth map using the offset position
-    float closestDepth = texture(depthMap, offsetFragToLight).r;
+    float closestDepth = texture(pointShadowMaps, vec4(offsetFragToLight, float(lightIndex))).r;
 
     // Transform back to original depth value
     closestDepth *= far_plane;
@@ -250,7 +249,7 @@ float PointShadowCalculation(vec3 fragPos, vec3 lightPosition) {
     for(int i = 0; i < 20; ++i)
     {
         vec3 sampleDir = offsetFragToLight + sampleOffsets[i] * diskRadius;
-        float pcfDepth = texture(depthMap, sampleDir).r * far_plane;
+        float pcfDepth = texture(pointShadowMaps, vec4(sampleDir, float(lightIndex))).r * far_plane;
         shadow += currentDepth - slopeBias > pcfDepth ? 1.0 : 0.0;
     }
     shadow /= 20.0;
@@ -285,7 +284,7 @@ vec3 CalcDirLight(Sun dirLight, vec3 normal, vec3 viewDir, vec3 diffuseTexColor,
     return (ambient + diffuse + specular) * dirLight.intensity;
 }
 
-vec3 CalcPointLight(PointLight light, vec3 normal, vec3 fragPos, vec3 viewDir, vec3 diffuseTexColor, vec3 specularTexColor) {
+vec3 CalcPointLight(PointLight light, int lightIndex, vec3 normal, vec3 fragPos, vec3 viewDir, vec3 diffuseTexColor, vec3 specularTexColor) {
     vec3 lightDir = normalize(light.position - fragPos);
     
     // Diffuse shading
@@ -301,7 +300,7 @@ vec3 CalcPointLight(PointLight light, vec3 normal, vec3 fragPos, vec3 viewDir, v
     float attenuation = 1.0 / (1.0 + 0.09 * distance + 0.032 * (distance * distance));
     
     // Calculate point shadow
-    float shadow = PointShadowCalculation(fragPos, light.position);
+    float shadow = PointShadowCalculation(fragPos, light.position, lightIndex);
     
     // Energy-conserving point light with shininess compensation
     vec3 ambient = light.color * diffuseTexColor * 0.02;  
@@ -1031,7 +1030,7 @@ void main() {
             float lightDistance = length(lights[i].position - fs_in.FragPos);
             if (lightDistance > 50.0) continue; // Skip distant lights for performance
             
-            result += CalcPointLight(lights[i], normal, fs_in.FragPos, viewDir, diffuseColor, specularColor);
+            result += CalcPointLight(lights[i], i, normal, fs_in.FragPos, viewDir, diffuseColor, specularColor);
         }
         
         // Calculate spot lights
