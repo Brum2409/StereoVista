@@ -401,6 +401,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                     try {
                         currentScene = Engine::loadScene(selection[0], camera);
                         pointLights = currentScene.pointLights;
+                        // Ensure default: all point lights cast shadows unless specified otherwise
+                        for (auto& pl : pointLights) { pl.castShadows = true; }
                         spotLights = currentScene.spotLights;
 
                         for (auto& model : currentScene.models) {
@@ -504,6 +506,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
                     newPointLight.color = glm::vec3(1.0f, 1.0f, 1.0f);
                     newPointLight.intensity = 1.0f;
                     newPointLight.lightSpaceMatrix = glm::mat4(1.0f);
+                    newPointLight.castShadows = true; // default: cast shadows
                     pointLights.push_back(newPointLight);
                     currentSelectedIndex = pointLights.size() - 1;
                     currentSelectedType = SelectedType::PointLight;
@@ -2585,6 +2588,13 @@ void renderPointLightManipulationPanel() {
         ImGui::ColorEdit3("Color", glm::value_ptr(light.color));
         ImGui::SliderFloat("Intensity", &light.intensity, 0.0f, 5.0f, "%.1f");
         ImGui::SameLine(); DrawHelpMarker("Brightness of the point light");
+
+        // Cast Shadows toggle
+        bool cast = light.castShadows;
+        if (ImGui::Checkbox("Cast Shadows", &cast)) {
+            light.castShadows = cast;
+        }
+        ImGui::SameLine(); DrawHelpMarker("If enabled, this light renders a depth cubemap and casts shadows");
     }
 
     ImGui::Spacing();
@@ -2659,6 +2669,13 @@ void renderSpotLightManipulationPanel() {
         if (innerAngle > outerAngle) {
             light.outerCutOff = light.innerCutOff;
         }
+
+        // Cast Shadows toggle for spot light (future use if spot shadows are implemented)
+        bool cast = light.castShadows;
+        if (ImGui::Checkbox("Cast Shadows", &cast)) {
+            light.castShadows = cast;
+        }
+        ImGui::SameLine(); DrawHelpMarker("Toggle whether this spot light should cast shadows (when supported)");
     }
 
     ImGui::Spacing();

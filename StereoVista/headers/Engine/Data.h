@@ -283,6 +283,7 @@ namespace Engine {
         glm::vec3 color;
         float intensity;
         glm::mat4 lightSpaceMatrix;
+        bool castShadows = true;
     };
 
     struct SpotLight {
@@ -293,6 +294,7 @@ namespace Engine {
         float innerCutOff;  // Inner cone angle (cosine)
         float outerCutOff;  // Outer cone angle (cosine)
         glm::mat4 lightSpaceMatrix;
+        bool castShadows = true;
     };
 
 }

@@ -2485,6 +2485,8 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
             glPolygonOffset(0.5f, 1.0f);
 
             for (int li = 0; li < pointLights.size() && li < MAX_LIGHTS; ++li) {
+                // Skip generating shadow map for lights that don't cast shadows
+                if (!pointLights[li].castShadows) continue;
                 glm::vec3 lightPos = pointLights[li].position;
 
                 std::vector<glm::mat4> shadowMatrices;
@@ -2559,6 +2561,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
             shader->setVec3(lightName + ".position", pointLights[i].position);
             shader->setVec3(lightName + ".color", pointLights[i].color);
             shader->setFloat(lightName + ".intensity", pointLights[i].intensity);
+            shader->setBool("lightsCastShadows[" + std::to_string(i) + "]", pointLights[i].castShadows);
         }
         shader->setInt("numLights", std::min((int)pointLights.size(), MAX_LIGHTS));
         
@@ -2621,6 +2624,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
             shader->setVec3(lightName + ".position", pointLights[i].position);
             shader->setVec3(lightName + ".color", pointLights[i].color);
             shader->setFloat(lightName + ".intensity", pointLights[i].intensity);
+            shader->setBool("lightsCastShadows[" + std::to_string(i) + "]", pointLights[i].castShadows);
         }
         shader->setInt("numLights", std::min((int)pointLights.size(), MAX_LIGHTS));
         
@@ -2668,6 +2672,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
             shader->setVec3(lightName + ".position", pointLights[i].position);
             shader->setVec3(lightName + ".color", pointLights[i].color);
             shader->setFloat(lightName + ".intensity", pointLights[i].intensity);
+            shader->setBool("lightsCastShadows[" + std::to_string(i) + "]", pointLights[i].castShadows);
         }
         
         // Set spot light uniforms

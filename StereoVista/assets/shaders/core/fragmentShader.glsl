@@ -111,6 +111,7 @@ uniform SpotLight spotLights[MAX_LIGHTS];
 uniform int numSpotLights;
 uniform Sun sun;
 uniform vec3 viewPos;
+uniform bool lightsCastShadows[MAX_LIGHTS];
 
 // Point shadow uniforms
 uniform float far_plane;
@@ -299,8 +300,11 @@ vec3 CalcPointLight(PointLight light, int lightIndex, vec3 normal, vec3 fragPos,
     float distance = length(light.position - fragPos);
     float attenuation = 1.0 / (1.0 + 0.09 * distance + 0.032 * (distance * distance));
     
-    // Calculate point shadow
-    float shadow = PointShadowCalculation(fragPos, light.position, lightIndex);
+    // Calculate point shadow (respect per-light toggle)
+    float shadow = 0.0;
+    if (lightsCastShadows[lightIndex]) {
+        shadow = PointShadowCalculation(fragPos, light.position, lightIndex);
+    }
     
     // Energy-conserving point light with shininess compensation
     vec3 ambient = light.color * diffuseTexColor * 0.02;  
