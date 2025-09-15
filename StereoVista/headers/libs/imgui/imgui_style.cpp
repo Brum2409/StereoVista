@@ -1,16 +1,16 @@
 #include "imgui_sytle.h"
+#include "IconsFontAwesome5.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
 
-// Define the scaling settings struct here to avoid compilation issues
 struct GuiScaleSettings {
     float currentScale = 1.0f;
     int lastWindowWidth = 0;
     int lastWindowHeight = 0;
     bool needsRescale = false;
-    
+
     static constexpr float MIN_SCALE = 0.5f;
     static constexpr float MAX_SCALE = 2.0f;
     static constexpr int MIN_WINDOW_WIDTH = 800;
@@ -19,54 +19,80 @@ struct GuiScaleSettings {
     static constexpr int REFERENCE_HEIGHT = 1080;
 };
 
-// Move the implementation of the function here
+// Global instances
+ImGuiFonts g_Fonts;
+GuiScaleSettings g_GuiScale;
+CustomStyleColors g_StyleColors;
+
 bool InitializeImGuiWithFonts(GLFWwindow* window, bool isDarkTheme) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
 
+    // Enable additional ImGui features
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigWindowsMoveFromTitleBarOnly = true;
+
     // Initialize GLFW and OpenGL backends
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330 core");
 
-    // Configure style using the global theme setting
+    // Configure style
     SetupImGuiStyle(isDarkTheme, 1.0f);
 
-    // Font configuration
+    // Font configuration with multiple options
     ImFontConfig fontConfig;
-    fontConfig.OversampleH = 2;
-    fontConfig.OversampleV = 2;
+    fontConfig.OversampleH = 3;
+    fontConfig.OversampleV = 3;
     fontConfig.PixelSnapH = true;
+    fontConfig.RasterizerMultiply = 1.2f;
 
-    // Default font paths to try
+    // Modern font paths to try (in order of preference)
     const char* fontPaths[] = {
-        "C:\\Windows\\Fonts\\segoeui.ttf",
-        "C:\\Windows\\Fonts\\arial.ttf",
-        "C:\\Windows\\Fonts\\tahoma.ttf"
+        // Windows fonts
+        "C:\\Windows\\Fonts\\SegoeUI.ttf",
+        "C:\\Windows\\Fonts\\Roboto-Regular.ttf",
+        "C:\\Windows\\Fonts\\Calibri.ttf",
+        "C:\\Windows\\Fonts\\Arial.ttf",
+        // Common installed fonts
+        "C:\\Program Files\\Microsoft\\Fonts\\SegoeUI.ttf",
+        // Fallback
+        "C:\\Windows\\Fonts\\Tahoma.ttf"
+    };
+
+    const char* boldFontPaths[] = {
+        "C:\\Windows\\Fonts\\SegoeUI-Bold.ttf",
+        "C:\\Windows\\Fonts\\Roboto-Bold.ttf",
+        "C:\\Windows\\Fonts\\Calibrib.ttf",
+        "C:\\Windows\\Fonts\\Arialbd.ttf",
+        "C:\\Windows\\Fonts\\Tahomabd.ttf"
+    };
+
+    const char* monoFontPaths[] = {
+        "C:\\Windows\\Fonts\\CascadiaCode.ttf",
+        "C:\\Windows\\Fonts\\Consolas.ttf",
+        "C:\\Windows\\Fonts\\CourierNew.ttf",
+        "C:\\Windows\\Fonts\\LucidaConsole.ttf"
     };
 
     bool fontLoaded = false;
-    float defaultFontSize = 18.0f;
-    float headerFontSize = 20.0f;
-    float smallFontSize = 14.0f;
-
-    // Apply scaling to font sizes
     float scale = g_GuiScale.currentScale;
-    defaultFontSize *= scale;
-    headerFontSize *= scale;
-    smallFontSize *= scale;
-    
-    // Try to load fonts
+
+    // Define font sizes
+    float regularSize = 16.0f * scale;
+    float boldSize = 16.0f * scale;
+    float headerSize = 20.0f * scale;
+    float smallSize = 14.0f * scale;
+    float monoSize = 15.0f * scale;
+
+    // Try to load regular font
     for (const char* fontPath : fontPaths) {
         if (std::filesystem::exists(fontPath)) {
             try {
-                g_Fonts.regular = io.Fonts->AddFontFromFileTTF(fontPath, defaultFontSize, &fontConfig);
-                g_Fonts.header = io.Fonts->AddFontFromFileTTF(fontPath, headerFontSize, &fontConfig);
-                g_Fonts.small = io.Fonts->AddFontFromFileTTF(fontPath, smallFontSize, &fontConfig);
-
-                if (g_Fonts.regular && g_Fonts.header && g_Fonts.small) {
+                g_Fonts.regular = io.Fonts->AddFontFromFileTTF(fontPath, regularSize, &fontConfig);
+                if (g_Fonts.regular) {
                     fontLoaded = true;
-                    std::cout << "Successfully loaded font: " << fontPath << " with scale " << scale << std::endl;
+                    std::cout << "Loaded regular font: " << fontPath << std::endl;
                     break;
                 }
             }
@@ -76,301 +102,546 @@ bool InitializeImGuiWithFonts(GLFWwindow* window, bool isDarkTheme) {
         }
     }
 
-    // Fallback to default font if needed
+    // Try to load bold font
+    for (const char* fontPath : boldFontPaths) {
+        if (std::filesystem::exists(fontPath)) {
+            try {
+                g_Fonts.bold = io.Fonts->AddFontFromFileTTF(fontPath, boldSize, &fontConfig);
+                if (g_Fonts.bold) {
+                    std::cout << "Loaded bold font: " << fontPath << std::endl;
+                    break;
+                }
+            }
+            catch (const std::exception& e) {
+                std::cerr << "Failed to load bold font " << fontPath << ": " << e.what() << std::endl;
+            }
+        }
+    }
+
+    // Load header font (use bold if available, otherwise regular)
+    if (g_Fonts.bold) {
+        g_Fonts.header = io.Fonts->AddFontFromFileTTF(boldFontPaths[0], headerSize, &fontConfig);
+    }
+    else if (g_Fonts.regular) {
+        ImFontConfig headerConfig = fontConfig;
+        headerConfig.SizePixels = headerSize;
+        g_Fonts.header = io.Fonts->AddFontFromMemoryTTF(
+            (void*)g_Fonts.regular->ConfigData->FontData,
+            g_Fonts.regular->ConfigData->FontDataSize,
+            headerSize, &headerConfig);
+    }
+
+    // Load small font
+    if (fontLoaded && g_Fonts.regular) {
+        ImFontConfig smallConfig = fontConfig;
+        smallConfig.SizePixels = smallSize;
+        g_Fonts.small = io.Fonts->AddFontFromMemoryTTF(
+            (void*)g_Fonts.regular->ConfigData->FontData,
+            g_Fonts.regular->ConfigData->FontDataSize,
+            smallSize, &smallConfig);
+    }
+
+    // Try to load monospace font
+    for (const char* fontPath : monoFontPaths) {
+        if (std::filesystem::exists(fontPath)) {
+            try {
+                g_Fonts.mono = io.Fonts->AddFontFromFileTTF(fontPath, monoSize, &fontConfig);
+                if (g_Fonts.mono) {
+                    std::cout << "Loaded monospace font: " << fontPath << std::endl;
+                    break;
+                }
+            }
+            catch (const std::exception& e) {
+                std::cerr << "Failed to load mono font " << fontPath << ": " << e.what() << std::endl;
+            }
+        }
+    }
+
+    // Load FontAwesome icons - SOLUTION 1: Try merging with proper size scaling
+    if (fontLoaded && g_Fonts.regular) {
+        float baseFontSize = 16.0f * scale;
+        float iconFontSize = baseFontSize * 2.0f / 3.0f; // FA fonts need size reduction per Reddit solution
+
+        // Create icon ranges
+        static const ImWchar icon_ranges[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };
+
+        ImFontConfig* iconConfig = new ImFontConfig();
+        iconConfig->MergeMode = true;
+        iconConfig->PixelSnapH = true;
+        iconConfig->GlyphMinAdvanceX = iconFontSize;
+        iconConfig->GlyphRanges = icon_ranges;
+
+        // Try multiple paths for FontAwesome solid font
+        const char* iconFontPaths[] = {
+            "fonts/fa-solid-900.ttf",
+            "StereoVista/fonts/fa-solid-900.ttf",
+            "fa-solid-900.ttf"
+        };
+
+        bool iconsLoaded = false;
+        for (const char* iconFontPath : iconFontPaths) {
+            if (std::filesystem::exists(iconFontPath)) {
+                // Load FontAwesome with correct size scaling
+                g_Fonts.icons = io.Fonts->AddFontFromFileTTF(iconFontPath, iconFontSize, iconConfig, icon_ranges);
+                if (g_Fonts.icons) {
+                    std::cout << "FontAwesome icons merged with size scaling: " << iconFontPath << std::endl;
+                    std::cout << "Base font size: " << baseFontSize << ", Icon font size: " << iconFontSize << std::endl;
+                    iconsLoaded = true;
+                    break;
+                }
+            }
+        }
+
+        delete iconConfig; // Clean up
+
+        if (!iconsLoaded) {
+            std::cerr << "WARNING: Could not load FontAwesome icons with merge approach!" << std::endl;
+
+            // SOLUTION 2: Try loading as separate font (no merge)
+            for (const char* iconFontPath : iconFontPaths) {
+                if (std::filesystem::exists(iconFontPath)) {
+                    g_Fonts.icons = io.Fonts->AddFontFromFileTTF(iconFontPath, iconFontSize, nullptr, icon_ranges);
+                    if (g_Fonts.icons) {
+                        std::cout << "FontAwesome loaded as SEPARATE font: " << iconFontPath << std::endl;
+                        iconsLoaded = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (!iconsLoaded) {
+            std::cerr << "CRITICAL: Could not load FontAwesome icons with any method!" << std::endl;
+        }
+    }
+
+    // Also add Unicode emoji support for direct Unicode characters like 💡
+    static const ImWchar emoji_ranges[] = {
+        0x1F000, 0x1F6FF, // Miscellaneous Symbols and Pictographs
+        0x1F300, 0x1F5FF, // Miscellaneous Symbols
+        0x1F600, 0x1F64F, // Emoticons
+        0x1F680, 0x1F6FF, // Transport and Map
+        0x2600, 0x26FF,   // Miscellaneous Symbols
+        0x2700, 0x27BF,   // Dingbats
+        0xFE00, 0xFE0F,   // Variation Selectors
+        0
+    };
+
+    ImFontConfig emoji_config;
+    emoji_config.MergeMode = true;
+    emoji_config.PixelSnapH = true;
+    emoji_config.FontDataOwnedByAtlas = false;
+
+    // Try to load system emoji fonts (Windows)
+    const char* emojiFontPaths[] = {
+        "C:\\Windows\\Fonts\\seguiemj.ttf", // Windows 10/11 Emoji font
+        "C:\\Windows\\Fonts\\NotoColorEmoji.ttf",
+        "C:\\Windows\\Fonts\\AppleColorEmoji.ttf"
+    };
+
+    for (const char* emojiFontPath : emojiFontPaths) {
+        if (std::filesystem::exists(emojiFontPath)) {
+            ImFont* emojiFont = io.Fonts->AddFontFromFileTTF(emojiFontPath, 16.0f * scale, &emoji_config, emoji_ranges);
+            if (emojiFont) {
+                std::cout << "Loaded emoji font: " << emojiFontPath << std::endl;
+                break;
+            }
+        }
+    }
+
+    // Fallback to default font if nothing loaded
     if (!fontLoaded) {
         std::cout << "Using ImGui default font" << std::endl;
         g_Fonts.regular = io.Fonts->AddFontDefault();
-        g_Fonts.header = io.Fonts->AddFontDefault();
-        g_Fonts.small = io.Fonts->AddFontDefault();
+        g_Fonts.bold = g_Fonts.regular;
+        g_Fonts.header = g_Fonts.regular;
+        g_Fonts.small = g_Fonts.regular;
+        g_Fonts.mono = g_Fonts.regular;
     }
 
     // Build font atlas
     io.Fonts->Build();
 
+    // Set the default font to the regular font with merged icons
+    if (g_Fonts.regular) {
+        io.FontDefault = g_Fonts.regular;
+        std::cout << "Set default font to regular font with merged FontAwesome icons" << std::endl;
+
+        // Test if the regular font has the lightbulb after merging
+        const ImFontGlyph* test_glyph = g_Fonts.regular->FindGlyph(0xf0eb);
+        std::cout << "Regular font has lightbulb glyph: " << (test_glyph ? "YES" : "NO") << std::endl;
+
+        if (test_glyph) {
+            std::cout << "Lightbulb glyph found! Advance: " << test_glyph->AdvanceX << ", Visible: " << (test_glyph->Visible ? "YES" : "NO") << std::endl;
+        }
+    } else {
+        std::cout << "WARNING: Regular font is null!" << std::endl;
+    }
+
     return true;
 }
 
-// Define the g_Fonts variable here
-ImGuiFonts g_Fonts;
-GuiScaleSettings g_GuiScale;
-
 float CalculateGuiScale(int windowWidth, int windowHeight) {
-    // Calculate scale based on window dimensions relative to reference resolution
     float widthRatio = static_cast<float>(windowWidth) / 1920.0f;
     float heightRatio = static_cast<float>(windowHeight) / 1080.0f;
-    
-    // Use the smaller ratio to ensure UI fits within the window
     float scale = std::min(widthRatio, heightRatio);
-    
-    // Clamp the scale to reasonable bounds
-    scale = std::max(0.5f, std::min(2.0f, scale));
-    
-    return scale;
+    return std::max(0.5f, std::min(2.0f, scale));
 }
 
 void UpdateGuiScale(int windowWidth, int windowHeight) {
-    // Ignore invalid window dimensions
-    if (windowWidth <= 0 || windowHeight <= 0) {
-        std::cout << "Invalid window dimensions, ignoring" << std::endl;
-        return;
-    }
-    
-    // Calculate new scale
+    if (windowWidth <= 0 || windowHeight <= 0) return;
+
     float newScale = CalculateGuiScale(windowWidth, windowHeight);
-    
-    // Always update on first call (when lastWindowWidth/Height are 0)
     bool isFirstCall = (g_GuiScale.lastWindowWidth == 0 && g_GuiScale.lastWindowHeight == 0);
-    
-    // Only update if window dimensions changed significantly OR it's the first call
-    if (isFirstCall || 
-        abs(windowWidth - g_GuiScale.lastWindowWidth) > 50 || 
+
+    if (isFirstCall ||
+        abs(windowWidth - g_GuiScale.lastWindowWidth) > 50 ||
         abs(windowHeight - g_GuiScale.lastWindowHeight) > 50) {
-        
-        // Only rescale if the scale change is significant OR it's the first call
+
         if (isFirstCall || fabs(newScale - g_GuiScale.currentScale) > 0.05f) {
             g_GuiScale.currentScale = newScale;
             g_GuiScale.needsRescale = true;
-        } else {
         }
-        
+
         g_GuiScale.lastWindowWidth = windowWidth;
         g_GuiScale.lastWindowHeight = windowHeight;
-    } else {
     }
 }
 
 void RescaleImGuiFonts(GLFWwindow* window, bool isDarkTheme) {
     if (!g_GuiScale.needsRescale) return;
-    
-    // Skip rescaling if window or context is invalid
     if (!window || !ImGui::GetCurrentContext()) {
-        std::cout << "Invalid window or ImGui context, skipping rescale" << std::endl;
         g_GuiScale.needsRescale = false;
         return;
     }
-    
-    
-    // For now, just update the style without clearing fonts to avoid crashes
-    // TODO: Implement proper font rescaling in a safer way
+
     SetupImGuiStyle(isDarkTheme, 1.0f);
-    
     g_GuiScale.needsRescale = false;
 }
 
 void SetupImGuiStyle(bool bStyleDark_, float alpha_) {
     ImGuiStyle& style = ImGui::GetStyle();
-
-    // Apply scaling to style parameters
     float scale = g_GuiScale.currentScale;
-    std::cout << "SetupImGuiStyle called with scale: " << scale << std::endl;
-    
-    // Set up modern style parameters with scaling
+
+    // Modern style parameters with improved spacing
     style.Alpha = 1.0f;
-    style.DisabledAlpha = 0.6f;
-    style.WindowPadding = ImVec2(12 * scale, 12 * scale);
-    style.WindowRounding = 8.0f * scale;
+    style.DisabledAlpha = 0.5f;
+    style.WindowPadding = ImVec2(15 * scale, 12 * scale);
+    style.WindowRounding = 10.0f * scale;
     style.WindowBorderSize = 1.0f * scale;
     style.WindowMinSize = ImVec2(32 * scale, 32 * scale);
-    style.WindowTitleAlign = ImVec2(0.5f, 0.5f);  // Center window titles
-    style.WindowMenuButtonPosition = ImGuiDir_Right;  // More modern position
+    style.WindowTitleAlign = ImVec2(0.5f, 0.5f);
+    style.WindowMenuButtonPosition = ImGuiDir_Left;
     style.ChildRounding = 8.0f * scale;
     style.ChildBorderSize = 1.0f * scale;
     style.PopupRounding = 8.0f * scale;
     style.PopupBorderSize = 1.0f * scale;
-    style.FramePadding = ImVec2(6 * scale, 4 * scale);
-    style.FrameRounding = 6.0f * scale;  // More rounded corners
+    style.FramePadding = ImVec2(8 * scale, 5 * scale);
+    style.FrameRounding = 8.0f * scale;
     style.FrameBorderSize = 0.0f;
-    style.ItemSpacing = ImVec2(8 * scale, 6 * scale);
-    style.ItemInnerSpacing = ImVec2(6 * scale, 4 * scale);
-    style.CellPadding = ImVec2(4 * scale, 2 * scale);
-    style.IndentSpacing = 25.0f * scale;
+    style.ItemSpacing = ImVec2(10 * scale, 8 * scale);
+    style.ItemInnerSpacing = ImVec2(8 * scale, 6 * scale);
+    style.CellPadding = ImVec2(6 * scale, 4 * scale);
+    style.IndentSpacing = 22.0f * scale;
     style.ColumnsMinSpacing = 6.0f * scale;
-    style.ScrollbarSize = 12.0f * scale;
-    style.ScrollbarRounding = 6.0f * scale;
-    style.GrabMinSize = 12.0f * scale;
-    style.GrabRounding = 6.0f * scale;
-    style.TabRounding = 6.0f * scale;
-    style.TabBorderSize = 0.0f;  
+    style.ScrollbarSize = 14.0f * scale;
+    style.ScrollbarRounding = 12.0f * scale;
+    style.GrabMinSize = 14.0f * scale;
+    style.GrabRounding = 8.0f * scale;
+    style.TabRounding = 8.0f * scale;
+    style.TabBorderSize = 0.0f;
+    style.TabMinWidthForCloseButton = 0.0f;
     style.ColorButtonPosition = ImGuiDir_Right;
     style.ButtonTextAlign = ImVec2(0.5f, 0.5f);
     style.SelectableTextAlign = ImVec2(0.0f, 0.0f);
 
-    // Modern dark theme colors
+    // Apply modern color schemes
     if (bStyleDark_) {
+        // Modern Dark Theme with blue accents
         ImVec4* colors = style.Colors;
 
+        // Define color palette
+        const ImVec4 bgDark = ImVec4(0.11f, 0.12f, 0.14f, 1.00f);      // #1C1E23
+        const ImVec4 bgMedium = ImVec4(0.14f, 0.15f, 0.17f, 1.00f);    // #24262B
+        const ImVec4 bgLight = ImVec4(0.18f, 0.19f, 0.22f, 1.00f);     // #2E3138
+        const ImVec4 bgVeryLight = ImVec4(0.22f, 0.23f, 0.26f, 1.00f); // #383A42
+
+        const ImVec4 textPrimary = ImVec4(0.95f, 0.96f, 0.98f, 1.00f);
+        const ImVec4 textSecondary = ImVec4(0.65f, 0.68f, 0.72f, 1.00f);
+        const ImVec4 textDisabled = ImVec4(0.40f, 0.42f, 0.46f, 1.00f);
+
+        // Modern blue accent colors
+        const ImVec4 accentPrimary = ImVec4(0.26f, 0.59f, 0.98f, 1.00f);     // #4396F9
+        const ImVec4 accentHover = ImVec4(0.36f, 0.69f, 1.00f, 1.00f);       // #5CAFFF
+        const ImVec4 accentActive = ImVec4(0.20f, 0.49f, 0.88f, 1.00f);      // #337DE0
+        const ImVec4 accentDim = ImVec4(0.26f, 0.59f, 0.98f, 0.40f);
+
+        // Success, Warning, Danger colors
+        const ImVec4 success = ImVec4(0.26f, 0.73f, 0.42f, 1.00f);  // #43BB6C
+        const ImVec4 warning = ImVec4(0.96f, 0.69f, 0.13f, 1.00f);  // #F5B021
+        const ImVec4 danger = ImVec4(0.86f, 0.28f, 0.29f, 1.00f);   // #DC474A
+
+        // Store custom colors
+        g_StyleColors.primary = accentPrimary;
+        g_StyleColors.primaryHover = accentHover;
+        g_StyleColors.primaryActive = accentActive;
+        g_StyleColors.secondary = bgVeryLight;
+        g_StyleColors.accent = accentPrimary;
+        g_StyleColors.success = success;
+        g_StyleColors.warning = warning;
+        g_StyleColors.danger = danger;
+        g_StyleColors.info = ImVec4(0.20f, 0.65f, 0.87f, 1.00f);
+
         // Background colors
-        colors[ImGuiCol_WindowBg] = ImVec4(0.15f, 0.16f, 0.17f, 0.95f);
-        colors[ImGuiCol_ChildBg] = ImVec4(0.15f, 0.16f, 0.17f, 0.00f);
-        colors[ImGuiCol_PopupBg] = ImVec4(0.15f, 0.16f, 0.17f, 0.94f);
-        colors[ImGuiCol_Border] = ImVec4(0.25f, 0.26f, 0.27f, 0.50f);
+        colors[ImGuiCol_WindowBg] = bgMedium;
+        colors[ImGuiCol_ChildBg] = ImVec4(bgDark.x, bgDark.y, bgDark.z, 0.00f);
+        colors[ImGuiCol_PopupBg] = bgLight;
+        colors[ImGuiCol_Border] = ImVec4(bgVeryLight.x, bgVeryLight.y, bgVeryLight.z, 0.50f);
         colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
 
         // Text colors
-        colors[ImGuiCol_Text] = ImVec4(0.95f, 0.96f, 0.98f, 1.00f);
-        colors[ImGuiCol_TextDisabled] = ImVec4(0.36f, 0.42f, 0.47f, 1.00f);
-
-        // Interactive element colors
-        const ImVec4 accentColor = ImVec4(0.28f, 0.56f, 1.00f, 1.00f);  // Modern blue accent
-        const ImVec4 accentHovered = ImVec4(0.38f, 0.66f, 1.00f, 1.00f);
-        const ImVec4 accentActive = ImVec4(0.18f, 0.46f, 0.90f, 1.00f);
+        colors[ImGuiCol_Text] = textPrimary;
+        colors[ImGuiCol_TextDisabled] = textDisabled;
 
         // Headers
-        colors[ImGuiCol_Header] = ImVec4(0.20f, 0.25f, 0.29f, 0.55f);
-        colors[ImGuiCol_HeaderHovered] = ImVec4(0.26f, 0.31f, 0.35f, 0.80f);
-        colors[ImGuiCol_HeaderActive] = ImVec4(0.24f, 0.29f, 0.33f, 1.00f);
+        colors[ImGuiCol_Header] = ImVec4(bgVeryLight.x, bgVeryLight.y, bgVeryLight.z, 0.55f);
+        colors[ImGuiCol_HeaderHovered] = ImVec4(accentPrimary.x, accentPrimary.y, accentPrimary.z, 0.30f);
+        colors[ImGuiCol_HeaderActive] = ImVec4(accentPrimary.x, accentPrimary.y, accentPrimary.z, 0.50f);
 
         // Buttons
-        colors[ImGuiCol_Button] = ImVec4(0.20f, 0.21f, 0.22f, 0.90f);
-        colors[ImGuiCol_ButtonHovered] = accentColor;
-        colors[ImGuiCol_ButtonActive] = accentActive;
+        colors[ImGuiCol_Button] = ImVec4(bgVeryLight.x, bgVeryLight.y, bgVeryLight.z, 0.60f);
+        colors[ImGuiCol_ButtonHovered] = ImVec4(accentPrimary.x, accentPrimary.y, accentPrimary.z, 0.30f);
+        colors[ImGuiCol_ButtonActive] = ImVec4(accentPrimary.x, accentPrimary.y, accentPrimary.z, 0.50f);
 
         // Frame backgrounds
-        colors[ImGuiCol_FrameBg] = ImVec4(0.20f, 0.21f, 0.22f, 0.54f);
-        colors[ImGuiCol_FrameBgHovered] = ImVec4(0.25f, 0.26f, 0.27f, 0.54f);
-        colors[ImGuiCol_FrameBgActive] = ImVec4(0.30f, 0.31f, 0.32f, 0.54f);
+        colors[ImGuiCol_FrameBg] = ImVec4(bgVeryLight.x, bgVeryLight.y, bgVeryLight.z, 0.30f);
+        colors[ImGuiCol_FrameBgHovered] = ImVec4(bgVeryLight.x, bgVeryLight.y, bgVeryLight.z, 0.40f);
+        colors[ImGuiCol_FrameBgActive] = ImVec4(bgVeryLight.x, bgVeryLight.y, bgVeryLight.z, 0.50f);
 
         // Tabs
-        colors[ImGuiCol_Tab] = ImVec4(0.15f, 0.16f, 0.17f, 0.86f);
-        colors[ImGuiCol_TabHovered] = accentColor;
-        colors[ImGuiCol_TabActive] = accentActive;
-        colors[ImGuiCol_TabUnfocused] = ImVec4(0.15f, 0.16f, 0.17f, 0.97f);
-        colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.20f, 0.21f, 0.22f, 1.00f);
+        colors[ImGuiCol_Tab] = bgLight;
+        colors[ImGuiCol_TabHovered] = ImVec4(accentPrimary.x, accentPrimary.y, accentPrimary.z, 0.30f);
+        colors[ImGuiCol_TabActive] = ImVec4(accentPrimary.x, accentPrimary.y, accentPrimary.z, 0.40f);
+        colors[ImGuiCol_TabUnfocused] = bgLight;
+        colors[ImGuiCol_TabUnfocusedActive] = ImVec4(bgVeryLight.x, bgVeryLight.y, bgVeryLight.z, 0.70f);
 
         // Title
-        colors[ImGuiCol_TitleBg] = ImVec4(0.15f, 0.16f, 0.17f, 1.00f);
-        colors[ImGuiCol_TitleBgActive] = ImVec4(0.15f, 0.16f, 0.17f, 1.00f);
-        colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.15f, 0.16f, 0.17f, 0.75f);
-        colors[ImGuiCol_MenuBarBg] = ImVec4(0.18f, 0.19f, 0.20f, 1.00f);
+        colors[ImGuiCol_TitleBg] = bgDark;
+        colors[ImGuiCol_TitleBgActive] = ImVec4(bgDark.x, bgDark.y, bgDark.z, 0.90f);
+        colors[ImGuiCol_TitleBgCollapsed] = ImVec4(bgDark.x, bgDark.y, bgDark.z, 0.75f);
+        colors[ImGuiCol_MenuBarBg] = bgMedium;
 
         // Scrollbar
-        colors[ImGuiCol_ScrollbarBg] = ImVec4(0.15f, 0.16f, 0.17f, 0.60f);
-        colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.30f, 0.31f, 0.32f, 0.80f);
-        colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.35f, 0.36f, 0.37f, 0.80f);
-        colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.40f, 0.41f, 0.42f, 0.80f);
+        colors[ImGuiCol_ScrollbarBg] = ImVec4(bgDark.x, bgDark.y, bgDark.z, 0.60f);
+        colors[ImGuiCol_ScrollbarGrab] = ImVec4(bgVeryLight.x, bgVeryLight.y, bgVeryLight.z, 0.30f);
+        colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(bgVeryLight.x, bgVeryLight.y, bgVeryLight.z, 0.40f);
+        colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(bgVeryLight.x, bgVeryLight.y, bgVeryLight.z, 0.50f);
 
-        // Slider/CheckBox
-        colors[ImGuiCol_CheckMark] = accentColor;
-        colors[ImGuiCol_SliderGrab] = accentColor;
+        // Checkbox & Radio
+        colors[ImGuiCol_CheckMark] = accentPrimary;
+        colors[ImGuiCol_SliderGrab] = accentPrimary;
         colors[ImGuiCol_SliderGrabActive] = accentActive;
 
-        // Interactive elements
-        colors[ImGuiCol_Separator] = ImVec4(0.25f, 0.26f, 0.27f, 0.50f);
-        colors[ImGuiCol_SeparatorHovered] = accentColor;
-        colors[ImGuiCol_SeparatorActive] = accentActive;
-        colors[ImGuiCol_ResizeGrip] = ImVec4(0.25f, 0.26f, 0.27f, 0.20f);
-        colors[ImGuiCol_ResizeGripHovered] = accentColor;
-        colors[ImGuiCol_ResizeGripActive] = accentActive;
+        // Separator
+        colors[ImGuiCol_Separator] = ImVec4(bgVeryLight.x, bgVeryLight.y, bgVeryLight.z, 0.50f);
+        colors[ImGuiCol_SeparatorHovered] = ImVec4(accentPrimary.x, accentPrimary.y, accentPrimary.z, 0.50f);
+        colors[ImGuiCol_SeparatorActive] = accentPrimary;
 
-        // Plot/Visual elements
-        colors[ImGuiCol_PlotLines] = ImVec4(0.61f, 0.61f, 0.61f, 1.00f);
-        colors[ImGuiCol_PlotLinesHovered] = accentColor;
-        colors[ImGuiCol_PlotHistogram] = ImVec4(0.90f, 0.70f, 0.00f, 1.00f);
-        colors[ImGuiCol_PlotHistogramHovered] = ImVec4(1.00f, 0.60f, 0.00f, 1.00f);
+        // Resize
+        colors[ImGuiCol_ResizeGrip] = ImVec4(bgVeryLight.x, bgVeryLight.y, bgVeryLight.z, 0.20f);
+        colors[ImGuiCol_ResizeGripHovered] = ImVec4(accentPrimary.x, accentPrimary.y, accentPrimary.z, 0.50f);
+        colors[ImGuiCol_ResizeGripActive] = ImVec4(accentPrimary.x, accentPrimary.y, accentPrimary.z, 0.70f);
 
-        // Miscellaneous
-        colors[ImGuiCol_TextSelectedBg] = ImVec4(0.28f, 0.56f, 1.00f, 0.35f);
-        colors[ImGuiCol_DragDropTarget] = accentColor;
-        colors[ImGuiCol_NavHighlight] = accentColor;
+        // Plot
+        colors[ImGuiCol_PlotLines] = accentPrimary;
+        colors[ImGuiCol_PlotLinesHovered] = accentHover;
+        colors[ImGuiCol_PlotHistogram] = accentPrimary;
+        colors[ImGuiCol_PlotHistogramHovered] = accentHover;
+
+        // Table
+        colors[ImGuiCol_TableHeaderBg] = bgVeryLight;
+        colors[ImGuiCol_TableBorderStrong] = ImVec4(bgVeryLight.x, bgVeryLight.y, bgVeryLight.z, 0.60f);
+        colors[ImGuiCol_TableBorderLight] = ImVec4(bgVeryLight.x, bgVeryLight.y, bgVeryLight.z, 0.30f);
+        colors[ImGuiCol_TableRowBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+        colors[ImGuiCol_TableRowBgAlt] = ImVec4(1.00f, 1.00f, 1.00f, 0.03f);
+
+        // Misc
+        colors[ImGuiCol_TextSelectedBg] = ImVec4(accentPrimary.x, accentPrimary.y, accentPrimary.z, 0.35f);
+        colors[ImGuiCol_DragDropTarget] = accentPrimary;
+        colors[ImGuiCol_NavHighlight] = accentPrimary;
         colors[ImGuiCol_NavWindowingHighlight] = ImVec4(1.00f, 1.00f, 1.00f, 0.70f);
         colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.20f);
-        colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.20f, 0.20f, 0.20f, 0.35f);
+        colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.50f);
     }
     else {
+        // Modern Light Theme
         ImVec4* colors = style.Colors;
 
-        // Color palette:
-        // F0F5F9 - Very light grayish blue (background)
-        // C9D6DF - Light grayish blue (elements, secondary surfaces)
-        // 52616B - Dark grayish blue (text, accents)
-        // 1E2022 - Very dark gray (primary text)
+        // Light color palette
+        const ImVec4 bgWhite = ImVec4(0.98f, 0.98f, 0.99f, 1.00f);     // #FAFAFC
+        const ImVec4 bgLight = ImVec4(0.94f, 0.95f, 0.96f, 1.00f);     // #F0F2F5
+        const ImVec4 bgMedium = ImVec4(0.88f, 0.89f, 0.91f, 1.00f);    // #E0E3E8
+        const ImVec4 bgDark = ImVec4(0.82f, 0.84f, 0.86f, 1.00f);      // #D1D5DB
 
-        const ImVec4 bgColor = ImVec4(0.941f, 0.961f, 0.976f, 1.00f);         // F0F5F9
-        const ImVec4 elementColor = ImVec4(0.788f, 0.839f, 0.875f, 1.00f);    // C9D6DF
-        const ImVec4 accentColor = ImVec4(0.322f, 0.380f, 0.420f, 1.00f);     // 52616B
-        const ImVec4 textColor = ImVec4(0.118f, 0.125f, 0.133f, 1.00f);       // 1E2022
+        const ImVec4 textPrimary = ImVec4(0.10f, 0.10f, 0.12f, 1.00f);
+        const ImVec4 textSecondary = ImVec4(0.40f, 0.42f, 0.46f, 1.00f);
+        const ImVec4 textDisabled = ImVec4(0.60f, 0.62f, 0.66f, 1.00f);
 
-        const ImVec4 accentHovered = ImVec4(0.369f, 0.435f, 0.482f, 1.00f);   // 52616B lighter
-        const ImVec4 accentActive = ImVec4(0.275f, 0.325f, 0.357f, 1.00f);    // 52616B darker
+        // Blue accent for light theme
+        const ImVec4 accentPrimary = ImVec4(0.20f, 0.50f, 0.95f, 1.00f);
+        const ImVec4 accentHover = ImVec4(0.30f, 0.60f, 1.00f, 1.00f);
+        const ImVec4 accentActive = ImVec4(0.15f, 0.40f, 0.85f, 1.00f);
+
+        // Store custom colors
+        g_StyleColors.primary = accentPrimary;
+        g_StyleColors.primaryHover = accentHover;
+        g_StyleColors.primaryActive = accentActive;
+        g_StyleColors.secondary = bgMedium;
+        g_StyleColors.accent = accentPrimary;
+        g_StyleColors.success = ImVec4(0.20f, 0.70f, 0.35f, 1.00f);
+        g_StyleColors.warning = ImVec4(0.90f, 0.65f, 0.10f, 1.00f);
+        g_StyleColors.danger = ImVec4(0.85f, 0.25f, 0.25f, 1.00f);
+        g_StyleColors.info = ImVec4(0.15f, 0.60f, 0.85f, 1.00f);
 
         // Background colors
-        colors[ImGuiCol_WindowBg] = ImVec4(bgColor.x, bgColor.y, bgColor.z, 0.95f);
-        colors[ImGuiCol_ChildBg] = ImVec4(bgColor.x, bgColor.y, bgColor.z, 0.00f);
-        colors[ImGuiCol_PopupBg] = ImVec4(bgColor.x, bgColor.y, bgColor.z, 0.94f);
-        colors[ImGuiCol_Border] = ImVec4(elementColor.x, elementColor.y, elementColor.z, 0.50f);
-        colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+        colors[ImGuiCol_WindowBg] = bgWhite;
+        colors[ImGuiCol_ChildBg] = ImVec4(bgWhite.x, bgWhite.y, bgWhite.z, 0.00f);
+        colors[ImGuiCol_PopupBg] = bgWhite;
+        colors[ImGuiCol_Border] = ImVec4(bgMedium.x, bgMedium.y, bgMedium.z, 0.50f);
+        colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.05f);
 
-        // Text colors
-        colors[ImGuiCol_Text] = textColor;
-        colors[ImGuiCol_TextDisabled] = ImVec4(accentColor.x, accentColor.y, accentColor.z, 0.65f);
+        // Text
+        colors[ImGuiCol_Text] = textPrimary;
+        colors[ImGuiCol_TextDisabled] = textDisabled;
 
         // Headers
-        colors[ImGuiCol_Header] = ImVec4(elementColor.x, elementColor.y, elementColor.z, 0.80f);
-        colors[ImGuiCol_HeaderHovered] = accentHovered;
-        colors[ImGuiCol_HeaderActive] = accentActive;
+        colors[ImGuiCol_Header] = ImVec4(bgLight.x, bgLight.y, bgLight.z, 0.80f);
+        colors[ImGuiCol_HeaderHovered] = ImVec4(accentPrimary.x, accentPrimary.y, accentPrimary.z, 0.20f);
+        colors[ImGuiCol_HeaderActive] = ImVec4(accentPrimary.x, accentPrimary.y, accentPrimary.z, 0.30f);
 
         // Buttons
-        colors[ImGuiCol_Button] = elementColor;
-        colors[ImGuiCol_ButtonHovered] = accentHovered;
-        colors[ImGuiCol_ButtonActive] = accentActive;
+        colors[ImGuiCol_Button] = bgLight;
+        colors[ImGuiCol_ButtonHovered] = ImVec4(accentPrimary.x, accentPrimary.y, accentPrimary.z, 0.15f);
+        colors[ImGuiCol_ButtonActive] = ImVec4(accentPrimary.x, accentPrimary.y, accentPrimary.z, 0.25f);
 
         // Frame backgrounds
-        colors[ImGuiCol_FrameBg] = ImVec4(elementColor.x, elementColor.y, elementColor.z, 0.60f);
-        colors[ImGuiCol_FrameBgHovered] = ImVec4(elementColor.x * 1.1f, elementColor.y * 1.1f, elementColor.z * 1.1f, 0.60f);
-        colors[ImGuiCol_FrameBgActive] = ImVec4(elementColor.x * 1.2f, elementColor.y * 1.2f, elementColor.z * 1.2f, 0.60f);
+        colors[ImGuiCol_FrameBg] = bgLight;
+        colors[ImGuiCol_FrameBgHovered] = ImVec4(bgMedium.x, bgMedium.y, bgMedium.z, 0.50f);
+        colors[ImGuiCol_FrameBgActive] = ImVec4(bgMedium.x, bgMedium.y, bgMedium.z, 0.70f);
 
         // Tabs
-        colors[ImGuiCol_Tab] = ImVec4(elementColor.x, elementColor.y, elementColor.z, 0.86f);
-        colors[ImGuiCol_TabHovered] = accentHovered;
-        colors[ImGuiCol_TabActive] = accentActive;
-        colors[ImGuiCol_TabUnfocused] = ImVec4(elementColor.x * 0.9f, elementColor.y * 0.9f, elementColor.z * 0.9f, 0.97f);
-        colors[ImGuiCol_TabUnfocusedActive] = ImVec4(elementColor.x, elementColor.y, elementColor.z, 1.00f);
+        colors[ImGuiCol_Tab] = bgLight;
+        colors[ImGuiCol_TabHovered] = ImVec4(accentPrimary.x, accentPrimary.y, accentPrimary.z, 0.20f);
+        colors[ImGuiCol_TabActive] = ImVec4(accentPrimary.x, accentPrimary.y, accentPrimary.z, 0.30f);
+        colors[ImGuiCol_TabUnfocused] = bgLight;
+        colors[ImGuiCol_TabUnfocusedActive] = bgMedium;
 
         // Title
-        colors[ImGuiCol_TitleBg] = elementColor;
-        colors[ImGuiCol_TitleBgActive] = ImVec4(accentColor.x, accentColor.y, accentColor.z, 0.8f);
-        colors[ImGuiCol_TitleBgCollapsed] = ImVec4(elementColor.x, elementColor.y, elementColor.z, 0.75f);
-        colors[ImGuiCol_MenuBarBg] = ImVec4(elementColor.x * 0.9f, elementColor.y * 0.9f, elementColor.z * 0.9f, 1.00f);
+        colors[ImGuiCol_TitleBg] = bgLight;
+        colors[ImGuiCol_TitleBgActive] = bgMedium;
+        colors[ImGuiCol_TitleBgCollapsed] = bgLight;
+        colors[ImGuiCol_MenuBarBg] = bgWhite;
 
         // Scrollbar
-        colors[ImGuiCol_ScrollbarBg] = ImVec4(elementColor.x, elementColor.y, elementColor.z, 0.60f);
-        colors[ImGuiCol_ScrollbarGrab] = accentColor;
-        colors[ImGuiCol_ScrollbarGrabHovered] = accentHovered;
-        colors[ImGuiCol_ScrollbarGrabActive] = accentActive;
+        colors[ImGuiCol_ScrollbarBg] = bgLight;
+        colors[ImGuiCol_ScrollbarGrab] = bgMedium;
+        colors[ImGuiCol_ScrollbarGrabHovered] = bgDark;
+        colors[ImGuiCol_ScrollbarGrabActive] = accentPrimary;
 
-        // Slider/CheckBox
-        colors[ImGuiCol_CheckMark] = accentColor;
-        colors[ImGuiCol_SliderGrab] = accentColor;
+        // Check/Radio/Slider
+        colors[ImGuiCol_CheckMark] = accentPrimary;
+        colors[ImGuiCol_SliderGrab] = accentPrimary;
         colors[ImGuiCol_SliderGrabActive] = accentActive;
 
-        // Interactive elements
-        colors[ImGuiCol_Separator] = ImVec4(accentColor.x, accentColor.y, accentColor.z, 0.50f);
-        colors[ImGuiCol_SeparatorHovered] = accentHovered;
+        // Separator
+        colors[ImGuiCol_Separator] = bgMedium;
+        colors[ImGuiCol_SeparatorHovered] = accentPrimary;
         colors[ImGuiCol_SeparatorActive] = accentActive;
-        colors[ImGuiCol_ResizeGrip] = ImVec4(accentColor.x, accentColor.y, accentColor.z, 0.20f);
-        colors[ImGuiCol_ResizeGripHovered] = accentHovered;
-        colors[ImGuiCol_ResizeGripActive] = accentActive;
 
-        // Plot/Visual elements
-        colors[ImGuiCol_PlotLines] = textColor;
-        colors[ImGuiCol_PlotLinesHovered] = accentHovered;
-        colors[ImGuiCol_PlotHistogram] = accentColor;
-        colors[ImGuiCol_PlotHistogramHovered] = accentHovered;
+        // Resize
+        colors[ImGuiCol_ResizeGrip] = ImVec4(bgMedium.x, bgMedium.y, bgMedium.z, 0.20f);
+        colors[ImGuiCol_ResizeGripHovered] = ImVec4(accentPrimary.x, accentPrimary.y, accentPrimary.z, 0.50f);
+        colors[ImGuiCol_ResizeGripActive] = ImVec4(accentPrimary.x, accentPrimary.y, accentPrimary.z, 0.70f);
 
-        // Miscellaneous
-        colors[ImGuiCol_TextSelectedBg] = ImVec4(accentColor.x, accentColor.y, accentColor.z, 0.35f);
-        colors[ImGuiCol_DragDropTarget] = accentColor;
-        colors[ImGuiCol_NavHighlight] = accentColor;
-        colors[ImGuiCol_NavWindowingHighlight] = ImVec4(accentColor.x, accentColor.y, accentColor.z, 0.80f);
-        colors[ImGuiCol_NavWindowingDimBg] = ImVec4(accentColor.x, accentColor.y, accentColor.z, 0.20f);
-        colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.20f, 0.20f, 0.20f, 0.35f);
+        // Plot
+        colors[ImGuiCol_PlotLines] = accentPrimary;
+        colors[ImGuiCol_PlotLinesHovered] = accentHover;
+        colors[ImGuiCol_PlotHistogram] = accentPrimary;
+        colors[ImGuiCol_PlotHistogramHovered] = accentHover;
+
+        // Table
+        colors[ImGuiCol_TableHeaderBg] = bgMedium;
+        colors[ImGuiCol_TableBorderStrong] = bgDark;
+        colors[ImGuiCol_TableBorderLight] = bgMedium;
+        colors[ImGuiCol_TableRowBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+        colors[ImGuiCol_TableRowBgAlt] = ImVec4(0.00f, 0.00f, 0.00f, 0.03f);
+
+        // Misc
+        colors[ImGuiCol_TextSelectedBg] = ImVec4(accentPrimary.x, accentPrimary.y, accentPrimary.z, 0.25f);
+        colors[ImGuiCol_DragDropTarget] = accentPrimary;
+        colors[ImGuiCol_NavHighlight] = accentPrimary;
+        colors[ImGuiCol_NavWindowingHighlight] = ImVec4(0.70f, 0.70f, 0.70f, 0.70f);
+        colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.20f, 0.20f, 0.20f, 0.20f);
+        colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.35f);
     }
 
-    // Apply alpha to colors if needed
+    // Apply alpha if needed
     if (alpha_ < 1.0f) {
         ImVec4* colors = style.Colors;
         for (int i = 0; i < ImGuiCol_COUNT; i++) {
             colors[i].w *= alpha_;
         }
+    }
+}
+
+// Custom widget styling functions
+void PushSectionHeaderStyle() {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 12));
+}
+
+void PopSectionHeaderStyle() {
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
+}
+
+void PushCompactStyle() {
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 2));
+}
+
+void PopCompactStyle() {
+    ImGui::PopStyleVar(2);
+}
+
+void ApplyCustomWidgetStyles() {
+    ImGuiStyle& style = ImGui::GetStyle();
+
+    // Custom button colors for different button types
+    // These can be used with PushStyleColor before buttons
+}
+
+void ApplyStylePreset(GuiStylePreset preset) {
+    switch (preset) {
+    case GuiStylePreset::MODERN_DARK:
+        SetupImGuiStyle(true, 1.0f);
+        break;
+    case GuiStylePreset::MODERN_LIGHT:
+        SetupImGuiStyle(false, 1.0f);
+        break;
+    case GuiStylePreset::HIGH_CONTRAST:
+        SetupImGuiStyle(true, 1.0f);
+        // Increase contrast
+        ImGui::GetStyle().Colors[ImGuiCol_Text] = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+        ImGui::GetStyle().Colors[ImGuiCol_WindowBg] = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+        break;
+    case GuiStylePreset::MINIMAL:
+        SetupImGuiStyle(false, 1.0f);
+        // Reduce visual clutter
+        ImGui::GetStyle().WindowRounding = 0.0f;
+        ImGui::GetStyle().FrameRounding = 0.0f;
+        ImGui::GetStyle().ScrollbarRounding = 0.0f;
+        ImGui::GetStyle().GrabRounding = 0.0f;
+        break;
     }
 }

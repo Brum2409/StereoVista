@@ -201,32 +201,64 @@ float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir) {
 // ---- POINT SHADOW CALCULATION ----
 float PointShadowCalculation(vec3 fragPos, vec3 lightPosition) {
     if (!enableShadows) return 0.0;
-    
-    // Apply normal offset to reduce self-shadowing (move sample point along normal)
+
+    // Get vector between fragment and light position (without offset first)
+    vec3 fragToLight = fragPos - lightPosition;
+    vec3 lightDir = normalize(fragToLight);
+
+    // Calculate surface normal
     vec3 normal = normalize(fs_in.Normal);
-    float normalOffset = 0.05;
-    vec3 offsetPos = fragPos + normal * normalOffset;
-    
-    // Get vector between offset position and light position
-    vec3 fragToLight = offsetPos - lightPosition;
-    
+
+    // Calculate slope-based bias to handle surfaces at different angles
+    float cosTheta = dot(normal, -lightDir);
+    cosTheta = clamp(cosTheta, 0.0, 1.0);
+
+    // Slope-based bias: more bias for surfaces at steep angles to light
+    float baseBias = 0.002;
+    float maxBias = 0.02;
+    float slopeBias = baseBias + maxBias * (1.0 - cosTheta);
+
+    // Normal offset bias - push sample point towards light along normal
+    // Use larger offset for surfaces more perpendicular to light direction
+    float normalOffsetScale = 0.02 + 0.08 * (1.0 - cosTheta);
+    vec3 offsetPos = fragPos + normal * normalOffsetScale;
+
+    // Recalculate fragment to light vector with offset position
+    vec3 offsetFragToLight = offsetPos - lightPosition;
+
     // Sample from the depth map using the offset position
-    float closestDepth = texture(depthMap, fragToLight).r;
-    
-    // It is currently in linear range between [0,1], let's re-transform it back to original depth value
+    float closestDepth = texture(depthMap, offsetFragToLight).r;
+
+    // Transform back to original depth value
     closestDepth *= far_plane;
-    
-    // Now get current linear depth as the length between the offset position and light position
-    float currentDepth = length(fragToLight);
-    
-    // Use minimal bias since we're using normal offset
-    float bias = 0.01;
-    float shadow = currentDepth - bias > closestDepth ? 1.0 : 0.0;
-    
-    // Simple fade near far plane
-    float fadeFactor = 1.0 - smoothstep(far_plane * 0.9, far_plane, currentDepth);
+
+    // Current depth from offset position
+    float currentDepth = length(offsetFragToLight);
+
+    // Simple PCF with small sample offsets to reduce aliasing without over-softening
+    float shadow = 0.0;
+    vec3 sampleOffsets[20] = vec3[]
+    (
+       vec3( 1,  1,  1), vec3( 1, -1,  1), vec3(-1, -1,  1), vec3(-1,  1,  1),
+       vec3( 1,  1, -1), vec3( 1, -1, -1), vec3(-1, -1, -1), vec3(-1,  1, -1),
+       vec3( 1,  1,  0), vec3( 1, -1,  0), vec3(-1, -1,  0), vec3(-1,  1,  0),
+       vec3( 1,  0,  1), vec3(-1,  0,  1), vec3( 1,  0, -1), vec3(-1,  0, -1),
+       vec3( 0,  1,  1), vec3( 0, -1,  1), vec3( 0, -1, -1), vec3( 0,  1, -1)
+    );
+
+    float diskRadius = 0.02; // Much smaller radius for tighter shadows
+    for(int i = 0; i < 20; ++i)
+    {
+        vec3 sampleDir = offsetFragToLight + sampleOffsets[i] * diskRadius;
+        float pcfDepth = texture(depthMap, sampleDir).r * far_plane;
+        shadow += currentDepth - slopeBias > pcfDepth ? 1.0 : 0.0;
+    }
+    shadow /= 20.0;
+
+    // Distance-based fade near far plane
+    float fadeFactor = 1.0 - smoothstep(far_plane * 0.85, far_plane, currentDepth);
     shadow *= fadeFactor;
-    
+
     return shadow;
 }
 
