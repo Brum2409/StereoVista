@@ -54,6 +54,20 @@ namespace Cursor {
         // Cursor position getters
         const glm::vec3& getCursorPosition() const { return m_cursorPosition; }
         bool isCursorPositionValid() const { return m_cursorPositionValid; }
+
+        // Cursor position setter for captured position during orbiting
+        void setCapturedCursorPosition(const glm::vec3& position) {
+            m_cursorPosition = position;
+            m_cursorPositionValid = true;
+        }
+        
+        // Enhanced cursor position setter that integrates with synchronization system
+        void setCapturedCursorPositionWithSync(const glm::vec3& position, bool enableSync = true) {
+            setCapturedCursorPosition(position);
+            
+            // If synchronization is enabled, this position will be used for cursor sync
+            // The actual synchronization happens in mouse button release handlers
+        }
         
         // Background cursor position getters (for when cursor is over empty space)
         const glm::vec3& getBackgroundCursorPosition() const { return m_backgroundCursorPosition; }

@@ -61,8 +61,20 @@ namespace Cursor {
 
         // During orbiting, maintain cursor at the captured position
         if (camera.IsOrbiting) {
-            m_cursorPositionValid = true;
-            // Assuming g_capturedCursorPos is set elsewhere when orbiting starts
+            // The cursor position should already be set via setCapturedCursorPosition
+            // Just update the individual cursor types with the current position
+            if (m_cursorPositionValid) {
+                m_sphereCursor->setPosition(m_cursorPosition);
+                m_sphereCursor->setPositionValid(true);
+                m_fragmentCursor->setPosition(m_cursorPosition);
+                m_fragmentCursor->setPositionValid(true);
+                m_planeCursor->setPosition(m_cursorPosition);
+                m_planeCursor->setPositionValid(true);
+
+                // Update sphere radius based on camera distance
+                m_sphereCursor->calculateRadius(camera.Position);
+            }
+            m_cursorPositionCalculatedThisFrame = true;
             return;
         }
 

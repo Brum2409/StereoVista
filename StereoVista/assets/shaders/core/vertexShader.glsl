@@ -34,31 +34,30 @@ uniform int lightingMode;
 uniform int currentMeshIndex;
 
 void main() {
-    // Normal matrix is now passed as a uniform from C++ for efficiency
+    // Normal matrix is provided via uniform
     
-    // Calculate fragment position in world space
+    // World-space position
     vs_out.FragPos = vec3(model * vec4(aPos, 1.0));
     
     if (isPointCloud) {
-        // Point cloud specific attributes
-        vs_out.VertexColor = aNormal;         // Using normal data for color
-        vs_out.Intensity = aTexCoords.x;      // Using texCoord.x for intensity
-        vs_out.Normal = vec3(0.0);            // Not used for point clouds
-        vs_out.TexCoords = vec2(0.0);         // Not used for point clouds
-        vs_out.TBN = mat3(1.0);               // Not used for point clouds
+        // Point cloud: pack color/intensity in attributes
+        vs_out.VertexColor = aNormal;         // pack normal as color
+        vs_out.Intensity = aTexCoords.x;      // intensity from texcoord.x
+        vs_out.Normal = vec3(0.0);            // not used
+        vs_out.TexCoords = vec2(0.0);         // not used
+        vs_out.TBN = mat3(1.0);               // not used
     } else {
-        // Regular model attributes (LearnOpenGL style)
+        // Mesh attributes
         vs_out.Normal = normalMatrix * aNormal;
         vs_out.TexCoords = aTexCoords;
         
-        // Calculate tangent space basis vectors for normal mapping
+        // TBN for normal mapping
         vec3 T = normalize(normalMatrix * aTangent);
         vec3 B = normalize(normalMatrix * aBitangent);
         vec3 N = normalize(vs_out.Normal);
         
-        // Re-orthogonalize T with respect to N using Gram-Schmidt process
+        // Re-orthogonalize T and B (Gram-Schmidt)
         T = normalize(T - dot(T, N) * N);
-        // Then re-orthogonalize B with respect to N and T
         B = normalize(B - dot(B, N) * N - dot(B, T) * T);
         
         vs_out.TBN = mat3(T, B, N);
@@ -67,10 +66,9 @@ void main() {
         vs_out.meshIndex = currentMeshIndex;
     }
     
-    // Calculate light space position for shadow mapping (regardless of lighting mode)
-    // This ensures we always have this data available even if shadow mapping is toggled on later
+    // Light-space position for shadow mapping
     vs_out.FragPosLightSpace = lightSpaceMatrix * vec4(vs_out.FragPos, 1.0);
     
-    // Final position calculation
+    // Clip-space position
     gl_Position = projection * view * vec4(vs_out.FragPos, 1.0);
 }

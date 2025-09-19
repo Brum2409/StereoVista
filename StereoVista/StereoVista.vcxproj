@@ -197,11 +197,14 @@
     <ClCompile Include="src\Cursors\Types\FragmentCursor.cpp" />
     <ClCompile Include="src\Cursors\Types\PlaneCursor.cpp" />
     <ClCompile Include="src\Cursors\Types\SphereCursor.cpp" />
+    <ClCompile Include="src\Core\CursorSynchronizer.cpp" />
     <ClCompile Include="src\Gui\GUI.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="headers\core.h" />
     <ClInclude Include="headers\Core\SceneManager.h" />
+    <ClInclude Include="headers\Core\CursorSynchronizer.h" />
+    <ClInclude Include="headers\Core\CursorSyncState.h" />
     <ClInclude Include="headers\cursor_presets.h" />
     <ClInclude Include="headers\engine\buffers.h" />
     <ClInclude Include="headers\Engine\BVH.h" />

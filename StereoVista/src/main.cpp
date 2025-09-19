@@ -19,6 +19,8 @@
 #include "Gui/GuiTypes.h"
 #include "../headers/Engine/BVH.h"
 #include "../headers/Engine/BVHDebug.h"
+#include "Core/CursorSynchronizer.h"
+#include "Core/CursorSyncState.h"
 
 // ---- GUI and Dialog ----
 #include "imgui/imgui_incl.h"
@@ -93,6 +95,10 @@ void cleanup(Engine::Shader* shader);
 float calculateLargestModelDimension();
 void calculateMouseRay(float mouseX, float mouseY, glm::vec3& rayOrigin, glm::vec3& rayDirection, glm::vec3& rayNear, glm::vec3& rayFar, float aspect);
 bool rayIntersectsModel(const glm::vec3& rayOrigin, const glm::vec3& rayDirection, const Engine::Model& model, float& distance);
+
+// ---- Cursor Synchronization Test Functions ----
+void testCursorSynchronization();
+void printCursorSyncDiagnostics();
 #pragma endregion
 
 
@@ -207,6 +213,7 @@ bool orbitFollowsCursor = false;
 // ---- Window Configuration ----
 int windowWidth = 1920;
 int windowHeight = 1080;
+bool isStereoWindow = false;
 
 // ---- Lighting ----
 std::vector<Engine::PointLight> pointLights;
@@ -1685,6 +1692,7 @@ void PerspectiveProjection(GLfloat* frustum, GLfloat dir,
     frustum[2] = -h_half * znear;
     frustum[3] = h_half * znear;
     frustum[4] = znear;
+
     frustum[5] = zfar;
 }
 
@@ -1708,7 +1716,7 @@ int main() {
 
     // ---- Create GLFW Window ----
     GLFWwindow* window = glfwCreateWindow(windowWidth, windowHeight, "StereoVista", nullptr, nullptr);
-    bool isStereoWindow = (window != nullptr);
+    isStereoWindow = (window != nullptr);
 
     if (!isStereoWindow) {
         std::cout << "Failed to create stereo GLFW window, falling back to mono rendering." << std::endl;
@@ -1741,6 +1749,10 @@ int main() {
     }
 
     glEnable(GL_MULTISAMPLE);
+    
+    // ---- Test Cursor Synchronization System ----
+    std::cout << "Cursor synchronization system initialized successfully" << std::endl;
+    testCursorSynchronization();
 
     // ---- Set GLFW Callbacks ----
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
@@ -1862,7 +1874,9 @@ int main() {
         if (orbitFollowsCursor) {
             camera.SetOrbitPointDirectly(capturedCursorPos);
             camera.StartOrbiting();
-
+        } else {
+            // For regular double-click centering, set cursor to screen center
+            glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
         }
         };
 
@@ -2321,7 +2335,8 @@ int main() {
         }
         
         // Update the cursor's captured position if available (after rendering)
-        if (cursorManager.isCursorPositionValid()) {
+        if (cursorManager.isCursorPositionValid() && !camera.IsOrbiting) {
+            // Only update captured position when not orbiting to preserve the original position
             capturedCursorPos = cursorManager.getCursorPosition();
         }
 
@@ -3944,9 +3959,15 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                 double currentTime = glfwGetTime();
                 if (currentTime - lastClickTime < doubleClickTime) {
                     if (cursorManager.isCursorPositionValid()) {
+                        // Double click on geometry - center on that point
                         camera.StartCenteringAnimation(cursorManager.getCursorPosition());
-                        glfwSetCursorPos(window, windowWidth / 2, windowHeight / 2);
+                    } else {
+                        // Double click on empty space - center view at default distance
+                        glm::vec3 centerPoint = camera.Position + camera.Front * camera.OrbitDistance;
+                        camera.StartCenteringAnimation(centerPoint);
                     }
+                    // Don't set cursor position here - let it be handled after centering animation completes
+                    // The cursor will naturally be at screen center since we're centering the view on the cursor position
                 }
                 lastClickTime = currentTime;
             }
@@ -3960,6 +3981,18 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                         camera.UpdateCursorInfo(cursorManager.getCursorPosition(), true);
                         camera.StartOrbiting(true); // Pass true to use current cursor position
                         capturedCursorPos = cursorManager.getCursorPosition();
+                        cursorManager.setCapturedCursorPositionWithSync(capturedCursorPos);
+                        
+                        // Capture cursor state for synchronization
+                        Core::CursorSyncManager::getInstance().captureState(
+                            capturedCursorPos,
+                            Core::CameraOperationType::Orbiting,
+                            camera.GetProjectionMatrix(aspectRatio, 0.1f, 100.0f),
+                            camera.GetViewMatrix(),
+                            windowWidth,
+                            windowHeight
+                        );
+                        
                         // Enable mouse capture when orbiting starts
                         isMouseCaptured = true;
                         firstMouse = true; // Reset the first mouse flag
@@ -3970,6 +4003,17 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                     else if (orbitFollowsCursor) {
                         camera.StartCenteringAnimation(cursorManager.getCursorPosition());
                         capturedCursorPos = cursorManager.getCursorPosition();
+                        cursorManager.setCapturedCursorPositionWithSync(capturedCursorPos);
+                        
+                        // Capture cursor state for synchronization
+                        Core::CursorSyncManager::getInstance().captureState(
+                            capturedCursorPos,
+                            Core::CameraOperationType::Orbiting,
+                            camera.GetProjectionMatrix(aspectRatio, 0.1f, 100.0f),
+                            camera.GetViewMatrix(),
+                            windowWidth,
+                            windowHeight
+                        );
 
                         isMouseCaptured = true;
                         firstMouse = true;
@@ -3977,11 +4021,22 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                         glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
                     }
                     else {
+                        // Standard orbiting mode - preserve cursor 3D position and convert to 2D after orbiting
+                        std::cout << "Standard orbit mode - will convert 3D cursor position to 2D after orbiting" << std::endl;
+
+                        // Calculate orbit point based on cursor depth
                         float cursorDepth = glm::length(cursorManager.getCursorPosition() - camera.Position);
                         glm::vec3 viewportCenter = camera.Position + camera.Front * cursorDepth;
-                        capturedCursorPos = viewportCenter;
-                        camera.SetOrbitPointDirectly(capturedCursorPos);
+                        camera.SetOrbitPointDirectly(viewportCenter);
                         camera.OrbitDistance = cursorDepth;
+
+                        // Capture the original 3D cursor position for conversion after orbiting
+                        capturedCursorPos = cursorManager.getCursorPosition();
+                        cursorManager.setCapturedCursorPositionWithSync(capturedCursorPos);
+
+                        // Don't capture state for synchronization in standard mode
+                        // This will cause the 3D-to-2D conversion behavior to be used
+
                         camera.StartOrbiting();
                         // Enable mouse capture when orbiting starts
                         isMouseCaptured = true;
@@ -3992,8 +4047,25 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                     }
                 }
                 else {
-                    capturedCursorPos = camera.Position + camera.Front * camera.OrbitDistance;
-                    camera.SetOrbitPointDirectly(capturedCursorPos);
+                    // When no valid cursor position, calculate a reasonable orbit point
+                    glm::vec3 orbitPoint = camera.Position + camera.Front * camera.OrbitDistance;
+                    camera.SetOrbitPointDirectly(orbitPoint);
+                    
+                    // For synchronization, use a position in front of the camera at a reasonable distance
+                    // This will be where the cursor appears after orbiting completes
+                    capturedCursorPos = camera.Position + camera.Front * (camera.OrbitDistance * 0.8f);
+                    cursorManager.setCapturedCursorPositionWithSync(capturedCursorPos);
+                    
+                    // Capture cursor state for synchronization
+                    Core::CursorSyncManager::getInstance().captureState(
+                        capturedCursorPos,
+                        Core::CameraOperationType::Orbiting,
+                        camera.GetProjectionMatrix(aspectRatio, 0.1f, 100.0f),
+                        camera.GetViewMatrix(),
+                        windowWidth,
+                        windowHeight
+                    );
+                    
                     camera.StartOrbiting();
                     // Enable mouse capture when orbiting starts
                     isMouseCaptured = true;
@@ -4013,20 +4085,79 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                 isMouseCaptured = false;
                 firstMouse = true; // Reset first mouse flag for next time
 
-                // Only set input mode to normal if we were moving a model
-                if (wasMovingModel) {
-                    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-                }
+                // Temporarily set to normal mode to allow cursor position changes
+                // The cursor manager will set the final mode after position sync
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
             }
 
             leftMousePressed = false;
             camera.StopOrbiting();
             
-            // Reset cursor position based on orbit mode (after StopOrbiting)
+            // Handle cursor positioning after orbiting based on orbit mode
             if (!wasMovingModel) {
-                // Both standard orbit and cursor orbit: center cursor on screen
-                glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
+                if (Core::CursorSyncManager::getInstance().needsSynchronization()) {
+                    // Check which mode we're in based on camera settings
+                    if (camera.orbitAroundCursor) {
+                        // Around cursor mode - use synchronization to restore cursor to 3D position
+                        std::cout << "[CursorFix] Around cursor mode - using cursor synchronization" << std::endl;
+                        Core::CursorSynchronizer::synchronizeCursorPosition(
+                            window,
+                            Core::CursorSyncManager::getInstance().getWorldPosition(),
+                            camera.GetProjectionMatrix(aspectRatio, 0.1f, 100.0f),
+                            camera.GetViewMatrix(),
+                            windowWidth,
+                            windowHeight,
+                            isStereoWindow
+                        );
+                        Core::CursorSyncManager::getInstance().markSynchronized();
+                    }
+                    else if (orbitFollowsCursor) {
+                        // Center cursor mode - cursor should be at viewport center after centering animation
+                        std::cout << "[CursorFix] Center cursor mode - positioning cursor at screen center" << std::endl;
+                        glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
+                        Core::CursorSyncManager::getInstance().markSynchronized();
+                    }
+                    else {
+                        // This shouldn't happen, but fallback to synchronization
+                        std::cout << "[CursorFix] Unexpected synchronization state - using fallback synchronization" << std::endl;
+                        Core::CursorSynchronizer::synchronizeCursorPosition(
+                            window,
+                            Core::CursorSyncManager::getInstance().getWorldPosition(),
+                            camera.GetProjectionMatrix(aspectRatio, 0.1f, 100.0f),
+                            camera.GetViewMatrix(),
+                            windowWidth,
+                            windowHeight,
+                            isStereoWindow
+                        );
+                        Core::CursorSyncManager::getInstance().markSynchronized();
+                    }
+                }
+                else {
+                    // Standard orbit mode - calculate new cursor position based on captured 3D cursor
+                    if (cursorManager.isCursorPositionValid()) {
+                        std::cout << "[CursorFix] Standard orbit mode - calculating new cursor position based on captured 3D cursor" << std::endl;
+                        glm::vec3 originalCursorPos = capturedCursorPos; // Use the captured position from before orbiting
+                        std::cout << "[CursorFix] Original 3D cursor position: (" << originalCursorPos.x << ", " << originalCursorPos.y << ", " << originalCursorPos.z << ")" << std::endl;
+
+                        // Project the original 3D cursor position to screen coordinates with the new camera view after orbiting
+                        Core::CursorSynchronizer::synchronizeCursorPosition(
+                            window,
+                            originalCursorPos,
+                            camera.GetProjectionMatrix(aspectRatio, 0.1f, 100.0f),
+                            camera.GetViewMatrix(),
+                            windowWidth,
+                            windowHeight,
+                            isStereoWindow
+                        );
+                    }
+                    else {
+                        // No valid cursor position - fallback to screen center
+                        std::cout << "[CursorFix] No valid cursor position - centering cursor on screen" << std::endl;
+                        glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
+                    }
+                }
             }
+            
             isMovingModel = false;
             selectionMode = false;
         }
@@ -4034,6 +4165,21 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
     else if (button == GLFW_MOUSE_BUTTON_MIDDLE) {
         if (action == GLFW_PRESS) {
             middleMousePressed = true;
+            
+            // Capture cursor state for synchronization before starting panning
+            glm::vec3 cursorPos = cursorManager.isCursorPositionValid() ? 
+                cursorManager.getCursorPosition() : 
+                camera.Position + camera.Front * camera.OrbitDistance;
+            
+            Core::CursorSyncManager::getInstance().captureState(
+                cursorPos,
+                Core::CameraOperationType::Panning,
+                camera.GetProjectionMatrix(aspectRatio, 0.1f, 100.0f),
+                camera.GetViewMatrix(),
+                windowWidth,
+                windowHeight
+            );
+            
             camera.StartPanning();
             // Enable mouse capture for middle button panning
             isMouseCaptured = true;
@@ -4045,6 +4191,21 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
         else if (action == GLFW_RELEASE) {
             middleMousePressed = false;
             camera.StopPanning();
+            
+            // Synchronize cursor position after panning
+            if (Core::CursorSyncManager::getInstance().needsSynchronization()) {
+                Core::CursorSynchronizer::synchronizeCursorPosition(
+                    window,
+                    Core::CursorSyncManager::getInstance().getWorldPosition(),
+                    camera.GetProjectionMatrix(aspectRatio, 0.1f, 100.0f),
+                    camera.GetViewMatrix(),
+                    windowWidth,
+                    windowHeight,
+                    isStereoWindow
+                );
+                Core::CursorSyncManager::getInstance().markSynchronized();
+            }
+            
             // Disable mouse capture
             isMouseCaptured = false;
             firstMouse = true; // Reset first mouse flag for next time
@@ -4053,6 +4214,21 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
     else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
         if (action == GLFW_PRESS) {
             rightMousePressed = true;
+            
+            // Capture cursor state for synchronization before starting rotation
+            glm::vec3 cursorPos = cursorManager.isCursorPositionValid() ? 
+                cursorManager.getCursorPosition() : 
+                camera.Position + camera.Front * camera.OrbitDistance;
+            
+            Core::CursorSyncManager::getInstance().captureState(
+                cursorPos,
+                Core::CameraOperationType::Rotating,
+                camera.GetProjectionMatrix(aspectRatio, 0.1f, 100.0f),
+                camera.GetViewMatrix(),
+                windowWidth,
+                windowHeight
+            );
+            
             // Enable mouse capture for right button rotation
             isMouseCaptured = true;
             firstMouse = true; // Reset the first mouse flag
@@ -4063,6 +4239,21 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
         }
         else if (action == GLFW_RELEASE) {
             rightMousePressed = false;
+            
+            // Synchronize cursor position after rotation
+            if (Core::CursorSyncManager::getInstance().needsSynchronization()) {
+                Core::CursorSynchronizer::synchronizeCursorPosition(
+                    window,
+                    Core::CursorSyncManager::getInstance().getWorldPosition(),
+                    camera.GetProjectionMatrix(aspectRatio, 0.1f, 100.0f),
+                    camera.GetViewMatrix(),
+                    windowWidth,
+                    windowHeight,
+                    isStereoWindow
+                );
+                Core::CursorSyncManager::getInstance().markSynchronized();
+            }
+            
             // Disable mouse capture
             isMouseCaptured = false;
             firstMouse = true; // Reset first mouse flag for next time
@@ -4232,6 +4423,16 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
         }
     }
 
+    // Test cursor synchronization system
+    if (key == GLFW_KEY_T && action == GLFW_PRESS) {
+        testCursorSynchronization();
+    }
+
+    // Print cursor synchronization diagnostics
+    if (key == GLFW_KEY_Y && action == GLFW_PRESS) {
+        printCursorSyncDiagnostics();
+    }
+
 
     // Handle Ctrl key
     if (key == GLFW_KEY_LEFT_CONTROL || key == GLFW_KEY_RIGHT_CONTROL)
@@ -4293,4 +4494,56 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
         }
     }
 }
+#pragma endregion
+
+// ---- Cursor Synchronization Test Functions ----
+#pragma region Cursor Synchronization Tests
+
+void testCursorSynchronization() {
+    std::cout << "\n=== Testing Cursor Synchronization System ===" << std::endl;
+    
+    // Test basic functionality
+    glm::vec3 testWorldPos(1.0f, 2.0f, -5.0f);
+    glm::mat4 testProjection = glm::perspective(glm::radians(45.0f), 16.0f/9.0f, 0.1f, 100.0f);
+    glm::mat4 testView = glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, -1.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    
+    // Test world to screen projection
+    glm::vec2 screenPos = Core::CursorSynchronizer::worldToScreen(testWorldPos, testProjection, testView, 1920, 1080);
+    std::cout << "Test projection result: (" << screenPos.x << ", " << screenPos.y << ")" << std::endl;
+    
+    // Test matrix validation
+    bool matricesValid = Core::CursorSynchronizer::validateMatrices(testProjection, testView);
+    std::cout << "Matrix validation: " << (matricesValid ? "PASSED" : "FAILED") << std::endl;
+    
+    // Test viewport bounds checking
+    bool withinViewport = Core::CursorSynchronizer::isWithinViewport(screenPos, 1920, 1080);
+    std::cout << "Viewport bounds check: " << (withinViewport ? "PASSED" : "FAILED") << std::endl;
+    
+    // Test behind camera detection
+    bool behindCamera = Core::CursorSynchronizer::isBehindCamera(testWorldPos, testView);
+    std::cout << "Behind camera check: " << (behindCamera ? "BEHIND" : "IN FRONT") << std::endl;
+    
+    // Test sync manager
+    Core::CursorSyncManager& syncManager = Core::CursorSyncManager::getInstance();
+    syncManager.captureState(testWorldPos, Core::CameraOperationType::Orbiting, testProjection, testView, 1920, 1080);
+    bool needsSync = syncManager.needsSynchronization();
+    std::cout << "Sync manager state: " << (needsSync ? "READY" : "NOT READY") << std::endl;
+    
+    syncManager.reset();
+    std::cout << "Cursor synchronization test completed successfully!" << std::endl;
+    std::cout << "============================================\n" << std::endl;
+}
+
+void printCursorSyncDiagnostics() {
+    if (cursorManager.isCursorPositionValid()) {
+        glm::vec3 cursorPos = cursorManager.getCursorPosition();
+        glm::mat4 projection = camera.GetProjectionMatrix(aspectRatio, 0.1f, 100.0f);
+        glm::mat4 view = camera.GetViewMatrix();
+        
+        Core::CursorSynchronizer::printDiagnostics(cursorPos, projection, view, windowWidth, windowHeight);
+    } else {
+        std::cout << "No valid cursor position for diagnostics" << std::endl;
+    }
+}
+
 #pragma endregion

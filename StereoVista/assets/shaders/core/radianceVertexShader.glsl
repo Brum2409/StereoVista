@@ -25,25 +25,25 @@ const int LIGHTING_SHADOW_MAPPING = 0;
 const int LIGHTING_VOXEL_CONE_TRACING = 1;
 const int LIGHTING_RADIANCE = 2;
 
-// Render states
+// Render state
 uniform bool isPointCloud;
 uniform int currentMeshIndex;
 
 void main() {
-    // Use the model matrix directly
+    // Normal matrix from model
     mat3 normalMatrix = transpose(inverse(mat3(model)));
     
-    // Calculate fragment position in world space
+    // World-space position
     vs_out.FragPos = vec3(model * vec4(aPos, 1.0));
     
     if (isPointCloud) {
-        // Point cloud specific attributes
-        vs_out.VertexColor = aNormal;         // Using normal data for color
-        vs_out.Intensity = aTexCoords.x;      // Using texCoord.x for intensity
-        vs_out.Normal = vec3(0.0);            // Not used for point clouds
-        vs_out.TexCoords = vec2(0.0);         // Not used for point clouds
+        // Point cloud: pack color/intensity in attributes
+        vs_out.VertexColor = aNormal;         // pack normal as color
+        vs_out.Intensity = aTexCoords.x;      // intensity from texcoord.x
+        vs_out.Normal = vec3(0.0);            // not used
+        vs_out.TexCoords = vec2(0.0);         // not used
     } else {
-        // Regular model attributes
+        // Mesh attributes
         vs_out.Normal = normalize(normalMatrix * aNormal);
         vs_out.TexCoords = aTexCoords;
         vs_out.VertexColor = vec3(1.0);
@@ -51,6 +51,6 @@ void main() {
         vs_out.meshIndex = currentMeshIndex;
     }
     
-    // Final position calculation
+    // Clip-space position
     gl_Position = projection * view * vec4(vs_out.FragPos, 1.0);
 }

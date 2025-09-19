@@ -161,27 +161,27 @@ vec3 orthogonal(vec3 u) {
 float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir) {
     if (!enableShadows) return 0.0;
     
-    // Perform perspective divide
+    // Perspective divide
     vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
     
-    // Transform to [0,1] range
+    // NDC -> [0,1]
     projCoords = projCoords * 0.5 + 0.5;
     
-    // Check if outside shadow map frustum
+    // Outside shadow frustum
     if(projCoords.z > 1.0 || projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0)
         return 0.0;
         
-    // Get depth of current fragment from light's perspective
+    // Depth of current fragment from light
     float currentDepth = projCoords.z;
     
-    // Use very small bias since polygon offset handles most issues
-    float bias = 0.00005;
+    // Small bias (polygon offset handles most of it)
+    float bias = 0.00005; 
     
-    // PCF (Percentage-Closer Filtering) for soft shadows
+    // PCF soft shadows
     float shadow = 0.0;
     vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
     
-    // Sample in a 3x3 grid around the projected coordinates
+    // 3x3 neighborhood
     for(int x = -1; x <= 1; ++x) {
         for(int y = -1; y <= 1; ++y) {
             vec2 sampleCoords = projCoords.xy + vec2(x, y) * texelSize;
@@ -191,7 +191,7 @@ float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir) {
     }
     shadow /= 9.0;
     
-    // Apply distance-based shadow fade out
+    // Distance-based fade
     float fadeFactor = 1.0 - smoothstep(0.8, 1.0, projCoords.z);
     shadow *= fadeFactor;
     
@@ -686,26 +686,23 @@ vec3 calculateIndirectDiffuseLight(vec3 normal, vec3 baseColor) {
     float noise = fract(sin(dot(fs_in.FragPos.xy, vec2(12.9898, 78.233))) * 43758.5453);
     float noiseAmount = 0.03;
     
-    // Apply material properties with subtle noise to break patterns
+    // Apply material properties with subtle noise
     return DIFFUSE_INDIRECT_FACTOR * material.diffuseReflectivity * 
            acc * baseColor * (1.0 + noise * noiseAmount - noiseAmount/2.0);
 }
 
 vec3 calculateIndirectSpecularLight(vec3 viewDirection) {
-    // Make sure to use the negative view direction for reflection
-    // This was the key issue - viewDirection was not negated properly
+    // Use view direction from camera to fragment
     vec3 normal = normalize(fs_in.Normal);
     
-    // IMPORTANT: viewDirection should point FROM the camera TO the fragment
-    // So we need to make sure it's correctly oriented
+    // Ensure orientation
     if (dot(viewDirection, fs_in.FragPos - viewPos) < 0.0) {
-        viewDirection = -viewDirection;  // Fix direction if needed
+        viewDirection = -viewDirection;
     }
     
-    // Correctly calculate reflection vector
+    // Reflection vector
     vec3 reflection = reflect(viewDirection, normal);
     
-    // Now trace the cone in the reflection direction from the fragment position
     return material.specularReflectivity * material.specularColor * 
            traceSpecularVoxelCone(fs_in.FragPos, reflection);
 }
@@ -923,14 +920,13 @@ vec3 calculateVCTSpotLight(SpotLight light, vec3 viewDirection) {
 
 void main() {
     // --- EARLY EXITS for special rendering modes ---
-    // Check for point cloud rendering first - quick exit path
+    // Point cloud rendering
     if (isPointCloud) {
         FragColor = vec4(fs_in.VertexColor * fs_in.Intensity, 1.0);
         
-        // Apply gamma correction to point cloud colors
+        // Gamma correction
         FragColor.rgb = pow(FragColor.rgb, vec3(1.0 / 2.2));
         
-        // Handle cursor for point clouds
         if (showFragmentCursor) {
             float distanceToCursor = length(cursorPos.xyz - fs_in.FragPos);
             float distanceFromCamera = length(cursorPos.xyz - viewPos);
@@ -957,11 +953,11 @@ void main() {
         return;
     }
     
-    // --- COMMON CALCULATIONS - Calculate once, use many times ---
-    // Get base color - temporarily disable gamma correction to fix texture issues
+    // --- Common calculations ---
+    // Base color
     vec3 baseColor;
     if (material.hasTexture > 0.5) {
-        // Use texture as-is to avoid double gamma correction
+        // Sample texture color
         baseColor = texture(material.textures[0], fs_in.TexCoords).rgb;
     } else {
         baseColor = material.objectColor;
@@ -1076,17 +1072,11 @@ void main() {
                 }
             }
             
-            // Add indirect specular lighting (reflections)
+            // Indirect specular (reflections)
             if (vctSettings.indirectSpecularLight) {
-                // Even objects with zero specularContrib should have a very small amount
-                // Just to check if the reflection system is working
                 float minSpecular = 0.001;
                 float specularContrib = max(minSpecular, material.specularReflectivity * (1.0 - material.transparency));
-                
-                // Add specular reflection - ensure it's visible on all objects for testing
                 vec3 specReflection = calculateIndirectSpecularLight(viewDir);
-                
-                // Simply add the specular light 
                 result += specReflection * specularContrib;
             }
             
