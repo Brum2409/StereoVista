@@ -66,8 +66,6 @@ OpenGLTemplate/x64/
 
 # Application specific files
 imgui.ini
-preferences.json
-cursor_presets.json
 
 # Build artifacts
 *.iobj
