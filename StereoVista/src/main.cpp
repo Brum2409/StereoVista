@@ -99,9 +99,6 @@ float calculateLargestModelDimension();
 void calculateMouseRay(float mouseX, float mouseY, glm::vec3& rayOrigin, glm::vec3& rayDirection, glm::vec3& rayNear, glm::vec3& rayFar, float aspect);
 bool rayIntersectsModel(const glm::vec3& rayOrigin, const glm::vec3& rayDirection, const Engine::Model& model, float& distance);
 
-// ---- Cursor Synchronization Test Functions ----
-void testCursorSynchronization();
-
 // ---- Preferences Functions ----
 void savePreferences();
 void printCursorSyncDiagnostics();
@@ -1181,6 +1178,8 @@ void savePreferences() {
     j["camera"]["orbitFollowsCursor"] = preferences.orbitFollowsCursor;
     j["camera"]["mouseSmoothingFactor"] = preferences.mouseSmoothingFactor;
     j["camera"]["mouseSensitivity"] = preferences.mouseSensitivity;
+    j["camera"]["autoConvergence"] = preferences.autoConvergence;
+    j["camera"]["convergenceDistanceFactor"] = preferences.convergenceDistanceFactor;
 
     // SpaceMouse settings
     j["spacemouse"]["enabled"] = preferences.spaceMouseEnabled;
@@ -1231,6 +1230,7 @@ void savePreferences() {
     j["shadows"]["pcfKernelSize"] = preferences.shadowSettings.pcfKernelSize;
     j["shadows"]["enablePCSS"] = preferences.shadowSettings.enablePCSS;
     j["shadows"]["lightSize"] = preferences.shadowSettings.lightSize;
+    j["shadows"]["shadowSoftness"] = preferences.shadowSettings.shadowSoftness;
     j["shadows"]["enableCascades"] = preferences.shadowSettings.enableCascades;
     j["shadows"]["numCascades"] = preferences.shadowSettings.numCascades;
     j["shadows"]["cascadeSplitLambda"] = preferences.shadowSettings.cascadeSplitLambda;
@@ -1458,6 +1458,8 @@ void loadPreferences() {
             preferences.orbitFollowsCursor = j["camera"].value("orbitFollowsCursor", false);
             preferences.mouseSmoothingFactor = j["camera"].value("mouseSmoothingFactor", 1.0f);
             preferences.mouseSensitivity = j["camera"].value("mouseSensitivity", 0.17f);
+            preferences.autoConvergence = j["camera"].value("autoConvergence", false);
+            preferences.convergenceDistanceFactor = j["camera"].value("convergenceDistanceFactor", 1.0f);
         }
 
         // SpaceMouse settings
@@ -1547,6 +1549,7 @@ void loadPreferences() {
             preferences.shadowSettings.pcfKernelSize = j["shadows"].value("pcfKernelSize", 3);
             preferences.shadowSettings.enablePCSS = j["shadows"].value("enablePCSS", false);
             preferences.shadowSettings.lightSize = j["shadows"].value("lightSize", 0.1f);
+            preferences.shadowSettings.shadowSoftness = j["shadows"].value("shadowSoftness", 1.0f);
             preferences.shadowSettings.enableCascades = j["shadows"].value("enableCascades", false);
             preferences.shadowSettings.numCascades = j["shadows"].value("numCascades", 4);
             preferences.shadowSettings.cascadeSplitLambda = j["shadows"].value("cascadeSplitLambda", 0.5f);
@@ -1848,9 +1851,6 @@ int main() {
 
     glEnable(GL_MULTISAMPLE);
     
-    // ---- Test Cursor Synchronization System ----
-    std::cout << "Cursor synchronization system initialized successfully" << std::endl;
-    testCursorSynchronization();
 
     // ---- Set GLFW Callbacks ----
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
@@ -2755,6 +2755,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     shader->setInt("shadowSettings.pcfKernelSize", preferences.shadowSettings.pcfKernelSize);
     shader->setBool("shadowSettings.enablePCSS", preferences.shadowSettings.enablePCSS);
     shader->setFloat("shadowSettings.lightSize", preferences.shadowSettings.lightSize);
+    shader->setFloat("shadowSettings.shadowSoftness", preferences.shadowSettings.shadowSoftness);
     shader->setBool("shadowSettings.enableCascades", preferences.shadowSettings.enableCascades);
     shader->setInt("shadowSettings.numCascades", preferences.shadowSettings.numCascades);
     shader->setFloat("shadowSettings.cascadeSplitLambda", preferences.shadowSettings.cascadeSplitLambda);
@@ -2804,6 +2805,8 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
             shader->setVec3(lightName + ".position", pointLights[i].position);
             shader->setVec3(lightName + ".color", pointLights[i].color);
             shader->setFloat(lightName + ".intensity", pointLights[i].intensity);
+            shader->setFloat(lightName + ".linear", pointLights[i].linear);
+            shader->setFloat(lightName + ".quadratic", pointLights[i].quadratic);
             shader->setBool("lightsCastShadows[" + std::to_string(i) + "]", pointLights[i].castShadows);
         }
         shader->setInt("numLights", std::min((int)pointLights.size(), MAX_LIGHTS));
@@ -2867,6 +2870,8 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
             shader->setVec3(lightName + ".position", pointLights[i].position);
             shader->setVec3(lightName + ".color", pointLights[i].color);
             shader->setFloat(lightName + ".intensity", pointLights[i].intensity);
+            shader->setFloat(lightName + ".linear", pointLights[i].linear);
+            shader->setFloat(lightName + ".quadratic", pointLights[i].quadratic);
             shader->setBool("lightsCastShadows[" + std::to_string(i) + "]", pointLights[i].castShadows);
         }
         shader->setInt("numLights", std::min((int)pointLights.size(), MAX_LIGHTS));
@@ -2915,6 +2920,8 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
             shader->setVec3(lightName + ".position", pointLights[i].position);
             shader->setVec3(lightName + ".color", pointLights[i].color);
             shader->setFloat(lightName + ".intensity", pointLights[i].intensity);
+            shader->setFloat(lightName + ".linear", pointLights[i].linear);
+            shader->setFloat(lightName + ".quadratic", pointLights[i].quadratic);
             shader->setBool("lightsCastShadows[" + std::to_string(i) + "]", pointLights[i].castShadows);
         }
         
@@ -3275,6 +3282,13 @@ void renderModels(Engine::Shader* shader) {
         shader->setVec3("material.objectColor", model.color);
         shader->setFloat("material.shininess", model.shininess);
         shader->setFloat("material.emissive", model.emissive);
+
+        // PBR material properties
+        shader->setFloat("material.metallicFactor", model.metallicFactor);
+        shader->setFloat("material.roughnessFactor", model.roughnessFactor);
+        shader->setVec3("material.F0", model.F0);
+        shader->setFloat("material.normalScale", model.normalScale);
+        shader->setFloat("material.heightScale", model.heightScale);
         
         // Set emissive intensity for all lighting modes
         shader->setFloat("emissiveIntensity", radianceSettings.emissiveIntensity);
@@ -4656,11 +4670,6 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
         }
     }
 
-    // Test cursor synchronization system
-    if (key == GLFW_KEY_T && action == GLFW_PRESS) {
-        testCursorSynchronization();
-    }
-
     // Print cursor synchronization diagnostics
     if (key == GLFW_KEY_Y && action == GLFW_PRESS) {
         printCursorSyncDiagnostics();
@@ -4732,40 +4741,7 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 // ---- Cursor Synchronization Test Functions ----
 #pragma region Cursor Synchronization Tests
 
-void testCursorSynchronization() {
-    std::cout << "\n=== Testing Cursor Synchronization System ===" << std::endl;
-    
-    // Test basic functionality
-    glm::vec3 testWorldPos(1.0f, 2.0f, -5.0f);
-    glm::mat4 testProjection = glm::perspective(glm::radians(45.0f), 16.0f/9.0f, 0.1f, 100.0f);
-    glm::mat4 testView = glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, -1.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-    
-    // Test world to screen projection
-    glm::vec2 screenPos = Core::CursorSynchronizer::worldToScreen(testWorldPos, testProjection, testView, 1920, 1080);
-    std::cout << "Test projection result: (" << screenPos.x << ", " << screenPos.y << ")" << std::endl;
-    
-    // Test matrix validation
-    bool matricesValid = Core::CursorSynchronizer::validateMatrices(testProjection, testView);
-    std::cout << "Matrix validation: " << (matricesValid ? "PASSED" : "FAILED") << std::endl;
-    
-    // Test viewport bounds checking
-    bool withinViewport = Core::CursorSynchronizer::isWithinViewport(screenPos, 1920, 1080);
-    std::cout << "Viewport bounds check: " << (withinViewport ? "PASSED" : "FAILED") << std::endl;
-    
-    // Test behind camera detection
-    bool behindCamera = Core::CursorSynchronizer::isBehindCamera(testWorldPos, testView);
-    std::cout << "Behind camera check: " << (behindCamera ? "BEHIND" : "IN FRONT") << std::endl;
-    
-    // Test sync manager
-    Core::CursorSyncManager& syncManager = Core::CursorSyncManager::getInstance();
-    syncManager.captureState(testWorldPos, Core::CameraOperationType::Orbiting, testProjection, testView, 1920, 1080);
-    bool needsSync = syncManager.needsSynchronization();
-    std::cout << "Sync manager state: " << (needsSync ? "READY" : "NOT READY") << std::endl;
-    
-    syncManager.reset();
-    std::cout << "Cursor synchronization test completed successfully!" << std::endl;
-    std::cout << "============================================\n" << std::endl;
-}
+
 
 void printCursorSyncDiagnostics() {
     if (cursorManager.isCursorPositionValid()) {

@@ -91,9 +91,18 @@ struct ShadowSettings {
     int pcfKernelSize; // 3, 5, 7, or 9
     bool enablePCSS;
     float lightSize; // For PCSS calculations
+    float shadowSoftness; // Softness multiplier for shadow filtering
     bool enableCascades;
     int numCascades;
     float cascadeSplitLambda;
+};
+
+// ---- MATERIAL SETTINGS ----
+struct MaterialSettings {
+    bool enablePBR;
+    bool enableAO;
+    bool enableNormalMapping;
+    bool enableParallaxMapping;
 };
 
 // ---- LIGHTING STRUCTURES ----
@@ -101,6 +110,8 @@ struct PointLight {
    vec3 position;
    vec3 color;
    float intensity;
+   float linear;
+   float quadratic;
 };
 
 struct SpotLight {
@@ -137,6 +148,9 @@ uniform HDRSettings hdrSettings;
 
 // Shadow quality uniforms
 uniform ShadowSettings shadowSettings;
+
+// Material settings uniforms
+uniform MaterialSettings materialSettings;
 
 // Emissive lighting uniform
 uniform float emissiveIntensity;
@@ -463,6 +477,53 @@ float roughnessToShininess(float roughness) {
     return (2.0 / (roughness * roughness)) - 2.0;
 }
 
+// ---- PBR BRDF FUNCTIONS ----
+// Normal Distribution Function (GGX/Trowbridge-Reitz)
+float DistributionGGX(vec3 N, vec3 H, float roughness) {
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float NdotH = max(dot(N, H), 0.0);
+    float NdotH2 = NdotH * NdotH;
+
+    float num = a2;
+    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
+    denom = 3.14159265359 * denom * denom;
+
+    return num / denom;
+}
+
+// Geometry function using Schlick-GGX approximation
+float GeometrySchlickGGX(float NdotV, float roughness) {
+    float r = (roughness + 1.0);
+    float k = (r * r) / 8.0;
+
+    float num = NdotV;
+    float denom = NdotV * (1.0 - k) + k;
+
+    return num / denom;
+}
+
+// Smith's method for geometry function
+float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
+    float NdotV = max(dot(N, V), 0.0);
+    float NdotL = max(dot(N, L), 0.0);
+    float ggx2 = GeometrySchlickGGX(NdotV, roughness);
+    float ggx1 = GeometrySchlickGGX(NdotL, roughness);
+
+    return ggx1 * ggx2;
+}
+
+// Fresnel equation using Schlick's approximation
+vec3 fresnelSchlick(float cosTheta, vec3 F0) {
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+// Enhanced Fresnel for roughness
+vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness) {
+    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+
 // Enhanced material property calculation with PBR support
 struct EnhancedMaterialProperties {
     vec3 albedo;
@@ -487,9 +548,18 @@ EnhancedMaterialProperties calculateMaterialProperties(vec2 texCoords) {
     // PBR material properties
     props.metallic = getMetallicValue(texCoords);
     props.roughness = getRoughnessValue(texCoords);
-    
-    // Calculate F0 based on metallic workflow
-    props.F0 = calculateF0(props.albedo, props.metallic);
+
+    // Calculate F0 based on metallic workflow (LearnOpenGL standard)
+    vec3 F0 = vec3(0.04); // Base reflectance for dielectrics
+    props.F0 = mix(F0, props.albedo, props.metallic); // Metals use albedo as F0
+
+    // Calculate proper albedo for PBR (metals use albedo as F0, dielectrics keep their color)
+    // For metals, the albedo becomes the F0 value, and diffuse contribution is removed
+    props.albedo = props.albedo;
+
+    // DEBUG: Clamp values to ensure they're in valid range
+    props.metallic = clamp(props.metallic, 0.0, 1.0);
+    props.roughness = clamp(props.roughness, 0.01, 1.0); // Avoid zero roughness
     
     // Convert roughness to shininess for Blinn-Phong
     props.shininess = max(roughnessToShininess(props.roughness), material.shininess);
@@ -627,107 +697,6 @@ float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir) {
 }
 
 // ---- POINT SHADOW CALCULATION ----
-float PointShadowCalculation(vec3 fragPos, vec3 lightPosition, int lightIndex) {
-    if (!enableShadows) return 0.0;
-
-    // Get vector between fragment and light position (without offset first)
-    vec3 fragToLight = fragPos - lightPosition;
-    vec3 lightDir = normalize(fragToLight);
-
-    // Calculate surface normal
-    vec3 normal = normalize(fs_in.Normal);
-
-    // Calculate slope-based bias to handle surfaces at different angles
-    float cosTheta = dot(normal, -lightDir);
-    cosTheta = clamp(cosTheta, 0.0, 1.0);
-
-    // Slope-based bias: more bias for surfaces at steep angles to light
-    float baseBias = 0.002;
-    float maxBias = 0.02;
-    float slopeBias = baseBias + maxBias * (1.0 - cosTheta);
-
-    // Normal offset bias - push sample point towards light along normal
-    // Use larger offset for surfaces more perpendicular to light direction
-    float normalOffsetScale = 0.02 + 0.08 * (1.0 - cosTheta);
-    vec3 offsetPos = fragPos + normal * normalOffsetScale;
-
-    // Recalculate fragment to light vector with offset position
-    vec3 offsetFragToLight = offsetPos - lightPosition;
-
-    // Sample from the depth map using the offset position
-    float closestDepth = texture(pointShadowMaps, vec4(offsetFragToLight, float(lightIndex))).r;
-
-    // Transform back to original depth value
-    closestDepth *= far_plane;
-
-    // Current depth from offset position
-    float currentDepth = length(offsetFragToLight);
-
-    // Variable quality PCF based on shadow settings
-    float shadow = 0.0;
-    
-    // Get sample count based on shadow quality
-    int kernelSize = shadowSettings.pcfKernelSize > 0 ? shadowSettings.pcfKernelSize : 3;
-    int sampleCount;
-    float diskRadius;
-    
-    if (kernelSize <= 3) {
-        // Low quality: 8 samples
-        sampleCount = 8;
-        diskRadius = 0.01;
-    } else if (kernelSize <= 5) {
-        // Medium quality: 20 samples
-        sampleCount = 20;
-        diskRadius = 0.02;
-    } else if (kernelSize <= 7) {
-        // High quality: 32 samples
-        sampleCount = 32;
-        diskRadius = 0.025;
-    } else {
-        // Ultra quality: 64 samples
-        sampleCount = 64;
-        diskRadius = 0.03;
-    }
-    
-    // Sample offsets for different quality levels
-    vec3 sampleOffsets[64] = vec3[]
-    (
-       // First 8 samples (Low quality)
-       vec3( 1,  1,  1), vec3( 1, -1,  1), vec3(-1, -1,  1), vec3(-1,  1,  1),
-       vec3( 1,  1, -1), vec3( 1, -1, -1), vec3(-1, -1, -1), vec3(-1,  1, -1),
-       // Next 12 samples (Medium quality - total 20)
-       vec3( 1,  1,  0), vec3( 1, -1,  0), vec3(-1, -1,  0), vec3(-1,  1,  0),
-       vec3( 1,  0,  1), vec3(-1,  0,  1), vec3( 1,  0, -1), vec3(-1,  0, -1),
-       vec3( 0,  1,  1), vec3( 0, -1,  1), vec3( 0, -1, -1), vec3( 0,  1, -1),
-       // Next 12 samples (High quality - total 32)
-       vec3( 2,  0,  0), vec3(-2,  0,  0), vec3( 0,  2,  0), vec3( 0, -2,  0),
-       vec3( 0,  0,  2), vec3( 0,  0, -2), vec3( 1,  2,  1), vec3(-1, -2, -1),
-       vec3( 2,  1, -1), vec3(-2, -1,  1), vec3( 1, -1,  2), vec3(-1,  1, -2),
-       // Next 32 samples (Ultra quality - total 64)
-       vec3( 2,  2,  0), vec3(-2, -2,  0), vec3( 2, -2,  0), vec3(-2,  2,  0),
-       vec3( 2,  0,  2), vec3(-2,  0, -2), vec3( 2,  0, -2), vec3(-2,  0,  2),
-       vec3( 0,  2,  2), vec3( 0, -2, -2), vec3( 0,  2, -2), vec3( 0, -2,  2),
-       vec3( 1,  2,  2), vec3(-1, -2, -2), vec3( 1, -2,  2), vec3(-1,  2, -2),
-       vec3( 2,  1,  2), vec3(-2, -1, -2), vec3( 2, -1,  2), vec3(-2,  1, -2),
-       vec3( 2,  2,  1), vec3(-2, -2, -1), vec3( 2, -2,  1), vec3(-2,  2, -1),
-       vec3( 3,  0,  0), vec3(-3,  0,  0), vec3( 0,  3,  0), vec3( 0, -3,  0),
-       vec3( 0,  0,  3), vec3( 0,  0, -3), vec3( 1,  1,  3), vec3(-1, -1, -3)
-    );
-
-    for(int i = 0; i < sampleCount; ++i)
-    {
-        vec3 sampleDir = offsetFragToLight + sampleOffsets[i] * diskRadius;
-        float pcfDepth = texture(pointShadowMaps, vec4(sampleDir, float(lightIndex))).r * far_plane;
-        shadow += currentDepth - slopeBias > pcfDepth ? 1.0 : 0.0;
-    }
-    shadow /= float(sampleCount);
-
-    // Distance-based fade near far plane
-    float fadeFactor = 1.0 - smoothstep(far_plane * 0.85, far_plane, currentDepth);
-    shadow *= fadeFactor;
-
-    return shadow;
-}
 
 // Poisson disk sampling pattern for PCSS and enhanced shadow sampling
 const vec2 poissonDisk[64] = vec2[](
@@ -755,6 +724,146 @@ const vec2 poissonDisk[64] = vec2[](
     vec2(-0.178564, -0.596057)
 );
 
+// Point light PCF filter using Poisson disk sampling
+float PointPCF_Filter(vec3 fragToLight, int lightIndex, float filterRadius, float zReceiver, float bias) {
+    int pcfSamples = 32;
+    float sum = 0.0;
+
+    // Normalize the light direction for consistent sampling
+    vec3 lightDir = normalize(fragToLight);
+    float lightDistance = length(fragToLight);
+
+    // Create two perpendicular vectors to the light direction for 3D sampling
+    vec3 up = abs(lightDir.z) < 0.999 ? vec3(0, 0, 1) : vec3(1, 0, 0);
+    vec3 tangent = normalize(cross(up, lightDir));
+    vec3 bitangent = cross(lightDir, tangent);
+
+    // Scale filter radius based on distance to prevent over-sampling
+    float adaptiveRadius = filterRadius * clamp(lightDistance / far_plane, 0.1, 1.0);
+
+    for(int i = 0; i < pcfSamples; i++) {
+        // Create 3D offset using Poisson disk pattern in tangent space
+        vec2 diskSample = poissonDisk[i] * adaptiveRadius;
+
+        // Convert 2D disk sample to 3D sphere sample
+        vec3 offset = diskSample.x * tangent +
+                     diskSample.y * bitangent +
+                     (sin(float(i) * 2.43) * 0.3 * adaptiveRadius) * lightDir;
+
+        vec3 sampleDir = fragToLight + offset;
+        float shadowMapDepth = texture(pointShadowMaps, vec4(sampleDir, float(lightIndex))).r * far_plane;
+        float sampleDistance = length(sampleDir);
+
+        sum += (sampleDistance - bias > shadowMapDepth) ? 0.0 : 1.0;
+    }
+
+    return sum / float(pcfSamples);
+}
+
+// Point light blocker search
+float findPointBlockerDistance(vec3 fragToLight, int lightIndex, float zReceiver, float lightSize) {
+    int blockerSearchSamples = 16;
+    float blockerSum = 0.0;
+    int numBlockers = 0;
+
+    vec3 lightDir = normalize(fragToLight);
+    float lightDistance = length(fragToLight);
+
+    // Create tangent space for consistent sampling
+    vec3 up = abs(lightDir.z) < 0.999 ? vec3(0, 0, 1) : vec3(1, 0, 0);
+    vec3 tangent = normalize(cross(up, lightDir));
+    vec3 bitangent = cross(lightDir, tangent);
+
+    // Much smaller search radius for blocker search
+    float searchRadius = lightSize * 0.02;
+    searchRadius = clamp(searchRadius, 0.005, 0.03);
+
+    for(int i = 0; i < blockerSearchSamples; i++) {
+        vec2 diskSample = poissonDisk[i] * searchRadius;
+
+        vec3 offset = diskSample.x * tangent +
+                     diskSample.y * bitangent +
+                     (sin(float(i) * 2.43) * 0.2 * searchRadius) * lightDir;
+
+        vec3 sampleDir = fragToLight + offset;
+        float shadowMapDepth = texture(pointShadowMaps, vec4(sampleDir, float(lightIndex))).r * far_plane;
+
+        if(shadowMapDepth < zReceiver) {
+            blockerSum += shadowMapDepth;
+            numBlockers++;
+        }
+    }
+
+    return (numBlockers > 0) ? blockerSum / float(numBlockers) : -1.0;
+}
+
+// Point light penumbra size calculation
+float pointPenumbraSize(float zReceiver, float zBlocker, float lightSize) {
+    return lightSize * (zReceiver - zBlocker) / zBlocker;
+}
+
+float PointShadowCalculation(vec3 fragPos, vec3 lightPosition, int lightIndex) {
+    if (!enableShadows) return 0.0;
+
+    // Get vector between fragment and light position
+    vec3 fragToLight = fragPos - lightPosition;
+    vec3 lightDir = normalize(fragToLight);
+    vec3 normal = normalize(fs_in.Normal);
+
+    // Calculate bias
+    float cosTheta = dot(normal, -lightDir);
+    cosTheta = clamp(cosTheta, 0.0, 1.0);
+    float baseBias = 0.002;
+    float maxBias = 0.02;
+    float adaptiveBias = baseBias + maxBias * (1.0 - cosTheta);
+
+    // Normal offset to reduce self-shadowing
+    float normalOffsetScale = 0.02 + 0.08 * (1.0 - cosTheta);
+    vec3 offsetPos = fragPos + normal * normalOffsetScale;
+    vec3 offsetFragToLight = offsetPos - lightPosition;
+
+    float currentDepth = length(offsetFragToLight);
+
+    // Use PCSS approach similar to directional lights
+    if(shadowSettings.enablePCSS) {
+        // Step 1: Blocker search
+        float avgBlockerDistance = findPointBlockerDistance(offsetFragToLight, lightIndex, currentDepth, shadowSettings.lightSize);
+
+        if(avgBlockerDistance == -1.0) return 0.0; // No shadow
+
+        // Step 2: Penumbra size
+        float penumbraRatio = pointPenumbraSize(currentDepth, avgBlockerDistance, shadowSettings.lightSize);
+
+        // Step 3: PCF with variable filter size
+        float filterRadius = penumbraRatio * shadowSettings.lightSize * 0.015 * shadowSettings.shadowSoftness;
+        filterRadius = clamp(filterRadius, 0.004 * shadowSettings.shadowSoftness, 0.025 * shadowSettings.shadowSoftness);
+
+        float shadow = 1.0 - PointPCF_Filter(offsetFragToLight, lightIndex, filterRadius, currentDepth, adaptiveBias);
+
+        // Distance-based fade near far plane
+        float fadeFactor = 1.0 - smoothstep(far_plane * 0.85, far_plane, currentDepth);
+        shadow *= fadeFactor;
+
+        return shadow;
+    } else {
+        // Fallback to improved standard PCF using Poisson disk
+        int kernelSize = shadowSettings.pcfKernelSize > 0 ? shadowSettings.pcfKernelSize : 3;
+        float diskRadius = (0.008 + (kernelSize - 3) * 0.003) * shadowSettings.shadowSoftness;
+
+        // Distance-based radius scaling
+        float distance = currentDepth / far_plane;
+        diskRadius *= (1.0 + distance);
+
+        float shadow = 1.0 - PointPCF_Filter(offsetFragToLight, lightIndex, diskRadius, currentDepth, adaptiveBias);
+
+        // Distance-based fade near far plane
+        float fadeFactor = 1.0 - smoothstep(far_plane * 0.85, far_plane, currentDepth);
+        shadow *= fadeFactor;
+
+        return shadow;
+    }
+}
+
 // PCSS for point lights (simplified version)
 float calculatePointPCSSShadow(vec3 fragPos, vec3 lightPosition, int lightIndex) {
     if(!shadowSettings.enablePCSS) {
@@ -776,8 +885,8 @@ float calculatePointPCSSShadow(vec3 fragPos, vec3 lightPosition, int lightIndex)
     sampleCount = int(mix(8.0, 32.0, distanceFactor));
     
     // Variable disk radius based on light size and distance
-    float diskRadius = shadowSettings.lightSize * (currentDepth / far_plane) * 0.05;
-    diskRadius = clamp(diskRadius, 0.01, 0.1);
+    float diskRadius = shadowSettings.lightSize * (currentDepth / far_plane) * 0.05 * shadowSettings.shadowSoftness;
+    diskRadius = clamp(diskRadius, 0.01 * shadowSettings.shadowSoftness, 0.1 * shadowSettings.shadowSoftness);
     
     // Bias calculation
     float cosTheta = dot(normal, -lightDir);
@@ -1075,6 +1184,91 @@ vec3 calculateEnvironmentReflection(vec3 normal, float reflectivity) {
 
 vec3 calculateAmbientFromSkybox(vec3 normal) {
     return texture(skybox, normal).rgb * skyboxIntensity;
+}
+
+// ---- PBR LIGHTING FUNCTIONS ----
+// Calculate PBR lighting for a single light source
+vec3 calculatePBRLighting(vec3 lightColor, vec3 lightDir, vec3 viewDir, vec3 normal,
+                         vec3 albedo, float metallic, float roughness, vec3 F0, float attenuation) {
+    vec3 N = normalize(normal);
+    vec3 V = normalize(viewDir);
+    vec3 L = normalize(lightDir);
+    vec3 H = normalize(V + L);
+
+    // Calculate radiance
+    vec3 radiance = lightColor * attenuation;
+
+    // Calculate BRDF components
+    float NDF = DistributionGGX(N, H, roughness);
+    float G = GeometrySmith(N, V, L, roughness);
+    vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0);
+
+    // Calculate specular BRDF
+    vec3 numerator = NDF * G * F;
+    float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001; // Add small value to prevent divide by zero
+    vec3 specular = numerator / denominator;
+
+    // Calculate diffuse component
+    vec3 kS = F; // Specular contribution
+    vec3 kD = vec3(1.0) - kS; // Diffuse contribution
+    kD *= 1.0 - metallic; // Metals don't have diffuse
+
+
+    // Lambert BRDF
+    float NdotL = max(dot(N, L), 0.0);
+    vec3 diffuse = kD * albedo / 3.14159265359;
+
+    // Final lighting contribution
+    return (diffuse + specular) * radiance * NdotL;
+}
+
+// PBR point light calculation
+vec3 CalcPBRPointLight(PointLight light, int lightIndex, vec3 normal, vec3 fragPos, vec3 viewDir,
+                       vec3 albedo, float metallic, float roughness, vec3 F0) {
+    vec3 lightDir = light.position - fragPos;
+    float distance = length(lightDir);
+    lightDir = normalize(lightDir);
+
+    // Calculate attenuation
+    float attenuation = 1.0 / (1.0 + light.linear * distance + light.quadratic * (distance * distance));
+
+    // Calculate shadow
+    float shadow = 0.0;
+    if (enableShadows) {
+        if(shadowSettings.enablePCSS) {
+            shadow = calculatePointPCSSShadow(fragPos, light.position, lightIndex);
+        } else {
+            shadow = PointShadowCalculation(fragPos, light.position, lightIndex);
+        }
+    }
+
+    // Apply shadow and intensity
+    vec3 lighting = calculatePBRLighting(light.color, lightDir, viewDir, normal,
+                                        albedo, metallic, roughness, F0, attenuation);
+
+    return lighting * (1.0 - shadow) * light.intensity;
+}
+
+// PBR directional light calculation
+vec3 CalcPBRDirLight(Sun sun, vec3 normal, vec3 viewDir,
+                     vec3 albedo, float metallic, float roughness, vec3 F0) {
+    vec3 lightDir = normalize(-sun.direction);
+
+    // Calculate shadow
+    float shadow = 0.0;
+    if (enableShadows) {
+        if(shadowSettings.enablePCSS) {
+            shadow = calculatePCSSShadow(shadowMap, fs_in.FragPosLightSpace, normal, lightDir);
+        } else {
+            shadow = ShadowCalculation(fs_in.FragPosLightSpace, normal, lightDir);
+        }
+    }
+
+    // Apply lighting
+    vec3 lighting = calculatePBRLighting(sun.color, lightDir, viewDir, normal,
+                                        albedo, metallic, roughness, F0, 1.0);
+
+    return lighting * (1.0 - shadow) * sun.intensity;
 }
 
 // ---- VOXEL CONE TRACING CORE FUNCTIONS ----
@@ -1731,32 +1925,45 @@ void main() {
         
         // Initialize HDR color accumulation for shadow mapping
         hdrColor = vec3(0.0);
+
+        // Add ambient lighting component for PBR
+        if (materialSettings.enablePBR) {
+            // Simple ambient for PBR - would be replaced by IBL in full implementation
+            vec3 ambient = vec3(0.03) * matProps.albedo;
+            float ao = getAmbientOcclusion(fs_in.TexCoords);
+            hdrColor += ambient * ao;
+        }
         
         // Calculate directional light (sun) with shadows
         if (sun.enabled) {
-            // Apply shadows properly following LearnOpenGL approach
-            if (enableShadows) {
-                float shadow = calculatePCSSShadow(shadowMap, fs_in.FragPosLightSpace, normal, normalize(-sun.direction));
-                
-                // Calculate lighting components separately
-                vec3 lightDir = normalize(-sun.direction);
-                float diff = max(dot(normal, lightDir), 0.0);
-                vec3 halfwayDir = normalize(lightDir + viewDir);
-                float clampedShininess = max(material.shininess, 4.0);
-                float spec = pow(max(dot(normal, halfwayDir), 0.0), clampedShininess);
-                
-                // Energy-conserving shadow mapping lighting
-                vec3 ambient = sun.color * diffuseColor * 0.05;
-                vec3 diffuse = sun.color * diff * diffuseColor;
-                
-                // Scale specular contribution based on shininess
-                float specularScale = clampedShininess / (clampedShininess + 16.0);
-                vec3 specular = sun.color * spec * specularColor * specularScale;
-                
-                // Apply shadow only to diffuse and specular - accumulate in HDR
-                hdrColor += (ambient + (1.0 - shadow) * (diffuse + specular)) * sun.intensity;
+            if (materialSettings.enablePBR) {
+                // PBR directional lighting
+                hdrColor += CalcPBRDirLight(sun, normal, viewDir, matProps.albedo, matProps.metallic, matProps.roughness, matProps.F0);
             } else {
-                hdrColor += CalcDirLight(sun, normal, viewDir, diffuseColor, specularColor);
+                // Traditional Blinn-Phong lighting
+                if (enableShadows) {
+                    float shadow = calculatePCSSShadow(shadowMap, fs_in.FragPosLightSpace, normal, normalize(-sun.direction));
+
+                    // Calculate lighting components separately
+                    vec3 lightDir = normalize(-sun.direction);
+                    float diff = max(dot(normal, lightDir), 0.0);
+                    vec3 halfwayDir = normalize(lightDir + viewDir);
+                    float clampedShininess = max(material.shininess, 4.0);
+                    float spec = pow(max(dot(normal, halfwayDir), 0.0), clampedShininess);
+
+                    // Energy-conserving shadow mapping lighting
+                    vec3 ambient = sun.color * diffuseColor * 0.05;
+                    vec3 diffuse = sun.color * diff * diffuseColor;
+
+                    // Scale specular contribution based on shininess
+                    float specularScale = clampedShininess / (clampedShininess + 16.0);
+                    vec3 specular = sun.color * spec * specularColor * specularScale;
+
+                    // Apply shadow only to diffuse and specular - accumulate in HDR
+                    hdrColor += (ambient + (1.0 - shadow) * (diffuse + specular)) * sun.intensity;
+                } else {
+                    hdrColor += CalcDirLight(sun, normal, viewDir, diffuseColor, specularColor);
+                }
             }
         }
         
@@ -1769,12 +1976,18 @@ void main() {
             if (!isLightSignificant(lights[i].position, fs_in.FragPos, lights[i].intensity, LIGHT_SIGNIFICANCE_THRESHOLD)) {
                 continue;
             }
-            
+
             // Distance-based early termination
             float lightDistance = length(lights[i].position - fs_in.FragPos);
             if (lightDistance > 50.0 * lodFactor) continue;
-            
-            hdrColor += CalcPointLight(lights[i], i, normal, fs_in.FragPos, viewDir, diffuseColor, specularColor) * lodFactor;
+
+            if (materialSettings.enablePBR) {
+                // PBR point lighting
+                hdrColor += CalcPBRPointLight(lights[i], i, normal, fs_in.FragPos, viewDir, matProps.albedo, matProps.metallic, matProps.roughness, matProps.F0) * lodFactor;
+            } else {
+                // Traditional point lighting
+                hdrColor += CalcPointLight(lights[i], i, normal, fs_in.FragPos, viewDir, diffuseColor, specularColor) * lodFactor;
+            }
         }
         
         // Calculate spot lights with enhanced culling

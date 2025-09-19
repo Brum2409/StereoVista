@@ -1073,7 +1073,12 @@ void renderSettingsWindow() {
                     }
                     ImGui::SameLine(); DrawHelpMarker("Size of the light source for PCSS calculations");
                 }
-                
+
+                if (ImGui::SliderFloat("Shadow Softness", &preferences.shadowSettings.shadowSoftness, 0.1f, 30.0f, "%.2f")) {
+                    settingsChanged = true;
+                }
+                ImGui::SameLine(); DrawHelpMarker("Adjusts the softness of shadow edges (affects both standard PCF and PCSS)");
+
                 ImGui::Spacing();
                 DrawSectionHeader("Material Enhancement");
                 
@@ -1082,47 +1087,6 @@ void renderSettingsWindow() {
                 }
                 ImGui::SameLine(); DrawHelpMarker("Physically Based Rendering for realistic materials");
                 
-                if (ImGui::Checkbox("Enable Ambient Occlusion", &preferences.materialSettings.enableAO)) {
-                    settingsChanged = true;
-                }
-                ImGui::SameLine(); DrawHelpMarker("Use ambient occlusion maps for enhanced depth");
-                
-                if (ImGui::Checkbox("Enable Normal Mapping", &preferences.materialSettings.enableNormalMapping)) {
-                    settingsChanged = true;
-                }
-                ImGui::SameLine(); DrawHelpMarker("Use normal maps for surface detail");
-                
-                if (preferences.materialSettings.enableNormalMapping) {
-                    if (ImGui::SliderFloat("Normal Scale", &preferences.materialSettings.normalScale, 0.0f, 2.0f, "%.2f")) {
-                        settingsChanged = true;
-                    }
-                    ImGui::SameLine(); DrawHelpMarker("Intensity of normal map effect");
-                }
-                
-                if (ImGui::Checkbox("Enable Parallax Mapping", &preferences.materialSettings.enableParallaxMapping)) {
-                    settingsChanged = true;
-                }
-                ImGui::SameLine(); DrawHelpMarker("Use height maps for surface displacement");
-                
-                if (preferences.materialSettings.enableParallaxMapping) {
-                    if (ImGui::SliderFloat("Height Scale", &preferences.materialSettings.heightScale, 0.0f, 0.1f, "%.4f")) {
-                        settingsChanged = true;
-                    }
-                    ImGui::SameLine(); DrawHelpMarker("Strength of parallax displacement effect");
-                }
-                
-                ImGui::Spacing();
-                DrawSectionHeader("Default Material Properties");
-                
-                if (ImGui::SliderFloat("Metallic Factor", &preferences.materialSettings.metallicFactor, 0.0f, 1.0f, "%.2f")) {
-                    settingsChanged = true;
-                }
-                ImGui::SameLine(); DrawHelpMarker("Default metallic value for materials without metallic maps");
-                
-                if (ImGui::SliderFloat("Roughness Factor", &preferences.materialSettings.roughnessFactor, 0.0f, 1.0f, "%.2f")) {
-                    settingsChanged = true;
-                }
-                ImGui::SameLine(); DrawHelpMarker("Default roughness value for materials without roughness maps");
             }
             else if (preferences.lightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
                 ImGui::Spacing();
@@ -2375,8 +2339,41 @@ void renderModelManipulationPanel(Engine::Model& model, Engine::Shader* shader) 
     }
 
     if (ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::ColorEdit3("Base Color", glm::value_ptr(model.color));
-        ImGui::SliderFloat("Shininess", &model.shininess, 1.0f, 90.0f);
+        if (ImGui::ColorEdit3("Base Color", glm::value_ptr(model.color))) {
+            // Auto-update F0 when color changes (if PBR is enabled)
+            if (preferences.materialSettings.enablePBR) {
+                model.F0 = glm::mix(glm::vec3(0.04f), model.color, model.metallicFactor);
+            }
+        }
+
+        // PBR Material Properties
+        if (preferences.materialSettings.enablePBR) {
+            ImGui::Spacing();
+            DrawSectionHeader("PBR Properties");
+
+            if (ImGui::SliderFloat("Metallic", &model.metallicFactor, 0.0f, 1.0f, "%.3f")) {
+                // Auto-update F0 based on metallic workflow
+                model.F0 = glm::mix(glm::vec3(0.04f), model.color, model.metallicFactor);
+            }
+            ImGui::SameLine(); DrawHelpMarker("0.0 = Dielectric (plastic, wood)\n1.0 = Metal (iron, gold)");
+
+            ImGui::SliderFloat("Roughness", &model.roughnessFactor, 0.0f, 1.0f, "%.3f");
+            ImGui::SameLine(); DrawHelpMarker("0.0 = Mirror-like\n1.0 = Completely rough");
+
+            ImGui::ColorEdit3("F0 (Base Reflectance)", glm::value_ptr(model.F0));
+            ImGui::SameLine(); DrawHelpMarker("Fresnel reflectance at normal incidence\nUsually 0.04 for dielectrics, metal color for metals");
+
+            ImGui::SliderFloat("Normal Intensity", &model.normalScale, 0.0f, 2.0f, "%.2f");
+            ImGui::SameLine(); DrawHelpMarker("Intensity of normal mapping effect");
+
+            ImGui::SliderFloat("Height Scale", &model.heightScale, 0.0f, 0.1f, "%.4f");
+            ImGui::SameLine(); DrawHelpMarker("Scale for parallax mapping height");
+
+        } else {
+            // Traditional material properties
+            ImGui::SliderFloat("Shininess", &model.shininess, 1.0f, 90.0f);
+        }
+
         ImGui::SliderFloat("Emissive", &model.emissive, 0.0f, 1.0f);
 
         if (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
@@ -2435,6 +2432,15 @@ void renderModelManipulationPanel(Engine::Model& model, Engine::Shader* shader) 
         textureLoadButton("Load Diffuse", "texture_diffuse");
         textureLoadButton("Load Normal", "texture_normal");
         textureLoadButton("Load Specular", "texture_specular");
+
+        if (preferences.materialSettings.enablePBR) {
+            ImGui::Spacing();
+            ImGui::Text("PBR Textures:");
+            textureLoadButton("Load Metallic", "texture_metallic");
+            textureLoadButton("Load Roughness", "texture_roughness");
+            textureLoadButton("Load AO", "texture_ao");
+            textureLoadButton("Load Height", "texture_height");
+        }
     }
 
     ImGui::Spacing();

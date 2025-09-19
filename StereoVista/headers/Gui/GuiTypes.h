@@ -120,6 +120,7 @@ namespace GUI {
             int pcfKernelSize = 3; // 3, 5, 7, or 9
             bool enablePCSS = false;
             float lightSize = 0.1f; // For PCSS calculations
+            float shadowSoftness = 1.0f; // Softness multiplier for shadow filtering
             bool enableCascades = false;
             int numCascades = 4;
             float cascadeSplitLambda = 0.5f;

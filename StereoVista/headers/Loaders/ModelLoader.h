@@ -75,6 +75,14 @@ namespace Engine {
         float shininess = 1.0f;
         float emissive = 0.0f;
 
+        // PBR Material Properties
+        float metallicFactor = 0.0f;         // Metallic/Non-metallic (0.0 = dielectric, 1.0 = metal)
+        float roughnessFactor = 0.5f;        // Surface roughness (0.0 = mirror, 1.0 = completely rough)
+        glm::vec3 F0 = glm::vec3(0.04f);     // Base reflectance (Fresnel reflectance at normal incidence)
+        float normalScale = 1.0f;            // Normal map intensity
+        float heightScale = 0.02f;           // Parallax mapping height scale
+
+        // VCT Material Properties (legacy)
         float diffuseReflectivity = 0.8f;    // Controls strength of diffuse reflection
         glm::vec3 specularColor = glm::vec3(1.0f); // Specular color (default white)
         float specularDiffusion = 0.5f;      // Controls glossiness/roughness
@@ -158,6 +166,30 @@ namespace Engine {
             if (meshes.empty()) return false;
             for (const auto& texture : meshes[0].textures) {
                 if (texture.type == "texture_ao") return true;
+            }
+            return false;
+        }
+
+        bool hasMetallicMap() const {
+            if (meshes.empty()) return false;
+            for (const auto& texture : meshes[0].textures) {
+                if (texture.type == "texture_metallic") return true;
+            }
+            return false;
+        }
+
+        bool hasRoughnessMap() const {
+            if (meshes.empty()) return false;
+            for (const auto& texture : meshes[0].textures) {
+                if (texture.type == "texture_roughness") return true;
+            }
+            return false;
+        }
+
+        bool hasHeightMap() const {
+            if (meshes.empty()) return false;
+            for (const auto& texture : meshes[0].textures) {
+                if (texture.type == "texture_height") return true;
             }
             return false;
         }

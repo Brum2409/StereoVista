@@ -541,6 +541,9 @@ namespace Engine {
         shader.setBool("material.hasNormalMap", hasNormalMap());
         shader.setBool("material.hasSpecularMap", hasSpecularMap());
         shader.setBool("material.hasAOMap", hasAOMap());
+        shader.setBool("material.hasMetallicMap", hasMetallicMap());
+        shader.setBool("material.hasRoughnessMap", hasRoughnessMap());
+        shader.setBool("material.hasHeightMap", hasHeightMap());
         shader.setFloat("material.hasTexture", !meshes.empty() && !meshes[0].textures.empty() ? 1.0f : 0.0f);
 
         // Explicitly set material properties before drawing
@@ -548,6 +551,14 @@ namespace Engine {
         shader.setVec3("material.specularColor", specularColor);
         shader.setFloat("material.shininess", shininess);
         shader.setFloat("material.emissive", emissive);
+
+        // PBR material properties are now set in main.cpp
+
+        // Enhanced emissive properties
+        shader.setVec3("material.emissiveColor", glm::vec3(0.0f)); // Default no emissive color
+        shader.setFloat("material.emissiveStrength", 1.0f);
+
+        // VCT material properties (legacy)
         shader.setFloat("material.diffuseReflectivity", diffuseReflectivity);
         shader.setFloat("material.specularReflectivity", specularReflectivity);
 

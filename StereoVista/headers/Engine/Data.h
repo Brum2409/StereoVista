@@ -282,6 +282,8 @@ namespace Engine {
         glm::vec3 position;
         glm::vec3 color;
         float intensity;
+        float linear = 0.09f;        // Linear attenuation coefficient
+        float quadratic = 0.032f;    // Quadratic attenuation coefficient
         glm::mat4 lightSpaceMatrix;
         bool castShadows = true;
     };
