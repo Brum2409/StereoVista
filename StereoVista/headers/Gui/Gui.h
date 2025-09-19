@@ -10,6 +10,7 @@
 #include "Loaders/ModelLoader.h"
 #include "Cursors/CursorPresets.h"
 #include "Loaders/PointCloudLoader.h"
+#include "Gui/CursorPreview3D.h"
 #include <portable-file-dialogs.h>
 
 // Forward declarations

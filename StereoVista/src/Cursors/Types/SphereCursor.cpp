@@ -9,11 +9,6 @@ namespace Cursor {
         m_vbo(0),
         m_ebo(0),
         m_shader(nullptr),
-        m_scalingMode(GUI::CURSOR_CONSTRAINED_DYNAMIC),
-        m_fixedRadius(0.05f),
-        m_currentRadius(0.05f),
-        m_minDiff(0.01f),
-        m_maxDiff(0.1f),
         m_color(1.0f, 0.0f, 0.0f, 0.7f),
         m_transparency(0.7f),
         m_edgeSoftness(0.8f),
@@ -30,7 +25,7 @@ namespace Cursor {
     }
 
     void SphereCursor::initialize() {
-        generateMesh(m_fixedRadius, 32, 32);
+        generateMesh(getBaseSize(), 32, 32);
 
         glGenVertexArrays(1, &m_vao);
         glGenBuffers(1, &m_vbo);
@@ -82,8 +77,11 @@ namespace Cursor {
         m_shader->setMat4("view", view);
         m_shader->setVec3("viewPos", cameraPosition);
 
+        // Calculate current scale using the unified scaling system
+        float currentRadius = getBaseSize() * calculateScale(cameraPosition);
+
         glm::mat4 model = glm::translate(glm::mat4(1.0f), m_position);
-        model = glm::scale(model, glm::vec3(m_currentRadius));
+        model = glm::scale(model, glm::vec3(currentRadius));
 
         m_shader->setMat4("model", model);
         m_shader->setFloat("innerSphereFactor", m_innerSphereFactor);
@@ -159,36 +157,8 @@ namespace Cursor {
     }
 
     float SphereCursor::calculateRadius(const glm::vec3& cameraPosition) {
-        float distance = glm::distance(m_position, cameraPosition);
-
-        switch (m_scalingMode) {
-        case GUI::CURSOR_NORMAL:
-            m_currentRadius = m_fixedRadius;
-            break;
-
-        case GUI::CURSOR_FIXED:
-            m_currentRadius = m_fixedRadius * distance;
-            break;
-
-        case GUI::CURSOR_CONSTRAINED_DYNAMIC: {
-            float distanceFactor = std::sqrt(distance);
-            float defaultScreenSize = std::pow(m_fixedRadius, 2) * distanceFactor;
-            float minScreenSize = std::pow(m_fixedRadius - m_minDiff, 2) * distanceFactor;
-            float maxScreenSize = std::pow(m_fixedRadius + m_maxDiff, 2) * distanceFactor;
-            m_currentRadius = glm::clamp(m_currentRadius, minScreenSize, maxScreenSize);
-            break;
-        }
-
-        case GUI::CURSOR_LOGARITHMIC:
-            m_currentRadius = m_fixedRadius * (1.0f + std::log(distance));
-            break;
-
-        default:
-            m_currentRadius = m_fixedRadius * distance;
-            break;
-        }
-
-        return m_currentRadius;
+        // Use the unified scaling system from BaseCursor
+        return getBaseSize() * calculateScale(cameraPosition);
     }
 
     void SphereCursor::generateMesh(float radius, unsigned int rings, unsigned int sectors) {

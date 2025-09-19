@@ -17,6 +17,7 @@
 #include "Engine/SpaceMouseInput.h"
 #include "Gui/Gui.h"
 #include "Gui/GuiTypes.h"
+#include "Gui/CursorPreview3D.h"
 #include "../headers/Engine/BVH.h"
 #include "../headers/Engine/BVHDebug.h"
 #include "../headers/Engine/BloomRenderer.h"
@@ -186,6 +187,9 @@ static char loadFilename[256] = "scene.json"; // Buffer for loading scene filena
 std::string currentPresetName = "Default";
 bool isEditingPresetName = false;
 char editPresetNameBuffer[256] = "";
+
+// Cursor 3D Preview
+GUI::CursorPreview3D cursorPreview3D;
 
 // ---- Input and Interaction ----
 bool selectionMode = false;
@@ -4509,7 +4513,7 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 
                 // Temporarily set to normal mode to allow cursor position changes
                 // The cursor manager will set the final mode after position sync
-                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
             }
 
             leftMousePressed = false;

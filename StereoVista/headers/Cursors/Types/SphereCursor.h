@@ -21,10 +21,9 @@ namespace Cursor {
         void generateMesh(float radius, unsigned int rings, unsigned int sectors);
 
         // Getters and setters for specific properties
-        GUI::CursorScalingMode getScalingMode() const { return m_scalingMode; }
-        void setScalingMode(GUI::CursorScalingMode mode) { m_scalingMode = mode; }
-        float getFixedRadius() const { return m_fixedRadius; }
-        void setFixedRadius(float radius) { m_fixedRadius = radius; }
+        // Note: Scaling properties now inherited from BaseCursor
+        float getFixedRadius() const { return getBaseSize(); }
+        void setFixedRadius(float radius) { setBaseSize(radius); }
         const glm::vec4& getColor() const { return m_color; }
         void setColor(const glm::vec4& color) { m_color = color; }
         float getTransparency() const { return m_transparency; }
@@ -39,11 +38,8 @@ namespace Cursor {
         void setInnerSphereColor(const glm::vec4& color) { m_innerSphereColor = color; }
         float getInnerSphereFactor() const { return m_innerSphereFactor; }
         void setInnerSphereFactor(float factor) { m_innerSphereFactor = factor; }
-        float getMinDiff() const { return m_minDiff; }
-        void setMinDiff(float diff) { m_minDiff = diff; }
-        float getMaxDiff() const { return m_maxDiff; }
-        void setMaxDiff(float diff) { m_maxDiff = diff; }
-        float getCurrentRadius() const { return m_currentRadius; }
+        // Note: MinDiff, MaxDiff, and CurrentRadius now inherited from BaseCursor
+        float getCurrentRadius() const { return getBaseSize() * getCurrentScale(); }
 
         Engine::Shader* getShader() const { return m_shader; }
         GLuint getVAO() const { return m_vao; }
@@ -57,12 +53,7 @@ namespace Cursor {
         std::vector<unsigned int> m_indices;
         Engine::Shader* m_shader;
 
-        // Specific properties
-        GUI::CursorScalingMode m_scalingMode;
-        float m_fixedRadius;
-        float m_currentRadius;
-        float m_minDiff;
-        float m_maxDiff;
+        // Specific properties (scaling properties moved to BaseCursor)
         glm::vec4 m_color;
         float m_transparency;
         float m_edgeSoftness;

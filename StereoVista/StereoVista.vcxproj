@@ -199,6 +199,7 @@
     <ClCompile Include="src\Cursors\Types\PlaneCursor.cpp" />
     <ClCompile Include="src\Cursors\Types\SphereCursor.cpp" />
     <ClCompile Include="src\Core\CursorSynchronizer.cpp" />
+    <ClCompile Include="src\Gui\CursorPreview3D.cpp" />
     <ClCompile Include="src\Gui\GUI.cpp" />
   </ItemGroup>
   <ItemGroup>

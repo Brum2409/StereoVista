@@ -82,6 +82,7 @@ extern GUI::ApplicationPreferences preferences;
 extern std::string currentPresetName;
 extern bool isEditingPresetName;
 extern char editPresetNameBuffer[256];
+extern GUI::CursorPreview3D cursorPreview3D;
 
 // External function declarations
 extern void savePreferences();
@@ -270,6 +271,9 @@ bool InitializeGUI(GLFWwindow* window, bool isDarkTheme) {
 }
 
 void CleanupGUI() {
+    // Cleanup cursor preview
+    cursorPreview3D.cleanup();
+
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
@@ -2132,6 +2136,107 @@ void renderCursorSettingsWindow() {
     ImGui::Separator();
     ImGui::Spacing();
 
+    // 3D Preview Section
+    DrawSectionHeader("3D Preview");
+
+    // Initialize the preview if not already done
+    static bool previewInitialized = false;
+    if (!previewInitialized) {
+        cursorPreview3D.initialize(256, 256);
+        previewInitialized = true;
+    }
+
+    // Get the currently active cursor based on visibility
+    Cursor::BaseCursor* activeCursor = nullptr;
+    if (sphereCursor->isVisible()) {
+        activeCursor = sphereCursor;
+    } else if (fragmentCursor->isVisible()) {
+        activeCursor = fragmentCursor;
+    } else if (planeCursor->isVisible()) {
+        activeCursor = planeCursor;
+    }
+
+    if (activeCursor) {
+        // Render the independent preview
+        cursorPreview3D.render(activeCursor);
+
+        // Display the preview image
+        ImGui::Text("Current Cursor on Cube:");
+        ImVec2 previewSize(200, 200);
+        ImGui::Image((void*)(intptr_t)cursorPreview3D.getTextureID(), previewSize);
+
+        // Handle mouse interaction for rotation
+        if (ImGui::IsItemHovered() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+            ImVec2 mouseDelta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+            cursorPreview3D.updateRotation(mouseDelta.x, mouseDelta.y);
+            ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
+        }
+
+        ImGui::Text("Drag to rotate the preview");
+    } else {
+        ImGui::Text("No cursor is currently visible.");
+        ImGui::Text("Enable a cursor type below to see the preview.");
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Unified Scaling Section (applies to all cursor types)
+    DrawSectionHeader("Universal Scaling");
+    ImGui::Text("These settings apply to all enabled cursor types:");
+
+    // Get scaling mode from any active cursor (they should all be the same)
+    Cursor::BaseCursor* referenceCursor = nullptr;
+    if (sphereCursor->isVisible()) referenceCursor = sphereCursor;
+    else if (fragmentCursor->isVisible()) referenceCursor = fragmentCursor;
+    else if (planeCursor->isVisible()) referenceCursor = planeCursor;
+
+    if (referenceCursor) {
+        const char* scalingModes[] = { "Normal", "Fixed", "Constrained Dynamic", "Logarithmic" };
+        int currentMode = static_cast<int>(referenceCursor->getScalingMode());
+        if (ImGui::Combo("Scaling Mode", &currentMode, scalingModes, IM_ARRAYSIZE(scalingModes))) {
+            // Apply to all cursor types
+            GUI::CursorScalingMode mode = static_cast<GUI::CursorScalingMode>(currentMode);
+            sphereCursor->setScalingMode(mode);
+            fragmentCursor->setScalingMode(mode);
+            planeCursor->setScalingMode(mode);
+        }
+
+        if (currentMode == static_cast<int>(GUI::CursorScalingMode::CURSOR_FIXED)) {
+            float baseSize = referenceCursor->getBaseSize();
+            if (ImGui::SliderFloat("Base Size", &baseSize, 0.01f, 3.0f, "%.2f")) {
+                // Apply to all cursor types
+                sphereCursor->setBaseSize(baseSize);
+                fragmentCursor->setBaseSize(baseSize);
+                planeCursor->setBaseSize(baseSize);
+            }
+        }
+        else {
+            float minDiff = referenceCursor->getMinDiff();
+            if (ImGui::SliderFloat("Min Size Difference", &minDiff, 0.01f, 2.0f, "%.2f")) {
+                // Apply to all cursor types
+                sphereCursor->setMinDiff(minDiff);
+                fragmentCursor->setMinDiff(minDiff);
+                planeCursor->setMinDiff(minDiff);
+            }
+
+            float maxDiff = referenceCursor->getMaxDiff();
+            if (ImGui::SliderFloat("Max Size Difference", &maxDiff, 0.02f, 5.0f, "%.2f")) {
+                // Apply to all cursor types
+                sphereCursor->setMaxDiff(maxDiff);
+                fragmentCursor->setMaxDiff(maxDiff);
+                planeCursor->setMaxDiff(maxDiff);
+            }
+        }
+    } else {
+        ImGui::Text("Enable a cursor type to configure scaling settings.");
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
     // Cursor Type Tabs
     if (ImGui::BeginTabBar("CursorTypes")) {
 
@@ -2143,33 +2248,7 @@ void renderCursorSettingsWindow() {
             }
 
             if (sphereVisible) {
-                DrawSectionHeader("Size & Scaling");
-
-                const char* scalingModes[] = { "Fixed Size", "Dynamic (Depth-based)" };
-                int currentMode = static_cast<int>(sphereCursor->getScalingMode());
-                if (ImGui::Combo("Scaling", &currentMode, scalingModes, IM_ARRAYSIZE(scalingModes))) {
-                    sphereCursor->setScalingMode(static_cast<GUI::CursorScalingMode>(currentMode));
-                }
-
-                if (currentMode == static_cast<int>(GUI::CursorScalingMode::CURSOR_FIXED)) {
-                    float fixedRadius = sphereCursor->getFixedRadius();
-                    if (ImGui::SliderFloat("Radius", &fixedRadius, 0.01f, 3.0f, "%.2f")) {
-                        sphereCursor->setFixedRadius(fixedRadius);
-                    }
-                }
-                else {
-                    float minDiff = sphereCursor->getMinDiff();
-                    if (ImGui::SliderFloat("Min Size", &minDiff, 0.01f, 2.0f, "%.2f")) {
-                        sphereCursor->setMinDiff(minDiff);
-                    }
-
-                    float maxDiff = sphereCursor->getMaxDiff();
-                    if (ImGui::SliderFloat("Max Size", &maxDiff, 0.02f, 5.0f, "%.2f")) {
-                        sphereCursor->setMaxDiff(maxDiff);
-                    }
-                }
-
-                DrawSectionHeader("Appearance");
+                DrawSectionHeader("3D Sphere Settings");
 
                 glm::vec4 cursorColor = sphereCursor->getColor();
                 if (ImGui::ColorEdit3("Color", glm::value_ptr(cursorColor))) {

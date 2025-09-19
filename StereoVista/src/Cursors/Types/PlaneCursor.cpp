@@ -10,10 +10,10 @@ namespace Cursor {
         m_vbo(0),
         m_ebo(0),
         m_shader(nullptr),
-        m_diameter(0.5f),
         m_color(0.0f, 1.0f, 0.0f, 0.7f)
     {
         m_name = "PlaneCursor";
+        setBaseSize(0.5f);  // Set default diameter
     }
 
     PlaneCursor::~PlaneCursor() {
@@ -93,8 +93,11 @@ namespace Cursor {
             glm::vec4(0.0f, 0.0f, 0.0f, 1.0f)
         );
 
+        // Calculate current diameter using the unified scaling system
+        float currentDiameter = getBaseSize() * calculateScale(cameraPosition);
+
         model = model * rotation;
-        model = glm::scale(model, glm::vec3(m_diameter));
+        model = glm::scale(model, glm::vec3(currentDiameter));
 
         m_shader->setMat4("model", model);
         m_shader->setVec4("color", m_color);
