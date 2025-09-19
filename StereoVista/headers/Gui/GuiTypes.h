@@ -13,6 +13,7 @@ namespace Engine {
 namespace GUI {
     enum SkyboxType {
         SKYBOX_CUBEMAP,
+        SKYBOX_HDR,
         SKYBOX_SOLID_COLOR,
         SKYBOX_GRADIENT
     };
@@ -58,6 +59,7 @@ namespace GUI {
         glm::vec3 gradientTopColor = glm::vec3(0.1f, 0.1f, 0.3f);
         glm::vec3 gradientBottomColor = glm::vec3(0.7f, 0.7f, 1.0f);
         int selectedCubemap = 0;  // Index of the selected predefined cubemap
+        std::string hdrPath = "";  // Path to HDR file
     };
 
     struct CubemapPreset {
@@ -189,6 +191,7 @@ namespace GUI {
         glm::vec3 skyboxGradientTop = glm::vec3(0.1f, 0.1f, 0.3f);
         glm::vec3 skyboxGradientBottom = glm::vec3(0.7f, 0.7f, 1.0f);
         int selectedCubemap = 0;
+        std::string skyboxHdrPath = "";
 
         // Startup scene settings
         bool loadStartupScene = false;

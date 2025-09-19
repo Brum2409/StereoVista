@@ -89,6 +89,7 @@ void updateSpaceMouseCursorAnchor();
 PointCloud loadPointCloudFile(const std::string& filePath, size_t downsampleFactor = 1);
 
 void createDefaultCubemap();
+bool loadHDRSkybox(const std::string& hdrPath);
 void initSkybox();
 void setupPointShadowMapping();
 
@@ -800,6 +801,18 @@ void updateSkybox() {
         createGradientSkybox(skyboxConfig.gradientBottomColor, skyboxConfig.gradientTopColor);
         break;
 
+    case GUI::SKYBOX_HDR:
+        if (!skyboxConfig.hdrPath.empty()) {
+            if (!loadHDRSkybox(skyboxConfig.hdrPath)) {
+                // Fallback to default cubemap if HDR loading fails
+                createDefaultCubemap();
+            }
+        } else {
+            // No HDR path specified, fallback to default
+            createDefaultCubemap();
+        }
+        break;
+
     case GUI::SKYBOX_CUBEMAP:
     default:
         // Try to load the selected cubemap
@@ -920,6 +933,164 @@ void setupPointShadowMapping() {
     catch (const std::exception& e) {
         std::cerr << "Error loading point shadow shader: " << e.what() << std::endl;
     }
+}
+
+// Convert HDR equirectangular map to cubemap
+bool loadHDRSkybox(const std::string& hdrPath) {
+    // Load HDR image
+    stbi_set_flip_vertically_on_load(true);
+    int width, height, nrComponents;
+    float* data = stbi_loadf(hdrPath.c_str(), &width, &height, &nrComponents, 0);
+
+    if (!data) {
+        std::cerr << "Failed to load HDR texture: " << hdrPath << std::endl;
+        stbi_set_flip_vertically_on_load(false);
+        return false;
+    }
+
+    // Create HDR texture
+    unsigned int hdrTexture;
+    glGenTextures(1, &hdrTexture);
+    glBindTexture(GL_TEXTURE_2D, hdrTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, width, height, 0, GL_RGB, GL_FLOAT, data);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    stbi_image_free(data);
+    stbi_set_flip_vertically_on_load(false);
+
+    // Create cubemap
+    glGenTextures(1, &cubemapTexture);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
+    for (unsigned int i = 0; i < 6; ++i) {
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB16F, 512, 512, 0, GL_RGB, GL_FLOAT, nullptr);
+    }
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    // Create projection matrices for each cubemap face
+    glm::mat4 captureProjection = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, 10.0f);
+    glm::mat4 captureViews[] = {
+        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3( 1.0f,  0.0f,  0.0f), glm::vec3(0.0f, -1.0f,  0.0f)),
+        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(-1.0f,  0.0f,  0.0f), glm::vec3(0.0f, -1.0f,  0.0f)),
+        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3( 0.0f,  1.0f,  0.0f), glm::vec3(0.0f,  0.0f,  1.0f)),
+        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3( 0.0f, -1.0f,  0.0f), glm::vec3(0.0f,  0.0f, -1.0f)),
+        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3( 0.0f,  0.0f,  1.0f), glm::vec3(0.0f, -1.0f,  0.0f)),
+        glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3( 0.0f,  0.0f, -1.0f), glm::vec3(0.0f, -1.0f,  0.0f))
+    };
+
+    // Create equirectangular to cubemap shader
+    const char* vertexShaderSource = R"(
+        #version 330 core
+        layout (location = 0) in vec3 aPos;
+
+        out vec3 localPos;
+
+        uniform mat4 projection;
+        uniform mat4 view;
+
+        void main()
+        {
+            localPos = aPos;
+            gl_Position = projection * view * vec4(localPos, 1.0);
+        }
+    )";
+
+    const char* fragmentShaderSource = R"(
+        #version 330 core
+        out vec4 FragColor;
+        in vec3 localPos;
+
+        uniform sampler2D equirectangularMap;
+
+        const vec2 invAtan = vec2(0.1591, 0.3183);
+        vec2 SampleSphericalMap(vec3 v)
+        {
+            vec2 uv = vec2(atan(v.z, v.x), asin(v.y));
+            uv *= invAtan;
+            uv += 0.5;
+            return uv;
+        }
+
+        void main()
+        {
+            vec2 uv = SampleSphericalMap(normalize(localPos));
+            vec3 color = texture(equirectangularMap, uv).rgb;
+
+            FragColor = vec4(color, 1.0);
+        }
+    )";
+
+    // Compile shaders
+    GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(vertexShader, 1, &vertexShaderSource, nullptr);
+    glCompileShader(vertexShader);
+
+    GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(fragmentShader, 1, &fragmentShaderSource, nullptr);
+    glCompileShader(fragmentShader);
+
+    GLuint shaderProgram = glCreateProgram();
+    glAttachShader(shaderProgram, vertexShader);
+    glAttachShader(shaderProgram, fragmentShader);
+    glLinkProgram(shaderProgram);
+
+    // Create framebuffer
+    unsigned int captureFBO;
+    unsigned int captureRBO;
+    glGenFramebuffers(1, &captureFBO);
+    glGenRenderbuffers(1, &captureRBO);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, captureFBO);
+    glBindRenderbuffer(GL_RENDERBUFFER, captureRBO);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, 512, 512);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, captureRBO);
+
+    // Convert HDR equirectangular environment map to cubemap
+    glUseProgram(shaderProgram);
+    glUniform1i(glGetUniformLocation(shaderProgram, "equirectangularMap"), 0);
+    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(captureProjection));
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, hdrTexture);
+
+    glViewport(0, 0, 512, 512); // Set viewport to cubemap face size
+    glBindFramebuffer(GL_FRAMEBUFFER, captureFBO);
+
+    // Render to each cubemap face
+    for (unsigned int i = 0; i < 6; ++i) {
+        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(captureViews[i]));
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, cubemapTexture, 0);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        // Render cube
+        glBindVertexArray(skyboxVAO);
+        glDrawArrays(GL_TRIANGLES, 0, 36);
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    // Cleanup
+    glDeleteTextures(1, &hdrTexture);
+    glDeleteFramebuffers(1, &captureFBO);
+    glDeleteRenderbuffers(1, &captureRBO);
+    glDeleteShader(vertexShader);
+    glDeleteShader(fragmentShader);
+    glDeleteProgram(shaderProgram);
+
+    // Reset viewport
+    int viewport[4];
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+
+    std::cout << "HDR skybox loaded and converted: " << hdrPath << std::endl;
+    return true;
 }
 
 // Helper function to create a default colored cubemap when textures can't be loaded
@@ -1209,6 +1380,7 @@ void savePreferences() {
         skyboxConfig.gradientBottomColor.b
     };
     j["skybox"]["selectedCubemap"] = skyboxConfig.selectedCubemap;
+    j["skybox"]["hdrPath"] = skyboxConfig.hdrPath;
 
     // Startup scene settings
     j["startup"]["loadScene"] = preferences.loadStartupScene;
@@ -1262,6 +1434,7 @@ void savePreferences() {
     preferences.skyboxGradientTop = skyboxConfig.gradientTopColor;
     preferences.skyboxGradientBottom = skyboxConfig.gradientBottomColor;
     preferences.selectedCubemap = skyboxConfig.selectedCubemap;
+    preferences.skyboxHdrPath = skyboxConfig.hdrPath;
 
     // Save to file
     std::ofstream file("preferences.json");
@@ -1312,6 +1485,7 @@ void applyPreferencesToProgram() {
     skyboxConfig.gradientTopColor = preferences.skyboxGradientTop;
     skyboxConfig.gradientBottomColor = preferences.skyboxGradientBottom;
     skyboxConfig.selectedCubemap = preferences.selectedCubemap;
+    skyboxConfig.hdrPath = preferences.skyboxHdrPath;
 
     updateSkybox();
 
@@ -1511,6 +1685,7 @@ void loadPreferences() {
             }
 
             preferences.selectedCubemap = j["skybox"].value("selectedCubemap", 0);
+            preferences.skyboxHdrPath = j["skybox"].value("hdrPath", "");
         }
 
         // Startup scene settings

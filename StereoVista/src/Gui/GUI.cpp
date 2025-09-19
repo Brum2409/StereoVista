@@ -13,6 +13,7 @@
 #include "Engine/SpaceMouseInput.h"
 #include "imgui/imgui_sytle.h"
 #include "imgui/IconsFontAwesome5.h"
+#include "libs/portable-file-dialogs.h"
 #include <utility>
 
 using namespace GUI;
@@ -1472,7 +1473,7 @@ void renderSettingsWindow() {
         if (ImGui::BeginTabItem("Environment")) {
             DrawSectionHeader("Skybox");
 
-            const char* skyboxTypes[] = { "Cubemap", "Solid Color", "Gradient" };
+            const char* skyboxTypes[] = { "Cubemap", "HDR", "Solid Color", "Gradient" };
             int currentType = static_cast<int>(skyboxConfig.type);
             if (ImGui::Combo("Type", &currentType, skyboxTypes, IM_ARRAYSIZE(skyboxTypes))) {
                 skyboxConfig.type = static_cast<GUI::SkyboxType>(currentType);
@@ -1518,6 +1519,27 @@ void renderSettingsWindow() {
                     }
                 }
                 ImGui::SameLine(); DrawHelpMarker("Select a directory containing skybox textures (right.jpg, left.jpg, etc. OR posx.jpg, negx.jpg, etc.)");
+            }
+            else if (skyboxConfig.type == GUI::SKYBOX_HDR) {
+                ImGui::Text("HDR File:");
+                ImGui::SameLine();
+
+                // Display current HDR path or "None selected"
+                std::string displayPath = skyboxConfig.hdrPath.empty() ? "None selected" :
+                    skyboxConfig.hdrPath.substr(skyboxConfig.hdrPath.find_last_of("/\\") + 1);
+                ImGui::TextDisabled("%s", displayPath.c_str());
+
+                if (ImGui::Button("Browse HDR File...")) {
+                    auto selection = pfd::open_file("Select HDR environment map", ".",
+                        { "HDR Images", "*.hdr", "All Files", "*" }).result();
+                    if (!selection.empty()) {
+                        skyboxConfig.hdrPath = selection[0];
+                        updateSkybox();
+                        preferences.skyboxHdrPath = skyboxConfig.hdrPath;
+                        savePreferences();
+                    }
+                }
+                ImGui::SameLine(); DrawHelpMarker("Select an HDR (.hdr) equirectangular environment map");
             }
             else if (skyboxConfig.type == GUI::SKYBOX_SOLID_COLOR) {
                 if (ImGui::ColorEdit3("Color", glm::value_ptr(skyboxConfig.solidColor))) {
