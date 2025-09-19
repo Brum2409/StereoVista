@@ -19,6 +19,7 @@
 #include "Gui/GuiTypes.h"
 #include "../headers/Engine/BVH.h"
 #include "../headers/Engine/BVHDebug.h"
+#include "../headers/Engine/BloomRenderer.h"
 #include "Core/CursorSynchronizer.h"
 #include "Core/CursorSyncState.h"
 
@@ -33,6 +34,8 @@
 #include <openLinks.h>
 #include <glm/gtx/component_wise.hpp>
 #include <stb_image.h>
+#include <fstream>
+#include <iostream>
 
 
 using namespace Engine;
@@ -62,7 +65,7 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos);
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 
 // ---- Rendering Functions ----
-void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& view, Engine::Shader* shader, ImGuiViewportP* viewport, ImGuiWindowFlags windowFlags, GLFWwindow* window);
+void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& view, Engine::Shader* shader, ImGuiViewportP* viewport, ImGuiWindowFlags windowFlags, GLFWwindow* window, bool renderGUIFlag = true);
 void renderModels(Engine::Shader* shader);
 void renderPointClouds(Engine::Shader* shader);
 void renderLightVisualizations(Engine::Shader* shader);
@@ -98,6 +101,9 @@ bool rayIntersectsModel(const glm::vec3& rayOrigin, const glm::vec3& rayDirectio
 
 // ---- Cursor Synchronization Test Functions ----
 void testCursorSynchronization();
+
+// ---- Preferences Functions ----
+void savePreferences();
 void printCursorSyncDiagnostics();
 #pragma endregion
 
@@ -238,6 +244,9 @@ const unsigned int SHADOW_WIDTH_POINT = 1024, SHADOW_HEIGHT_POINT = 1024;
 Engine::Shader* pointShadowShader = nullptr;
 float far_plane = 50.0f;
 Engine::Shader* radianceShader = nullptr;
+
+// Bloom rendering system
+Engine::BloomRenderer* bloomRenderer = nullptr;
 
 GUI::LightingMode currentLightingMode = GUI::LIGHTING_SHADOW_MAPPING;
 bool enableShadows = true;
@@ -1210,6 +1219,32 @@ void savePreferences() {
     j["lighting"]["mode"] = static_cast<int>(preferences.lightingMode);
     j["lighting"]["enableShadows"] = preferences.enableShadows;
     
+    // Save HDR settings
+    j["hdr"]["enabled"] = preferences.hdrSettings.enabled;
+    j["hdr"]["exposure"] = preferences.hdrSettings.exposure;
+    j["hdr"]["bloomThreshold"] = preferences.hdrSettings.bloomThreshold;
+    j["hdr"]["bloomIntensity"] = preferences.hdrSettings.bloomIntensity;
+    j["hdr"]["toneMapOperator"] = preferences.hdrSettings.toneMapOperator;
+    j["hdr"]["enableBloom"] = preferences.hdrSettings.enableBloom;
+    
+    // Save shadow settings
+    j["shadows"]["pcfKernelSize"] = preferences.shadowSettings.pcfKernelSize;
+    j["shadows"]["enablePCSS"] = preferences.shadowSettings.enablePCSS;
+    j["shadows"]["lightSize"] = preferences.shadowSettings.lightSize;
+    j["shadows"]["enableCascades"] = preferences.shadowSettings.enableCascades;
+    j["shadows"]["numCascades"] = preferences.shadowSettings.numCascades;
+    j["shadows"]["cascadeSplitLambda"] = preferences.shadowSettings.cascadeSplitLambda;
+    
+    // Save material settings
+    j["materials"]["enablePBR"] = preferences.materialSettings.enablePBR;
+    j["materials"]["enableAO"] = preferences.materialSettings.enableAO;
+    j["materials"]["enableNormalMapping"] = preferences.materialSettings.enableNormalMapping;
+    j["materials"]["enableParallaxMapping"] = preferences.materialSettings.enableParallaxMapping;
+    j["materials"]["normalScale"] = preferences.materialSettings.normalScale;
+    j["materials"]["heightScale"] = preferences.materialSettings.heightScale;
+    j["materials"]["metallicFactor"] = preferences.materialSettings.metallicFactor;
+    j["materials"]["roughnessFactor"] = preferences.materialSettings.roughnessFactor;
+    
     // Save model import settings
     j["modelImport"]["flipUVs"] = preferences.modelImportSettings.flipUVs;
     j["modelImport"]["generateNormals"] = preferences.modelImportSettings.generateNormals;
@@ -1495,6 +1530,69 @@ void loadPreferences() {
             // Update the global lighting mode
             currentLightingMode = preferences.lightingMode;
             enableShadows = preferences.enableShadows;
+        }
+        
+        // HDR settings
+        if (j.contains("hdr")) {
+            preferences.hdrSettings.enabled = j["hdr"].value("enabled", true);
+            preferences.hdrSettings.exposure = j["hdr"].value("exposure", 1.0f);
+            preferences.hdrSettings.bloomThreshold = j["hdr"].value("bloomThreshold", 1.0f);
+            preferences.hdrSettings.bloomIntensity = j["hdr"].value("bloomIntensity", 0.04f);
+            preferences.hdrSettings.toneMapOperator = j["hdr"].value("toneMapOperator", 0);
+            preferences.hdrSettings.enableBloom = j["hdr"].value("enableBloom", false);
+        }
+        
+        // Shadow settings
+        if (j.contains("shadows")) {
+            preferences.shadowSettings.pcfKernelSize = j["shadows"].value("pcfKernelSize", 3);
+            preferences.shadowSettings.enablePCSS = j["shadows"].value("enablePCSS", false);
+            preferences.shadowSettings.lightSize = j["shadows"].value("lightSize", 0.1f);
+            preferences.shadowSettings.enableCascades = j["shadows"].value("enableCascades", false);
+            preferences.shadowSettings.numCascades = j["shadows"].value("numCascades", 4);
+            preferences.shadowSettings.cascadeSplitLambda = j["shadows"].value("cascadeSplitLambda", 0.5f);
+        }
+        
+        // Material settings
+        if (j.contains("materials")) {
+            preferences.materialSettings.enablePBR = j["materials"].value("enablePBR", true);
+            preferences.materialSettings.enableAO = j["materials"].value("enableAO", true);
+            preferences.materialSettings.enableNormalMapping = j["materials"].value("enableNormalMapping", true);
+            preferences.materialSettings.enableParallaxMapping = j["materials"].value("enableParallaxMapping", false);
+            preferences.materialSettings.normalScale = j["materials"].value("normalScale", 1.0f);
+            preferences.materialSettings.heightScale = j["materials"].value("heightScale", 0.02f);
+            preferences.materialSettings.metallicFactor = j["materials"].value("metallicFactor", 0.0f);
+            preferences.materialSettings.roughnessFactor = j["materials"].value("roughnessFactor", 0.5f);
+        }
+        
+        // VCT settings
+        if (j.contains("vct")) {
+            preferences.vctSettings.indirectSpecularLight = j["vct"].value("indirectSpecularLight", true);
+            preferences.vctSettings.indirectDiffuseLight = j["vct"].value("indirectDiffuseLight", true);
+            preferences.vctSettings.directLight = j["vct"].value("directLight", true);
+            preferences.vctSettings.shadows = j["vct"].value("shadows", true);
+            preferences.vctSettings.voxelSize = j["vct"].value("voxelSize", 1.0f / 64.0f);
+            preferences.vctSettings.diffuseConeCount = j["vct"].value("diffuseConeCount", 9);
+            preferences.vctSettings.tracingMaxDistance = j["vct"].value("tracingMaxDistance", 1.41421356237f);
+            preferences.vctSettings.shadowSampleCount = j["vct"].value("shadowSampleCount", 18);
+            preferences.vctSettings.shadowStepMultiplier = j["vct"].value("shadowStepMultiplier", 0.15f);
+        }
+        
+        // Radiance settings
+        if (j.contains("radiance")) {
+            preferences.radianceSettings.enableRaytracing = j["radiance"].value("enableRaytracing", true);
+            preferences.radianceSettings.maxBounces = j["radiance"].value("maxBounces", 2);
+            preferences.radianceSettings.samplesPerPixel = j["radiance"].value("samplesPerPixel", 1);
+            preferences.radianceSettings.rayMaxDistance = j["radiance"].value("rayMaxDistance", 50.0f);
+            preferences.radianceSettings.enableIndirectLighting = j["radiance"].value("enableIndirectLighting", true);
+            preferences.radianceSettings.enableEmissiveLighting = j["radiance"].value("enableEmissiveLighting", true);
+            preferences.radianceSettings.indirectIntensity = j["radiance"].value("indirectIntensity", 0.3f);
+            preferences.radianceSettings.skyIntensity = j["radiance"].value("skyIntensity", 1.0f);
+            preferences.radianceSettings.emissiveIntensity = j["radiance"].value("emissiveIntensity", 1.0f);
+            preferences.radianceSettings.materialRoughness = j["radiance"].value("materialRoughness", 0.5f);
+            preferences.radianceSettings.enableBVH = j["radiance"].value("enableBVH", true);
+            preferences.radianceSettings.showBVHDebug = j["radiance"].value("showBVHDebug", false);
+            preferences.radianceSettings.bvhDebugMaxDepth = j["radiance"].value("bvhDebugMaxDepth", 3);
+            preferences.radianceSettings.bvhDebugRenderMode = j["radiance"].value("bvhDebugRenderMode", 1);
         }
         
         // Model import settings
@@ -1792,6 +1890,29 @@ int main() {
     catch (std::exception& e) {
         std::cout << "Warning: Failed to load radiance shader: " << e.what() << std::endl;
         radianceShader = nullptr;
+    }
+
+    // ---- Initialize Bloom Renderer ----
+    std::cout << "Initializing bloom renderer..." << std::endl;
+    bloomRenderer = new Engine::BloomRenderer();
+    if (!bloomRenderer->initialize(windowWidth, windowHeight)) {
+        std::cerr << "ERROR: Failed to initialize bloom renderer - HDR/Bloom effects will be disabled" << std::endl;
+        delete bloomRenderer;
+        bloomRenderer = nullptr;
+    } else {
+        std::cout << "Bloom renderer initialized successfully" << std::endl;
+        
+        // Ensure proper size is set
+        bloomRenderer->resize(windowWidth, windowHeight);
+        
+        // Validate the bloom system
+        if (!bloomRenderer->validateBloomSystem()) {
+            std::cerr << "ERROR: Bloom system validation failed - disabling bloom" << std::endl;
+            delete bloomRenderer;
+            bloomRenderer = nullptr;
+        } else {
+            std::cout << "Bloom system validation passed" << std::endl;
+        }
     }
 
 
@@ -2323,15 +2444,61 @@ int main() {
         }
 
         // ---- Rendering ----
+        // Check if HDR/bloom is enabled
+        bool hdrEnabled = preferences.hdrSettings.enabled && bloomRenderer != nullptr;
+        bool bloomEnabled = preferences.hdrSettings.enableBloom && hdrEnabled;
+        
+        if (hdrEnabled) {
+            // Begin HDR rendering (render to HDR framebuffer)
+            bloomRenderer->beginBloomPass();
+            
+            // Validate that HDR framebuffer is properly bound
+            if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+                std::cerr << "ERROR: HDR framebuffer not complete in main loop!" << std::endl;
+                hdrEnabled = false; // Fall back to non-HDR rendering
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            }
+        }
+        
         if (isStereoWindow) {
             // Render left eye to left buffer (cursor position will be calculated here first time)
-            renderEye(GL_BACK_LEFT, leftProjection, leftView, activeShader, viewport, windowFlags, window);
+            renderEye(GL_BACK_LEFT, leftProjection, leftView, activeShader, viewport, windowFlags, window, !hdrEnabled);
             // Render right eye to right buffer (cursor position will use cached value)
-            renderEye(GL_BACK_RIGHT, rightProjection, rightView, activeShader, viewport, windowFlags, window);
+            renderEye(GL_BACK_RIGHT, rightProjection, rightView, activeShader, viewport, windowFlags, window, !hdrEnabled);
         }
         else {
             // Render mono view to default buffer (cursor position will be calculated here)
-            renderEye(GL_BACK_LEFT, projection, view, activeShader, viewport, windowFlags, window);
+            renderEye(GL_BACK_LEFT, projection, view, activeShader, viewport, windowFlags, window, !hdrEnabled);
+        }
+        
+        if (hdrEnabled) {
+            // Update bloom settings from preferences
+            Engine::BloomSettings& bloomSettings = bloomRenderer->getSettings();
+            bloomSettings.enabled = preferences.hdrSettings.enableBloom;
+            bloomSettings.threshold = preferences.hdrSettings.bloomThreshold;
+            bloomSettings.intensity = preferences.hdrSettings.bloomIntensity;
+            bloomSettings.exposure = preferences.hdrSettings.exposure;
+            bloomSettings.toneMapOperator = preferences.hdrSettings.toneMapOperator;
+            
+            // Apply HDR processing (with or without bloom) and render final result to screen
+            bloomRenderer->applyBloom(0, bloomSettings); // Pass 0 since we use the internal HDR buffer
+            
+            // Now render GUI on top of the composed HDR result
+            if (showGui) {
+                // Ensure we're rendering to the default framebuffer
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                glViewport(0, 0, windowWidth, windowHeight);
+                
+                // Render GUI for the appropriate eye(s)
+                if (isStereoWindow) {
+                    // For stereo, render GUI to left eye only (typical approach)
+                    glDrawBuffer(GL_BACK_LEFT);
+                    renderGUI(true, viewport, windowFlags, activeShader);
+                } else {
+                    // For mono, render GUI normally
+                    renderGUI(true, viewport, windowFlags, activeShader);
+                }
+            }
         }
         
         // Update the cursor's captured position if available (after rendering)
@@ -2388,6 +2555,12 @@ void cleanup(Engine::Shader* shader) {
     glDeleteTextures(1, &cubemapTexture);
     delete skyboxShader;
 
+    // Cleanup bloom renderer
+    if (bloomRenderer) {
+        delete bloomRenderer;
+        bloomRenderer = nullptr;
+    }
+
     // Delete zero plane resources
     glDeleteVertexArrays(1, &zeroPlaneVAO);
     glDeleteBuffers(1, &zeroPlaneVBO);
@@ -2442,9 +2615,12 @@ float calculateLargestModelDimension() {
 
 // ---- Rendering ----
 #pragma region Rendering
-void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& view, Engine::Shader* shader, ImGuiViewportP* viewport, ImGuiWindowFlags windowFlags, GLFWwindow* window) {
+void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& view, Engine::Shader* shader, ImGuiViewportP* viewport, ImGuiWindowFlags windowFlags, GLFWwindow* window, bool renderGUIFlag) {
     // Set the draw buffer and clear color and depth buffers
-    glDrawBuffer(drawBuffer);
+    // Only set draw buffer if not using HDR (HDR uses MRT - Multiple Render Targets)
+    if (!preferences.hdrSettings.enabled || bloomRenderer == nullptr) {
+        glDrawBuffer(drawBuffer);
+    }
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     // Reset OpenGL state
@@ -2529,7 +2705,33 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     }
 
     // 3. Regular rendering pass
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    // Bind the appropriate framebuffer for the main scene rendering
+    if (preferences.hdrSettings.enabled && bloomRenderer != nullptr) {
+        // Rebind HDR framebuffer (it may have been unbound during shadow mapping)
+        // Don't call beginBloomPass() again as it would clear the buffer
+        Engine::BloomSettings& bloomSettings = bloomRenderer->getSettings();
+        glBindFramebuffer(GL_FRAMEBUFFER, bloomSettings.hdrFBO);
+        
+        // Validate HDR framebuffer is complete
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+            std::cerr << "ERROR: HDR framebuffer not complete in renderEye!" << std::endl;
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        } else {
+            // Ensure MRT is set up correctly
+            GLuint attachments[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+            glDrawBuffers(2, attachments);
+            
+            // Verify MRT setup
+            GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+            if (status != GL_FRAMEBUFFER_COMPLETE) {
+                std::cerr << "ERROR: HDR framebuffer with MRT not complete!" << std::endl;
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            }
+        }
+    } else {
+        // Bind default framebuffer for non-HDR rendering
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
     glViewport(0, 0, windowWidth, windowHeight);
 
     shader->use();
@@ -2540,6 +2742,32 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     // Set lighting mode uniforms - this is always needed
     shader->setInt("lightingMode", static_cast<int>(currentLightingMode));
     shader->setBool("enableShadows", enableShadows);
+    
+    // Set HDR settings uniforms
+    shader->setBool("hdrSettings.enabled", preferences.hdrSettings.enabled);
+    shader->setFloat("hdrSettings.exposure", preferences.hdrSettings.exposure);
+    shader->setFloat("hdrSettings.bloomThreshold", preferences.hdrSettings.bloomThreshold);
+    shader->setFloat("hdrSettings.bloomIntensity", preferences.hdrSettings.bloomIntensity);
+    shader->setInt("hdrSettings.toneMapOperator", preferences.hdrSettings.toneMapOperator);
+    shader->setBool("hdrSettings.enableBloom", preferences.hdrSettings.enableBloom);
+    
+    // Set shadow quality settings uniforms
+    shader->setInt("shadowSettings.pcfKernelSize", preferences.shadowSettings.pcfKernelSize);
+    shader->setBool("shadowSettings.enablePCSS", preferences.shadowSettings.enablePCSS);
+    shader->setFloat("shadowSettings.lightSize", preferences.shadowSettings.lightSize);
+    shader->setBool("shadowSettings.enableCascades", preferences.shadowSettings.enableCascades);
+    shader->setInt("shadowSettings.numCascades", preferences.shadowSettings.numCascades);
+    shader->setFloat("shadowSettings.cascadeSplitLambda", preferences.shadowSettings.cascadeSplitLambda);
+    
+    // Set material enhancement uniforms (for enhanced material properties)
+    shader->setBool("materialSettings.enablePBR", preferences.materialSettings.enablePBR);
+    shader->setBool("materialSettings.enableAO", preferences.materialSettings.enableAO);
+    shader->setBool("materialSettings.enableNormalMapping", preferences.materialSettings.enableNormalMapping);
+    shader->setBool("materialSettings.enableParallaxMapping", preferences.materialSettings.enableParallaxMapping);
+    shader->setFloat("materialSettings.normalScale", preferences.materialSettings.normalScale);
+    shader->setFloat("materialSettings.heightScale", preferences.materialSettings.heightScale);
+    shader->setFloat("materialSettings.metallicFactor", preferences.materialSettings.metallicFactor);
+    shader->setFloat("materialSettings.roughnessFactor", preferences.materialSettings.roughnessFactor);
 
     // Set common light properties - these are needed for both modes
     shader->setVec3("sun.direction", sun.direction);
@@ -2933,8 +3161,8 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
         voxelizer->renderDebugVisualization(camera.Position, projection, view);
     }
 
-    // Render UI
-    if (showGui) {
+    // Render UI (only if requested)
+    if (showGui && renderGUIFlag) {
         renderGUI(drawBuffer == GL_BACK_LEFT, viewport, windowFlags, shader);
     }
 
@@ -3728,6 +3956,11 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height)
     
     // Update GUI scaling based on new window dimensions
     UpdateGuiScale(width, height);
+    
+    // Resize bloom renderer if it exists
+    if (bloomRenderer) {
+        bloomRenderer->resize(width, height);
+    }
 }
 
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {

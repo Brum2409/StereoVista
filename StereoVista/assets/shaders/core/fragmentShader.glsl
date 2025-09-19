@@ -1,5 +1,6 @@
 #version 460
-out vec4 FragColor;
+layout (location = 0) out vec4 FragColor;
+layout (location = 1) out vec4 BrightColor;
 
 in VS_OUT {
    vec3 FragPos;
@@ -39,6 +40,20 @@ struct Material {
    float shininess;
    float emissive;
    
+   // Enhanced PBR properties
+   bool hasMetallicMap;
+   bool hasRoughnessMap;
+   bool hasHeightMap;
+   float metallicFactor;
+   float roughnessFactor;
+   float normalScale;
+   float heightScale;
+   
+   // Enhanced lighting properties
+   vec3 emissiveColor;
+   float emissiveStrength;
+   vec3 F0; // Base reflectance for dielectrics/metals
+   
    // VCT specific properties
    float diffuseReflectivity;
    float specularReflectivity;
@@ -59,6 +74,26 @@ struct VCTSettings {
     float tracingMaxDistance; // Maximum distance for cone tracing
     int shadowSampleCount;   // Number of samples for shadow cones
     float shadowStepMultiplier; // Step size multiplier for shadows
+};
+
+// ---- HDR RENDERING SETTINGS ----
+struct HDRSettings {
+    bool enabled;
+    float exposure;
+    float bloomThreshold;
+    float bloomIntensity;
+    int toneMapOperator; // 0=Reinhard, 1=ACES, 2=Filmic
+    bool enableBloom;
+};
+
+// ---- SHADOW QUALITY SETTINGS ----
+struct ShadowSettings {
+    int pcfKernelSize; // 3, 5, 7, or 9
+    bool enablePCSS;
+    float lightSize; // For PCSS calculations
+    bool enableCascades;
+    int numCascades;
+    float cascadeSplitLambda;
 };
 
 // ---- LIGHTING STRUCTURES ----
@@ -96,6 +131,12 @@ uniform float skyboxIntensity;
 uniform sampler3D voxelGrid;
 uniform float voxelSize;
 uniform VCTSettings vctSettings;
+
+// HDR rendering uniforms
+uniform HDRSettings hdrSettings;
+
+// Shadow quality uniforms
+uniform ShadowSettings shadowSettings;
 
 // Emissive lighting uniform
 uniform float emissiveIntensity;
@@ -157,7 +198,367 @@ vec3 orthogonal(vec3 u) {
     return abs(dot(u, v)) > 0.99999f ? cross(u, vec3(0, 1, 0)) : cross(u, v);
 }
 
-// ---- LEARNOPENGL SHADOW MAPPING FUNCTIONS ----
+// ---- HDR TONE MAPPING FUNCTIONS ----
+
+// Utility function for sRGB conversion
+vec3 linearToSRGB(vec3 color) {
+    return pow(color, vec3(1.0/2.2));
+}
+
+// 1. Reinhard Tone Mapping (Classic, simple)
+vec3 reinhardToneMapping(vec3 hdrColor, float exposure) {
+    vec3 mapped = hdrColor * exposure;
+    return mapped / (1.0 + mapped);
+}
+
+// 2. ACES Filmic Tone Mapping (Industry standard, used by many AAA games)
+vec3 acesToneMapping(vec3 hdrColor, float exposure) {
+    hdrColor *= exposure;
+    
+    // ACES RRT/ODT fit by Stephen Hill
+    const float a = 2.51;
+    const float b = 0.03;
+    const float c = 2.43;
+    const float d = 0.59;
+    const float e = 0.14;
+    
+    return clamp((hdrColor * (a * hdrColor + b)) / (hdrColor * (c * hdrColor + d) + e), 0.0, 1.0);
+}
+
+// 3. Uncharted 2 Filmic Tone Mapping (John Hable's implementation)
+vec3 uncharted2ToneMapping(vec3 hdrColor, float exposure) {
+    hdrColor *= exposure;
+    
+    // John Hable's filmic operator
+    const float A = 0.15; // Shoulder Strength
+    const float B = 0.50; // Linear Strength
+    const float C = 0.10; // Linear Angle
+    const float D = 0.20; // Toe Strength
+    const float E = 0.02; // Toe Numerator
+    const float F = 0.30; // Toe Denominator
+    
+    vec3 numerator = ((hdrColor * (A * hdrColor + C * B) + D * E));
+    vec3 denominator = (hdrColor * (A * hdrColor + B) + D * F);
+    vec3 mapped = numerator / denominator - E / F;
+    
+    // White scale
+    const float W = 11.2; // Linear White Point Value
+    vec3 whiteScale = vec3(1.0) / (((W * (A * W + C * B) + D * E)) / (W * (A * W + B) + D * F) - E / F);
+    
+    return mapped * whiteScale;
+}
+
+// 4. AgX Tone Mapping (Modern, perceptually accurate)
+vec3 agxToneMapping(vec3 hdrColor, float exposure) {
+    hdrColor *= exposure;
+    
+    // AgX constants
+    const mat3 agx_mat = mat3(
+        0.842479062253094, 0.0423282422610123, 0.0423756549057051,
+        0.0784335999999992, 0.878468636469772, 0.0784336,
+        0.0792237451477643, 0.0791661274605434, 0.879142973793104
+    );
+    
+    const mat3 agx_mat_inv = mat3(
+        1.19687900512017, -0.0528968517574562, -0.0529716355144438,
+        -0.0980208811401368, 1.15190312990417, -0.0980434501171241,
+        -0.0918716309140477, -0.0918604049019608, 1.15131639628864
+    );
+    
+    // Apply AgX transform
+    hdrColor = agx_mat * hdrColor;
+    
+    // Log2 encoding
+    hdrColor = clamp(log2(hdrColor), -10.0, 10.0);
+    
+    // Apply curve
+    hdrColor = (hdrColor + 10.0) / 20.0;
+    
+    // S-curve approximation
+    hdrColor = hdrColor * hdrColor * (3.0 - 2.0 * hdrColor);
+    
+    // Convert back
+    hdrColor = 2.0 * hdrColor - 1.0;
+    hdrColor = pow(vec3(2.0), hdrColor);
+    
+    // Apply inverse transform
+    hdrColor = agx_mat_inv * hdrColor;
+    
+    return clamp(hdrColor, 0.0, 1.0);
+}
+
+// 5. Khronos PBR Neutral Tone Mapping (glTF reference implementation)
+vec3 khronosPbrNeutralToneMapping(vec3 hdrColor, float exposure) {
+    hdrColor *= exposure;
+    
+    const float startCompression = 0.8 - 0.04;
+    const float desaturation = 0.15;
+    
+    float x = min(hdrColor.r, min(hdrColor.g, hdrColor.b));
+    float offset = x < 0.08 ? x - 6.25 * x * x : 0.04;
+    hdrColor -= offset;
+    
+    float peak = max(hdrColor.r, max(hdrColor.g, hdrColor.b));
+    if (peak < startCompression) return hdrColor;
+    
+    const float d = 1.0 - startCompression;
+    float newPeak = 1.0 - d * d / (peak + d - startCompression);
+    hdrColor *= newPeak / peak;
+    
+    float g = 1.0 - 1.0 / (desaturation * (peak - newPeak) + 1.0);
+    return mix(hdrColor, newPeak * vec3(1.0), g);
+}
+
+// 6. Tony McMapface (Modern, perceptually motivated)
+vec3 tonyMcMapfaceToneMapping(vec3 hdrColor, float exposure) {
+    hdrColor *= exposure;
+    
+    // Constants for the tone mapping curve
+    const float c_r = 0.36;
+    const float s = 0.25;
+    const float m = 0.11;
+    const float a = 0.004;
+    const float c_b = 0.14;
+    
+    // Luminance-based processing
+    float luma = dot(hdrColor, vec3(0.2126, 0.7152, 0.0722));
+    
+    // Toe
+    float toe = exp(-(luma / a));
+    
+    // Shoulder  
+    float shoulder = exp(-(luma - c_r) / s);
+    shoulder = c_r + s * log(1.0 + shoulder);
+    
+    // Blend between toe and shoulder
+    float t = clamp((luma - a) / (c_r - a), 0.0, 1.0);
+    t = smoothstep(0.0, 1.0, t);
+    
+    float mapped_luma = mix(luma * toe, shoulder, t);
+    
+    // Preserve color ratios
+    vec3 result = hdrColor * (mapped_luma / max(luma, 1e-6));
+    
+    return clamp(result, 0.0, 1.0);
+}
+
+// Calculate luminance for HDR processing
+float calculateLuminance(vec3 color) {
+    return dot(color, vec3(0.2126, 0.7152, 0.0722));
+}
+
+// Apply tone mapping based on settings
+vec3 applyToneMapping(vec3 hdrColor) {
+    if (!hdrSettings.enabled) {
+        return clamp(hdrColor, 0.0, 1.0); // Simple clamp if HDR disabled
+    }
+    
+    float exposure = hdrSettings.exposure;
+    
+    // Apply tone mapping operator
+    if (hdrSettings.toneMapOperator == 0) {
+        return reinhardToneMapping(hdrColor, exposure);
+    } else if (hdrSettings.toneMapOperator == 1) {
+        return acesToneMapping(hdrColor, exposure);
+    } else if (hdrSettings.toneMapOperator == 2) {
+        return uncharted2ToneMapping(hdrColor, exposure);
+    } else if (hdrSettings.toneMapOperator == 3) {
+        return agxToneMapping(hdrColor, exposure);
+    } else if (hdrSettings.toneMapOperator == 4) {
+        return khronosPbrNeutralToneMapping(hdrColor, exposure);
+    } else if (hdrSettings.toneMapOperator == 5) {
+        return tonyMcMapfaceToneMapping(hdrColor, exposure);
+    } else {
+        // Default to ACES (industry standard)
+        return acesToneMapping(hdrColor, exposure);
+    }
+}
+
+// ---- ENHANCED NORMAL MAPPING FUNCTIONS ----
+// Enhanced TBN matrix calculation with Gram-Schmidt orthogonalization
+mat3 calculateEnhancedTBN(vec3 normal, vec3 tangent, vec3 bitangent) {
+    // Normalize input vectors
+    normal = normalize(normal);
+    tangent = normalize(tangent);
+    
+    // Gram-Schmidt orthogonalization to ensure orthogonal TBN matrix
+    tangent = normalize(tangent - dot(tangent, normal) * normal);
+    bitangent = cross(normal, tangent);
+    
+    return mat3(tangent, bitangent, normal);
+}
+
+// Sample and process normal map with intensity control
+vec3 sampleNormalMap(sampler2D normalMap, vec2 texCoords, float normalScale) {
+    // Sample normal map
+    vec3 normalMapSample = texture(normalMap, texCoords).rgb;
+    
+    // Convert from [0,1] to [-1,1] range
+    normalMapSample = normalMapSample * 2.0 - 1.0;
+    
+    // Apply normal scale for intensity control
+    normalMapSample.xy *= normalScale;
+    
+    // Ensure the normal is normalized
+    return normalize(normalMapSample);
+}
+
+// Blend multiple normal maps (for detail normal mapping)
+vec3 blendNormals(vec3 baseNormal, vec3 detailNormal, float blendFactor) {
+    // Reoriented Normal Mapping (RNM) blending
+    vec3 t = baseNormal + vec3(0.0, 0.0, 1.0);
+    vec3 u = detailNormal * vec3(-1.0, -1.0, 1.0);
+    vec3 blended = normalize(t * dot(t, u) - u * t.z);
+    
+    return mix(baseNormal, blended, blendFactor);
+}
+
+// Calculate enhanced normal with multiple layers support
+vec3 calculateEnhancedNormal(vec2 texCoords, mat3 TBN) {
+    vec3 normal = vec3(0.0, 0.0, 1.0); // Default tangent space normal
+    
+    if (material.hasNormalMap && material.numNormalTextures > 0) {
+        // Sample primary normal map
+        normal = sampleNormalMap(material.textures[2], texCoords, material.normalScale);
+        
+        // If multiple normal textures exist, blend them
+        if (material.numNormalTextures > 1) {
+            vec3 detailNormal = sampleNormalMap(material.textures[3], texCoords * 4.0, material.normalScale * 0.5);
+            normal = blendNormals(normal, detailNormal, 0.5);
+        }
+    }
+    
+    // Transform from tangent space to world space
+    return normalize(TBN * normal);
+}
+
+// ---- PBR MATERIAL FUNCTIONS ----
+// Sample metallic value from texture or use factor
+float getMetallicValue(vec2 texCoords) {
+    if (material.hasMetallicMap) {
+        return texture(material.textures[4], texCoords).b * material.metallicFactor; // Blue channel for metallic
+    }
+    return material.metallicFactor;
+}
+
+// Sample roughness value from texture or use factor
+float getRoughnessValue(vec2 texCoords) {
+    if (material.hasRoughnessMap) {
+        return texture(material.textures[5], texCoords).g * material.roughnessFactor; // Green channel for roughness
+    }
+    return material.roughnessFactor;
+}
+
+// Calculate F0 (base reflectance) for PBR materials
+vec3 calculateF0(vec3 albedo, float metallic) {
+    // Dielectric materials have F0 around 0.04, metals use albedo as F0
+    return mix(vec3(0.04), albedo, metallic);
+}
+
+// Convert roughness to shininess for Blinn-Phong compatibility
+float roughnessToShininess(float roughness) {
+    // Clamp roughness to avoid division by zero
+    roughness = clamp(roughness, 0.01, 1.0);
+    // Convert roughness to shininess (higher roughness = lower shininess)
+    return (2.0 / (roughness * roughness)) - 2.0;
+}
+
+// Enhanced material property calculation with PBR support
+struct EnhancedMaterialProperties {
+    vec3 albedo;
+    vec3 specularColor;
+    float metallic;
+    float roughness;
+    float shininess;
+    vec3 F0;
+    vec3 emissive;
+};
+
+EnhancedMaterialProperties calculateMaterialProperties(vec2 texCoords) {
+    EnhancedMaterialProperties props;
+    
+    // Base albedo color
+    if (material.hasTexture > 0.5) {
+        props.albedo = texture(material.textures[0], texCoords).rgb;
+    } else {
+        props.albedo = material.objectColor;
+    }
+    
+    // PBR material properties
+    props.metallic = getMetallicValue(texCoords);
+    props.roughness = getRoughnessValue(texCoords);
+    
+    // Calculate F0 based on metallic workflow
+    props.F0 = calculateF0(props.albedo, props.metallic);
+    
+    // Convert roughness to shininess for Blinn-Phong
+    props.shininess = max(roughnessToShininess(props.roughness), material.shininess);
+    
+    // Specular color handling
+    if (material.hasSpecularMap && material.numSpecularTextures > 0) {
+        float specIntensity = texture(material.textures[1], texCoords).r;
+        props.specularColor = vec3(specIntensity);
+    } else {
+        props.specularColor = mix(vec3(1.0), props.albedo, props.metallic);
+    }
+    
+    // Enhanced emissive properties
+    props.emissive = material.emissiveColor * material.emissiveStrength;
+    if (material.emissive > 0.0) {
+        props.emissive += props.albedo * material.emissive;
+    }
+    
+    return props;
+}
+
+// ---- AMBIENT OCCLUSION FUNCTIONS ----
+// Sample ambient occlusion from texture
+float getAmbientOcclusion(vec2 texCoords) {
+    if (material.hasAOMap) {
+        return texture(material.textures[6], texCoords).r; // Red channel for AO
+    }
+    return 1.0; // No occlusion if no AO map
+}
+
+// Apply ambient occlusion to ambient lighting
+vec3 applyAmbientOcclusion(vec3 ambientLight, float aoFactor) {
+    return ambientLight * aoFactor;
+}
+
+// Enhanced ambient lighting calculation with AO
+vec3 calculateAmbientLighting(vec3 baseColor, vec2 texCoords) {
+    float aoFactor = getAmbientOcclusion(texCoords);
+    vec3 ambientLight = baseColor * 0.05; // Base ambient level
+    return applyAmbientOcclusion(ambientLight, aoFactor);
+}
+
+// ---- PERFORMANCE OPTIMIZATION FUNCTIONS ----
+// Distance-based light culling
+bool shouldProcessLight(vec3 lightPos, vec3 fragPos, float lightRadius) {
+    float distance = length(lightPos - fragPos);
+    return distance <= lightRadius;
+}
+
+// Calculate light attenuation for culling decisions
+float calculateLightAttenuation(vec3 lightPos, vec3 fragPos) {
+    float distance = length(lightPos - fragPos);
+    return 1.0 / (1.0 + 0.09 * distance + 0.032 * (distance * distance));
+}
+
+// Check if light contribution is significant enough to process
+bool isLightSignificant(vec3 lightPos, vec3 fragPos, float lightIntensity, float threshold) {
+    float attenuation = calculateLightAttenuation(lightPos, fragPos);
+    return (lightIntensity * attenuation) > threshold;
+}
+
+// LOD-based shading quality adjustment
+float getLODFactor(vec3 fragPos, vec3 viewPos) {
+    float distance = length(fragPos - viewPos);
+    // Reduce quality for distant objects
+    return clamp(1.0 - (distance - 10.0) / 40.0, 0.1, 1.0);
+}
+
+// ---- ENHANCED SHADOW MAPPING FUNCTIONS ----
 float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir) {
     if (!enableShadows) return 0.0;
     
@@ -174,26 +575,53 @@ float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir) {
     // Depth of current fragment from light
     float currentDepth = projCoords.z;
     
-    // Small bias (polygon offset handles most of it)
-    float bias = 0.00005; 
+    // Adaptive bias based on surface angle to light
+    float cosTheta = dot(normal, lightDir);
+    cosTheta = clamp(cosTheta, 0.0, 1.0);
+    float baseBias = 0.0005;
+    float maxBias = 0.005;
+    float adaptiveBias = baseBias + maxBias * (1.0 - cosTheta);
     
-    // PCF soft shadows
+    // Enhanced PCF with variable kernel size
     float shadow = 0.0;
     vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
     
-    // 3x3 neighborhood
-    for(int x = -1; x <= 1; ++x) {
-        for(int y = -1; y <= 1; ++y) {
-            vec2 sampleCoords = projCoords.xy + vec2(x, y) * texelSize;
-            float pcfDepth = texture(shadowMap, sampleCoords).r; 
-            shadow += (currentDepth - bias) > pcfDepth ? 1.0 : 0.0;        
+    // Use kernel size from shadow settings (default to 3 if not available)
+    int kernelSize = shadowSettings.pcfKernelSize > 0 ? shadowSettings.pcfKernelSize : 3;
+    int halfKernel = kernelSize / 2;
+    
+    // Distance-based kernel size adjustment
+    float distance = length(projCoords.xy - 0.5);
+    float kernelScale = 1.0 + distance * 0.5; // Larger kernel for edges
+    
+    int sampleCount = 0;
+    for(int x = -halfKernel; x <= halfKernel; ++x) {
+        for(int y = -halfKernel; y <= halfKernel; ++y) {
+            vec2 offset = vec2(x, y) * texelSize * kernelScale;
+            vec2 sampleCoords = projCoords.xy + offset;
+            
+            // Skip samples outside shadow map
+            if(sampleCoords.x < 0.0 || sampleCoords.x > 1.0 || 
+               sampleCoords.y < 0.0 || sampleCoords.y > 1.0) continue;
+            
+            float pcfDepth = texture(shadowMap, sampleCoords).r;
+            shadow += (currentDepth - adaptiveBias) > pcfDepth ? 1.0 : 0.0;
+            sampleCount++;
         }    
     }
-    shadow /= 9.0;
     
-    // Distance-based fade
-    float fadeFactor = 1.0 - smoothstep(0.8, 1.0, projCoords.z);
+    // Normalize by actual sample count
+    if(sampleCount > 0) {
+        shadow /= float(sampleCount);
+    }
+    
+    // Enhanced distance-based fade with smoother transition
+    float fadeFactor = 1.0 - smoothstep(0.7, 1.0, projCoords.z);
     shadow *= fadeFactor;
+    
+    // Soft shadow edges based on distance from shadow caster
+    float edgeSoftness = smoothstep(0.0, 0.1, distance) * 0.1;
+    shadow = mix(shadow, shadow * 0.8, edgeSoftness);
     
     return shadow;
 }
@@ -235,25 +663,64 @@ float PointShadowCalculation(vec3 fragPos, vec3 lightPosition, int lightIndex) {
     // Current depth from offset position
     float currentDepth = length(offsetFragToLight);
 
-    // Simple PCF with small sample offsets to reduce aliasing without over-softening
+    // Variable quality PCF based on shadow settings
     float shadow = 0.0;
-    vec3 sampleOffsets[20] = vec3[]
+    
+    // Get sample count based on shadow quality
+    int kernelSize = shadowSettings.pcfKernelSize > 0 ? shadowSettings.pcfKernelSize : 3;
+    int sampleCount;
+    float diskRadius;
+    
+    if (kernelSize <= 3) {
+        // Low quality: 8 samples
+        sampleCount = 8;
+        diskRadius = 0.01;
+    } else if (kernelSize <= 5) {
+        // Medium quality: 20 samples
+        sampleCount = 20;
+        diskRadius = 0.02;
+    } else if (kernelSize <= 7) {
+        // High quality: 32 samples
+        sampleCount = 32;
+        diskRadius = 0.025;
+    } else {
+        // Ultra quality: 64 samples
+        sampleCount = 64;
+        diskRadius = 0.03;
+    }
+    
+    // Sample offsets for different quality levels
+    vec3 sampleOffsets[64] = vec3[]
     (
+       // First 8 samples (Low quality)
        vec3( 1,  1,  1), vec3( 1, -1,  1), vec3(-1, -1,  1), vec3(-1,  1,  1),
        vec3( 1,  1, -1), vec3( 1, -1, -1), vec3(-1, -1, -1), vec3(-1,  1, -1),
+       // Next 12 samples (Medium quality - total 20)
        vec3( 1,  1,  0), vec3( 1, -1,  0), vec3(-1, -1,  0), vec3(-1,  1,  0),
        vec3( 1,  0,  1), vec3(-1,  0,  1), vec3( 1,  0, -1), vec3(-1,  0, -1),
-       vec3( 0,  1,  1), vec3( 0, -1,  1), vec3( 0, -1, -1), vec3( 0,  1, -1)
+       vec3( 0,  1,  1), vec3( 0, -1,  1), vec3( 0, -1, -1), vec3( 0,  1, -1),
+       // Next 12 samples (High quality - total 32)
+       vec3( 2,  0,  0), vec3(-2,  0,  0), vec3( 0,  2,  0), vec3( 0, -2,  0),
+       vec3( 0,  0,  2), vec3( 0,  0, -2), vec3( 1,  2,  1), vec3(-1, -2, -1),
+       vec3( 2,  1, -1), vec3(-2, -1,  1), vec3( 1, -1,  2), vec3(-1,  1, -2),
+       // Next 32 samples (Ultra quality - total 64)
+       vec3( 2,  2,  0), vec3(-2, -2,  0), vec3( 2, -2,  0), vec3(-2,  2,  0),
+       vec3( 2,  0,  2), vec3(-2,  0, -2), vec3( 2,  0, -2), vec3(-2,  0,  2),
+       vec3( 0,  2,  2), vec3( 0, -2, -2), vec3( 0,  2, -2), vec3( 0, -2,  2),
+       vec3( 1,  2,  2), vec3(-1, -2, -2), vec3( 1, -2,  2), vec3(-1,  2, -2),
+       vec3( 2,  1,  2), vec3(-2, -1, -2), vec3( 2, -1,  2), vec3(-2,  1, -2),
+       vec3( 2,  2,  1), vec3(-2, -2, -1), vec3( 2, -2,  1), vec3(-2,  2, -1),
+       vec3( 3,  0,  0), vec3(-3,  0,  0), vec3( 0,  3,  0), vec3( 0, -3,  0),
+       vec3( 0,  0,  3), vec3( 0,  0, -3), vec3( 1,  1,  3), vec3(-1, -1, -3)
     );
 
-    float diskRadius = 0.02; // Much smaller radius for tighter shadows
-    for(int i = 0; i < 20; ++i)
+    for(int i = 0; i < sampleCount; ++i)
     {
         vec3 sampleDir = offsetFragToLight + sampleOffsets[i] * diskRadius;
         float pcfDepth = texture(pointShadowMaps, vec4(sampleDir, float(lightIndex))).r * far_plane;
         shadow += currentDepth - slopeBias > pcfDepth ? 1.0 : 0.0;
     }
-    shadow /= 20.0;
+    shadow /= float(sampleCount);
 
     // Distance-based fade near far plane
     float fadeFactor = 1.0 - smoothstep(far_plane * 0.85, far_plane, currentDepth);
@@ -262,25 +729,244 @@ float PointShadowCalculation(vec3 fragPos, vec3 lightPosition, int lightIndex) {
     return shadow;
 }
 
-// ---- LEARNOPENGL LIGHTING FUNCTIONS ----
+// Poisson disk sampling pattern for PCSS and enhanced shadow sampling
+const vec2 poissonDisk[64] = vec2[](
+    vec2(-0.613392, 0.617481), vec2(0.170019, -0.040254), vec2(-0.299417, 0.791925),
+    vec2(0.645680, 0.493210), vec2(-0.651784, 0.717887), vec2(0.421003, 0.027070),
+    vec2(-0.817194, -0.271096), vec2(-0.705374, -0.668203), vec2(0.977050, -0.108615),
+    vec2(0.063326, 0.142369), vec2(0.203528, 0.214331), vec2(-0.667531, 0.326090),
+    vec2(-0.098422, -0.295755), vec2(-0.885922, 0.215369), vec2(0.566637, 0.605213),
+    vec2(0.039766, -0.396100), vec2(0.751946, 0.453352), vec2(0.078707, -0.715323),
+    vec2(-0.075838, -0.529344), vec2(0.724479, -0.580798), vec2(0.222999, -0.215125),
+    vec2(-0.467574, -0.405438), vec2(-0.248268, -0.814753), vec2(0.354411, -0.887570),
+    vec2(0.175817, 0.382366), vec2(0.487472, -0.063082), vec2(-0.084078, 0.898312),
+    vec2(0.488876, -0.783441), vec2(0.470016, 0.217933), vec2(-0.696890, -0.549791),
+    vec2(-0.149693, 0.605762), vec2(0.034211, 0.979980), vec2(0.503098, -0.308878),
+    vec2(-0.016205, -0.872921), vec2(0.385784, -0.393902), vec2(-0.146886, -0.859249),
+    vec2(0.643361, 0.164098), vec2(0.634388, -0.049471), vec2(-0.688894, 0.007843),
+    vec2(0.464034, -0.188818), vec2(-0.440840, 0.137486), vec2(0.364483, 0.511704),
+    vec2(0.034028, 0.325968), vec2(0.099094, -0.308023), vec2(0.693960, -0.366253),
+    vec2(0.678884, -0.204688), vec2(0.001801, 0.780328), vec2(0.145177, -0.898984),
+    vec2(0.062655, -0.611866), vec2(0.315226, -0.604297), vec2(-0.780145, 0.486251),
+    vec2(-0.371868, 0.882138), vec2(0.200476, 0.494430), vec2(-0.494552, -0.711051),
+    vec2(0.612476, 0.705252), vec2(-0.578845, -0.768792), vec2(-0.772454, -0.090976),
+    vec2(0.504440, 0.372295), vec2(0.155736, 0.065157), vec2(0.391522, 0.849605),
+    vec2(-0.620106, -0.328104), vec2(0.789239, -0.419965), vec2(-0.545396, 0.538133),
+    vec2(-0.178564, -0.596057)
+);
+
+// PCSS for point lights (simplified version)
+float calculatePointPCSSShadow(vec3 fragPos, vec3 lightPosition, int lightIndex) {
+    if(!shadowSettings.enablePCSS) {
+        return PointShadowCalculation(fragPos, lightPosition, lightIndex);
+    }
+    
+    vec3 fragToLight = fragPos - lightPosition;
+    vec3 lightDir = normalize(fragToLight);
+    vec3 normal = normalize(fs_in.Normal);
+    
+    float currentDepth = length(fragToLight);
+    
+    // Simplified PCSS for point lights - use variable sample count based on distance
+    float shadow = 0.0;
+    int sampleCount = 16; // Base sample count for PCSS
+    
+    // Increase sample count for closer surfaces (more detailed shadows)
+    float distanceFactor = clamp(1.0 - (currentDepth / far_plane), 0.0, 1.0);
+    sampleCount = int(mix(8.0, 32.0, distanceFactor));
+    
+    // Variable disk radius based on light size and distance
+    float diskRadius = shadowSettings.lightSize * (currentDepth / far_plane) * 0.05;
+    diskRadius = clamp(diskRadius, 0.01, 0.1);
+    
+    // Bias calculation
+    float cosTheta = dot(normal, -lightDir);
+    cosTheta = clamp(cosTheta, 0.0, 1.0);
+    float baseBias = 0.002;
+    float maxBias = 0.02;
+    float slopeBias = baseBias + maxBias * (1.0 - cosTheta);
+    
+    // Sample around the light direction with variable radius
+    for(int i = 0; i < sampleCount; ++i) {
+        // Use Poisson disk pattern for better distribution
+        vec2 diskSample = poissonDisk[i % 64];
+        vec3 sampleOffset = vec3(diskSample.x, diskSample.y, 0.0) * diskRadius;
+        
+        // Rotate sample offset to align with light direction
+        vec3 sampleDir = fragToLight + sampleOffset;
+        float pcfDepth = texture(pointShadowMaps, vec4(sampleDir, float(lightIndex))).r * far_plane;
+        shadow += currentDepth - slopeBias > pcfDepth ? 1.0 : 0.0;
+    }
+    
+    return shadow / float(sampleCount);
+}
+
+// ---- PCSS (Percentage Closer Soft Shadows) IMPLEMENTATION ----
+// Step 1: Blocker search - find average depth of blockers
+float findBlockerDistance(sampler2D shadowMap, vec2 uv, float zReceiver, float lightSize) {
+    int blockerSearchSamples = 16;
+    float searchRadius = lightSize * (zReceiver - 0.1) / zReceiver;
+    
+    float blockerSum = 0.0;
+    int numBlockers = 0;
+    
+    for(int i = 0; i < blockerSearchSamples; i++) {
+        vec2 offset = poissonDisk[i] * searchRadius;
+        vec2 sampleCoords = uv + offset;
+        
+        // Skip samples outside shadow map
+        if(sampleCoords.x < 0.0 || sampleCoords.x > 1.0 || 
+           sampleCoords.y < 0.0 || sampleCoords.y > 1.0) continue;
+        
+        float shadowMapDepth = texture(shadowMap, sampleCoords).r;
+        
+        if(shadowMapDepth < zReceiver) {
+            blockerSum += shadowMapDepth;
+            numBlockers++;
+        }
+    }
+    
+    if(numBlockers == 0) return -1.0; // No blockers found
+    return blockerSum / numBlockers;
+}
+
+// Step 2: Penumbra size estimation
+float penumbraSize(float zReceiver, float zBlocker, float lightSize) {
+    return lightSize * (zReceiver - zBlocker) / zBlocker;
+}
+
+// Step 3: PCF with variable kernel size
+float PCF_Filter(sampler2D shadowMap, vec2 uv, float zReceiver, float filterRadius, vec3 normal, vec3 lightDir) {
+    int pcfSamples = 32; // Reduced for performance
+    float sum = 0.0;
+    
+    // Adaptive bias
+    float cosTheta = dot(normal, lightDir);
+    cosTheta = clamp(cosTheta, 0.0, 1.0);
+    float baseBias = 0.0005;
+    float maxBias = 0.005;
+    float adaptiveBias = baseBias + maxBias * (1.0 - cosTheta);
+    
+    for(int i = 0; i < pcfSamples; i++) {
+        vec2 offset = poissonDisk[i] * filterRadius;
+        vec2 sampleCoords = uv + offset;
+        
+        // Skip samples outside shadow map
+        if(sampleCoords.x < 0.0 || sampleCoords.x > 1.0 || 
+           sampleCoords.y < 0.0 || sampleCoords.y > 1.0) {
+            sum += 1.0; // Assume no shadow outside map
+            continue;
+        }
+        
+        float shadowMapDepth = texture(shadowMap, sampleCoords).r;
+        sum += (zReceiver - adaptiveBias > shadowMapDepth) ? 0.0 : 1.0;
+    }
+    
+    return sum / pcfSamples;
+}
+
+// Main PCSS function for directional lights
+float calculatePCSSShadow(sampler2D shadowMap, vec4 fragPosLightSpace, vec3 normal, vec3 lightDir) {
+    if(!shadowSettings.enablePCSS) {
+        return ShadowCalculation(fragPosLightSpace, normal, lightDir);
+    }
+    
+    vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
+    projCoords = projCoords * 0.5 + 0.5;
+    
+    // Outside shadow frustum
+    if(projCoords.z > 1.0 || projCoords.x < 0.0 || projCoords.x > 1.0 || 
+       projCoords.y < 0.0 || projCoords.y > 1.0)
+        return 0.0;
+    
+    float zReceiver = projCoords.z;
+    
+    // Step 1: Blocker search
+    float avgBlockerDistance = findBlockerDistance(shadowMap, projCoords.xy, zReceiver, shadowSettings.lightSize);
+    
+    if(avgBlockerDistance == -1.0) return 0.0; // No shadow
+    
+    // Step 2: Penumbra size
+    float penumbraRatio = penumbraSize(zReceiver, avgBlockerDistance, shadowSettings.lightSize);
+    
+    // Step 3: PCF with variable filter size
+    float filterRadius = penumbraRatio * shadowSettings.lightSize / zReceiver;
+    filterRadius = clamp(filterRadius, 0.001, 0.1); // Clamp to reasonable range
+    
+    return 1.0 - PCF_Filter(shadowMap, projCoords.xy, zReceiver, filterRadius, normal, lightDir);
+}
+
+// ---- SPOT SHADOW CALCULATION ----
+float SpotShadowCalculation(vec3 fragPos, vec3 lightPosition, vec3 lightDirection, int lightIndex) {
+    if (!enableShadows) return 0.0;
+
+    // For now, use a simplified approach similar to point lights
+    // In a full implementation, spot lights would have their own shadow maps
+    vec3 fragToLight = fragPos - lightPosition;
+    vec3 lightDir = normalize(fragToLight);
+    vec3 normal = normalize(fs_in.Normal);
+
+    // Calculate bias
+    float cosTheta = dot(normal, -lightDir);
+    cosTheta = clamp(cosTheta, 0.0, 1.0);
+    float baseBias = 0.002;
+    float maxBias = 0.02;
+    float slopeBias = baseBias + maxBias * (1.0 - cosTheta);
+
+    // Use point shadow map technique for now (simplified)
+    // In practice, spot lights should have their own directional shadow maps
+    float currentDepth = length(fragToLight);
+    
+    // Variable quality PCF based on shadow settings (same as point lights)
+    float shadow = 0.0;
+    int kernelSize = shadowSettings.pcfKernelSize > 0 ? shadowSettings.pcfKernelSize : 3;
+    int sampleCount = (kernelSize <= 3) ? 4 : (kernelSize <= 5) ? 8 : (kernelSize <= 7) ? 12 : 16;
+    
+    // Simplified sampling for spot lights
+    float diskRadius = 0.01 + (kernelSize - 3) * 0.005;
+    
+    // Basic directional sampling pattern
+    for(int i = 0; i < sampleCount; ++i) {
+        float angle = float(i) * 6.28318 / float(sampleCount);
+        vec3 offset = vec3(cos(angle), sin(angle), 0.0) * diskRadius;
+        vec3 sampleDir = fragToLight + offset;
+        
+        // For now, return 0 shadow since we don't have proper spot light shadow maps
+        // This is a placeholder for future implementation
+        shadow += 0.0;
+    }
+    
+    return shadow / float(sampleCount);
+}
+
+// ---- ENHANCED LIGHTING FUNCTIONS ----
+// Enhanced Blinn-Phong with energy conservation and Fresnel
 vec3 CalcDirLight(Sun dirLight, vec3 normal, vec3 viewDir, vec3 diffuseTexColor, vec3 specularTexColor) {
     vec3 lightDir = normalize(-dirLight.direction);
     
-    // Diffuse shading
-    float diff = max(dot(normal, lightDir), 0.0);
+    // Diffuse component (Lambertian)
+    float NdotL = max(dot(normal, lightDir), 0.0);
     
-    // Specular shading (Blinn-Phong) with shininess clamping
+    // Specular component (Blinn-Phong with energy conservation)
     vec3 halfwayDir = normalize(lightDir + viewDir);
-    float clampedShininess = max(material.shininess, 4.0); // Prevent extremely low shininess
-    float spec = pow(max(dot(normal, halfwayDir), 0.0), clampedShininess);
+    float NdotH = max(dot(normal, halfwayDir), 0.0);
+    float clampedShininess = max(material.shininess, 4.0);
     
-    // Energy-conserving lighting with shininess compensation  
-    vec3 ambient = dirLight.color * diffuseTexColor * 0.05;  
-    vec3 diffuse = dirLight.color * diff * diffuseTexColor;
+    // Energy conservation normalization factor
+    const float PI = 3.14159265359;
+    float normalizationFactor = (clampedShininess + 8.0) / (8.0 * PI);
+    float specularPower = normalizationFactor * pow(NdotH, clampedShininess);
     
-    // Scale specular contribution based on shininess to prevent washout
-    float specularScale = clampedShininess / (clampedShininess + 16.0); // Normalize specular intensity
-    vec3 specular = dirLight.color * spec * specularTexColor * specularScale;
+    // Fresnel approximation (Schlick's approximation)
+    float VdotH = max(dot(viewDir, halfwayDir), 0.0);
+    vec3 F0 = mix(vec3(0.04), specularTexColor, material.metallicFactor); // Use metallic factor if available
+    vec3 fresnel = F0 + (1.0 - F0) * pow(1.0 - VdotH, 5.0);
+    
+    // Energy-conserving lighting calculation with AO
+    float aoFactor = getAmbientOcclusion(fs_in.TexCoords);
+    vec3 ambient = dirLight.color * diffuseTexColor * 0.05 * aoFactor; // Apply AO to ambient
+    vec3 diffuse = dirLight.color * NdotL * diffuseTexColor * (1.0 - fresnel); // Diffuse reduced by Fresnel
+    vec3 specular = dirLight.color * specularPower * fresnel;
     
     return (ambient + diffuse + specular) * dirLight.intensity;
 }
@@ -288,13 +974,23 @@ vec3 CalcDirLight(Sun dirLight, vec3 normal, vec3 viewDir, vec3 diffuseTexColor,
 vec3 CalcPointLight(PointLight light, int lightIndex, vec3 normal, vec3 fragPos, vec3 viewDir, vec3 diffuseTexColor, vec3 specularTexColor) {
     vec3 lightDir = normalize(light.position - fragPos);
     
-    // Diffuse shading
-    float diff = max(dot(normal, lightDir), 0.0);
+    // Diffuse component (Lambertian)
+    float NdotL = max(dot(normal, lightDir), 0.0);
     
-    // Specular shading (Blinn-Phong) with shininess clamping
+    // Specular component (Blinn-Phong with energy conservation)
     vec3 halfwayDir = normalize(lightDir + viewDir);
-    float clampedShininess = max(material.shininess, 4.0); // Prevent extremely low shininess
-    float spec = pow(max(dot(normal, halfwayDir), 0.0), clampedShininess);
+    float NdotH = max(dot(normal, halfwayDir), 0.0);
+    float clampedShininess = max(material.shininess, 4.0);
+    
+    // Energy conservation normalization factor
+    const float PI = 3.14159265359;
+    float normalizationFactor = (clampedShininess + 8.0) / (8.0 * PI);
+    float specularPower = normalizationFactor * pow(NdotH, clampedShininess);
+    
+    // Fresnel approximation
+    float VdotH = max(dot(viewDir, halfwayDir), 0.0);
+    vec3 F0 = mix(vec3(0.04), specularTexColor, material.metallicFactor);
+    vec3 fresnel = F0 + (1.0 - F0) * pow(1.0 - VdotH, 5.0);
     
     // Attenuation
     float distance = length(light.position - fragPos);
@@ -303,16 +999,14 @@ vec3 CalcPointLight(PointLight light, int lightIndex, vec3 normal, vec3 fragPos,
     // Calculate point shadow (respect per-light toggle)
     float shadow = 0.0;
     if (lightsCastShadows[lightIndex]) {
-        shadow = PointShadowCalculation(fragPos, light.position, lightIndex);
+        shadow = calculatePointPCSSShadow(fragPos, light.position, lightIndex);
     }
     
-    // Energy-conserving point light with shininess compensation
-    vec3 ambient = light.color * diffuseTexColor * 0.02;  
-    vec3 diffuse = light.color * diff * diffuseTexColor;
-    
-    // Scale specular contribution based on shininess to prevent washout  
-    float specularScale = clampedShininess / (clampedShininess + 16.0);
-    vec3 specular = light.color * spec * specularTexColor * specularScale;
+    // Energy-conserving point light calculation with AO
+    float aoFactor = getAmbientOcclusion(fs_in.TexCoords);
+    vec3 ambient = light.color * diffuseTexColor * 0.02 * aoFactor; // Apply AO to ambient
+    vec3 diffuse = light.color * NdotL * diffuseTexColor * (1.0 - fresnel);
+    vec3 specular = light.color * specularPower * fresnel;
     
     // Apply shadow to diffuse and specular (but not ambient)
     diffuse *= (1.0 - shadow);
@@ -322,16 +1016,26 @@ vec3 CalcPointLight(PointLight light, int lightIndex, vec3 normal, vec3 fragPos,
     return (ambient + diffuse + specular) * attenuation * light.intensity;
 }
 
-vec3 CalcSpotLight(SpotLight light, vec3 normal, vec3 fragPos, vec3 viewDir, vec3 diffuseTexColor, vec3 specularTexColor) {
+vec3 CalcSpotLight(SpotLight light, int lightIndex, vec3 normal, vec3 fragPos, vec3 viewDir, vec3 diffuseTexColor, vec3 specularTexColor) {
     vec3 lightDir = normalize(light.position - fragPos);
     
-    // Diffuse shading
-    float diff = max(dot(normal, lightDir), 0.0);
+    // Diffuse component (Lambertian)
+    float NdotL = max(dot(normal, lightDir), 0.0);
     
-    // Specular shading (Blinn-Phong) with shininess clamping
+    // Specular component (Blinn-Phong with energy conservation)
     vec3 halfwayDir = normalize(lightDir + viewDir);
+    float NdotH = max(dot(normal, halfwayDir), 0.0);
     float clampedShininess = max(material.shininess, 4.0);
-    float spec = pow(max(dot(normal, halfwayDir), 0.0), clampedShininess);
+    
+    // Energy conservation normalization factor
+    const float PI = 3.14159265359;
+    float normalizationFactor = (clampedShininess + 8.0) / (8.0 * PI);
+    float specularPower = normalizationFactor * pow(NdotH, clampedShininess);
+    
+    // Fresnel approximation
+    float VdotH = max(dot(viewDir, halfwayDir), 0.0);
+    vec3 F0 = mix(vec3(0.04), specularTexColor, material.metallicFactor);
+    vec3 fresnel = F0 + (1.0 - F0) * pow(1.0 - VdotH, 5.0);
     
     // Attenuation
     float distance = length(light.position - fragPos);
@@ -340,19 +1044,24 @@ vec3 CalcSpotLight(SpotLight light, vec3 normal, vec3 fragPos, vec3 viewDir, vec
     // Spotlight (soft edges)
     float theta = dot(lightDir, normalize(-light.direction));
     float epsilon = light.innerCutOff - light.outerCutOff;
-    float intensity = clamp((theta - light.outerCutOff) / epsilon, 0.0, 1.0);
+    float spotlightIntensity = clamp((theta - light.outerCutOff) / epsilon, 0.0, 1.0);
     
-    // Energy-conserving spot light with shininess compensation
-    vec3 ambient = light.color * diffuseTexColor * 0.02;  
-    vec3 diffuse = light.color * diff * diffuseTexColor;
+    // Energy-conserving spot light calculation with AO
+    float aoFactor = getAmbientOcclusion(fs_in.TexCoords);
+    vec3 ambient = light.color * diffuseTexColor * 0.02 * aoFactor; // Apply AO to ambient
+    vec3 diffuse = light.color * NdotL * diffuseTexColor * (1.0 - fresnel);
+    vec3 specular = light.color * specularPower * fresnel;
     
-    // Scale specular contribution based on shininess
-    float specularScale = clampedShininess / (clampedShininess + 16.0);
-    vec3 specular = light.color * spec * specularTexColor * specularScale;
+    // Calculate spot light shadow
+    float shadow = SpotShadowCalculation(fragPos, light.position, light.direction, lightIndex);
     
     // Apply spotlight intensity to diffuse and specular (but not ambient)
-    diffuse *= intensity;
-    specular *= intensity;
+    diffuse *= spotlightIntensity;
+    specular *= spotlightIntensity;
+    
+    // Apply shadow to diffuse and specular (but not ambient)
+    diffuse *= (1.0 - shadow);
+    specular *= (1.0 - shadow);
     
     // Apply attenuation and light intensity
     return (ambient + diffuse + specular) * attenuation * light.intensity;
@@ -922,10 +1631,23 @@ void main() {
     // --- EARLY EXITS for special rendering modes ---
     // Point cloud rendering
     if (isPointCloud) {
-        FragColor = vec4(fs_in.VertexColor * fs_in.Intensity, 1.0);
+        vec3 pointColor = fs_in.VertexColor * fs_in.Intensity;
         
-        // Gamma correction
-        FragColor.rgb = pow(FragColor.rgb, vec3(1.0 / 2.2));
+        // For HDR rendering, output raw color without gamma correction
+        if (hdrSettings.enabled) {
+            FragColor = vec4(pointColor, 1.0);
+        } else {
+            // Apply gamma correction for non-HDR rendering
+            FragColor = vec4(pow(pointColor, vec3(1.0 / 2.2)), 1.0);
+        }
+        
+        // Extract bright areas for bloom
+        float brightness = calculateLuminance(pointColor);
+        if (brightness > hdrSettings.bloomThreshold && hdrSettings.enableBloom) {
+            BrightColor = vec4(pointColor, 1.0);
+        } else {
+            BrightColor = vec4(0.0, 0.0, 0.0, 1.0);
+        }
         
         if (showFragmentCursor) {
             float distanceToCursor = length(cursorPos.xyz - fs_in.FragPos);
@@ -949,7 +1671,22 @@ void main() {
     }
     
     if (isChunkOutline) {
-        FragColor = vec4(1.0, 1.0, 0.0, 1.0);
+        vec3 outlineColor = vec3(1.0, 1.0, 0.0);
+        
+        // For HDR rendering, output raw color
+        if (hdrSettings.enabled) {
+            FragColor = vec4(outlineColor, 1.0);
+        } else {
+            FragColor = vec4(outlineColor, 1.0);
+        }
+        
+        // Extract bright areas for bloom
+        float brightness = calculateLuminance(outlineColor);
+        if (brightness > hdrSettings.bloomThreshold && hdrSettings.enableBloom) {
+            BrightColor = vec4(outlineColor, 1.0);
+        } else {
+            BrightColor = vec4(0.0, 0.0, 0.0, 1.0);
+        }
         return;
     }
     
@@ -966,11 +1703,11 @@ void main() {
     float specularStrength = material.hasSpecularMap ? 
                            texture(material.textures[1], fs_in.TexCoords).r : 0.2;
     
-    // Calculate normal - do this once
+    // Calculate enhanced normal with improved TBN and multi-layer support
     vec3 normal;
-    if (material.hasNormalMap) {
-        normal = texture(material.textures[2], fs_in.TexCoords).rgb;
-        normal = normalize(fs_in.TBN * (normal * 2.0 - 1.0));
+    if (material.hasNormalMap && material.numNormalTextures > 0) {
+        // Use enhanced normal mapping with proper TBN matrix
+        normal = calculateEnhancedNormal(fs_in.TexCoords, fs_in.TBN);
     } else {
         // Normalize the interpolated normal (interpolation can denormalize it)
         normal = normalize(fs_in.Normal);
@@ -978,30 +1715,28 @@ void main() {
     
     // Calculate view direction once (FROM fragment TO camera)
     vec3 viewDir = normalize(viewPos - fs_in.FragPos);
+    
+    // HDR color accumulation
+    vec3 hdrColor = vec3(0.0);
     vec3 result = vec3(0.0);
     
     // --- LIGHTING CALCULATION BASED ON MODE ---
     if (lightingMode == LIGHTING_SHADOW_MAPPING) {
         // ------ LEARNOPENGL SHADOW MAPPING LIGHTING ------
         
-        // Get material diffuse and specular colors (gamma-correct)
-        vec3 diffuseColor = baseColor;
-        vec3 specularColor = vec3(1.0); // Default white specular
+        // Calculate enhanced material properties with PBR support
+        EnhancedMaterialProperties matProps = calculateMaterialProperties(fs_in.TexCoords);
+        vec3 diffuseColor = matProps.albedo;
+        vec3 specularColor = matProps.specularColor;
         
-        if (material.hasSpecularMap && material.numSpecularTextures > 0) {
-            // For specular maps, use the red channel for intensity and keep white color
-            // This prevents red tinting from single-channel specular maps
-            float specIntensity = texture(material.textures[1], fs_in.TexCoords).r;
-            specularColor = vec3(specIntensity); // Use intensity across all channels
-        }
-        
-        result = vec3(0.0);
+        // Initialize HDR color accumulation for shadow mapping
+        hdrColor = vec3(0.0);
         
         // Calculate directional light (sun) with shadows
         if (sun.enabled) {
             // Apply shadows properly following LearnOpenGL approach
             if (enableShadows) {
-                float shadow = ShadowCalculation(fs_in.FragPosLightSpace, normal, normalize(-sun.direction));
+                float shadow = calculatePCSSShadow(shadowMap, fs_in.FragPosLightSpace, normal, normalize(-sun.direction));
                 
                 // Calculate lighting components separately
                 vec3 lightDir = normalize(-sun.direction);
@@ -1018,33 +1753,51 @@ void main() {
                 float specularScale = clampedShininess / (clampedShininess + 16.0);
                 vec3 specular = sun.color * spec * specularColor * specularScale;
                 
-                // Apply shadow only to diffuse and specular
-                result += (ambient + (1.0 - shadow) * (diffuse + specular)) * sun.intensity;
+                // Apply shadow only to diffuse and specular - accumulate in HDR
+                hdrColor += (ambient + (1.0 - shadow) * (diffuse + specular)) * sun.intensity;
             } else {
-                result += CalcDirLight(sun, normal, viewDir, diffuseColor, specularColor);
+                hdrColor += CalcDirLight(sun, normal, viewDir, diffuseColor, specularColor);
             }
         }
         
-        // Calculate point lights
+        // Calculate point lights with enhanced culling
+        float lodFactor = getLODFactor(fs_in.FragPos, viewPos);
+        const float LIGHT_SIGNIFICANCE_THRESHOLD = 0.01;
+        
         for(int i = 0; i < min(numLights, MAX_LIGHTS); i++) {
+            // Enhanced light culling
+            if (!isLightSignificant(lights[i].position, fs_in.FragPos, lights[i].intensity, LIGHT_SIGNIFICANCE_THRESHOLD)) {
+                continue;
+            }
+            
+            // Distance-based early termination
             float lightDistance = length(lights[i].position - fs_in.FragPos);
-            if (lightDistance > 50.0) continue; // Skip distant lights for performance
+            if (lightDistance > 50.0 * lodFactor) continue;
             
-            result += CalcPointLight(lights[i], i, normal, fs_in.FragPos, viewDir, diffuseColor, specularColor);
+            hdrColor += CalcPointLight(lights[i], i, normal, fs_in.FragPos, viewDir, diffuseColor, specularColor) * lodFactor;
         }
         
-        // Calculate spot lights
+        // Calculate spot lights with enhanced culling
         for(int i = 0; i < min(numSpotLights, MAX_LIGHTS); i++) {
-            float lightDistance = length(spotLights[i].position - fs_in.FragPos);
-            if (lightDistance > 50.0) continue; // Skip distant lights for performance
+            // Enhanced light culling for spot lights
+            if (!isLightSignificant(spotLights[i].position, fs_in.FragPos, spotLights[i].intensity, LIGHT_SIGNIFICANCE_THRESHOLD)) {
+                continue;
+            }
             
-            result += CalcSpotLight(spotLights[i], normal, fs_in.FragPos, viewDir, diffuseColor, specularColor);
+            // Distance-based early termination
+            float lightDistance = length(spotLights[i].position - fs_in.FragPos);
+            if (lightDistance > 50.0 * lodFactor) continue;
+            
+            hdrColor += CalcSpotLight(spotLights[i], i, normal, fs_in.FragPos, viewDir, diffuseColor, specularColor) * lodFactor;
         }
         
-        // Add emissive contribution
-        if (material.emissive > 0.0) {
-            result += diffuseColor * material.emissive * emissiveIntensity;
+        // Add enhanced emissive contribution using PBR properties
+        if (length(matProps.emissive) > 0.0) {
+            hdrColor += matProps.emissive * emissiveIntensity;
         }
+        
+        // Store HDR result for tone mapping
+        result = hdrColor;
     }
     else if (lightingMode == LIGHTING_VOXEL_CONE_TRACING) {
         // ------ VOXEL CONE TRACING LIGHTING ------
@@ -1148,12 +1901,24 @@ void main() {
         }
     }
     
-    // LearnOpenGL proper gamma correction - apply at the very end
-    FragColor = vec4(result, 1.0);
+    // Extract bright areas for bloom before tone mapping
+    float brightness = calculateLuminance(result);
+    if (brightness > hdrSettings.bloomThreshold && hdrSettings.enableBloom) {
+        BrightColor = vec4(result, 1.0);
+    } else {
+        BrightColor = vec4(0.0, 0.0, 0.0, 1.0);
+    }
     
-    // Apply gamma correction as final step (standard gamma = 2.2)
-    const float gamma = 2.2;
-    FragColor.rgb = pow(FragColor.rgb, vec3(1.0 / gamma));
+    // For HDR rendering, output raw HDR color (tone mapping happens in bloom renderer)
+    if (hdrSettings.enabled) {
+        FragColor = vec4(result, 1.0);
+    } else {
+        // Apply tone mapping and gamma correction for non-HDR rendering
+        vec3 toneMappedColor = applyToneMapping(result);
+        const float gamma = 2.2;
+        toneMappedColor = pow(toneMappedColor, vec3(1.0 / gamma));
+        FragColor = vec4(toneMappedColor, 1.0);
+    }
     
     // Apply cursor effect
     if (showFragmentCursor) {

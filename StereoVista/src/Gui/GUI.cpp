@@ -98,7 +98,7 @@ static void DrawSectionHeader(const char* label) {
     ImGui::Separator();
 }
 
-// Helper function for inline help text
+// Helper function for help markers (tooltips)
 static void DrawHelpMarker(const char* desc) {
     ImGui::TextDisabled("(?)");
     if (ImGui::IsItemHovered()) {
@@ -995,6 +995,134 @@ void renderSettingsWindow() {
                     settingsChanged = true;
                 }
                 ImGui::SameLine(); DrawHelpMarker("Toggle shadow mapping on/off");
+                
+                ImGui::Spacing();
+                DrawSectionHeader("HDR Rendering");
+                
+                if (ImGui::Checkbox("Enable HDR", &preferences.hdrSettings.enabled)) {
+                    settingsChanged = true;
+                }
+                ImGui::SameLine(); DrawHelpMarker("Enable High Dynamic Range rendering for better lighting");
+                
+                if (preferences.hdrSettings.enabled) {
+                    if (ImGui::SliderFloat("Exposure", &preferences.hdrSettings.exposure, 0.1f, 5.0f, "%.2f")) {
+                        settingsChanged = true;
+                    }
+                    ImGui::SameLine(); DrawHelpMarker("Controls overall brightness of the scene");
+                    
+                    const char* toneMapOperators[] = { 
+                        "Reinhard", 
+                        "ACES", 
+                        "Uncharted 2", 
+                        "AgX", 
+                        "Khronos PBR Neutral", 
+                        "Tony McMapface" 
+                    };
+                    if (ImGui::Combo("Tone Mapping", &preferences.hdrSettings.toneMapOperator, toneMapOperators, IM_ARRAYSIZE(toneMapOperators))) {
+                        settingsChanged = true;
+                    }
+                    ImGui::SameLine(); 
+                    const char* toneMapDescriptions[] = {
+                        "Reinhard: Simple, classic tone mapping",
+                        "ACES: Industry standard, cinematic look",
+                        "Uncharted 2: Popular in games, good contrast",
+                        "AgX: Modern, perceptually accurate",
+                        "Khronos PBR Neutral: Neutral for PBR workflows",
+                        "Tony McMapface: Modern, perceptually motivated"
+                    };
+                    DrawHelpMarker(toneMapDescriptions[preferences.hdrSettings.toneMapOperator]);
+                    
+                    if (ImGui::Checkbox("Enable Bloom", &preferences.hdrSettings.enableBloom)) {
+                        settingsChanged = true;
+                    }
+                    ImGui::SameLine(); DrawHelpMarker("Add glow effect to bright areas");
+                    
+                    if (preferences.hdrSettings.enableBloom) {
+                        if (ImGui::SliderFloat("Bloom Threshold", &preferences.hdrSettings.bloomThreshold, 0.01f, 1.0f, "%.2f")) {
+                            settingsChanged = true;
+                        }
+                        ImGui::SameLine(); DrawHelpMarker("Brightness threshold for bloom effect");
+                        
+                        if (ImGui::SliderFloat("Bloom Intensity", &preferences.hdrSettings.bloomIntensity, 0.0f, 1.0f, "%.3f")) {
+                            settingsChanged = true;
+                        }
+                        ImGui::SameLine(); DrawHelpMarker("Strength of the bloom effect");
+                    }
+                }
+                
+                ImGui::Spacing();
+                DrawSectionHeader("Shadow Quality");
+                
+                const char* pcfKernelSizes[] = { "3x3 (Fast)", "5x5 (Balanced)", "7x7 (Quality)", "9x9 (High Quality)" };
+                int kernelIndex = (preferences.shadowSettings.pcfKernelSize - 3) / 2;
+                kernelIndex = glm::clamp(kernelIndex, 0, 3);
+                if (ImGui::Combo("PCF Kernel Size", &kernelIndex, pcfKernelSizes, IM_ARRAYSIZE(pcfKernelSizes))) {
+                    preferences.shadowSettings.pcfKernelSize = 3 + (kernelIndex * 2);
+                    settingsChanged = true;
+                }
+                ImGui::SameLine(); DrawHelpMarker("Size of the shadow filtering kernel. Larger = softer shadows but slower");
+                
+                if (ImGui::Checkbox("Enable PCSS", &preferences.shadowSettings.enablePCSS)) {
+                    settingsChanged = true;
+                }
+                ImGui::SameLine(); DrawHelpMarker("Percentage Closer Soft Shadows - realistic variable shadow softness");
+                
+                if (preferences.shadowSettings.enablePCSS) {
+                    if (ImGui::SliderFloat("Light Size", &preferences.shadowSettings.lightSize, 0.01f, 1.0f, "%.3f")) {
+                        settingsChanged = true;
+                    }
+                    ImGui::SameLine(); DrawHelpMarker("Size of the light source for PCSS calculations");
+                }
+                
+                ImGui::Spacing();
+                DrawSectionHeader("Material Enhancement");
+                
+                if (ImGui::Checkbox("Enable PBR Materials", &preferences.materialSettings.enablePBR)) {
+                    settingsChanged = true;
+                }
+                ImGui::SameLine(); DrawHelpMarker("Physically Based Rendering for realistic materials");
+                
+                if (ImGui::Checkbox("Enable Ambient Occlusion", &preferences.materialSettings.enableAO)) {
+                    settingsChanged = true;
+                }
+                ImGui::SameLine(); DrawHelpMarker("Use ambient occlusion maps for enhanced depth");
+                
+                if (ImGui::Checkbox("Enable Normal Mapping", &preferences.materialSettings.enableNormalMapping)) {
+                    settingsChanged = true;
+                }
+                ImGui::SameLine(); DrawHelpMarker("Use normal maps for surface detail");
+                
+                if (preferences.materialSettings.enableNormalMapping) {
+                    if (ImGui::SliderFloat("Normal Scale", &preferences.materialSettings.normalScale, 0.0f, 2.0f, "%.2f")) {
+                        settingsChanged = true;
+                    }
+                    ImGui::SameLine(); DrawHelpMarker("Intensity of normal map effect");
+                }
+                
+                if (ImGui::Checkbox("Enable Parallax Mapping", &preferences.materialSettings.enableParallaxMapping)) {
+                    settingsChanged = true;
+                }
+                ImGui::SameLine(); DrawHelpMarker("Use height maps for surface displacement");
+                
+                if (preferences.materialSettings.enableParallaxMapping) {
+                    if (ImGui::SliderFloat("Height Scale", &preferences.materialSettings.heightScale, 0.0f, 0.1f, "%.4f")) {
+                        settingsChanged = true;
+                    }
+                    ImGui::SameLine(); DrawHelpMarker("Strength of parallax displacement effect");
+                }
+                
+                ImGui::Spacing();
+                DrawSectionHeader("Default Material Properties");
+                
+                if (ImGui::SliderFloat("Metallic Factor", &preferences.materialSettings.metallicFactor, 0.0f, 1.0f, "%.2f")) {
+                    settingsChanged = true;
+                }
+                ImGui::SameLine(); DrawHelpMarker("Default metallic value for materials without metallic maps");
+                
+                if (ImGui::SliderFloat("Roughness Factor", &preferences.materialSettings.roughnessFactor, 0.0f, 1.0f, "%.2f")) {
+                    settingsChanged = true;
+                }
+                ImGui::SameLine(); DrawHelpMarker("Default roughness value for materials without roughness maps");
             }
             else if (preferences.lightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
                 ImGui::Spacing();
@@ -2344,11 +2472,51 @@ void renderMeshManipulationPanel(Engine::Model& model, int meshIndex, Engine::Sh
     ImGui::Checkbox("Visible", &mesh.visible);
 
     if (ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::ColorEdit3("Color", glm::value_ptr(mesh.color));
+        DrawSectionHeader("Basic Properties");
+        ImGui::ColorEdit3("Albedo Color", glm::value_ptr(mesh.color));
         ImGui::SliderFloat("Shininess", &mesh.shininess, 1.0f, 90.0f);
         ImGui::SliderFloat("Emissive", &mesh.emissive, 0.0f, 1.0f);
+        
+        if (preferences.materialSettings.enablePBR) {
+            DrawSectionHeader("PBR Properties");
+            
+            // Add metallic and roughness sliders for this mesh
+            static float meshMetallic = preferences.materialSettings.metallicFactor;
+            static float meshRoughness = preferences.materialSettings.roughnessFactor;
+            
+            if (ImGui::SliderFloat("Metallic", &meshMetallic, 0.0f, 1.0f, "%.2f")) {
+                // Update mesh metallic property (would need to be added to mesh structure)
+            }
+            ImGui::SameLine(); DrawHelpMarker("0 = Dielectric (plastic, wood), 1 = Metal");
+            
+            if (ImGui::SliderFloat("Roughness", &meshRoughness, 0.0f, 1.0f, "%.2f")) {
+                // Update mesh roughness property (would need to be added to mesh structure)
+            }
+            ImGui::SameLine(); DrawHelpMarker("0 = Mirror-like, 1 = Completely rough");
+        }
+        
+        if (preferences.materialSettings.enableNormalMapping) {
+            DrawSectionHeader("Normal Mapping");
+            static float normalScale = preferences.materialSettings.normalScale;
+            if (ImGui::SliderFloat("Normal Intensity", &normalScale, 0.0f, 2.0f, "%.2f")) {
+                preferences.materialSettings.normalScale = normalScale;
+                savePreferences();
+            }
+            ImGui::SameLine(); DrawHelpMarker("Strength of normal map effect");
+        }
+        
+        if (preferences.materialSettings.enableParallaxMapping) {
+            DrawSectionHeader("Parallax Mapping");
+            static float heightScale = preferences.materialSettings.heightScale;
+            if (ImGui::SliderFloat("Height Scale", &heightScale, 0.0f, 0.1f, "%.4f")) {
+                preferences.materialSettings.heightScale = heightScale;
+                savePreferences();
+            }
+            ImGui::SameLine(); DrawHelpMarker("Depth of parallax displacement");
+        }
 
         if (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
+            ImGui::Spacing();
             ImGui::TextDisabled("VCT properties are per-model only");
         }
     }
@@ -2380,9 +2548,28 @@ void renderMeshManipulationPanel(Engine::Model& model, int meshIndex, Engine::Sh
             }
             };
 
+        // Basic textures
+        DrawSectionHeader("Basic Textures");
         textureLoadButton("Load Diffuse", "texture_diffuse");
-        textureLoadButton("Load Normal", "texture_normal");
         textureLoadButton("Load Specular", "texture_specular");
+        
+        // Enhanced textures
+        DrawSectionHeader("Enhanced Textures");
+        textureLoadButton("Load Normal Map", "texture_normal");
+        textureLoadButton("Load Ambient Occlusion", "texture_ao");
+        
+        // PBR textures
+        if (preferences.materialSettings.enablePBR) {
+            DrawSectionHeader("PBR Textures");
+            textureLoadButton("Load Metallic Map", "texture_metallic");
+            textureLoadButton("Load Roughness Map", "texture_roughness");
+        }
+        
+        // Advanced textures
+        if (preferences.materialSettings.enableParallaxMapping) {
+            DrawSectionHeader("Advanced Textures");
+            textureLoadButton("Load Height Map", "texture_height");
+        }
     }
 
     ImGui::Spacing();

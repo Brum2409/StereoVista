@@ -172,6 +172,7 @@
     <ClCompile Include="src\Cursors\CursorPresets.cpp" />
     <ClCompile Include="src\Engine\BVH.cpp" />
     <ClCompile Include="src\Engine\BVHDebug.cpp" />
+    <ClCompile Include="src\Engine\BloomRenderer.cpp" />
     <ClCompile Include="src\Engine\Buffers.cpp" />
     <ClCompile Include="src\Engine\Input.cpp" />
     <ClCompile Include="src\Engine\OctreePointCloudManager.cpp" />
@@ -209,6 +210,7 @@
     <ClInclude Include="headers\engine\buffers.h" />
     <ClInclude Include="headers\Engine\BVH.h" />
     <ClInclude Include="headers\Engine\BVHDebug.h" />
+    <ClInclude Include="headers\Engine\BloomRenderer.h" />
     <ClInclude Include="headers\engine\data.h" />
     <ClInclude Include="headers\engine\input.h" />
     <ClInclude Include="headers\Engine\OctreePointCloudManager.h" />

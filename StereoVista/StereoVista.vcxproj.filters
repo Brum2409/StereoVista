@@ -93,6 +93,9 @@
     <ClCompile Include="src\CursorManager.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\Engine\BloomRenderer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="headers\core.h">
@@ -111,6 +114,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\engine\data.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Engine\BloomRenderer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\Camera.h">

@@ -105,6 +105,38 @@ namespace GUI {
         bool enableShadows = true;
         VCTSettings vctSettings;
         
+        // HDR rendering settings
+        struct HDRSettings {
+            bool enabled = true;
+            float exposure = 1.0f;
+            float bloomThreshold = 1.0f;
+            float bloomIntensity = 0.04f;
+            int toneMapOperator = 0; // 0=Reinhard, 1=ACES, 2=Filmic
+            bool enableBloom = false;
+        } hdrSettings;
+        
+        // Shadow quality settings
+        struct ShadowSettings {
+            int pcfKernelSize = 3; // 3, 5, 7, or 9
+            bool enablePCSS = false;
+            float lightSize = 0.1f; // For PCSS calculations
+            bool enableCascades = false;
+            int numCascades = 4;
+            float cascadeSplitLambda = 0.5f;
+        } shadowSettings;
+        
+        // Enhanced material settings
+        struct MaterialSettings {
+            bool enablePBR = true;
+            bool enableAO = true;
+            bool enableNormalMapping = true;
+            bool enableParallaxMapping = false;
+            float normalScale = 1.0f;
+            float heightScale = 0.02f;
+            float metallicFactor = 0.0f;
+            float roughnessFactor = 0.5f;
+        } materialSettings;
+        
         // Radiance raytracing settings
         struct RadianceSettings {
             bool enableRaytracing = true;
