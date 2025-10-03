@@ -1086,6 +1086,32 @@ void renderSettingsWindow() {
                 ImGui::SameLine(); DrawHelpMarker("Adjusts the softness of shadow edges (affects both standard PCF and PCSS)");
 
                 ImGui::Spacing();
+                DrawSectionHeader("Indirect Lighting (Global Illumination)");
+
+                if (ImGui::Checkbox("Enable Indirect Lighting", &preferences.shadowSettings.enableIndirectLighting)) {
+                    settingsChanged = true;
+                }
+                ImGui::SameLine(); DrawHelpMarker("Add voxel-based global illumination to shadow mapping mode");
+
+                if (preferences.shadowSettings.enableIndirectLighting) {
+                    ImGui::Indent();
+
+                    if (ImGui::Checkbox("Indirect Diffuse", &preferences.vctSettings.indirectDiffuseLight)) {
+                        vctSettings.indirectDiffuseLight = preferences.vctSettings.indirectDiffuseLight;
+                        settingsChanged = true;
+                    }
+                    ImGui::SameLine(); DrawHelpMarker("Color bleeding and bounce lighting");
+
+                    if (ImGui::Checkbox("Indirect Specular", &preferences.vctSettings.indirectSpecularLight)) {
+                        vctSettings.indirectSpecularLight = preferences.vctSettings.indirectSpecularLight;
+                        settingsChanged = true;
+                    }
+                    ImGui::SameLine(); DrawHelpMarker("Glossy reflections from voxelized scene");
+
+                    ImGui::Unindent();
+                }
+
+                ImGui::Spacing();
                 DrawSectionHeader("Material Enhancement");
                 
                 if (ImGui::Checkbox("Enable PBR Materials", &preferences.materialSettings.enablePBR)) {

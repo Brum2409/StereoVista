@@ -86,6 +86,7 @@ struct ShadowSettings {
     bool enableCascades;
     int numCascades;
     float cascadeSplitLambda;
+    bool enableIndirectLighting; // Enable voxel-based indirect lighting
 };
 
 // ---- MATERIAL SETTINGS ----
@@ -1262,6 +1263,233 @@ vec3 CalcPBRDirLight(Sun sun, vec3 normal, vec3 viewDir,
     return lighting * (1.0 - shadow) * sun.intensity;
 }
 
+// ---- VOXEL CONE TRACING CORE FUNCTIONS FOR INDIRECT LIGHTING ----
+// Improved diffuse voxel cone tracing with better sampling
+vec3 traceDiffuseVoxelCone(vec3 from, vec3 direction) {
+    direction = normalize(direction);
+
+    // Cone parameters - wider cone for diffuse lighting
+    const float CONE_SPREAD = 0.325; // ~18.6 degrees
+    const float MIN_CONE_RADIUS = voxelSize;
+
+    vec4 acc = vec4(0.0);
+    float dist = voxelSize * 0.5; // Start closer to surface
+
+    // Add temporal jitter to reduce banding artifacts
+    float jitter = fract(sin(dot(fs_in.FragPos.xy + direction.xy, vec2(12.9898, 78.233))) * 43758.5453);
+    dist += voxelSize * 0.2 * jitter;
+
+    const float SQRT2 = 1.414213;
+    const float MIPMAP_HARDCAP = 5.4;
+    float maxDist = min(vctSettings.tracingMaxDistance, SQRT2 * 1.2);
+
+    // Improved sampling with variable step count based on distance
+    int maxSteps = 8; // Increased for better quality
+    for (int i = 0; i < maxSteps && dist < maxDist && acc.a < 0.95; i++) {
+        vec3 samplePos = from + dist * direction;
+        if (!isInVoxelGrid(samplePos)) break;
+
+        // Calculate cone radius and appropriate mipmap level
+        float coneRadius = max(MIN_CONE_RADIUS, CONE_SPREAD * dist);
+        float level = max(0.0, log2(coneRadius / voxelSize * 1.2)); // Slightly faster LOD
+        level = min(level, MIPMAP_HARDCAP);
+
+        vec3 texCoord = worldToVoxelCoord(samplePos);
+
+        // Multi-sample for larger cones to reduce aliasing
+        vec4 voxel = vec4(0.0);
+        float sampleWeight = 1.0;
+
+        if (coneRadius > voxelSize * 2.0 && i > 1) {
+            // Sample multiple points within the cone
+            vec3 ortho1 = orthogonal(direction);
+            vec3 ortho2 = cross(direction, ortho1);
+            float offset = coneRadius * 0.25;
+
+            voxel += textureLod(voxelGrid, texCoord, level); // Center
+            voxel += textureLod(voxelGrid, worldToVoxelCoord(samplePos + ortho1 * offset), level);
+            voxel += textureLod(voxelGrid, worldToVoxelCoord(samplePos - ortho1 * offset), level);
+            voxel += textureLod(voxelGrid, worldToVoxelCoord(samplePos + ortho2 * offset), level);
+            voxel += textureLod(voxelGrid, worldToVoxelCoord(samplePos - ortho2 * offset), level);
+            voxel *= 0.2; // Average 5 samples
+            sampleWeight = 1.2; // Boost multi-sample contribution
+        } else {
+            voxel = textureLod(voxelGrid, texCoord, level);
+        }
+
+        // Distance-based attenuation for realistic lighting falloff
+        float distAttenuation = 1.0 / (1.0 + 0.1 * dist);
+
+        // Improved blending with energy conservation
+        float blendFactor = 0.08 * (1.0 + 0.5 * level) * sampleWeight * distAttenuation;
+        acc += blendFactor * voxel * (1.0 - acc.a);
+
+        // Adaptive step size - faster steps for distant samples
+        float stepMultiplier = 1.8 + 0.6 * level;
+        dist += voxelSize * stepMultiplier;
+    }
+
+    // Better tone mapping and energy conservation
+    vec3 result = acc.rgb * 1.8;
+    result = result / (1.0 + result); // Simple Reinhard tone mapping
+    return pow(result, vec3(1.2)); // Slight gamma adjustment
+}
+
+// Improved specular voxel cone tracing with proper cone aperture
+vec3 traceSpecularVoxelCone(vec3 from, vec3 direction) {
+    direction = normalize(direction);
+
+    // Better self-intersection avoidance
+    vec3 normal = normalize(fs_in.Normal);
+    float offset = max(3.0 * voxelSize, 0.02);
+    from += offset * direction; // Move along reflection direction
+
+    // Cone parameters for specular reflections
+    // Tighter cone for sharp reflections, wider for rough materials
+    float coneAperture = 0.02 + 0.15 * material.specularDiffusion; // 1-9 degrees
+    const float MIN_CONE_RADIUS = voxelSize * 0.5;
+    const float MIPMAP_HARDCAP = 5.4;
+
+    vec4 acc = vec4(0.0);
+    float dist = 0.0; // Start from offset position
+    float maxDist = min(vctSettings.tracingMaxDistance, length(gridMax - gridMin) * 0.6);
+
+    // Use more samples for high-quality reflections
+    int maxSteps = min(12, int(8.0 + 4.0 / (material.specularDiffusion + 0.1)));
+
+    for (int i = 0; i < maxSteps && dist < maxDist && acc.a < 0.98; i++) {
+        vec3 samplePos = from + dist * direction;
+        if (!isInVoxelGrid(samplePos)) break;
+
+        // Calculate cone radius based on distance and material roughness
+        float coneRadius = max(MIN_CONE_RADIUS, coneAperture * dist);
+
+        // Determine mipmap level from cone radius
+        float level = max(0.0, log2(coneRadius / voxelSize));
+        level = min(level, MIPMAP_HARDCAP);
+
+        vec3 texCoord = worldToVoxelCoord(samplePos);
+        vec4 voxel = vec4(0.0);
+
+        // For very tight cones (sharp reflections), use single sample
+        if (coneRadius < voxelSize * 1.5) {
+            voxel = textureLod(voxelGrid, texCoord, level);
+        } else {
+            // For wider cones, use multi-sampling for better quality
+            vec3 ortho1 = orthogonal(direction);
+            vec3 ortho2 = cross(direction, ortho1);
+            float sampleOffset = coneRadius * 0.3;
+
+            // Sample center and 4 offset points
+            voxel += textureLod(voxelGrid, texCoord, level) * 0.4; // Center weighted more
+            voxel += textureLod(voxelGrid, worldToVoxelCoord(samplePos + ortho1 * sampleOffset), level) * 0.15;
+            voxel += textureLod(voxelGrid, worldToVoxelCoord(samplePos - ortho1 * sampleOffset), level) * 0.15;
+            voxel += textureLod(voxelGrid, worldToVoxelCoord(samplePos + ortho2 * sampleOffset), level) * 0.15;
+            voxel += textureLod(voxelGrid, worldToVoxelCoord(samplePos - ortho2 * sampleOffset), level) * 0.15;
+        }
+
+        // Distance-based attenuation for realistic reflections
+        float distAttenuation = 1.0 / (1.0 + 0.02 * dist);
+
+        // Energy conservation with proper blending
+        float f = 1.0 - acc.a;
+        float weight = 0.12 * (1.0 + 0.8 * material.specularDiffusion) * distAttenuation;
+
+        acc.rgb += weight * voxel.rgb * voxel.a * f;
+        acc.a += weight * voxel.a * f;
+
+        // Adaptive step size based on cone radius and distance
+        float stepSize = voxelSize * (0.8 + 0.4 * level + 0.01 * dist);
+        dist += stepSize;
+    }
+
+    // Final specular contribution with material properties
+    float specularStrength = material.specularReflectivity * (2.0 - material.specularDiffusion);
+    return acc.rgb * specularStrength * material.specularColor;
+}
+
+// Calculate indirect diffuse lighting with configurable number of cones
+vec3 calculateIndirectDiffuseLight(vec3 normal, vec3 baseColor) {
+    const float DIFFUSE_INDIRECT_FACTOR = 0.52;
+    const float ISQRT2 = 0.707106;
+
+    // Weight values for different cone types
+    const float w[3] = {1.5, 0.8, 0.6}; // weights (center, side, corner)
+    const float ANGLE_MIX = 0.6; // Angle for side cones
+
+    // Calculate orthogonal base vectors
+    vec3 ortho = normalize(orthogonal(normal));
+    vec3 ortho2 = normalize(cross(ortho, normal));
+
+    // Calculate corner vectors if needed
+    vec3 corner = normalize(0.5 * (ortho + ortho2));
+    vec3 corner2 = normalize(0.5 * (ortho - ortho2));
+
+    // Start position with offset
+    const float CONE_OFFSET = -0.015;
+    vec3 N_OFFSET = normal * (1.0 + 3.8 * ISQRT2) * voxelSize;
+    vec3 C_ORIGIN = fs_in.FragPos + N_OFFSET;
+
+    // Accumulate indirect diffuse light
+    vec3 acc = vec3(0.0);
+
+    // Get the cone count from settings
+    int coneCount = vctSettings.diffuseConeCount;
+
+    // Always trace the center cone
+    acc += w[0] * traceDiffuseVoxelCone(C_ORIGIN + CONE_OFFSET * normal, normal);
+
+    // Trace side cones if using 5 or more cones
+    if (coneCount >= 5) {
+        vec3 s1 = normalize(mix(normal, ortho, ANGLE_MIX));
+        vec3 s2 = normalize(mix(normal, -ortho, ANGLE_MIX));
+        vec3 s3 = normalize(mix(normal, ortho2, ANGLE_MIX));
+        vec3 s4 = normalize(mix(normal, -ortho2, ANGLE_MIX));
+
+        acc += w[1] * traceDiffuseVoxelCone(C_ORIGIN + CONE_OFFSET * ortho, s1);
+        acc += w[1] * traceDiffuseVoxelCone(C_ORIGIN - CONE_OFFSET * ortho, s2);
+        acc += w[1] * traceDiffuseVoxelCone(C_ORIGIN + CONE_OFFSET * ortho2, s3);
+        acc += w[1] * traceDiffuseVoxelCone(C_ORIGIN - CONE_OFFSET * ortho2, s4);
+    }
+
+    // Trace corner cones if using 9 cones
+    if (coneCount >= 9) {
+        vec3 c1 = normalize(mix(normal, corner, ANGLE_MIX));
+        vec3 c2 = normalize(mix(normal, -corner, ANGLE_MIX));
+        vec3 c3 = normalize(mix(normal, corner2, ANGLE_MIX));
+        vec3 c4 = normalize(mix(normal, -corner2, ANGLE_MIX));
+
+        acc += w[2] * traceDiffuseVoxelCone(C_ORIGIN + CONE_OFFSET * corner, c1);
+        acc += w[2] * traceDiffuseVoxelCone(C_ORIGIN - CONE_OFFSET * corner, c2);
+        acc += w[2] * traceDiffuseVoxelCone(C_ORIGIN + CONE_OFFSET * corner2, c3);
+        acc += w[2] * traceDiffuseVoxelCone(C_ORIGIN - CONE_OFFSET * corner2, c4);
+    }
+
+    // Add slight noise to break up patterns
+    float noise = fract(sin(dot(fs_in.FragPos.xy, vec2(12.9898, 78.233))) * 43758.5453);
+    float noiseAmount = 0.03;
+
+    // Apply material properties with subtle noise
+    return DIFFUSE_INDIRECT_FACTOR * material.diffuseReflectivity *
+           acc * baseColor * (1.0 + noise * noiseAmount - noiseAmount/2.0);
+}
+
+vec3 calculateIndirectSpecularLight(vec3 viewDirection) {
+    // Use view direction from camera to fragment
+    vec3 normal = normalize(fs_in.Normal);
+
+    // Ensure orientation
+    if (dot(viewDirection, fs_in.FragPos - viewPos) < 0.0) {
+        viewDirection = -viewDirection;
+    }
+
+    // Reflection vector
+    vec3 reflection = reflect(viewDirection, normal);
+
+    return material.specularReflectivity * material.specularColor *
+           traceSpecularVoxelCone(fs_in.FragPos, reflection);
+}
+
 void main() {
     // --- EARLY EXITS for special rendering modes ---
     // Point cloud rendering
@@ -1449,7 +1677,22 @@ void main() {
         if (length(matProps.emissive) > 0.0) {
             hdrColor += matProps.emissive * emissiveIntensity;
         }
-        
+
+        // Add indirect lighting from voxel cone tracing if enabled
+        if (shadowSettings.enableIndirectLighting && isInVoxelGrid(fs_in.FragPos)) {
+            // Indirect diffuse (global illumination)
+            if (vctSettings.indirectDiffuseLight) {
+                vec3 indirectDiffuse = calculateIndirectDiffuseLight(normal, diffuseColor);
+                hdrColor += indirectDiffuse;
+            }
+
+            // Indirect specular (reflections)
+            if (vctSettings.indirectSpecularLight) {
+                vec3 indirectSpecular = calculateIndirectSpecularLight(viewDir);
+                hdrColor += indirectSpecular;
+            }
+        }
+
         // Store HDR result for tone mapping
         result = hdrColor;
     }

@@ -130,6 +130,7 @@ namespace GUI {
             bool enableCascades = false;
             int numCascades = 4;
             float cascadeSplitLambda = 0.5f;
+            bool enableIndirectLighting = false; // Enable voxel-based indirect lighting in shadow mapping mode
         } shadowSettings;
         
         // Enhanced material settings

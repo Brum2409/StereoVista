@@ -1481,6 +1481,7 @@ void savePreferences() {
     j["shadows"]["enableCascades"] = preferences.shadowSettings.enableCascades;
     j["shadows"]["numCascades"] = preferences.shadowSettings.numCascades;
     j["shadows"]["cascadeSplitLambda"] = preferences.shadowSettings.cascadeSplitLambda;
+    j["shadows"]["enableIndirectLighting"] = preferences.shadowSettings.enableIndirectLighting;
     
     // Save material settings
     j["materials"]["enablePBR"] = preferences.materialSettings.enablePBR;
@@ -1810,6 +1811,7 @@ void loadPreferences() {
             preferences.shadowSettings.enableCascades = j["shadows"].value("enableCascades", false);
             preferences.shadowSettings.numCascades = j["shadows"].value("numCascades", 4);
             preferences.shadowSettings.cascadeSplitLambda = j["shadows"].value("cascadeSplitLambda", 0.5f);
+            preferences.shadowSettings.enableIndirectLighting = j["shadows"].value("enableIndirectLighting", false);
         }
         
         // Material settings
@@ -2916,8 +2918,11 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     glBindTexture(GL_TEXTURE_2D, 0);
     glBindTexture(GL_TEXTURE_3D, 0);
 
-    // 1. Update the voxel grid if voxel visualization is enabled or we're using voxel cone tracing
-    if (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING || voxelizer->showDebugVisualization) {
+    // 1. Update the voxel grid if voxel visualization is enabled or we're using voxel cone tracing or shadow mapping with indirect lighting
+    bool needsVoxelization = (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) ||
+                             voxelizer->showDebugVisualization ||
+                             (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING && preferences.shadowSettings.enableIndirectLighting);
+    if (needsVoxelization) {
         voxelizer->update(camera.Position, currentScene.models);
     }
 
@@ -3108,6 +3113,35 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
             shader->setFloat(lightName + ".outerCutOff", spotLights[i].outerCutOff);
         }
         shader->setInt("numSpotLights", std::min((int)spotLights.size(), MAX_LIGHTS));
+
+        // Add VCT uniforms if indirect lighting is enabled
+        if (preferences.shadowSettings.enableIndirectLighting) {
+            // Set voxel grid parameters
+            float halfSize = voxelizer->getVoxelGridSize() * 0.5f;
+            shader->setVec3("gridMin", glm::vec3(-halfSize));
+            shader->setVec3("gridMax", glm::vec3(halfSize));
+            shader->setFloat("voxelSize", vctSettings.voxelSize);
+
+            // Set VCT settings
+            shader->setBool("vctSettings.indirectSpecularLight", vctSettings.indirectSpecularLight);
+            shader->setBool("vctSettings.indirectDiffuseLight", vctSettings.indirectDiffuseLight);
+            shader->setInt("vctSettings.diffuseConeCount", vctSettings.diffuseConeCount);
+            shader->setFloat("vctSettings.tracingMaxDistance", vctSettings.tracingMaxDistance);
+
+            // Bind voxel 3D texture - using texture unit 5
+            glActiveTexture(GL_TEXTURE5);
+            glBindTexture(GL_TEXTURE_3D, voxelizer->getVoxelTexture());
+            shader->setInt("voxelGrid", 5);
+
+            // Set default material properties for indirect lighting
+            shader->setFloat("material.diffuseReflectivity", 0.8f);
+            shader->setFloat("material.specularReflectivity", 0.0f);
+            shader->setFloat("material.specularDiffusion", 0.5f);
+            shader->setVec3("material.specularColor", glm::vec3(1.0f));
+        }
+
+        // Set shadow settings uniform
+        shader->setBool("shadowSettings.enableIndirectLighting", preferences.shadowSettings.enableIndirectLighting);
     }
     // Voxel cone tracing specific setup
     else if (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {

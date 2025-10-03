@@ -1,7 +1,7 @@
 {
     "camera": {
         "autoConvergence": true,
-        "convergence": 6.733068466186523,
+        "convergence": 8.467148780822754,
         "convergenceCapMax": 40.0,
         "convergenceCapMin": 0.5,
         "convergenceDistanceFactor": 1.0,
@@ -69,11 +69,12 @@
     "shadows": {
         "cascadeSplitLambda": 0.5,
         "enableCascades": false,
+        "enableIndirectLighting": true,
         "enablePCSS": false,
         "lightSize": 0.0949999988079071,
         "numCascades": 4,
         "pcfKernelSize": 9,
-        "shadowSoftness": 2.0799999237060547
+        "shadowSoftness": 11.65999984741211
     },
     "skybox": {
         "exposure": 0.05999999865889549,
@@ -87,7 +88,7 @@
             0.10000000149011612,
             0.30000001192092896
         ],
-        "hdrPath": "C:\\Users\\Benbrem\\Downloads\\citrus_orchard_road_puresky_8k.hdr",
+        "hdrPath": "C:\\Users\\Benbrem\\Downloads\\citrus_orchard_road_puresky_16k.hdr",
         "selectedCubemap": 0,
         "solidColor": [
             0.20000000298023224,
