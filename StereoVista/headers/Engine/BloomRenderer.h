@@ -48,7 +48,7 @@ namespace Engine {
         void beginBloomPass();
         
         // Apply bloom effect and render final result
-        void applyBloom(GLuint sceneTexture, const BloomSettings& settings);
+        void applyBloom(GLuint sceneTexture, const BloomSettings& settings, GLenum drawBuffer = GL_BACK);
         
         // Get bloom settings
         BloomSettings& getSettings() { return m_settings; }

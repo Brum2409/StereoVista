@@ -1,8 +1,12 @@
 {
     "camera": {
         "autoConvergence": true,
-        "convergence": 6.925877094268799,
+        "convergence": 6.733068466186523,
+        "convergenceCapMax": 40.0,
+        "convergenceCapMin": 0.5,
         "convergenceDistanceFactor": 1.0,
+        "convergenceSmoothingSpeed": 4.900000095367432,
+        "enableConvergenceCap": false,
         "farPlane": 224.0,
         "fov": 48.1510009765625,
         "maxScrollVelocity": 7.204999923706055,
@@ -23,7 +27,7 @@
         "currentPreset": "Sphere"
     },
     "hdr": {
-        "bloomIntensity": 0.020999999716877937,
+        "bloomIntensity": 0.004000000189989805,
         "bloomThreshold": 0.15000000596046448,
         "enableBloom": true,
         "enabled": true,
@@ -66,12 +70,13 @@
         "cascadeSplitLambda": 0.5,
         "enableCascades": false,
         "enablePCSS": false,
-        "lightSize": 0.07800000160932541,
+        "lightSize": 0.0949999988079071,
         "numCascades": 4,
         "pcfKernelSize": 9,
-        "shadowSoftness": 8.09000015258789
+        "shadowSoftness": 2.0799999237060547
     },
     "skybox": {
+        "exposure": 0.05999999865889549,
         "gradientBottom": [
             0.699999988079071,
             0.699999988079071,
@@ -89,7 +94,7 @@
             0.30000001192092896,
             0.4000000059604645
         ],
-        "type": 2
+        "type": 1
     },
     "spacemouse": {
         "anchorMode": 1,

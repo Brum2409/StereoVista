@@ -41,6 +41,7 @@ extern Engine::Voxelizer* voxelizer;
 extern float ambientStrengthFromSkybox;
 extern float mouseSmoothingFactor;
 extern bool orbitFollowsCursor;
+extern float convergenceSmoothingSpeed;
 
 // SpaceMouse variables
 extern SpaceMouseInput spaceMouseInput;
@@ -1368,6 +1369,37 @@ void renderSettingsWindow() {
                 }
                 ImGui::SameLine(); DrawHelpMarker("Multiplier for the distance to nearest object used for convergence");
 
+                if (ImGui::SliderFloat("Smoothing Speed", &convergenceSmoothingSpeed, 0.5f, 20.0f, "%.1f")) {
+                    preferences.convergenceSmoothingSpeed = convergenceSmoothingSpeed;
+                    settingsChanged = true;
+                }
+                ImGui::SameLine(); DrawHelpMarker("Speed of convergence transition. Higher values = faster transitions, lower values = smoother but slower");
+
+                if (ImGui::Checkbox("Enable Convergence Cap", &preferences.enableConvergenceCap)) {
+                    settingsChanged = true;
+                }
+                ImGui::SameLine(); DrawHelpMarker("Limit auto convergence to a specific range");
+
+                if (preferences.enableConvergenceCap) {
+                    if (ImGui::SliderFloat("Min Convergence", &preferences.convergenceCapMin, 0.1f, 20.0f, "%.1f")) {
+                        // Ensure min doesn't exceed max
+                        if (preferences.convergenceCapMin > preferences.convergenceCapMax) {
+                            preferences.convergenceCapMin = preferences.convergenceCapMax;
+                        }
+                        settingsChanged = true;
+                    }
+                    ImGui::SameLine(); DrawHelpMarker("Minimum convergence distance when auto convergence is active");
+
+                    if (ImGui::SliderFloat("Max Convergence", &preferences.convergenceCapMax, 0.1f, 100.0f, "%.1f")) {
+                        // Ensure max doesn't go below min
+                        if (preferences.convergenceCapMax < preferences.convergenceCapMin) {
+                            preferences.convergenceCapMax = preferences.convergenceCapMin;
+                        }
+                        settingsChanged = true;
+                    }
+                    ImGui::SameLine(); DrawHelpMarker("Maximum convergence distance when auto convergence is active");
+                }
+
                 ImGui::Text("Current Convergence: %.2f", currentScene.settings.convergence);
                 ImGui::SameLine(); DrawHelpMarker("Auto-calculated convergence distance based on nearest object");
             }
@@ -1544,6 +1576,12 @@ void renderSettingsWindow() {
                     }
                 }
                 ImGui::SameLine(); DrawHelpMarker("Select an HDR (.hdr) equirectangular environment map");
+
+                // Exposure control for HDR skyboxes
+                if (ImGui::SliderFloat("HDR Exposure", &preferences.skyboxExposure, 0.01f, 2.0f, "%.2f", ImGuiSliderFlags_Logarithmic)) {
+                    savePreferences();
+                }
+                ImGui::SameLine(); DrawHelpMarker("Controls the brightness of the HDR skybox. Most HDR environment maps need values between 0.1-0.5");
             }
             else if (skyboxConfig.type == GUI::SKYBOX_SOLID_COLOR) {
                 if (ImGui::ColorEdit3("Color", glm::value_ptr(skyboxConfig.solidColor))) {

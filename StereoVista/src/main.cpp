@@ -94,7 +94,7 @@ bool loadHDRSkybox(const std::string& hdrPath);
 void initSkybox();
 void setupPointShadowMapping();
 
-void cleanup(Engine::Shader* shader);
+void cleanup();
 
 // ---- Utility Functions ----
 float calculateLargestModelDimension();
@@ -135,6 +135,10 @@ float minSeparation = 0.01f; // Minimum stereo separation
 // The convergence will shift the zFokus but there is still some weirdness when going into negative
 float minConvergence = 0.0f;  // Minimum convergence
 float maxConvergence = 40.0f;   // Maximum convergence
+
+// Auto convergence smoothing
+float targetConvergence = 2.6f; // Target convergence for smooth interpolation
+float convergenceSmoothingSpeed = 5.0f; // Speed of convergence interpolation (higher = faster)
 
 double accumulatedXOffset = 0.0;
 double accumulatedYOffset = 0.0;
@@ -246,6 +250,8 @@ const unsigned int SHADOW_WIDTH_POINT = 1024, SHADOW_HEIGHT_POINT = 1024;
 Engine::Shader* pointShadowShader = nullptr;
 float far_plane = 50.0f;
 Engine::Shader* radianceShader = nullptr;
+Engine::Shader* shadowMappingShader = nullptr;
+Engine::Shader* voxelConeTracingShader = nullptr;
 
 // Bloom rendering system
 Engine::BloomRenderer* bloomRenderer = nullptr;
@@ -941,10 +947,10 @@ void setupPointShadowMapping() {
 
 // Convert HDR equirectangular map to cubemap
 bool loadHDRSkybox(const std::string& hdrPath) {
-    // Load HDR image
+    // Load HDR image (force 3 channels for RGB)
     stbi_set_flip_vertically_on_load(true);
     int width, height, nrComponents;
-    float* data = stbi_loadf(hdrPath.c_str(), &width, &height, &nrComponents, 0);
+    float* data = stbi_loadf(hdrPath.c_str(), &width, &height, &nrComponents, 3);
 
     if (!data) {
         std::cerr << "Failed to load HDR texture: " << hdrPath << std::endl;
@@ -952,11 +958,13 @@ bool loadHDRSkybox(const std::string& hdrPath) {
         return false;
     }
 
-    // Create HDR texture
+    std::cout << "Loaded HDR image: " << width << "x" << height << " with " << nrComponents << " components" << std::endl;
+
+    // Create HDR texture with floating point format
     unsigned int hdrTexture;
     glGenTextures(1, &hdrTexture);
     glBindTexture(GL_TEXTURE_2D, hdrTexture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, width, height, 0, GL_RGB, GL_FLOAT, data);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB32F, width, height, 0, GL_RGB, GL_FLOAT, data);
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
@@ -966,16 +974,16 @@ bool loadHDRSkybox(const std::string& hdrPath) {
     stbi_image_free(data);
     stbi_set_flip_vertically_on_load(false);
 
-    // Create cubemap
+    // Create cubemap with HDR format
     glGenTextures(1, &cubemapTexture);
     glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
     for (unsigned int i = 0; i < 6; ++i) {
-        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB16F, 512, 512, 0, GL_RGB, GL_FLOAT, nullptr);
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB32F, 512, 512, 0, GL_RGB, GL_FLOAT, nullptr);
     }
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
     // Create projection matrices for each cubemap face
@@ -1031,19 +1039,56 @@ bool loadHDRSkybox(const std::string& hdrPath) {
         }
     )";
 
-    // Compile shaders
+    // Compile shaders with error checking
     GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
     glShaderSource(vertexShader, 1, &vertexShaderSource, nullptr);
     glCompileShader(vertexShader);
+
+    GLint success;
+    glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        char infoLog[512];
+        glGetShaderInfoLog(vertexShader, 512, nullptr, infoLog);
+        std::cerr << "HDR vertex shader compilation failed: " << infoLog << std::endl;
+        glDeleteShader(vertexShader);
+        glDeleteTextures(1, &hdrTexture);
+        glDeleteTextures(1, &cubemapTexture);
+        return false;
+    }
 
     GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
     glShaderSource(fragmentShader, 1, &fragmentShaderSource, nullptr);
     glCompileShader(fragmentShader);
 
+    glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        char infoLog[512];
+        glGetShaderInfoLog(fragmentShader, 512, nullptr, infoLog);
+        std::cerr << "HDR fragment shader compilation failed: " << infoLog << std::endl;
+        glDeleteShader(vertexShader);
+        glDeleteShader(fragmentShader);
+        glDeleteTextures(1, &hdrTexture);
+        glDeleteTextures(1, &cubemapTexture);
+        return false;
+    }
+
     GLuint shaderProgram = glCreateProgram();
     glAttachShader(shaderProgram, vertexShader);
     glAttachShader(shaderProgram, fragmentShader);
     glLinkProgram(shaderProgram);
+
+    glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
+    if (!success) {
+        char infoLog[512];
+        glGetProgramInfoLog(shaderProgram, 512, nullptr, infoLog);
+        std::cerr << "HDR shader program linking failed: " << infoLog << std::endl;
+        glDeleteShader(vertexShader);
+        glDeleteShader(fragmentShader);
+        glDeleteProgram(shaderProgram);
+        glDeleteTextures(1, &hdrTexture);
+        glDeleteTextures(1, &cubemapTexture);
+        return false;
+    }
 
     // Create framebuffer
     unsigned int captureFBO;
@@ -1055,6 +1100,20 @@ bool loadHDRSkybox(const std::string& hdrPath) {
     glBindRenderbuffer(GL_RENDERBUFFER, captureRBO);
     glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, 512, 512);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, captureRBO);
+
+    // Check framebuffer completeness
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        std::cerr << "HDR framebuffer is not complete!" << std::endl;
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glDeleteFramebuffers(1, &captureFBO);
+        glDeleteRenderbuffers(1, &captureRBO);
+        glDeleteShader(vertexShader);
+        glDeleteShader(fragmentShader);
+        glDeleteProgram(shaderProgram);
+        glDeleteTextures(1, &hdrTexture);
+        glDeleteTextures(1, &cubemapTexture);
+        return false;
+    }
 
     // Convert HDR equirectangular environment map to cubemap
     glUseProgram(shaderProgram);
@@ -1080,6 +1139,10 @@ bool loadHDRSkybox(const std::string& hdrPath) {
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
+    // Generate mipmaps for the cubemap
+    glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
+    glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
+
     // Cleanup
     glDeleteTextures(1, &hdrTexture);
     glDeleteFramebuffers(1, &captureFBO);
@@ -1093,7 +1156,7 @@ bool loadHDRSkybox(const std::string& hdrPath) {
     glGetIntegerv(GL_VIEWPORT, viewport);
     glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
 
-    std::cout << "HDR skybox loaded and converted: " << hdrPath << std::endl;
+    std::cout << "HDR skybox loaded and converted successfully: " << hdrPath << std::endl;
     return true;
 }
 
@@ -1230,6 +1293,9 @@ void renderSkybox(const glm::mat4& projection, const glm::mat4& view, Engine::Sh
     glm::mat4 skyView = glm::mat4(glm::mat3(view));
     skyboxShader->setMat4("projection", projection);
     skyboxShader->setMat4("view", skyView);
+    skyboxShader->setBool("hdrEnabled", preferences.hdrSettings.enabled);
+    skyboxShader->setBool("isHDRSkybox", skyboxConfig.type == GUI::SKYBOX_HDR);
+    skyboxShader->setFloat("skyboxExposure", preferences.skyboxExposure);
     glBindVertexArray(skyboxVAO);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
@@ -1355,6 +1421,10 @@ void savePreferences() {
     j["camera"]["mouseSensitivity"] = preferences.mouseSensitivity;
     j["camera"]["autoConvergence"] = preferences.autoConvergence;
     j["camera"]["convergenceDistanceFactor"] = preferences.convergenceDistanceFactor;
+    j["camera"]["convergenceSmoothingSpeed"] = preferences.convergenceSmoothingSpeed;
+    j["camera"]["enableConvergenceCap"] = preferences.enableConvergenceCap;
+    j["camera"]["convergenceCapMin"] = preferences.convergenceCapMin;
+    j["camera"]["convergenceCapMax"] = preferences.convergenceCapMax;
 
     // SpaceMouse settings
     j["spacemouse"]["enabled"] = preferences.spaceMouseEnabled;
@@ -1385,6 +1455,7 @@ void savePreferences() {
     };
     j["skybox"]["selectedCubemap"] = skyboxConfig.selectedCubemap;
     j["skybox"]["hdrPath"] = skyboxConfig.hdrPath;
+    j["skybox"]["exposure"] = preferences.skyboxExposure;
 
     // Startup scene settings
     j["startup"]["loadScene"] = preferences.loadStartupScene;
@@ -1463,6 +1534,8 @@ void applyPreferencesToProgram() {
     currentScene.settings.convergence = preferences.convergence;
     currentScene.settings.autoConvergence = preferences.autoConvergence;
     currentScene.settings.convergenceDistanceFactor = preferences.convergenceDistanceFactor;
+    convergenceSmoothingSpeed = preferences.convergenceSmoothingSpeed;
+    targetConvergence = preferences.convergence; // Initialize target to match current convergence
     currentScene.settings.nearPlane = preferences.nearPlane;
     currentScene.settings.farPlane = preferences.farPlane;
     camera.useNewMethod = preferences.useNewStereoMethod;
@@ -1638,6 +1711,10 @@ void loadPreferences() {
             preferences.mouseSensitivity = j["camera"].value("mouseSensitivity", 0.17f);
             preferences.autoConvergence = j["camera"].value("autoConvergence", false);
             preferences.convergenceDistanceFactor = j["camera"].value("convergenceDistanceFactor", 1.0f);
+            preferences.convergenceSmoothingSpeed = j["camera"].value("convergenceSmoothingSpeed", 5.0f);
+            preferences.enableConvergenceCap = j["camera"].value("enableConvergenceCap", false);
+            preferences.convergenceCapMin = j["camera"].value("convergenceCapMin", 0.5f);
+            preferences.convergenceCapMax = j["camera"].value("convergenceCapMax", 40.0f);
         }
 
         // SpaceMouse settings
@@ -1690,6 +1767,7 @@ void loadPreferences() {
 
             preferences.selectedCubemap = j["skybox"].value("selectedCubemap", 0);
             preferences.skyboxHdrPath = j["skybox"].value("hdrPath", "");
+            preferences.skyboxExposure = j["skybox"].value("exposure", 0.2f);
         }
 
         // Startup scene settings
@@ -1879,6 +1957,8 @@ void InitializeDefaults() {
     currentScene.settings.convergence = preferences.convergence;
     currentScene.settings.autoConvergence = preferences.autoConvergence;
     currentScene.settings.convergenceDistanceFactor = preferences.convergenceDistanceFactor;
+    convergenceSmoothingSpeed = preferences.convergenceSmoothingSpeed;
+    targetConvergence = preferences.convergence; // Initialize target to match current convergence
     currentScene.settings.nearPlane = preferences.nearPlane;
     currentScene.settings.farPlane = preferences.farPlane;
 
@@ -2042,15 +2122,23 @@ int main() {
 
     voxelizer = new Engine::Voxelizer(128);
 
-    // ---- Initialize Shader ----
-    Engine::Shader* shader = nullptr;
+    // ---- Initialize Shadow Mapping Shader ----
     try {
-        shader = Engine::loadShader("core/vertexShader.glsl", "core/fragmentShader.glsl");
+        shadowMappingShader = Engine::loadShader("core/shadowMappingVertexShader.glsl", "core/shadowMappingFragmentShader.glsl");
     }
     catch (std::exception& e) {
-        std::cout << e.what() << std::endl;
+        std::cout << "Error: Failed to load shadow mapping shader: " << e.what() << std::endl;
         glfwTerminate();
         return -1;
+    }
+
+    // ---- Initialize Voxel Cone Tracing Shader ----
+    try {
+        voxelConeTracingShader = Engine::loadShader("core/voxelConeTracingVertexShader.glsl", "core/voxelConeTracingFragmentShader.glsl");
+    }
+    catch (std::exception& e) {
+        std::cout << "Warning: Failed to load voxel cone tracing shader: " << e.what() << std::endl;
+        voxelConeTracingShader = nullptr;
     }
 
     // ---- Initialize Zero Plane Shader ----
@@ -2617,9 +2705,13 @@ int main() {
         }
 
         // ---- Shader Selection ----
-        Engine::Shader* activeShader = shader;  // Default to standard shader
+        Engine::Shader* activeShader = shadowMappingShader;  // Default to shadow mapping shader
         if (currentLightingMode == GUI::LIGHTING_RADIANCE && radianceShader) {
             activeShader = radianceShader;
+        } else if (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING && voxelConeTracingShader) {
+            activeShader = voxelConeTracingShader;
+        } else if (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING && shadowMappingShader) {
+            activeShader = shadowMappingShader;
         }
 
         // ---- Rendering ----
@@ -2639,17 +2731,6 @@ int main() {
             }
         }
         
-        if (isStereoWindow) {
-            // Render left eye to left buffer (cursor position will be calculated here first time)
-            renderEye(GL_BACK_LEFT, leftProjection, leftView, activeShader, viewport, windowFlags, window, !hdrEnabled);
-            // Render right eye to right buffer (cursor position will use cached value)
-            renderEye(GL_BACK_RIGHT, rightProjection, rightView, activeShader, viewport, windowFlags, window, !hdrEnabled);
-        }
-        else {
-            // Render mono view to default buffer (cursor position will be calculated here)
-            renderEye(GL_BACK_LEFT, projection, view, activeShader, viewport, windowFlags, window, !hdrEnabled);
-        }
-        
         if (hdrEnabled) {
             // Update bloom settings from preferences
             Engine::BloomSettings& bloomSettings = bloomRenderer->getSettings();
@@ -2658,16 +2739,30 @@ int main() {
             bloomSettings.intensity = preferences.hdrSettings.bloomIntensity;
             bloomSettings.exposure = preferences.hdrSettings.exposure;
             bloomSettings.toneMapOperator = preferences.hdrSettings.toneMapOperator;
-            
-            // Apply HDR processing (with or without bloom) and render final result to screen
-            bloomRenderer->applyBloom(0, bloomSettings); // Pass 0 since we use the internal HDR buffer
-            
+
+            if (isStereoWindow) {
+                // Render and apply HDR/bloom separately for each eye
+
+                // Left eye
+                renderEye(GL_BACK_LEFT, leftProjection, leftView, activeShader, viewport, windowFlags, window, false);
+                bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_LEFT);
+
+                // Right eye
+                renderEye(GL_BACK_RIGHT, rightProjection, rightView, activeShader, viewport, windowFlags, window, false);
+                bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_RIGHT);
+            }
+            else {
+                // Mono view
+                renderEye(GL_BACK_LEFT, projection, view, activeShader, viewport, windowFlags, window, false);
+                bloomRenderer->applyBloom(0, bloomSettings, GL_BACK);
+            }
+
             // Now render GUI on top of the composed HDR result
             if (showGui) {
                 // Ensure we're rendering to the default framebuffer
                 glBindFramebuffer(GL_FRAMEBUFFER, 0);
                 glViewport(0, 0, windowWidth, windowHeight);
-                
+
                 // Render GUI for the appropriate eye(s)
                 if (isStereoWindow) {
                     // For stereo, render GUI to left eye only (typical approach)
@@ -2677,6 +2772,19 @@ int main() {
                     // For mono, render GUI normally
                     renderGUI(true, viewport, windowFlags, activeShader);
                 }
+            }
+        }
+        else {
+            // Non-HDR rendering path
+            if (isStereoWindow) {
+                // Render left eye to left buffer (cursor position will be calculated here first time)
+                renderEye(GL_BACK_LEFT, leftProjection, leftView, activeShader, viewport, windowFlags, window, true);
+                // Render right eye to right buffer (cursor position will use cached value)
+                renderEye(GL_BACK_RIGHT, rightProjection, rightView, activeShader, viewport, windowFlags, window, true);
+            }
+            else {
+                // Render mono view to default buffer (cursor position will be calculated here)
+                renderEye(GL_BACK_LEFT, projection, view, activeShader, viewport, windowFlags, window, true);
             }
         }
         
@@ -2691,7 +2799,7 @@ int main() {
                 view, projection,
                 leftView, leftProjection,
                 rightView, rightProjection,
-                shader, currentScene.settings.radarShowScene,
+                activeShader, currentScene.settings.radarShowScene,
                 currentScene.settings.radarScale, currentScene.settings.radarPos);
         }
 
@@ -2700,7 +2808,7 @@ int main() {
     }
 
     // ---- Cleanup ----
-    cleanup(shader);
+    cleanup();
     
     // ---- Shutdown Async Loading System ----
     OctreePointCloudManager::shutdownAsyncSystem();
@@ -2711,7 +2819,7 @@ int main() {
 
 // ---- Initialization and Cleanup -----
 #pragma region Initialization and Cleanup
-void cleanup(Engine::Shader* shader) {
+void cleanup() {
     // Delete cursor manager resources
     cursorManager.cleanup();
 
@@ -2756,9 +2864,8 @@ void cleanup(Engine::Shader* shader) {
     glDeleteTextures(1, &depthCubemap);
     delete pointShadowShader;
     delete radianceShader;
-
-    // Delete shader
-    delete shader;
+    delete shadowMappingShader;
+    delete voxelConeTracingShader;
 
     // Clean up SpaceMouse input
     spaceMouseInput.Shutdown();
@@ -3300,22 +3407,39 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
         float largestDimension = calculateLargestModelDimension();
         camera.AdjustMovementSpeed(distanceToNearestObject, largestDimension, currentScene.settings.farPlane);
         
-        // Update convergence automatically if enabled
+        // Update target convergence automatically if enabled
         if (currentScene.settings.autoConvergence) {
             float cameraDistance = camera.distanceToNearestObject;
             if (cameraDistance < currentScene.settings.farPlane * 0.95f && camera.distanceUpdated) {
                 float autoConvergenceValue = cameraDistance * currentScene.settings.convergenceDistanceFactor;
-                float minSafeConvergence = cameraDistance + 0.5f;
-                autoConvergenceValue = glm::max(autoConvergenceValue, minSafeConvergence);
-                autoConvergenceValue = glm::clamp(autoConvergenceValue, 0.5f, 40.0f);
-                currentScene.settings.convergence = autoConvergenceValue;
-                preferences.convergence = autoConvergenceValue;
+
+                // Apply user-defined convergence cap if enabled
+                if (preferences.enableConvergenceCap) {
+                    autoConvergenceValue = glm::clamp(autoConvergenceValue, preferences.convergenceCapMin, preferences.convergenceCapMax);
+                } else {
+                    // Default clamp to reasonable bounds: Min: near plane, Max: far plane
+                    autoConvergenceValue = glm::clamp(autoConvergenceValue, currentScene.settings.nearPlane, currentScene.settings.farPlane);
+                }
+
+                targetConvergence = autoConvergenceValue;
             }
-            // If looking at empty space, keep previous convergence value
+            // If looking at empty space, keep previous target convergence value
         }
         distanceCalculatedThisFrame = true;
     }
-    
+
+    // Smoothly interpolate convergence to target (always, but faster when auto convergence is on)
+    if (currentScene.settings.autoConvergence) {
+        // Smooth interpolation when auto convergence is enabled
+        float lerpFactor = 1.0f - glm::exp(-convergenceSmoothingSpeed * deltaTime);
+        currentScene.settings.convergence = glm::mix(currentScene.settings.convergence, targetConvergence, lerpFactor);
+        preferences.convergence = currentScene.settings.convergence;
+    } else {
+        // When auto convergence is off, keep target in sync with actual convergence
+        // so when it's turned back on, it starts from the current value
+        targetConvergence = currentScene.settings.convergence;
+    }
+
     // Render zero plane if enabled (AFTER distance calculation)
     if (currentScene.settings.showZeroPlane) {
         renderZeroPlane(shader, projection, view, currentScene.settings.convergence);

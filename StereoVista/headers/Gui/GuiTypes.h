@@ -101,6 +101,10 @@ namespace GUI {
         // Automatic convergence settings
         bool autoConvergence = false;
         float convergenceDistanceFactor = 1.0f;
+        float convergenceSmoothingSpeed = 5.0f;
+        bool enableConvergenceCap = false;
+        float convergenceCapMin = 0.5f;
+        float convergenceCapMax = 40.0f;
 
         // Lighting settings
         LightingMode lightingMode = LIGHTING_SHADOW_MAPPING;
@@ -192,6 +196,7 @@ namespace GUI {
         glm::vec3 skyboxGradientBottom = glm::vec3(0.7f, 0.7f, 1.0f);
         int selectedCubemap = 0;
         std::string skyboxHdrPath = "";
+        float skyboxExposure = 0.2f; // Exposure for HDR skyboxes (typical range: 0.1-0.5)
 
         // Startup scene settings
         bool loadStartupScene = false;

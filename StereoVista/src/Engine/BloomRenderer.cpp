@@ -339,7 +339,7 @@ void BloomRenderer::beginBloomPass() {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
 
-void BloomRenderer::applyBloom(GLuint sceneTexture, const BloomSettings& settings) {
+void BloomRenderer::applyBloom(GLuint sceneTexture, const BloomSettings& settings, GLenum drawBuffer) {
     if (!m_initialized) return;
     
     // Always render with bloom pipeline, but set intensity to 0 if bloom is disabled
@@ -404,6 +404,7 @@ void BloomRenderer::applyBloom(GLuint sceneTexture, const BloomSettings& setting
     
     // Final composition
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDrawBuffer(drawBuffer); // Set the target draw buffer for stereo support
     glViewport(0, 0, m_width, m_height);
     glClear(GL_COLOR_BUFFER_BIT);
     
