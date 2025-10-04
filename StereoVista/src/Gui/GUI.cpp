@@ -1362,35 +1362,30 @@ void renderSettingsWindow() {
             }
             ImGui::SameLine(); DrawHelpMarker("Controls the camera's field of view. Higher values show more of the scene");
 
-            if (ImGui::SliderFloat("Near Clip", &currentScene.settings.nearPlane, 0.01f, 10.0f, "%.2f")) {
-                preferences.nearPlane = currentScene.settings.nearPlane;
+            if (ImGui::SliderFloat("Near Clip", &preferences.nearPlane, 0.01f, 10.0f, "%.2f")) {
                 settingsChanged = true;
             }
             ImGui::SameLine(); DrawHelpMarker("Minimum visible distance from camera. Smaller values can cause visual artifacts");
 
-            if (ImGui::SliderFloat("Far Clip", &currentScene.settings.farPlane, 10.0f, 1000.0f, "%.0f")) {
-                preferences.farPlane = currentScene.settings.farPlane;
+            if (ImGui::SliderFloat("Far Clip", &preferences.farPlane, 10.0f, 1000.0f, "%.0f")) {
                 settingsChanged = true;
             }
             ImGui::SameLine(); DrawHelpMarker("Maximum visible distance from camera. Higher values may impact performance");
 
             DrawSectionHeader("Stereoscopic 3D");
 
-            if (ImGui::SliderFloat("Eye Separation", &currentScene.settings.separation, 0.01f, 2.0f, "%.2f")) {
-                preferences.separation = currentScene.settings.separation;
+            if (ImGui::SliderFloat("Eye Separation", &preferences.separation, 0.01f, 2.0f, "%.2f")) {
                 settingsChanged = true;
             }
             ImGui::SameLine(); DrawHelpMarker("Adjusts the distance between stereo views. Higher values increase 3D effect");
 
-            if (ImGui::Checkbox("Auto Convergence", &currentScene.settings.autoConvergence)) {
-                preferences.autoConvergence = currentScene.settings.autoConvergence;
+            if (ImGui::Checkbox("Auto Convergence", &preferences.autoConvergence)) {
                 settingsChanged = true;
             }
             ImGui::SameLine(); DrawHelpMarker("Automatically sets convergence based on distance to nearest object");
 
-            if (currentScene.settings.autoConvergence) {
-                if (ImGui::SliderFloat("Distance Factor", &currentScene.settings.convergenceDistanceFactor, 0.1f, 2.0f, "%.1fx")) {
-                    preferences.convergenceDistanceFactor = currentScene.settings.convergenceDistanceFactor;
+            if (preferences.autoConvergence) {
+                if (ImGui::SliderFloat("Distance Factor", &preferences.convergenceDistanceFactor, 0.1f, 2.0f, "%.1fx")) {
                     settingsChanged = true;
                 }
                 ImGui::SameLine(); DrawHelpMarker("Multiplier for the distance to nearest object used for convergence");
@@ -1426,12 +1421,11 @@ void renderSettingsWindow() {
                     ImGui::SameLine(); DrawHelpMarker("Maximum convergence distance when auto convergence is active");
                 }
 
-                ImGui::Text("Current Convergence: %.2f", currentScene.settings.convergence);
+                ImGui::Text("Current Convergence: %.2f", preferences.convergence);
                 ImGui::SameLine(); DrawHelpMarker("Auto-calculated convergence distance based on nearest object");
             }
             else {
-                if (ImGui::SliderFloat("Convergence", &currentScene.settings.convergence, 0.0f, 40.0f, "%.1f")) {
-                    preferences.convergence = currentScene.settings.convergence;
+                if (ImGui::SliderFloat("Convergence", &preferences.convergence, 0.0f, 40.0f, "%.1f")) {
                     settingsChanged = true;
                 }
                 ImGui::SameLine(); DrawHelpMarker("Sets the focal point distance where left and right views converge");
@@ -1710,7 +1704,6 @@ void renderSettingsWindow() {
             DrawSectionHeader("Radar Overlay");
 
             if (ImGui::Checkbox("Show Radar", &preferences.radarEnabled)) {
-                currentScene.settings.radarEnabled = preferences.radarEnabled;
                 settingsChanged = true;
             }
             ImGui::SameLine(); DrawHelpMarker("Show a radar overlay with the camera frustum");
@@ -1718,19 +1711,16 @@ void renderSettingsWindow() {
             if (preferences.radarEnabled) {
                 ImGui::Indent();
                 if (ImGui::SliderFloat2("Position", glm::value_ptr(preferences.radarPos), -1.0f, 1.0f, "%.2f")) {
-                    currentScene.settings.radarPos = preferences.radarPos;
                     settingsChanged = true;
                 }
                 ImGui::SameLine(); DrawHelpMarker("Horizontal and vertical position of the radar (-1 to 1)");
 
                 if (ImGui::SliderFloat("Scale", &preferences.radarScale, 0.001f, 0.5f, "%.3f")) {
-                    currentScene.settings.radarScale = preferences.radarScale;
                     settingsChanged = true;
                 }
                 ImGui::SameLine(); DrawHelpMarker("Size of the radar display");
 
                 if (ImGui::Checkbox("Show Scene in Radar", &preferences.radarShowScene)) {
-                    currentScene.settings.radarShowScene = preferences.radarShowScene;
                     settingsChanged = true;
                 }
                 ImGui::SameLine(); DrawHelpMarker("Show the scene models in the radar view");
@@ -1738,7 +1728,6 @@ void renderSettingsWindow() {
             }
 
             if (ImGui::Checkbox("Show Zero Plane", &preferences.showZeroPlane)) {
-                currentScene.settings.showZeroPlane = preferences.showZeroPlane;
                 settingsChanged = true;
             }
             ImGui::SameLine(); DrawHelpMarker("Display the zero plane in the visualization");
@@ -2051,6 +2040,22 @@ void renderSettingsWindow() {
                 settingsChanged = true;
             }
             ImGui::SameLine(); DrawHelpMarker("Apply node transformations directly to vertices. Use for static models only.");
+
+            DrawSectionHeader("Auto-Scaling");
+
+            if (ImGui::Checkbox("Auto-scale Large Models", &preferences.modelImportSettings.autoScaleLargeModels)) {
+                settingsChanged = true;
+            }
+            ImGui::SameLine(); DrawHelpMarker("Automatically scale down models that are too large to fit comfortably in the scene.");
+
+            if (preferences.modelImportSettings.autoScaleLargeModels) {
+                ImGui::Indent();
+                if (ImGui::SliderFloat("Max Model Radius", &preferences.modelImportSettings.maxModelRadius, 1.0f, 20.0f, "%.1f")) {
+                    settingsChanged = true;
+                }
+                ImGui::SameLine(); DrawHelpMarker("Maximum bounding sphere radius before auto-scaling is applied. Default: 5.0 units.");
+                ImGui::Unindent();
+            }
 
             ImGui::Spacing();
             if (ImGui::Button("Reset to Defaults", ImVec2(-1, 0))) {
@@ -2584,7 +2589,8 @@ void renderModelManipulationPanel(Engine::Model& model, Engine::Shader* shader) 
                     { "Images", "*.png *.jpg *.jpeg *.bmp", "All", "*" }).result();
                 if (!selection.empty()) {
                     Texture texture;
-                    texture.id = model.TextureFromFile(selection[0].c_str(), selection[0], selection[0]);
+                    texture.fullPath = selection[0];
+                    texture.id = model.TextureFromFile(selection[0].c_str(), selection[0], texture.fullPath);
                     texture.type = type;
                     texture.path = selection[0];
                     for (auto& mesh : model.getMeshes()) {
@@ -2711,7 +2717,8 @@ void renderMeshManipulationPanel(Engine::Model& model, int meshIndex, Engine::Sh
                     { "Images", "*.png *.jpg *.jpeg *.bmp", "All", "*" }).result();
                 if (!selection.empty()) {
                     Texture texture;
-                    texture.id = model.TextureFromFile(selection[0].c_str(), selection[0], selection[0]);
+                    texture.fullPath = selection[0];
+                    texture.id = model.TextureFromFile(selection[0].c_str(), selection[0], texture.fullPath);
                     texture.type = type;
                     texture.path = selection[0];
                     mesh.textures.push_back(texture);

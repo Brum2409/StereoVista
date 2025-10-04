@@ -68,16 +68,18 @@ namespace Engine {
             glBindTexture(GL_TEXTURE_2D, textures[i].id);
         }
 
-        // Set texture counts
+        // Set texture counts (will be 0 if no textures loaded)
         shader.setInt("material.numDiffuseTextures", diffuseNr);
         shader.setInt("material.numSpecularTextures", specularNr);
         shader.setInt("material.numNormalTextures", normalNr);
 
-        // Draw mesh
+        // Draw mesh (works even without textures)
         glBindVertexArray(VAO);
-        glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
+        if (!indices.empty()) {
+            glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
+        }
         glBindVertexArray(0);
-        
+
         // Reset to default
         glActiveTexture(GL_TEXTURE0);
     }
@@ -103,6 +105,20 @@ namespace Engine {
             }
         }
         boundingSphereRadius = std::sqrt(maxDistSq);
+
+        // Auto-scale large models to fit in scene (if enabled in preferences)
+        if (preferences.modelImportSettings.autoScaleLargeModels &&
+            boundingSphereRadius > preferences.modelImportSettings.maxModelRadius) {
+            float scaleFactor = preferences.modelImportSettings.maxModelRadius / boundingSphereRadius;
+            scale = glm::vec3(scaleFactor);
+            std::cout << "\nAuto-scaled model to fit scene:" << std::endl;
+            std::cout << "  Original bounding radius: " << boundingSphereRadius << " units" << std::endl;
+            std::cout << "  Target radius: " << preferences.modelImportSettings.maxModelRadius << " units" << std::endl;
+            std::cout << "  Applied scale factor: " << scaleFactor << std::endl;
+            std::cout << "  (You can adjust this in Preferences > Model Import Settings)\n" << std::endl;
+            // Update bounding sphere radius to reflect the new scale
+            boundingSphereRadius = preferences.modelImportSettings.maxModelRadius;
+        }
     }
 
     void Model::loadModel(const std::string& path) {
@@ -161,8 +177,20 @@ namespace Engine {
 
         directory = path.substr(0, path.find_last_of('/'));
         processNode(scene->mRootNode, scene);
-        
+
         std::cout << "Model processing complete. Total meshes processed: " << meshes.size() << std::endl;
+
+        // Check if model has any textures
+        int totalTextures = 0;
+        for (const auto& mesh : meshes) {
+            totalTextures += mesh.textures.size();
+        }
+
+        if (totalTextures == 0 && scene->mNumMaterials > 0) {
+            std::cout << "NOTE: Model loaded but has no textures. It will render with material colors only." << std::endl;
+        } else if (totalTextures > 0) {
+            std::cout << "Loaded " << totalTextures << " texture(s) successfully." << std::endl;
+        }
     }
 
     void Model::processNode(aiNode* node, const aiScene* scene) {
@@ -248,8 +276,18 @@ namespace Engine {
                 aiTextureType_SPECULAR, "texture_specular");
             textures.insert(textures.end(), specularMaps.begin(), specularMaps.end());
 
+            // Try both HEIGHT and NORMALS for normal maps (different formats use different types)
+            // HEIGHT is used by .obj files, NORMALS is used by other formats
+            // Try NORMALS first (proper normal map type)
             std::vector<Texture> normalMaps = loadMaterialTextures(material,
-                aiTextureType_HEIGHT, "texture_normal");
+                aiTextureType_NORMALS, "texture_normal");
+
+            // Only try HEIGHT if NORMALS didn't find anything (prevents duplicates)
+            if (normalMaps.empty()) {
+                normalMaps = loadMaterialTextures(material,
+                    aiTextureType_HEIGHT, "texture_normal");
+            }
+
             textures.insert(textures.end(), normalMaps.begin(), normalMaps.end());
 
             std::vector<Texture> aoMaps = loadMaterialTextures(material,
@@ -292,11 +330,11 @@ namespace Engine {
     std::vector<Texture> Model::loadMaterialTextures(aiMaterial* mat, aiTextureType type, const std::string& typeName) {
         std::vector<Texture> textures;
         unsigned int textureCount = mat->GetTextureCount(type);
-        
+
         if (textureCount > 0) {
             std::cout << "Loading " << textureCount << " textures of type: " << typeName << std::endl;
         }
-        
+
         for (unsigned int i = 0; i < textureCount; i++) {
             aiString texturePath;
             aiTextureMapping mapping;
@@ -304,7 +342,7 @@ namespace Engine {
             float blend;
             aiTextureOp operation;
             aiTextureMapMode mapMode[3];
-            
+
             if (mat->GetTexture(type, i, &texturePath, &mapping, &uvIndex, &blend, &operation, mapMode) != AI_SUCCESS) {
                 std::cerr << "Failed to get texture " << i << " of type " << typeName << std::endl;
                 continue;
@@ -326,30 +364,59 @@ namespace Engine {
                 Texture texture;
                 texture.path = texturePath.C_Str();
                 texture.type = typeName;
-                
+
+                // Determine if we should flip this texture type
+                // Normal maps should use flipUVs preference (default: no flip)
+                // Other textures default to flipping (OpenGL compatibility) unless flipUVs overrides
+                bool shouldFlip;
+                if (typeName == "texture_normal") {
+                    // For normal maps: respect flipUVs setting (default false = no flip)
+                    shouldFlip = preferences.modelImportSettings.flipUVs;
+                } else {
+                    // For other textures: flip by default for OpenGL, unless flipUVs says otherwise
+                    // If flipUVs is true, we flip; if false, we still flip for backward compatibility
+                    shouldFlip = true;  // Default OpenGL behavior
+                }
+
                 // Check if this is an embedded texture (starts with '*')
                 std::string pathStr = texturePath.C_Str();
                 if (pathStr[0] == '*') {
                     // Handle embedded texture
                     texture.id = loadEmbeddedTexture(pathStr, texture.fullPath);
                 } else {
-                    // Handle file texture
-                    texture.id = TextureFromFile(texturePath.C_Str(), directory, texture.fullPath);
+                    // Handle file texture with flip setting
+                    texture.id = TextureFromFile(texturePath.C_Str(), directory, texture.fullPath, shouldFlip);
                 }
-                
+
                 if (texture.id != 0) {
-                    textures.push_back(texture);
-                    loadedTextures.push_back(texture);
-                    std::cout << "Successfully loaded texture: " << texture.path << " -> " << texture.fullPath << std::endl;
+                    // Check if this exact file (by fullPath) was already loaded with same type
+                    // This prevents loading the same file twice when referenced differently
+                    bool isDuplicate = false;
+                    if (!texture.fullPath.empty()) {
+                        for (const auto& loadedTex : loadedTextures) {
+                            if (loadedTex.fullPath == texture.fullPath && loadedTex.type == typeName) {
+                                isDuplicate = true;
+                                std::cout << "Skipping duplicate texture (same file already loaded): " << texture.fullPath << std::endl;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!isDuplicate) {
+                        textures.push_back(texture);
+                        loadedTextures.push_back(texture);
+                        std::cout << "Successfully loaded texture [" << typeName << "]: " << texture.path << " -> " << texture.fullPath << std::endl;
+                    }
                 } else {
-                    std::cerr << "Failed to load texture: " << texture.path << std::endl;
+                    std::cerr << "WARNING: Skipping failed texture [" << typeName << "]: " << texture.path << std::endl;
+                    std::cerr << "         Model will render without this texture map" << std::endl;
                 }
             }
         }
         return textures;
     }
 
-    GLuint Model::TextureFromFile(const char* path, const std::string& directory, std::string& outFullPath) {
+    GLuint Model::TextureFromFile(const char* path, const std::string& directory, std::string& outFullPath, bool flipVertically) {
         // Get the base directory without the model file name
         std::string baseDir = directory;
         size_t lastSlash = baseDir.find_last_of("/\\");
@@ -371,7 +438,7 @@ namespace Engine {
 
         // Try different extensions in order of preference
         std::vector<std::string> extensions = {
-            ".png", ".jpg", ".jpeg", ".tga", ".bmp", ".dds", ".tiff", ".psd", ".gif", ".hdr", ".pic"
+            ".png", ".jpg", ".jpeg", ".tga", ".bmp", ".dds", ".tif", ".tiff", ".psd", ".gif", ".hdr", ".pic"
         };
 
         std::vector<std::string> pathsToTry;
@@ -383,7 +450,7 @@ namespace Engine {
             // Build comprehensive list of paths to try (common texture directory patterns)
             pathsToTry.push_back(directory + "/" + textureNameWithExt);                    // Same directory as model
             pathsToTry.push_back(directory + "/textures/" + textureNameWithExt);           // textures subdirectory
-            pathsToTry.push_back(directory + "/texture/" + textureNameWithExt);            // texture subdirectory 
+            pathsToTry.push_back(directory + "/texture/" + textureNameWithExt);            // texture subdirectory
             pathsToTry.push_back(directory + "/materials/" + textureNameWithExt);          // materials subdirectory
             pathsToTry.push_back(directory + "/images/" + textureNameWithExt);             // images subdirectory
             pathsToTry.push_back(directory + "/maps/" + textureNameWithExt);               // maps subdirectory
@@ -400,8 +467,8 @@ namespace Engine {
         int width, height, nrComponents;
         std::string successPath;
 
-        // Enable verbose debugging for stb_image
-        stbi_set_flip_vertically_on_load(true);
+        // Set flip based on parameter
+        stbi_set_flip_vertically_on_load(flipVertically);
 
         for (const auto& tryPath : pathsToTry) {
             // Convert to canonical path to handle ".." and "." in paths
@@ -409,7 +476,6 @@ namespace Engine {
             try {
                 if (std::filesystem::exists(tryPath)) {
                     canonicalPath = std::filesystem::canonical(tryPath);
-                    std::cout << "Attempting to load texture: " << canonicalPath.string() << std::endl;
 
                     // Read file into memory first
                     std::ifstream file(canonicalPath, std::ios::binary | std::ios::ate);
@@ -437,23 +503,18 @@ namespace Engine {
                         outFullPath = successPath;
                         break;
                     }
-                    else {
-                        std::cout << "STB failed to load " << canonicalPath.string()
-                            << ": " << stbi_failure_reason() << std::endl;
-                    }
                 }
             }
             catch (const std::filesystem::filesystem_error& e) {
-                std::cout << "Filesystem error while trying path " << tryPath
-                    << ": " << e.what() << std::endl;
+                // Silently continue to next path
                 continue;
             }
         }
 
-        GLuint textureID;
-        glGenTextures(1, &textureID);
-
         if (data) {
+            GLuint textureID;
+            glGenTextures(1, &textureID);
+
             GLenum format;
             GLenum internalFormat;
             if (nrComponents == 1) {
@@ -491,22 +552,34 @@ namespace Engine {
             stbi_image_free(data);
             std::cout << "Successfully loaded texture: " << successPath
                 << " (" << width << "x" << height << ", " << nrComponents << " components)" << std::endl;
+
+            return textureID;
         }
         else {
-            std::cout << "Failed to load texture from all attempted paths for: " << textureName << std::endl;
-            std::cout << "Last STB Image error: " << stbi_failure_reason() << std::endl;
+            std::cerr << "\n=== TEXTURE LOADING FAILED ===" << std::endl;
+            std::cerr << "Failed to load texture: \"" << textureName << "\"" << std::endl;
+            std::cerr << "STB Image error: " << stbi_failure_reason() << std::endl;
 
-            // Create a default colored texture
-            unsigned char defaultColor[] = { 255, 0, 255, 255 };  // Magenta
-            glBindTexture(GL_TEXTURE_2D, textureID);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, defaultColor);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            // Provide helpful suggestions based on the error
+            std::string errorMsg = stbi_failure_reason();
+            if (errorMsg.find("png") != std::string::npos ||
+                errorMsg.find("jpg") != std::string::npos ||
+                errorMsg.find("bad") != std::string::npos) {
+
+                // Check if the original texture has .tif extension
+                if (textureName.find(".tif") != std::string::npos) {
+                    std::cerr << "\nSuggestion: This appears to be a TIFF file. STB Image has limited TIFF support." << std::endl;
+                    std::cerr << "  - Try converting the texture to PNG or JPG format" << std::endl;
+                    std::cerr << "  - Ensure the TIFF is uncompressed (not LZW, ZIP, or JPEG compressed)" << std::endl;
+                }
+            }
+
+            std::cerr << "\nSearched in " << pathsToTry.size() << " possible locations" << std::endl;
+            std::cerr << "============================\n" << std::endl;
+
+            // Return 0 to indicate failure - no fallback texture
+            return 0;
         }
-
-        return textureID;
     }
 
     GLuint Model::loadEmbeddedTexture(const std::string& embeddedPath, std::string& outFullPath) {

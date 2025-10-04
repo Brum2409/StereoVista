@@ -9,33 +9,11 @@
 
 namespace Engine {
 
-    struct SceneSettings {
-        float separation = 0.5f;
-        float convergence = 2.6f;
-        float nearPlane = 0.1f;
-        float farPlane = 200.0f;
-        int msaaSamples = 2;
-        
-        // Automatic convergence settings
-        bool autoConvergence = false;
-        float convergenceDistanceFactor = 1.0f;  // Multiplier for distance to nearest object
-        
-        // Added radar fields:
-        bool radarEnabled = false;
-        glm::vec2 radarPos = glm::vec2(0.8f, -0.8f);
-        float radarScale = 0.2f;
-        bool radarShowScene = true;
-        
-        // Zero plane visualization
-        bool showZeroPlane = false;
-    };
-
     struct Scene {
         std::vector<Model> models;
         std::vector<PointCloud> pointClouds;
         std::vector<PointLight> pointLights;
         std::vector<SpotLight> spotLights;
-        SceneSettings settings;
         Camera::CameraState cameraState;
         
         // Default constructor with default camera state

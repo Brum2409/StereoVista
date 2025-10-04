@@ -30,7 +30,6 @@ void renderSunManipulationPanel();
 void renderModelManipulationPanel(Engine::Model& model, Engine::Shader* shader);
 void renderMeshManipulationPanel(Engine::Model& model, int meshIndex, Engine::Shader* shader);
 void renderPointCloudManipulationPanel(Engine::PointCloud& pointCloud);
-void renderStereoCameraVisualization(const Camera& camera, const Engine::SceneSettings& settings);
 
 // Scene management functions
 void deleteSelectedModel();

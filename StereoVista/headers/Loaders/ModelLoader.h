@@ -103,7 +103,7 @@ namespace Engine {
         float animationDuration = 1.0f;  // Duration in seconds
         glm::vec3 targetScale = glm::vec3(1.0f);  // Final scale after animation
         glm::vec3 animationStartScale = glm::vec3(0.0f);  // Start scale (small)
-        static GLuint TextureFromFile(const char* path, const std::string& directory, std::string& outFullPath);
+        static GLuint TextureFromFile(const char* path, const std::string& directory, std::string& outFullPath, bool flipVertically = true);
         const std::vector<Mesh>& getMeshes() const { return meshes; }
         std::vector<Mesh>& getMeshes() { return meshes; }
 

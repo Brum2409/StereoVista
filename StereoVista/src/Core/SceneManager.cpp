@@ -28,10 +28,6 @@ namespace Engine {
 
             // Create scene data json
             json sceneJson;
-            sceneJson["settings"]["separation"] = scene.settings.separation;
-            sceneJson["settings"]["convergence"] = scene.settings.convergence;
-            sceneJson["settings"]["nearPlane"] = scene.settings.nearPlane;
-            sceneJson["settings"]["farPlane"] = scene.settings.farPlane;
 
             // Save current camera state
             auto cameraState = camera.GetState();
@@ -57,83 +53,121 @@ namespace Engine {
                 modelJson["visible"] = model.visible;
 
                 // Check if this is a file-based model (not a primitive)
-                bool isPrimitive = (model.path == "cube" || model.path == "sphere" || 
-                                  model.path == "cylinder" || model.path == "plane" || 
+                bool isPrimitive = (model.path == "cube" || model.path == "sphere" ||
+                                  model.path == "cylinder" || model.path == "plane" ||
                                   model.path == "torus" || model.path.empty());
-                
+
                 // Save primitive type for proper reconstruction
                 if (isPrimitive && !model.path.empty()) {
                     modelJson["primitiveType"] = model.path;
                 }
-                
+
                 if (!model.path.empty() && !isPrimitive) {
                     // Create model-specific directory
                     std::filesystem::path modelDir = sceneDir / "models" / model.name;
                     std::filesystem::create_directories(modelDir);
 
-                    // Copy original model file
+                    // Copy original model file and all associated files
                     std::filesystem::path originalModelPath(model.path);
-                    std::string newModelFilename = originalModelPath.filename().string();
-                    std::filesystem::path newModelPath = modelDir / newModelFilename;
+                    if (std::filesystem::exists(originalModelPath)) {
+                        std::string mainModelFilename = originalModelPath.filename().string();
+                        std::filesystem::path mainModelNewPath = modelDir / mainModelFilename;
 
-                    try {
-                        std::filesystem::copy_file(originalModelPath, newModelPath,
-                            std::filesystem::copy_options::overwrite_existing);
-                        modelJson["localPath"] = "models/" + model.name + "/" + newModelFilename;
+                        try {
+                            // Copy the main model file
+                            std::filesystem::copy_file(originalModelPath, mainModelNewPath,
+                                std::filesystem::copy_options::overwrite_existing);
+                            modelJson["localPath"] = "models/" + model.name + "/" + mainModelFilename;
 
-                        // Process and save texture information
-                        json texturesJson = json::array();
-                        std::unordered_set<std::string> processedTextures;
+                            // Get the model's directory and base name for finding associated files
+                            std::filesystem::path originalModelDir = originalModelPath.parent_path();
+                            std::string baseName = originalModelPath.stem().string();
+                            std::string extension = originalModelPath.extension().string();
 
-                        // Process each mesh's textures
-                        for (const auto& mesh : model.getMeshes()) {
-                            for (const auto& texture : mesh.textures) {
-                                if (texture.fullPath.empty()) {
-                                    continue;
-                                }
-
-                                // Create unique identifier for texture
-                                std::string textureIdentifier = texture.type + "|" + texture.path;
-                                if (processedTextures.find(textureIdentifier) != processedTextures.end()) {
-                                    continue;
-                                }
-                                processedTextures.insert(textureIdentifier);
-
-                                // Copy texture file
-                                try {
-                                    std::filesystem::path texturePath(texture.fullPath);
-                                    if (!std::filesystem::exists(texturePath)) {
-                                        std::cerr << "Texture file not found: " << texturePath << std::endl;
-                                        continue;
-                                    }
-
-                                    std::string newTextureName = texturePath.filename().string();
-                                    std::filesystem::path newTexturePath = modelDir / newTextureName;
-
-                                    std::filesystem::copy_file(texturePath, newTexturePath,
+                            // Copy associated files based on model format
+                            if (extension == ".gltf" || extension == ".glb") {
+                                // For GLTF: copy .bin files with same base name
+                                std::filesystem::path binFile = originalModelDir / (baseName + ".bin");
+                                if (std::filesystem::exists(binFile)) {
+                                    std::filesystem::copy_file(binFile, modelDir / binFile.filename(),
                                         std::filesystem::copy_options::overwrite_existing);
+                                    std::cout << "Copied GLTF binary: " << binFile.filename() << std::endl;
+                                }
+                            }
+                            else if (extension == ".obj") {
+                                // For OBJ: copy .mtl file with same base name
+                                std::filesystem::path mtlFile = originalModelDir / (baseName + ".mtl");
+                                if (std::filesystem::exists(mtlFile)) {
+                                    std::filesystem::copy_file(mtlFile, modelDir / mtlFile.filename(),
+                                        std::filesystem::copy_options::overwrite_existing);
+                                    std::cout << "Copied OBJ material: " << mtlFile.filename() << std::endl;
+                                }
+                            }
+                            else if (extension == ".fbx" || extension == ".dae" || extension == ".blend") {
+                                // For FBX/Collada/Blender: may have embedded or external textures
+                                // Additional files are typically handled by texture copying below
+                            }
+                        }
+                        catch (const std::exception& e) {
+                            std::cerr << "Failed to copy model file " << model.path << ": " << e.what() << std::endl;
+                        }
+                    } else {
+                        std::cerr << "Warning: Model file not found: " << originalModelPath << std::endl;
+                    }
 
-                                    json textureJson;
-                                    textureJson["type"] = texture.type;
-                                    textureJson["originalPath"] = texture.path;
-                                    textureJson["localPath"] = (model.name + "/" + newTextureName);
-                                    texturesJson.push_back(textureJson);
+                    // Save mesh-specific texture information
+                    json meshesJson = json::array();
+                    for (size_t meshIndex = 0; meshIndex < model.getMeshes().size(); meshIndex++) {
+                        const auto& mesh = model.getMeshes()[meshIndex];
+
+                        if (mesh.textures.empty()) {
+                            continue; // Skip meshes with no textures
+                        }
+
+                        json meshJson;
+                        meshJson["meshIndex"] = meshIndex;
+                        json texturesJson = json::array();
+
+                        for (const auto& texture : mesh.textures) {
+                            if (texture.fullPath.empty()) {
+                                std::cerr << "Warning: Texture has empty fullPath: " << texture.type << std::endl;
+                                continue;
+                            }
+
+                            // Copy texture file
+                            try {
+                                std::filesystem::path texturePath(texture.fullPath);
+                                if (!std::filesystem::exists(texturePath)) {
+                                    std::cerr << "Warning: Texture file not found: " << texturePath << std::endl;
+                                    continue;
                                 }
-                                catch (const std::exception& e) {
-                                    std::cerr << "Failed to copy texture " << texture.path << ": " << e.what() << std::endl;
-                                    continue; // Continue with other textures even if one fails
-                                }
+
+                                std::string newTextureName = texturePath.filename().string();
+                                std::filesystem::path newTexturePath = modelDir / newTextureName;
+
+                                std::filesystem::copy_file(texturePath, newTexturePath,
+                                    std::filesystem::copy_options::overwrite_existing);
+
+                                json textureJson;
+                                textureJson["type"] = texture.type;
+                                textureJson["path"] = texture.path;
+                                textureJson["filename"] = newTextureName;
+                                texturesJson.push_back(textureJson);
+                            }
+                            catch (const std::exception& e) {
+                                std::cerr << "Failed to copy texture " << texture.fullPath << ": " << e.what() << std::endl;
                             }
                         }
 
-                        // Only add textures array if we actually have textures
                         if (!texturesJson.empty()) {
-                            modelJson["textures"] = texturesJson;
+                            meshJson["textures"] = texturesJson;
+                            meshesJson.push_back(meshJson);
                         }
                     }
-                    catch (const std::exception& e) {
-                        std::cerr << "Failed to process model " << model.name << ": " << e.what() << std::endl;
-                        // Still add the model JSON even if texture processing fails
+
+                    // Only add meshes array if we have mesh data
+                    if (!meshesJson.empty()) {
+                        modelJson["meshes"] = meshesJson;
                     }
                 }
 
@@ -183,6 +217,14 @@ namespace Engine {
                 spotLightsJson.push_back(spotLightJson);
             }
             sceneJson["spotLights"] = spotLightsJson;
+
+            std::cout << "\n=== Scene Save Summary ===" << std::endl;
+            std::cout << "Models saved: " << scene.models.size() << std::endl;
+            std::cout << "Point clouds saved: " << scene.pointClouds.size() << std::endl;
+            std::cout << "Point lights saved: " << scene.pointLights.size() << std::endl;
+            std::cout << "Spot lights saved: " << scene.spotLights.size() << std::endl;
+            std::cout << "Scene directory: " << sceneDir << std::endl;
+            std::cout << "========================\n" << std::endl;
 
             // Write scene file with chunking support
             std::string jsonStr = sceneJson.dump(4);
@@ -237,54 +279,48 @@ namespace Engine {
                 throw std::runtime_error("Failed to open scene file: " + filename);
             }
 
-            if (metaFile.is_open()) {
-                json metaJson;
-                metaFile >> metaJson;
+            json metaJson;
+            metaFile >> metaJson;
 
-                if (metaJson.contains("numChunks")) {
-                    // Load chunked file
-                    std::string combinedJson;
-                    size_t numChunks = metaJson["numChunks"];
+            if (metaJson.contains("numChunks")) {
+                // Load chunked file
+                std::string combinedJson;
+                size_t numChunks = metaJson["numChunks"];
 
-                    for (size_t i = 0; i < numChunks; i++) {
-                        std::string chunkFilename = filename + "." + std::to_string(i);
-                        std::ifstream chunkFile(chunkFilename);
-                        if (!chunkFile.is_open()) {
-                            throw std::runtime_error("Failed to open scene chunk file: " + chunkFilename);
-                        }
-
-                        std::string chunk((std::istreambuf_iterator<char>(chunkFile)),
-                            std::istreambuf_iterator<char>());
-                        combinedJson += chunk;
+                for (size_t i = 0; i < numChunks; i++) {
+                    std::string chunkFilename = filename + "." + std::to_string(i);
+                    std::ifstream chunkFile(chunkFilename);
+                    if (!chunkFile.is_open()) {
+                        throw std::runtime_error("Failed to open scene chunk file: " + chunkFilename);
                     }
-                    sceneJson = json::parse(combinedJson);
+
+                    std::string chunk((std::istreambuf_iterator<char>(chunkFile)),
+                        std::istreambuf_iterator<char>());
+                    combinedJson += chunk;
                 }
-                else {
-                    // Regular single file
-                    metaFile.seekg(0);
-                    metaFile >> sceneJson;
-                }
+                sceneJson = json::parse(combinedJson);
+            }
+            else {
+                // Regular single file
+                metaFile.seekg(0);
+                metaFile >> sceneJson;
             }
 
             // Get scene directory
             scenePath = std::filesystem::path(filename);
             sceneDir = scenePath.parent_path() / scenePath.stem();
 
-            // Load scene settings if they exist
-            if (sceneJson.contains("settings")) {
-                const auto& settings = sceneJson["settings"];
-                scene.settings.separation = settings.value("separation", 0.5f);
-                scene.settings.convergence = settings.value("convergence", 2.6f);
-                scene.settings.nearPlane = settings.value("nearPlane", 0.1f);
-                scene.settings.farPlane = settings.value("farPlane", 200.0f);
+            // Verify scene directory exists
+            if (!std::filesystem::exists(sceneDir)) {
+                throw std::runtime_error("Scene directory not found: " + sceneDir.string());
             }
 
             // Load camera state if it exists in the scene
             if (sceneJson.contains("camera")) {
                 const auto& cameraJson = sceneJson["camera"];
-                
+
                 // Position
-                if (cameraJson.contains("position") && cameraJson["position"].is_array() && 
+                if (cameraJson.contains("position") && cameraJson["position"].is_array() &&
                     cameraJson["position"].size() == 3) {
                     scene.cameraState.position = {
                         cameraJson["position"][0].get<float>(),
@@ -292,9 +328,9 @@ namespace Engine {
                         cameraJson["position"][2].get<float>()
                     };
                 }
-                
+
                 // Front vector
-                if (cameraJson.contains("front") && cameraJson["front"].is_array() && 
+                if (cameraJson.contains("front") && cameraJson["front"].is_array() &&
                     cameraJson["front"].size() == 3) {
                     scene.cameraState.front = {
                         cameraJson["front"][0].get<float>(),
@@ -302,9 +338,9 @@ namespace Engine {
                         cameraJson["front"][2].get<float>()
                     };
                 }
-                
+
                 // Up vector
-                if (cameraJson.contains("up") && cameraJson["up"].is_array() && 
+                if (cameraJson.contains("up") && cameraJson["up"].is_array() &&
                     cameraJson["up"].size() == 3) {
                     scene.cameraState.up = {
                         cameraJson["up"][0].get<float>(),
@@ -312,7 +348,7 @@ namespace Engine {
                         cameraJson["up"][2].get<float>()
                     };
                 }
-                
+
                 // Other camera properties
                 if (cameraJson.contains("yaw")) {
                     scene.cameraState.yaw = cameraJson["yaw"].get<float>();
@@ -326,7 +362,7 @@ namespace Engine {
                     scene.cameraState.zoom = cameraJson["zoom"].get<float>();
                     camera.Zoom = scene.cameraState.zoom;
                 }
-                
+
                 // Update camera vectors
                 camera.Position = scene.cameraState.position;
                 camera.Front = scene.cameraState.front;
@@ -339,65 +375,97 @@ namespace Engine {
                 for (const auto& modelJson : sceneJson["models"]) {
                     try {
                         Model model;
-                        
-                        // Check if this is a model with a local path or a cube
-                        if (modelJson.contains("localPath")) {
+
+                        // Check if this is a primitive or file-based model
+                        bool isPrimitive = modelJson.contains("primitiveType");
+
+                        if (!isPrimitive && modelJson.contains("localPath")) {
+                            // Load file-based model
                             std::filesystem::path modelPath = sceneDir / modelJson["localPath"].get<std::string>();
-                            
+
+                            // Verify model file exists
+                            if (!std::filesystem::exists(modelPath)) {
+                                std::cerr << "Error: Model file not found: " << modelPath << std::endl;
+                                continue;
+                            }
+
+                            // Check for associated files (like .bin for GLTF)
+                            std::string extension = modelPath.extension().string();
+                            if (extension == ".gltf") {
+                                std::filesystem::path binFile = modelPath.parent_path() / (modelPath.stem().string() + ".bin");
+                                if (!std::filesystem::exists(binFile)) {
+                                    std::cerr << "Warning: GLTF binary file not found: " << binFile << std::endl;
+                                    std::cerr << "Model may fail to load or be incomplete." << std::endl;
+                                }
+                            }
+
                             // Load model from file
-                            model = *Engine::loadModel(modelPath.string());
-                            model.path = modelJson["path"].get<std::string>();
+                            std::cout << "Loading model from: " << modelPath << std::endl;
+                            Model* loadedModel = Engine::loadModel(modelPath.string());
+                            if (!loadedModel) {
+                                std::cerr << "Error: Failed to load model: " << modelPath << std::endl;
+                                continue;
+                            }
+
+                            model = *loadedModel;
+                            delete loadedModel;
+
+                            // Set paths - use the scene-local path as the new path
+                            model.path = modelPath.string();
                             model.directory = modelPath.parent_path().string();
 
-                            // Clear existing textures before loading new ones
+                            std::cout << "Successfully loaded model with " << model.getMeshes().size() << " meshes" << std::endl;
+
+                            // Clear all existing textures before loading saved ones
                             for (auto& mesh : model.getMeshes()) {
                                 mesh.textures.clear();
                             }
 
-                            // Load textures if present
-                            if (modelJson.contains("textures")) {
-                                std::unordered_set<std::string> loadedTextures;
+                            // Load mesh-specific textures
+                            if (modelJson.contains("meshes")) {
+                                for (const auto& meshJson : modelJson["meshes"]) {
+                                    size_t meshIndex = meshJson["meshIndex"].get<size_t>();
 
-                                for (const auto& textureJson : modelJson["textures"]) {
-                                    std::string identifier = textureJson["type"].get<std::string>() + "|" +
-                                        textureJson["originalPath"].get<std::string>();
+                                    // Validate mesh index
+                                    if (meshIndex >= model.getMeshes().size()) {
+                                        std::cerr << "Warning: Invalid mesh index " << meshIndex
+                                                  << " for model with " << model.getMeshes().size() << " meshes" << std::endl;
+                                        continue;
+                                    }
 
-                                    if (loadedTextures.find(identifier) == loadedTextures.end()) {
-                                        loadedTextures.insert(identifier);
+                                    auto& mesh = model.getMeshes()[meshIndex];
 
-                                        Texture texture;
-                                        texture.type = textureJson["type"];
-                                        texture.path = textureJson["originalPath"];
+                                    if (meshJson.contains("textures")) {
+                                        for (const auto& textureJson : meshJson["textures"]) {
+                                            Texture texture;
+                                            texture.type = textureJson["type"].get<std::string>();
+                                            texture.path = textureJson["path"].get<std::string>();
 
-                                        std::filesystem::path texturePath = modelPath.parent_path() /
-                                            textureJson["localPath"].get<std::string>();
-                                        texture.fullPath = texturePath.string();
+                                            // Build texture path: sceneDir/models/modelName/filename
+                                            std::filesystem::path texturePath = modelPath.parent_path() /
+                                                textureJson["filename"].get<std::string>();
 
-                                        texture.id = Model::TextureFromFile(
-                                            texturePath.filename().string().c_str(),
-                                            texturePath.parent_path().string(),
-                                            texture.fullPath
-                                        );
-
-                                        // Get the mesh index if it exists
-                                        size_t meshIndex = textureJson.value("meshIndex", 0);
-
-                                        // Add the texture to specified mesh or all meshes if not specified
-                                        if (meshIndex < model.getMeshes().size()) {
-                                            model.getMeshes()[meshIndex].textures.push_back(texture);
-                                        }
-                                        else {
-                                            // Add to all meshes if index is invalid
-                                            for (auto& mesh : model.getMeshes()) {
-                                                mesh.textures.push_back(texture);
+                                            // Verify texture file exists
+                                            if (!std::filesystem::exists(texturePath)) {
+                                                std::cerr << "Warning: Texture file not found: " << texturePath << std::endl;
+                                                continue;
                                             }
-                                        }
 
-                                        std::cout << "Loaded texture: " << texturePath.string() << std::endl;
+                                            texture.fullPath = texturePath.string();
+                                            texture.id = Model::TextureFromFile(
+                                                texturePath.filename().string().c_str(),
+                                                texturePath.parent_path().string(),
+                                                texture.fullPath
+                                            );
+
+                                            mesh.textures.push_back(texture);
+                                            std::cout << "Loaded texture: " << texture.type << " -> " << texturePath << std::endl;
+                                        }
                                     }
                                 }
                             }
-                        } else {
+                        }
+                        else {
                             // Creating a primitive
                             glm::vec3 color = glm::vec3(
                                 modelJson["color"][0].get<float>(),
@@ -406,10 +474,10 @@ namespace Engine {
                             );
                             float shininess = modelJson.value("shininess", 1.0f);
                             float emissive = modelJson.value("emissive", 0.0f);
-                            
-                            // Check for primitiveType field first, then fall back to legacy cube detection
+
+                            // Get primitive type
                             std::string primitiveType = modelJson.value("primitiveType", "cube");
-                            
+
                             if (primitiveType == "sphere") {
                                 model = Engine::createSphere(color, shininess, emissive);
                             }
@@ -423,16 +491,15 @@ namespace Engine {
                                 model = Engine::createTorus(color, shininess, emissive);
                             }
                             else {
-                                // Default to cube for legacy scenes or unknown types
+                                // Default to cube
                                 model = Engine::createCube(color, shininess, emissive);
                             }
 
-                            // Make sure color is explicitly set after creation
                             model.color = color;
                         }
 
-                        // Set model properties
-                        model.name = modelJson["name"];
+                        // Set common model properties
+                        model.name = modelJson["name"].get<std::string>();
                         model.position = glm::vec3(
                             modelJson["position"][0].get<float>(),
                             modelJson["position"][1].get<float>(),
@@ -561,6 +628,12 @@ namespace Engine {
                     }
                 }
             }
+            std::cout << "\n=== Scene Load Summary ===" << std::endl;
+            std::cout << "Models loaded: " << scene.models.size() << std::endl;
+            std::cout << "Point clouds loaded: " << scene.pointClouds.size() << std::endl;
+            std::cout << "Point lights loaded: " << scene.pointLights.size() << std::endl;
+            std::cout << "Spot lights loaded: " << scene.spotLights.size() << std::endl;
+            std::cout << "========================\n" << std::endl;
         }
         catch (const std::exception& e) {
             throw std::runtime_error("Failed to load scene: " + std::string(e.what()));

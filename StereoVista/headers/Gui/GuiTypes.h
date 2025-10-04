@@ -213,7 +213,9 @@ namespace GUI {
             bool fixInfacingNormals = false;         // Fix inward-facing normals
             bool removeRedundantMaterials = true;    // Remove redundant materials
             bool optimizeMeshes = false;             // Optimize meshes for better performance
-            bool pretransformVertices = false;      // Pre-transform vertices by node hierarchy
+            bool pretransformVertices = false;       // Pre-transform vertices by node hierarchy
+            bool autoScaleLargeModels = true;        // Automatically scale down oversized models to fit scene
+            float maxModelRadius = 5.0f;             // Maximum bounding sphere radius before auto-scaling
         } modelImportSettings;
     };
 }

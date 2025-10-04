@@ -1503,6 +1503,8 @@ void savePreferences() {
     j["modelImport"]["removeRedundantMaterials"] = preferences.modelImportSettings.removeRedundantMaterials;
     j["modelImport"]["optimizeMeshes"] = preferences.modelImportSettings.optimizeMeshes;
     j["modelImport"]["pretransformVertices"] = preferences.modelImportSettings.pretransformVertices;
+    j["modelImport"]["autoScaleLargeModels"] = preferences.modelImportSettings.autoScaleLargeModels;
+    j["modelImport"]["maxModelRadius"] = preferences.modelImportSettings.maxModelRadius;
 
     // Update preferences struct
     preferences.skyboxType = static_cast<int>(skyboxConfig.type);
@@ -1531,22 +1533,10 @@ void applyPreferencesToProgram() {
     show3DCursor = preferences.show3DCursor;
 
     // Apply camera preferences
-    currentScene.settings.separation = preferences.separation;
-    currentScene.settings.convergence = preferences.convergence;
-    currentScene.settings.autoConvergence = preferences.autoConvergence;
-    currentScene.settings.convergenceDistanceFactor = preferences.convergenceDistanceFactor;
     convergenceSmoothingSpeed = preferences.convergenceSmoothingSpeed;
     targetConvergence = preferences.convergence; // Initialize target to match current convergence
-    currentScene.settings.nearPlane = preferences.nearPlane;
-    currentScene.settings.farPlane = preferences.farPlane;
     camera.useNewMethod = preferences.useNewStereoMethod;
     camera.Zoom = preferences.fov;
-    
-    // Apply radar preferences
-    currentScene.settings.radarEnabled = preferences.radarEnabled;
-    currentScene.settings.radarPos = preferences.radarPos;
-    currentScene.settings.radarScale = preferences.radarScale;
-    currentScene.settings.radarShowScene = preferences.radarShowScene;
     camera.scrollMomentum = preferences.scrollMomentum;
     camera.maxScrollVelocity = preferences.maxScrollVelocity;
     camera.scrollDeceleration = preferences.scrollDeceleration;
@@ -1868,6 +1858,8 @@ void loadPreferences() {
             preferences.modelImportSettings.removeRedundantMaterials = j["modelImport"].value("removeRedundantMaterials", true);
             preferences.modelImportSettings.optimizeMeshes = j["modelImport"].value("optimizeMeshes", false);
             preferences.modelImportSettings.pretransformVertices = j["modelImport"].value("pretransformVertices", false);
+            preferences.modelImportSettings.autoScaleLargeModels = j["modelImport"].value("autoScaleLargeModels", true);
+            preferences.modelImportSettings.maxModelRadius = j["modelImport"].value("maxModelRadius", 5.0f);
         }
 
         // Apply loaded preferences
@@ -1930,10 +1922,10 @@ void InitializeDefaults() {
     preferences = GUI::ApplicationPreferences();
     
     // Set default radar settings
-    currentScene.settings.radarEnabled = preferences.radarEnabled;
-    currentScene.settings.radarPos = preferences.radarPos;
-    currentScene.settings.radarScale = preferences.radarScale;
-    currentScene.settings.radarShowScene = preferences.radarShowScene;
+    preferences.radarEnabled = preferences.radarEnabled;
+    preferences.radarPos = preferences.radarPos;
+    preferences.radarScale = preferences.radarScale;
+    preferences.radarShowScene = preferences.radarShowScene;
 
     // Initialize the camera with default values from preferences
     camera.useNewMethod = preferences.useNewStereoMethod;
@@ -1955,14 +1947,14 @@ void InitializeDefaults() {
     show3DCursor = preferences.show3DCursor;
 
     // Apply to scene settings
-    currentScene.settings.separation = preferences.separation;
-    currentScene.settings.convergence = preferences.convergence;
-    currentScene.settings.autoConvergence = preferences.autoConvergence;
-    currentScene.settings.convergenceDistanceFactor = preferences.convergenceDistanceFactor;
+    preferences.separation = preferences.separation;
+    preferences.convergence = preferences.convergence;
+    preferences.autoConvergence = preferences.autoConvergence;
+    preferences.convergenceDistanceFactor = preferences.convergenceDistanceFactor;
     convergenceSmoothingSpeed = preferences.convergenceSmoothingSpeed;
     targetConvergence = preferences.convergence; // Initialize target to match current convergence
-    currentScene.settings.nearPlane = preferences.nearPlane;
-    currentScene.settings.farPlane = preferences.farPlane;
+    preferences.nearPlane = preferences.nearPlane;
+    preferences.farPlane = preferences.farPlane;
 
 
     // Set up default cursor preset if needed
@@ -2074,7 +2066,6 @@ int main() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_STEREO, GLFW_TRUE);  // Enable stereo hint
-    glfwWindowHint(GLFW_SAMPLES, currentScene.settings.msaaSamples);
 
     // ---- Create GLFW Window ----
     GLFWwindow* window = glfwCreateWindow(windowWidth, windowHeight, "StereoVista", nullptr, nullptr);
@@ -2528,7 +2519,7 @@ int main() {
                 
                 // Project model position to screen space
                 glm::mat4 view = camera.GetViewMatrix();
-                glm::mat4 projection = camera.GetProjectionMatrix(aspectRatio, currentScene.settings.nearPlane, currentScene.settings.farPlane);
+                glm::mat4 projection = camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane);
                 glm::mat4 viewProj = projection * view;
                 
                 // Convert world space position to screen space
@@ -2565,7 +2556,7 @@ int main() {
                 
                 // Project light position to screen space
                 glm::mat4 view = camera.GetViewMatrix();
-                glm::mat4 projection = camera.GetProjectionMatrix(aspectRatio, currentScene.settings.nearPlane, currentScene.settings.farPlane);
+                glm::mat4 projection = camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane);
                 glm::mat4 viewProj = projection * view;
                 
                 // Convert world space position to screen space
@@ -2593,7 +2584,7 @@ int main() {
                 
                 // Project light position to screen space
                 glm::mat4 view = camera.GetViewMatrix();
-                glm::mat4 projection = camera.GetProjectionMatrix(aspectRatio, currentScene.settings.nearPlane, currentScene.settings.farPlane);
+                glm::mat4 projection = camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane);
                 glm::mat4 viewProj = projection * view;
                 
                 // Convert world space position to screen space
@@ -2660,7 +2651,7 @@ int main() {
         }
 
         aspectRatio = static_cast<float>(windowWidth) / static_cast<float>(windowHeight);
-        glm::mat4 projection = camera.GetProjectionMatrix(aspectRatio, currentScene.settings.nearPlane, currentScene.settings.farPlane);
+        glm::mat4 projection = camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane);
 
         // Calculate stereo projections if needed
         glm::mat4 leftProjection = projection;
@@ -2668,18 +2659,18 @@ int main() {
         glm::mat4 leftView = view;
         glm::mat4 rightView = view;
 
-        if (isStereoWindow || currentScene.settings.radarEnabled) {
+        if (isStereoWindow || preferences.radarEnabled) {
         GLfloat frustum[6];
-        float effectiveSeparation = currentScene.settings.separation;
+        float effectiveSeparation = preferences.separation;
 
         PerspectiveProjection(frustum, -1.0f, camera.Zoom, aspectRatio,
-            currentScene.settings.nearPlane, currentScene.settings.farPlane,
-            effectiveSeparation, currentScene.settings.convergence);
+            preferences.nearPlane, preferences.farPlane,
+            effectiveSeparation, preferences.convergence);
         leftProjection = glm::frustum(frustum[0], frustum[1], frustum[2], frustum[3], frustum[4], frustum[5]);
 
         PerspectiveProjection(frustum, +1.0f, camera.Zoom, aspectRatio,
-            currentScene.settings.nearPlane, currentScene.settings.farPlane,
-            effectiveSeparation, currentScene.settings.convergence);
+            preferences.nearPlane, preferences.farPlane,
+            effectiveSeparation, preferences.convergence);
         rightProjection = glm::frustum(frustum[0], frustum[1], frustum[2], frustum[3], frustum[4], frustum[5]);
 
         // Calculate offset view matrices
@@ -2796,13 +2787,13 @@ int main() {
             capturedCursorPos = cursorManager.getCursorPosition();
         }
 
-        if (currentScene.settings.radarEnabled) {
-            DrawRadar(isStereoWindow, camera, currentScene.settings.convergence,
+        if (preferences.radarEnabled) {
+            DrawRadar(isStereoWindow, camera, preferences.convergence,
                 view, projection,
                 leftView, leftProjection,
                 rightView, rightProjection,
-                activeShader, currentScene.settings.radarShowScene,
-                currentScene.settings.radarScale, currentScene.settings.radarPos);
+                activeShader, preferences.radarShowScene,
+                preferences.radarScale, preferences.radarPos);
         }
 
         // ---- Swap Buffers ----
@@ -3436,23 +3427,23 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     }
     
     if (!distanceCalculatedThisFrame) {
-        float distanceToNearestObject = camera.getDistanceToNearestObject(camera, projection, view, currentScene.settings.farPlane, windowWidth, windowHeight);
+        float distanceToNearestObject = camera.getDistanceToNearestObject(camera, projection, view, preferences.farPlane, windowWidth, windowHeight);
         camera.UpdateDistanceToObject(distanceToNearestObject);
         float largestDimension = calculateLargestModelDimension();
-        camera.AdjustMovementSpeed(distanceToNearestObject, largestDimension, currentScene.settings.farPlane);
+        camera.AdjustMovementSpeed(distanceToNearestObject, largestDimension, preferences.farPlane);
         
         // Update target convergence automatically if enabled
-        if (currentScene.settings.autoConvergence) {
+        if (preferences.autoConvergence) {
             float cameraDistance = camera.distanceToNearestObject;
-            if (cameraDistance < currentScene.settings.farPlane * 0.95f && camera.distanceUpdated) {
-                float autoConvergenceValue = cameraDistance * currentScene.settings.convergenceDistanceFactor;
+            if (cameraDistance < preferences.farPlane * 0.95f && camera.distanceUpdated) {
+                float autoConvergenceValue = cameraDistance * preferences.convergenceDistanceFactor;
 
                 // Apply user-defined convergence cap if enabled
                 if (preferences.enableConvergenceCap) {
                     autoConvergenceValue = glm::clamp(autoConvergenceValue, preferences.convergenceCapMin, preferences.convergenceCapMax);
                 } else {
                     // Default clamp to reasonable bounds: Min: near plane, Max: far plane
-                    autoConvergenceValue = glm::clamp(autoConvergenceValue, currentScene.settings.nearPlane, currentScene.settings.farPlane);
+                    autoConvergenceValue = glm::clamp(autoConvergenceValue, preferences.nearPlane, preferences.farPlane);
                 }
 
                 targetConvergence = autoConvergenceValue;
@@ -3463,20 +3454,20 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     }
 
     // Smoothly interpolate convergence to target (always, but faster when auto convergence is on)
-    if (currentScene.settings.autoConvergence) {
+    if (preferences.autoConvergence) {
         // Smooth interpolation when auto convergence is enabled
         float lerpFactor = 1.0f - glm::exp(-convergenceSmoothingSpeed * deltaTime);
-        currentScene.settings.convergence = glm::mix(currentScene.settings.convergence, targetConvergence, lerpFactor);
-        preferences.convergence = currentScene.settings.convergence;
+        preferences.convergence = glm::mix(preferences.convergence, targetConvergence, lerpFactor);
+        preferences.convergence = preferences.convergence;
     } else {
         // When auto convergence is off, keep target in sync with actual convergence
         // so when it's turned back on, it starts from the current value
-        targetConvergence = currentScene.settings.convergence;
+        targetConvergence = preferences.convergence;
     }
 
     // Render zero plane if enabled (AFTER distance calculation)
-    if (currentScene.settings.showZeroPlane) {
-        renderZeroPlane(shader, projection, view, currentScene.settings.convergence);
+    if (preferences.showZeroPlane) {
+        renderZeroPlane(shader, projection, view, preferences.convergence);
     }
 
     renderSkybox(projection, view, shader);
@@ -3587,7 +3578,7 @@ void renderModels(Engine::Shader* shader) {
     // Calculate view projection matrix for frustum culling
     glm::mat4 viewProj;
     if (shader != simpleDepthShader) {
-        viewProj = camera.GetProjectionMatrix(aspectRatio, currentScene.settings.nearPlane, currentScene.settings.farPlane)
+        viewProj = camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane)
             * camera.GetViewMatrix();
     }
 
@@ -4212,7 +4203,7 @@ void calculateMouseRay(float mouseX, float mouseY, glm::vec3& rayOrigin, glm::ve
     glm::vec4 rayFarClip = glm::vec4(x, y, 1.0, 1.0);
 
     // Convert to eye space
-    glm::mat4 invProj = glm::inverse(camera.GetProjectionMatrix(aspect, currentScene.settings.nearPlane, currentScene.settings.farPlane));
+    glm::mat4 invProj = glm::inverse(camera.GetProjectionMatrix(aspect, preferences.nearPlane, preferences.farPlane));
     glm::vec4 rayNearEye = invProj * rayNearClip;
     glm::vec4 rayFarEye = invProj * rayFarClip;
 
