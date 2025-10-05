@@ -1,7 +1,7 @@
 {
     "camera": {
         "autoConvergence": true,
-        "convergence": 5.600012302398682,
+        "convergence": 2.9134271144866943,
         "convergenceCapMax": 40.0,
         "convergenceCapMin": 0.5,
         "convergenceDistanceFactor": 1.0,
@@ -51,9 +51,11 @@
     "modelImport": {
         "autoScaleLargeModels": true,
         "calculateTangentSpace": true,
-        "fixInfacingNormals": false,
+        "fixInfacingNormals": true,
+        "flipNormals": false,
         "flipUVs": false,
-        "generateNormals": true,
+        "generateNormals": false,
+        "generateSmoothNormals": false,
         "joinIdenticalVertices": true,
         "maxModelRadius": 5.0,
         "optimizeMeshes": false,

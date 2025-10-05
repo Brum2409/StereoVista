@@ -37,6 +37,7 @@ namespace Engine {
             sceneJson["camera"]["yaw"] = cameraState.yaw;
             sceneJson["camera"]["pitch"] = cameraState.pitch;
             sceneJson["camera"]["zoom"] = cameraState.zoom;
+            sceneJson["camera"]["orientation"] = {cameraState.orientation.x, cameraState.orientation.y, cameraState.orientation.z, cameraState.orientation.w};
 
             // Save models
             json modelsJson = json::array();
@@ -51,6 +52,21 @@ namespace Engine {
                 modelJson["shininess"] = model.shininess;
                 modelJson["emissive"] = model.emissive;
                 modelJson["visible"] = model.visible;
+
+                // Save PBR material properties
+                modelJson["metallicFactor"] = model.metallicFactor;
+                modelJson["roughnessFactor"] = model.roughnessFactor;
+                modelJson["F0"] = { model.F0.x, model.F0.y, model.F0.z };
+                modelJson["normalScale"] = model.normalScale;
+                modelJson["heightScale"] = model.heightScale;
+
+                // Save VCT/legacy material properties
+                modelJson["diffuseReflectivity"] = model.diffuseReflectivity;
+                modelJson["specularColor"] = { model.specularColor.r, model.specularColor.g, model.specularColor.b };
+                modelJson["specularDiffusion"] = model.specularDiffusion;
+                modelJson["specularReflectivity"] = model.specularReflectivity;
+                modelJson["refractiveIndex"] = model.refractiveIndex;
+                modelJson["transparency"] = model.transparency;
 
                 // Check if this is a file-based model (not a primitive)
                 bool isPrimitive = (model.path == "cube" || model.path == "sphere" ||
@@ -352,22 +368,27 @@ namespace Engine {
                 // Other camera properties
                 if (cameraJson.contains("yaw")) {
                     scene.cameraState.yaw = cameraJson["yaw"].get<float>();
-                    camera.Yaw = scene.cameraState.yaw;
                 }
                 if (cameraJson.contains("pitch")) {
                     scene.cameraState.pitch = cameraJson["pitch"].get<float>();
-                    camera.Pitch = scene.cameraState.pitch;
                 }
                 if (cameraJson.contains("zoom")) {
                     scene.cameraState.zoom = cameraJson["zoom"].get<float>();
-                    camera.Zoom = scene.cameraState.zoom;
                 }
 
-                // Update camera vectors
-                camera.Position = scene.cameraState.position;
-                camera.Front = scene.cameraState.front;
-                camera.Up = scene.cameraState.up;
-                camera.updateCameraVectors();
+                // Orientation quaternion
+                if (cameraJson.contains("orientation") && cameraJson["orientation"].is_array() &&
+                    cameraJson["orientation"].size() == 4) {
+                    scene.cameraState.orientation = {
+                        cameraJson["orientation"][3].get<float>(), // w component first for glm::quat constructor
+                        cameraJson["orientation"][0].get<float>(), // x
+                        cameraJson["orientation"][1].get<float>(), // y
+                        cameraJson["orientation"][2].get<float>()  // z
+                    };
+                }
+
+                // Apply the loaded camera state
+                camera.SetState(scene.cameraState);
             }
 
             // Load models
@@ -523,6 +544,33 @@ namespace Engine {
                         model.shininess = modelJson.value("shininess", 1.0f);
                         model.emissive = modelJson.value("emissive", 0.0f);
                         model.visible = modelJson.value("visible", true);
+
+                        // Load PBR material properties
+                        model.metallicFactor = modelJson.value("metallicFactor", 0.0f);
+                        model.roughnessFactor = modelJson.value("roughnessFactor", 0.5f);
+                        if (modelJson.contains("F0") && modelJson["F0"].is_array() && modelJson["F0"].size() == 3) {
+                            model.F0 = glm::vec3(
+                                modelJson["F0"][0].get<float>(),
+                                modelJson["F0"][1].get<float>(),
+                                modelJson["F0"][2].get<float>()
+                            );
+                        }
+                        model.normalScale = modelJson.value("normalScale", 1.0f);
+                        model.heightScale = modelJson.value("heightScale", 0.02f);
+
+                        // Load VCT/legacy material properties
+                        model.diffuseReflectivity = modelJson.value("diffuseReflectivity", 0.8f);
+                        if (modelJson.contains("specularColor") && modelJson["specularColor"].is_array() && modelJson["specularColor"].size() == 3) {
+                            model.specularColor = glm::vec3(
+                                modelJson["specularColor"][0].get<float>(),
+                                modelJson["specularColor"][1].get<float>(),
+                                modelJson["specularColor"][2].get<float>()
+                            );
+                        }
+                        model.specularDiffusion = modelJson.value("specularDiffusion", 0.5f);
+                        model.specularReflectivity = modelJson.value("specularReflectivity", 0.0f);
+                        model.refractiveIndex = modelJson.value("refractiveIndex", 1.0f);
+                        model.transparency = modelJson.value("transparency", 0.0f);
 
                         scene.models.push_back(model);
                     }

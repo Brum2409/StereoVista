@@ -131,7 +131,11 @@ namespace Engine {
             processFlags |= aiProcess_FlipUVs;
         }
         if (preferences.modelImportSettings.generateNormals) {
-            processFlags |= aiProcess_GenNormals;
+            if (preferences.modelImportSettings.generateSmoothNormals) {
+                processFlags |= aiProcess_GenSmoothNormals;
+            } else {
+                processFlags |= aiProcess_GenNormals;
+            }
         }
         if (preferences.modelImportSettings.calculateTangentSpace) {
             processFlags |= aiProcess_CalcTangentSpace;
@@ -225,6 +229,11 @@ namespace Engine {
                 vertex.normal.x = mesh->mNormals[i].x;
                 vertex.normal.y = mesh->mNormals[i].y;
                 vertex.normal.z = mesh->mNormals[i].z;
+
+                // Flip normals if requested
+                if (preferences.modelImportSettings.flipNormals) {
+                    vertex.normal = -vertex.normal;
+                }
             } else {
                 vertex.normal = glm::vec3(0.0f, 1.0f, 0.0f); // Default up vector
             }

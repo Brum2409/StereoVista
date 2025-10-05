@@ -2107,10 +2107,22 @@ void renderSettingsWindow() {
             }
             ImGui::SameLine(); DrawHelpMarker("Flips the V (Y) coordinate of UV maps. Enable if textures appear upside down.");
 
+            if (ImGui::Checkbox("Flip Normals", &preferences.modelImportSettings.flipNormals)) {
+                settingsChanged = true;
+            }
+            ImGui::SameLine(); DrawHelpMarker("Inverts the direction of all normals. Enable if lighting appears inverted (dark faces should be bright).");
+
             if (ImGui::Checkbox("Generate Normals", &preferences.modelImportSettings.generateNormals)) {
                 settingsChanged = true;
             }
             ImGui::SameLine(); DrawHelpMarker("Automatically generate vertex normals for models that don't have them.");
+
+            ImGui::Indent();
+            if (ImGui::Checkbox("Use Smooth Normals", &preferences.modelImportSettings.generateSmoothNormals)) {
+                settingsChanged = true;
+            }
+            ImGui::SameLine(); DrawHelpMarker("Generate smooth normals for better shading (only when Generate Normals is enabled).");
+            ImGui::Unindent();
 
             if (ImGui::Checkbox("Calculate Tangents", &preferences.modelImportSettings.calculateTangentSpace)) {
                 settingsChanged = true;

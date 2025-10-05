@@ -1504,7 +1504,9 @@ void savePreferences() {
     
     // Save model import settings
     j["modelImport"]["flipUVs"] = preferences.modelImportSettings.flipUVs;
+    j["modelImport"]["flipNormals"] = preferences.modelImportSettings.flipNormals;
     j["modelImport"]["generateNormals"] = preferences.modelImportSettings.generateNormals;
+    j["modelImport"]["generateSmoothNormals"] = preferences.modelImportSettings.generateSmoothNormals;
     j["modelImport"]["calculateTangentSpace"] = preferences.modelImportSettings.calculateTangentSpace;
     j["modelImport"]["joinIdenticalVertices"] = preferences.modelImportSettings.joinIdenticalVertices;
     j["modelImport"]["sortByPrimitiveType"] = preferences.modelImportSettings.sortByPrimitiveType;
@@ -1859,7 +1861,9 @@ void loadPreferences() {
         // Model import settings
         if (j.contains("modelImport")) {
             preferences.modelImportSettings.flipUVs = j["modelImport"].value("flipUVs", false);
+            preferences.modelImportSettings.flipNormals = j["modelImport"].value("flipNormals", false);
             preferences.modelImportSettings.generateNormals = j["modelImport"].value("generateNormals", true);
+            preferences.modelImportSettings.generateSmoothNormals = j["modelImport"].value("generateSmoothNormals", false);
             preferences.modelImportSettings.calculateTangentSpace = j["modelImport"].value("calculateTangentSpace", true);
             preferences.modelImportSettings.joinIdenticalVertices = j["modelImport"].value("joinIdenticalVertices", true);
             preferences.modelImportSettings.sortByPrimitiveType = j["modelImport"].value("sortByPrimitiveType", true);

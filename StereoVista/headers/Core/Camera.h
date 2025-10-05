@@ -136,6 +136,7 @@ public:
         state.yaw = Yaw;
         state.pitch = Pitch;
         state.zoom = Zoom;
+        state.orientation = Orientation;
         return state;
     }
 
@@ -147,7 +148,7 @@ public:
         Yaw = state.yaw;
         Pitch = state.pitch;
         Zoom = state.zoom;
-        initializeQuaternionFromEuler();
+        Orientation = state.orientation;
         updateCameraVectorsFromQuaternion();
     }
 

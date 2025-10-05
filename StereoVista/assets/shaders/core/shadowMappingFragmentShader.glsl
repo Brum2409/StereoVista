@@ -420,20 +420,23 @@ vec3 blendNormals(vec3 baseNormal, vec3 detailNormal, float blendFactor) {
 }
 
 // Calculate enhanced normal with multiple layers support
-vec3 calculateEnhancedNormal(vec2 texCoords, mat3 TBN) {
-    vec3 normal = vec3(0.0, 0.0, 1.0); // Default tangent space normal
-    
-    if (material.hasNormalMap && material.numNormalTextures > 0) {
-        // Sample primary normal map
-        normal = sampleNormalMap(material.textures[2], texCoords, material.normalScale);
-        
-        // If multiple normal textures exist, blend them
-        if (material.numNormalTextures > 1) {
-            vec3 detailNormal = sampleNormalMap(material.textures[3], texCoords * 4.0, material.normalScale * 0.5);
-            normal = blendNormals(normal, detailNormal, 0.5);
-        }
+vec3 calculateEnhancedNormal(vec2 texCoords, mat3 TBN, vec3 vertexNormal) {
+    // If no normal map or normalScale is 0, use vertex normal directly
+    if (!material.hasNormalMap || material.numNormalTextures == 0 || material.normalScale <= 0.0) {
+        return normalize(vertexNormal);
     }
-    
+
+    vec3 normal = vec3(0.0, 0.0, 1.0); // Default tangent space normal
+
+    // Sample primary normal map
+    normal = sampleNormalMap(material.textures[2], texCoords, material.normalScale);
+
+    // If multiple normal textures exist, blend them
+    if (material.numNormalTextures > 1) {
+        vec3 detailNormal = sampleNormalMap(material.textures[3], texCoords * 4.0, material.normalScale * 0.5);
+        normal = blendNormals(normal, detailNormal, 0.5);
+    }
+
     // Transform from tangent space to world space
     return normalize(TBN * normal);
 }
@@ -1567,14 +1570,8 @@ void main() {
                            texture(material.textures[1], fs_in.TexCoords).r : 0.2;
     
     // Calculate enhanced normal with improved TBN and multi-layer support
-    vec3 normal;
-    if (material.hasNormalMap && material.numNormalTextures > 0) {
-        // Use enhanced normal mapping with proper TBN matrix
-        normal = calculateEnhancedNormal(fs_in.TexCoords, fs_in.TBN);
-    } else {
-        // Normalize the interpolated normal (interpolation can denormalize it)
-        normal = normalize(fs_in.Normal);
-    }
+    // Calculate normal (handles both normal mapping and vertex normals correctly)
+    vec3 normal = calculateEnhancedNormal(fs_in.TexCoords, fs_in.TBN, fs_in.Normal);
     
     // Calculate view direction once (FROM fragment TO camera)
     vec3 viewDir = normalize(viewPos - fs_in.FragPos);

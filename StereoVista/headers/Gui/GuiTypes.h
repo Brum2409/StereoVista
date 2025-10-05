@@ -206,7 +206,9 @@ namespace GUI {
         // Model Import Settings
         struct ModelImportSettings {
             bool flipUVs = false;                    // Toggle UV coordinate flipping
+            bool flipNormals = false;                // Flip normals (invert direction)
             bool generateNormals = true;             // Generate normals if missing
+            bool generateSmoothNormals = false;      // Generate smooth normals instead of flat normals
             bool calculateTangentSpace = true;       // Calculate tangent and bitangent vectors
             bool joinIdenticalVertices = true;       // Join identical vertices to reduce redundancy
             bool sortByPrimitiveType = true;         // Sort by primitive type for better performance
