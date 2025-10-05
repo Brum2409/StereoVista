@@ -92,7 +92,7 @@ bool InitializeImGuiWithFonts(GLFWwindow* window, bool isDarkTheme) {
                 g_Fonts.regular = io.Fonts->AddFontFromFileTTF(fontPath, regularSize, &fontConfig);
                 if (g_Fonts.regular) {
                     fontLoaded = true;
-                    std::cout << "Loaded regular font: " << fontPath << std::endl;
+
                     break;
                 }
             }
@@ -108,7 +108,7 @@ bool InitializeImGuiWithFonts(GLFWwindow* window, bool isDarkTheme) {
             try {
                 g_Fonts.bold = io.Fonts->AddFontFromFileTTF(fontPath, boldSize, &fontConfig);
                 if (g_Fonts.bold) {
-                    std::cout << "Loaded bold font: " << fontPath << std::endl;
+
                     break;
                 }
             }
@@ -147,7 +147,6 @@ bool InitializeImGuiWithFonts(GLFWwindow* window, bool isDarkTheme) {
             try {
                 g_Fonts.mono = io.Fonts->AddFontFromFileTTF(fontPath, monoSize, &fontConfig);
                 if (g_Fonts.mono) {
-                    std::cout << "Loaded monospace font: " << fontPath << std::endl;
                     break;
                 }
             }
@@ -184,8 +183,6 @@ bool InitializeImGuiWithFonts(GLFWwindow* window, bool isDarkTheme) {
                 // Load FontAwesome with correct size scaling
                 g_Fonts.icons = io.Fonts->AddFontFromFileTTF(iconFontPath, iconFontSize, iconConfig, icon_ranges);
                 if (g_Fonts.icons) {
-                    std::cout << "FontAwesome icons merged with size scaling: " << iconFontPath << std::endl;
-                    std::cout << "Base font size: " << baseFontSize << ", Icon font size: " << iconFontSize << std::endl;
                     iconsLoaded = true;
                     break;
                 }
@@ -265,15 +262,10 @@ bool InitializeImGuiWithFonts(GLFWwindow* window, bool isDarkTheme) {
     // Set the default font to the regular font with merged icons
     if (g_Fonts.regular) {
         io.FontDefault = g_Fonts.regular;
-        std::cout << "Set default font to regular font with merged FontAwesome icons" << std::endl;
 
         // Test if the regular font has the lightbulb after merging
         const ImFontGlyph* test_glyph = g_Fonts.regular->FindGlyph(0xf0eb);
-        std::cout << "Regular font has lightbulb glyph: " << (test_glyph ? "YES" : "NO") << std::endl;
 
-        if (test_glyph) {
-            std::cout << "Lightbulb glyph found! Advance: " << test_glyph->AdvanceX << ", Visible: " << (test_glyph->Visible ? "YES" : "NO") << std::endl;
-        }
     } else {
         std::cout << "WARNING: Regular font is null!" << std::endl;
     }

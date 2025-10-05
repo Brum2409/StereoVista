@@ -453,7 +453,6 @@ bool SpaceMouseInput::Initialize(const std::string& appName) {
         m_navigationModel->SetEnabled(true);
         m_enabled = true;
         
-        std::cout << "SpaceMouse navigation initialized successfully" << std::endl;
         return true;
         
     } catch (const std::exception& e) {

@@ -201,6 +201,7 @@
     <ClCompile Include="src\Core\CursorSynchronizer.cpp" />
     <ClCompile Include="src\Gui\CursorPreview3D.cpp" />
     <ClCompile Include="src\Gui\GUI.cpp" />
+    <ClCompile Include="src\Tools\BrushTool.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="headers\core.h" />
@@ -219,6 +220,7 @@
     <ClInclude Include="headers\Engine\SpaceMouseInput.h" />
     <ClInclude Include="headers\engine\window.h" />
     <ClInclude Include="headers\Camera.h" />
+    <ClInclude Include="headers\Tools\BrushTool.h" />
     <ClInclude Include="headers\libs\assimp\aabb.h" />
     <ClInclude Include="headers\libs\assimp\ai_assert.h" />
     <ClInclude Include="headers\libs\assimp\anim.h" />

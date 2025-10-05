@@ -2,6 +2,7 @@
 #include "Gui/GUITypes.h"
 #include "Engine/Core.h"
 #include "Engine/BVHDebug.h"
+#include "Tools/BrushTool.h"
 #include <json.h>
 #include <fstream>
 #include <sstream>
@@ -36,6 +37,7 @@ extern bool showInfoWindow;
 extern bool showSettingsWindow;
 extern bool show3DCursor;
 extern bool showCursorSettingsWindow;
+extern bool showBrushToolWindow;
 extern Cursor::CursorManager cursorManager;
 extern Engine::Voxelizer* voxelizer;
 extern float ambientStrengthFromSkybox;
@@ -49,6 +51,9 @@ extern bool spaceMouseInitialized;
 
 // Cursor variables
 extern Cursor::CursorManager cursorManager;
+
+// Brush tool
+extern Tools::BrushTool brushTool;
 
 extern GUI::LightingMode currentLightingMode;
 extern bool enableShadows;
@@ -65,7 +70,8 @@ extern enum class SelectedType {
     PointCloud,
     Sun,
     PointLight,
-    SpotLight
+    SpotLight,
+    BrushCluster
 } currentSelectedType;
 extern int currentSelectedIndex;
 extern int currentSelectedMeshIndex;
@@ -679,6 +685,11 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
             showSettingsWindow = true;
         }
 
+        // Brush Tool Menu
+        if (ImGui::MenuItem("Brush Tool")) {
+            showBrushToolWindow = true;
+        }
+
         ImGui::EndMainMenuBar();
     }
 
@@ -891,6 +902,41 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
             ImGui::PopID();
         }
 
+        // Brush Clusters List
+        extern Tools::BrushTool brushTool;
+        int clusterCount = brushTool.getClusterCount();
+        for (int i = 0; i < clusterCount; i++) {
+            const Tools::BrushCluster* cluster = brushTool.getCluster(i);
+            if (!cluster) continue;
+
+            std::string clusterName = cluster->name;
+            if (strlen(searchBuffer) > 0 && clusterName.find(searchBuffer) == std::string::npos) continue;
+
+            ImGui::PushID(i + currentScene.models.size() + currentScene.pointClouds.size() + 5000);
+            bool isSelected = (currentSelectedIndex == i && currentSelectedType == SelectedType::BrushCluster);
+
+            ImGui::AlignTextToFramePadding();
+            ImGui::Text("");  // No visibility checkbox for clusters
+            ImGui::NextColumn();
+
+            ImGui::AlignTextToFramePadding();
+            if (g_Fonts.icons) {
+                ImGui::PushFont(g_Fonts.icons);
+                ImGui::Text(ICON_FA_PAINT_BRUSH);
+                ImGui::PopFont();
+                ImGui::SameLine();
+            }
+            std::string displayName = clusterName + " (" + std::to_string(cluster->instances.size()) + ")";
+            if (ImGui::Selectable(displayName.c_str(), isSelected, ImGuiSelectableFlags_SpanAllColumns)) {
+                currentSelectedType = SelectedType::BrushCluster;
+                currentSelectedIndex = i;
+                currentSelectedMeshIndex = -1;
+                brushTool.setActiveCluster(i);
+            }
+            ImGui::NextColumn();
+            ImGui::PopID();
+        }
+
         ImGui::Columns(1);
         ImGui::EndChild();
     }
@@ -930,6 +976,64 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
             currentSelectedIndex < spotLights.size()) {
             renderSpotLightManipulationPanel();
         }
+        else if (currentSelectedType == SelectedType::BrushCluster && currentSelectedIndex >= 0) {
+            extern Tools::BrushTool brushTool;
+            int clusterCount = brushTool.getClusterCount();
+            if (currentSelectedIndex < clusterCount) {
+                Tools::BrushCluster* cluster = brushTool.getCluster(currentSelectedIndex);
+                if (cluster) {
+                    DrawSectionHeader("Brush Cluster Properties");
+
+                    ImGui::Text("Name: %s", cluster->name.c_str());
+                    if (cluster->sourceModelIndex >= 0 && cluster->sourceModelIndex < currentScene.models.size()) {
+                        ImGui::Text("Source Model: %s", currentScene.models[cluster->sourceModelIndex].name.c_str());
+                    }
+                    ImGui::Text("Instances: %d", brushTool.getInstanceCountForCluster(currentSelectedIndex));
+
+                    ImGui::Spacing();
+
+                    // Instance Variation
+                    DrawSectionHeader("Instance Variation");
+
+                    ImGui::SliderFloat("Min Scale", &cluster->minScale, 0.1f, 5.0f, "%.2f");
+                    ImGui::SameLine(); DrawHelpMarker("Minimum scale multiplier");
+
+                    ImGui::SliderFloat("Max Scale", &cluster->maxScale, 0.1f, 5.0f, "%.2f");
+                    ImGui::SameLine(); DrawHelpMarker("Maximum scale multiplier");
+
+                    if (cluster->maxScale < cluster->minScale) {
+                        cluster->maxScale = cluster->minScale;
+                    }
+
+                    ImGui::SliderFloat("Rotation", &cluster->rotationRandomization, 0.0f, 1.0f, "%.2f");
+                    ImGui::SameLine(); DrawHelpMarker("Random rotation");
+
+                    ImGui::SliderFloat("Color Variation", &cluster->colorVariation, 0.0f, 1.0f, "%.2f");
+                    ImGui::SameLine(); DrawHelpMarker("Random color variation");
+
+                    ImGui::Checkbox("Align to Surface", &cluster->alignToNormal);
+
+                    ImGui::Spacing();
+
+                    // Cluster Actions
+                    DrawSectionHeader("Actions");
+
+                    if (ImGui::Button("Set as Active Cluster", ImVec2(-1, 0))) {
+                        brushTool.setActiveCluster(currentSelectedIndex);
+                    }
+
+                    if (ImGui::Button("Clear Instances", ImVec2(-1, 0))) {
+                        brushTool.clearInstancesForCluster(currentSelectedIndex);
+                    }
+
+                    if (ImGui::Button("Delete Cluster", ImVec2(-1, 0))) {
+                        brushTool.deleteCluster(currentSelectedIndex);
+                        currentSelectedType = SelectedType::None;
+                        currentSelectedIndex = -1;
+                    }
+                }
+            }
+        }
         else {
             ImGui::TextDisabled("No object selected");
             ImGui::Spacing();
@@ -948,6 +1052,10 @@ void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags window
 
     if (showCursorSettingsWindow) {
         renderCursorSettingsWindow();
+    }
+
+    if (showBrushToolWindow) {
+        renderBrushToolWindow();
     }
 
     // FPS Counter (always in top-right corner)
@@ -2467,6 +2575,179 @@ void renderCursorSettingsWindow() {
 
         ImGui::EndTabBar();
     }
+
+    ImGui::End();
+}
+
+void renderBrushToolWindow() {
+    extern Tools::BrushTool brushTool;
+
+    ImGui::SetNextWindowSize(ImVec2(450, 650), ImGuiCond_FirstUseEver);
+    ImGui::Begin("Brush Tool", nullptr);
+
+    DrawSectionHeader("Brush Tool Settings");
+
+    // Enable/Disable brush tool
+    if (ImGui::Checkbox("Enable Brush Tool", &preferences.brushToolSettings.enabled)) {
+        // Will be handled in main.cpp
+    }
+
+    if (!preferences.brushToolSettings.enabled) {
+        ImGui::TextDisabled("Enable the brush tool to start painting");
+        ImGui::End();
+        return;
+    }
+
+    ImGui::Spacing();
+
+    // Cluster Management
+    DrawSectionHeader("Brush Clusters");
+
+    // Create new cluster section
+    static char newClusterName[128] = "New Cluster";
+    ImGui::InputText("Cluster Name", newClusterName, IM_ARRAYSIZE(newClusterName));
+
+    static std::vector<std::string> modelNames;
+    modelNames.clear();
+    modelNames.push_back("None");
+    for (size_t i = 0; i < currentScene.models.size(); i++) {
+        modelNames.push_back(currentScene.models[i].name);
+    }
+
+    int newClusterModelIndex = preferences.brushToolSettings.selectedModelIndex + 1;
+    ImGui::Combo("Model", &newClusterModelIndex,
+        [](void* data, int idx, const char** out_text) {
+            std::vector<std::string>* names = static_cast<std::vector<std::string>*>(data);
+            *out_text = (*names)[idx].c_str();
+            return true;
+        }, &modelNames, modelNames.size());
+    preferences.brushToolSettings.selectedModelIndex = newClusterModelIndex - 1;
+
+    if (ImGui::Button("Create New Cluster", ImVec2(-1, 0))) {
+        if (preferences.brushToolSettings.selectedModelIndex >= 0) {
+            brushTool.createCluster(std::string(newClusterName), preferences.brushToolSettings.selectedModelIndex);
+            strcpy_s(newClusterName, "New Cluster");
+        }
+    }
+
+    ImGui::Spacing();
+
+    // List of existing clusters
+    DrawSectionHeader("Existing Clusters");
+
+    int activeCluster = brushTool.getActiveCluster();
+    int clusterCount = brushTool.getClusterCount();
+
+    if (clusterCount == 0) {
+        ImGui::TextDisabled("No clusters created yet");
+    } else {
+        for (int i = 0; i < clusterCount; i++) {
+            const Tools::BrushCluster* cluster = brushTool.getCluster(i);
+            if (!cluster) continue;
+
+            ImGui::PushID(i);
+
+            bool isActive = (i == activeCluster);
+            if (ImGui::Selectable(cluster->name.c_str(), isActive)) {
+                brushTool.setActiveCluster(i);
+            }
+
+            // Show instance count
+            ImGui::SameLine();
+            ImGui::TextDisabled("(%d instances)", cluster->instances.size());
+
+            ImGui::PopID();
+        }
+    }
+
+    ImGui::Spacing();
+
+    // Active cluster settings
+    if (activeCluster >= 0 && activeCluster < clusterCount) {
+        Tools::BrushCluster* cluster = brushTool.getCluster(activeCluster);
+        if (cluster) {
+            DrawSectionHeader("Active Cluster Settings");
+
+            ImGui::Text("Cluster: %s", cluster->name.c_str());
+            if (cluster->sourceModelIndex >= 0 && cluster->sourceModelIndex < currentScene.models.size()) {
+                ImGui::Text("Model: %s", currentScene.models[cluster->sourceModelIndex].name.c_str());
+            }
+            ImGui::Text("Instances: %d", brushTool.getInstanceCountForCluster(activeCluster));
+
+            ImGui::Spacing();
+
+            // Instance Variation
+            DrawSectionHeader("Instance Variation");
+
+            ImGui::SliderFloat("Min Scale", &cluster->minScale, 0.1f, 5.0f, "%.2f");
+            ImGui::SameLine(); DrawHelpMarker("Minimum scale multiplier (1.0 = original size)");
+
+            ImGui::SliderFloat("Max Scale", &cluster->maxScale, 0.1f, 5.0f, "%.2f");
+            ImGui::SameLine(); DrawHelpMarker("Maximum scale multiplier (1.0 = original size)");
+
+            if (cluster->maxScale < cluster->minScale) {
+                cluster->maxScale = cluster->minScale;
+            }
+
+            ImGui::SliderFloat("Rotation", &cluster->rotationRandomization, 0.0f, 1.0f, "%.2f");
+            ImGui::SameLine(); DrawHelpMarker("Random rotation amount (0 = no rotation, 1 = full 360°)");
+
+            ImGui::SliderFloat("Color Variation", &cluster->colorVariation, 0.0f, 1.0f, "%.2f");
+            ImGui::SameLine(); DrawHelpMarker("Random color variation for instances");
+
+            ImGui::Checkbox("Align to Surface", &cluster->alignToNormal);
+            ImGui::SameLine(); DrawHelpMarker("Align painted instances to surface normal");
+
+            ImGui::Spacing();
+
+            // Cluster Actions
+            DrawSectionHeader("Cluster Actions");
+
+            if (ImGui::Button("Clear Instances", ImVec2(-1, 0))) {
+                brushTool.clearInstancesForCluster(activeCluster);
+            }
+
+            if (ImGui::Button("Delete Cluster", ImVec2(-1, 0))) {
+                brushTool.deleteCluster(activeCluster);
+            }
+        }
+    }
+
+    ImGui::Spacing();
+
+    // Global Brush Settings
+    DrawSectionHeader("Global Brush Settings");
+
+    ImGui::SliderFloat("Brush Radius", &preferences.brushToolSettings.brushRadius, 0.1f, 5.0f, "%.2f");
+    ImGui::SameLine(); DrawHelpMarker("Size of the brush area");
+
+    ImGui::SliderFloat("Min Spacing", &preferences.brushToolSettings.minSpacing, 0.0f, 2.0f, "%.2f");
+    ImGui::SameLine(); DrawHelpMarker("Minimum distance between painted instances");
+
+    ImGui::SliderFloat("Density", &preferences.brushToolSettings.density, 0.1f, 5.0f, "%.2f");
+    ImGui::SameLine(); DrawHelpMarker("Number of instances per paint stroke");
+
+    ImGui::Checkbox("Show Brush Cursor", &preferences.brushToolSettings.showBrushCursor);
+
+    ImGui::Spacing();
+
+    // Global Statistics
+    DrawSectionHeader("Statistics");
+    ImGui::Text("Total Clusters: %d", clusterCount);
+    ImGui::Text("Total Instances: %d", brushTool.getTotalInstanceCount());
+
+    if (ImGui::Button("Clear All Clusters", ImVec2(-1, 0))) {
+        brushTool.clearAllInstances();
+    }
+
+    ImGui::Spacing();
+
+    // Usage instructions
+    DrawSectionHeader("Usage");
+    ImGui::TextWrapped("1. Create a new cluster with a model");
+    ImGui::TextWrapped("2. Select cluster from the list to edit");
+    ImGui::TextWrapped("3. Adjust cluster settings");
+    ImGui::TextWrapped("4. Hold LEFT MOUSE BUTTON and drag over surfaces to paint");
 
     ImGui::End();
 }

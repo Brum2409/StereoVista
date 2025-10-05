@@ -217,5 +217,20 @@ namespace GUI {
             bool autoScaleLargeModels = true;        // Automatically scale down oversized models to fit scene
             float maxModelRadius = 5.0f;             // Maximum bounding sphere radius before auto-scaling
         } modelImportSettings;
+
+        // Brush Tool Settings
+        struct BrushToolSettings {
+            bool enabled = false;                    // Brush tool enabled/disabled
+            float brushRadius = 0.5f;                // Radius of the brush area
+            int selectedModelIndex = -1;             // Currently selected model for painting
+            float minScale = 0.8f;                   // Minimum scale for painted instances
+            float maxScale = 1.2f;                   // Maximum scale for painted instances
+            float rotationRandomization = 1.0f;      // Rotation randomization amount (0.0 - 1.0)
+            bool alignToNormal = true;               // Align instances to surface normal
+            float colorVariation = 0.1f;             // Color variation for painted instances (0.0 - 1.0)
+            float density = 1.0f;                    // Instances per paint stroke
+            float minSpacing = 0.1f;                 // Minimum distance between instances
+            bool showBrushCursor = true;             // Show brush cursor indicator
+        } brushToolSettings;
     };
 }

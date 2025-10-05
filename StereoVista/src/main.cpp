@@ -23,6 +23,7 @@
 #include "../headers/Engine/BloomRenderer.h"
 #include "Core/CursorSynchronizer.h"
 #include "Core/CursorSyncState.h"
+#include "Tools/BrushTool.h"
 
 // ---- GUI and Dialog ----
 #include "imgui/imgui_incl.h"
@@ -100,6 +101,7 @@ void cleanup();
 float calculateLargestModelDimension();
 void calculateMouseRay(float mouseX, float mouseY, glm::vec3& rayOrigin, glm::vec3& rayDirection, glm::vec3& rayNear, glm::vec3& rayFar, float aspect);
 bool rayIntersectsModel(const glm::vec3& rayOrigin, const glm::vec3& rayDirection, const Engine::Model& model, float& distance);
+bool rayIntersectsModel(const glm::vec3& rayOrigin, const glm::vec3& rayDirection, const Engine::Model& model, float& distance, glm::vec3& outNormal);
 
 // ---- Preferences Functions ----
 void savePreferences();
@@ -155,13 +157,15 @@ bool showInfoWindow = false;
 bool showSettingsWindow = false;
 bool show3DCursor = true;
 bool showCursorSettingsWindow = false;
+bool showBrushToolWindow = false;
 enum class SelectedType {
     None,
     Model,
     PointCloud,
     Sun,
     PointLight,
-    SpotLight
+    SpotLight,
+    BrushCluster
 };
 
 std::atomic<bool> isRecalculatingChunks(false);
@@ -222,6 +226,9 @@ Cursor::CursorManager cursorManager;
 glm::vec3 capturedCursorPos;
 bool orbitFollowsCursor = false;
 
+// ---- Brush Tool ----
+Tools::BrushTool brushTool;
+
 // ---- Window Configuration ----
 int windowWidth = 1920;
 int windowHeight = 1080;
@@ -242,6 +249,7 @@ unsigned int depthMapFBO;
 unsigned int depthMap;
 const unsigned int SHADOW_WIDTH = 4096, SHADOW_HEIGHT = 4096;
 Engine::Shader* simpleDepthShader = nullptr;
+glm::mat4 lightSpaceMatrix = glm::mat4(1.0f);
 
 // Point shadow mapping variables
 unsigned int depthCubemap;
@@ -252,6 +260,7 @@ float far_plane = 50.0f;
 Engine::Shader* radianceShader = nullptr;
 Engine::Shader* shadowMappingShader = nullptr;
 Engine::Shader* voxelConeTracingShader = nullptr;
+Engine::Shader* instancedShader = nullptr;
 
 // Bloom rendering system
 Engine::BloomRenderer* bloomRenderer = nullptr;
@@ -2152,6 +2161,15 @@ int main() {
         radianceShader = nullptr;
     }
 
+    // ---- Initialize Instanced Rendering Shader ----
+    try {
+        instancedShader = Engine::loadShader("core/instancedVertexShader.glsl", "core/instancedFragmentShader.glsl");
+    }
+    catch (std::exception& e) {
+        std::cout << "Warning: Failed to load instanced rendering shader: " << e.what() << std::endl;
+        instancedShader = nullptr;
+    }
+
     // ---- Initialize Bloom Renderer ----
     std::cout << "Initializing bloom renderer..." << std::endl;
     bloomRenderer = new Engine::BloomRenderer();
@@ -2428,6 +2446,21 @@ int main() {
         // Update spawn animations for all models
         for (auto& model : currentScene.models) {
             model.updateAnimation(deltaTime);
+        }
+
+        // ---- Update Brush Tool Settings ----
+        // Synchronize global settings to brush tool instance
+        brushTool.setBrushRadius(preferences.brushToolSettings.brushRadius);
+        brushTool.setSelectedModel(preferences.brushToolSettings.selectedModelIndex);
+        brushTool.setDensity(preferences.brushToolSettings.density);
+        brushTool.setMinSpacing(preferences.brushToolSettings.minSpacing);
+        // Note: Per-cluster settings (scale, rotation, alignment, color) are now managed directly in cluster objects
+
+        // Enable/disable brush tool
+        if (preferences.brushToolSettings.enabled && !brushTool.isEnabled()) {
+            brushTool.enable();
+        } else if (!preferences.brushToolSettings.enabled && brushTool.isEnabled()) {
+            brushTool.disable();
         }
 
         // ---- Update Model Depth Movement Physics ----
@@ -2924,7 +2957,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
         glClear(GL_DEPTH_BUFFER_BIT);
 
         // Calculate light space matrix based on actual scene bounds
-        glm::mat4 lightSpaceMatrix = calculateLightSpaceMatrix();
+        lightSpaceMatrix = calculateLightSpaceMatrix();
 
         // Use depth shader for shadow map generation
         simpleDepthShader->use();
@@ -3061,7 +3094,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     // Shadow mapping specific setup
     if (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING) {
         // Calculate light space matrix based on actual scene bounds (same as depth pass)
-        glm::mat4 lightSpaceMatrix = calculateLightSpaceMatrix();
+        lightSpaceMatrix = calculateLightSpaceMatrix();
 
         shader->setMat4("lightSpaceMatrix", lightSpaceMatrix);
 
@@ -3491,6 +3524,33 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
         cursorManager.renderCursors(projection, view);
     }
 
+    // Render brush tool indicator
+    if (preferences.brushToolSettings.enabled &&
+        preferences.brushToolSettings.selectedModelIndex >= 0 &&
+        cursorManager.isCursorPositionValid()) {
+
+        // Get cursor position and calculate normal
+        glm::vec3 cursorPos = cursorManager.getCursorPosition();
+
+        // Ray-cast to get the surface normal at cursor position
+        glm::vec3 rayOrigin, rayDirection, rayNear, rayFar;
+        calculateMouseRay(lastX, lastY, rayOrigin, rayDirection, rayNear, rayFar, aspectRatio);
+
+        glm::vec3 surfaceNormal = glm::vec3(0.0f, 1.0f, 0.0f); // Default up
+        float distance;
+
+        // Find surface normal at cursor position
+        for (const auto& model : currentScene.models) {
+            glm::vec3 hitNormal;
+            if (rayIntersectsModel(rayOrigin, rayDirection, model, distance, hitNormal)) {
+                surfaceNormal = hitNormal;
+                break;
+            }
+        }
+
+        brushTool.renderBrushIndicator(projection, view, cursorPos, surfaceNormal);
+    }
+
     // 4. Voxel visualization (if enabled) - AFTER main rendering
     if (voxelizer->showDebugVisualization) {
         voxelizer->renderDebugVisualization(camera.Position, projection, view);
@@ -3643,6 +3703,38 @@ void renderModels(Engine::Shader* shader) {
             shader->setInt("currentMeshIndex", j);
             model.getMeshes()[j].Draw(*shader);
         }
+    }
+
+    // Render brush tool instances with instanced rendering
+    // Note: Instances should always render, regardless of whether brush tool is enabled
+    if (instancedShader && shader != simpleDepthShader && brushTool.getTotalInstanceCount() > 0) {
+        instancedShader->use();
+
+        // Set basic uniforms
+        instancedShader->setMat4("view", camera.GetViewMatrix());
+        instancedShader->setMat4("projection", camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane));
+        instancedShader->setVec3("viewPos", camera.Position);
+        instancedShader->setMat4("lightSpaceMatrix", lightSpaceMatrix);
+        instancedShader->setBool("enableShadows", enableShadows);
+
+        // Set sun properties
+        instancedShader->setVec3("sunDirection", sun.direction);
+        instancedShader->setVec3("sunColor", sun.color);
+        instancedShader->setFloat("sunIntensity", sun.intensity);
+        instancedShader->setBool("useInstanceColor", true);
+
+        // Bind shadow map
+        if (enableShadows) {
+            glActiveTexture(GL_TEXTURE0 + Engine::SHADOW_MAP_TEXTURE_UNIT);
+            glBindTexture(GL_TEXTURE_2D, depthMap);
+            instancedShader->setInt("shadowMap", Engine::SHADOW_MAP_TEXTURE_UNIT);
+        }
+
+        // Render instances
+        brushTool.renderInstances(instancedShader, currentScene.models);
+
+        // Restore active shader
+        shader->use();
     }
 }
 
@@ -4284,6 +4376,91 @@ bool rayIntersectsModel(const glm::vec3& rayOrigin, const glm::vec3& rayDirectio
 
     return false;
 }
+
+// Overloaded version that also returns the surface normal
+bool rayIntersectsModel(const glm::vec3& rayOrigin, const glm::vec3& rayDirection, const Engine::Model& model, float& distance, glm::vec3& outNormal) {
+    float closestDistance = std::numeric_limits<float>::max();
+    bool intersected = false;
+    glm::vec3 hitNormal;
+
+    // Calculate model matrix
+    glm::mat4 modelMatrix = glm::translate(glm::mat4(1.0f), model.position);
+    modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.x), glm::vec3(1, 0, 0));
+    modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.y), glm::vec3(0, 1, 0));
+    modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.z), glm::vec3(0, 0, 1));
+    modelMatrix = glm::scale(modelMatrix, model.scale);
+
+    // Transform ray to model space
+    glm::mat4 invModelMatrix = glm::inverse(modelMatrix);
+    glm::vec3 rayOriginModel = glm::vec3(invModelMatrix * glm::vec4(rayOrigin, 1.0f));
+    glm::vec3 rayDirectionModel = glm::normalize(glm::vec3(invModelMatrix * glm::vec4(rayDirection, 0.0f)));
+
+    // Check each mesh in the model
+    for (const auto& mesh : model.getMeshes()) {
+        // Iterate through all triangles in the mesh
+        for (size_t i = 0; i < mesh.indices.size(); i += 3) {
+            glm::vec3 v0 = mesh.vertices[mesh.indices[i]].position;
+            glm::vec3 v1 = mesh.vertices[mesh.indices[i + 1]].position;
+            glm::vec3 v2 = mesh.vertices[mesh.indices[i + 2]].position;
+
+            // Möller–Trumbore intersection algorithm
+            glm::vec3 edge1 = v1 - v0;
+            glm::vec3 edge2 = v2 - v0;
+            glm::vec3 h = glm::cross(rayDirectionModel, edge2);
+            float a = glm::dot(edge1, h);
+
+            if (a > -0.00001f && a < 0.00001f) continue; // Ray is parallel to triangle
+
+            float f = 1.0f / a;
+            glm::vec3 s = rayOriginModel - v0;
+            float u = f * glm::dot(s, h);
+
+            if (u < 0.0f || u > 1.0f) continue;
+
+            glm::vec3 q = glm::cross(s, edge1);
+            float v = f * glm::dot(rayDirectionModel, q);
+
+            if (v < 0.0f || u + v > 1.0f) continue;
+
+            float t = f * glm::dot(edge2, q);
+
+            if (t > 0.00001f && t < closestDistance) {
+                closestDistance = t;
+
+                // Calculate face normal from triangle edges
+                glm::vec3 faceNormal = glm::normalize(glm::cross(edge1, edge2));
+
+                // If mesh has vertex normals, interpolate them using barycentric coordinates
+                float w = 1.0f - u - v;  // Barycentric coordinate for v0
+                if (mesh.vertices[mesh.indices[i]].normal != glm::vec3(0.0f)) {
+                    glm::vec3 n0 = mesh.vertices[mesh.indices[i]].normal;
+                    glm::vec3 n1 = mesh.vertices[mesh.indices[i + 1]].normal;
+                    glm::vec3 n2 = mesh.vertices[mesh.indices[i + 2]].normal;
+                    hitNormal = glm::normalize(w * n0 + u * n1 + v * n2);
+                } else {
+                    hitNormal = faceNormal;
+                }
+
+                intersected = true;
+            }
+        }
+    }
+
+    if (intersected) {
+        // Transform the intersection point back to world space
+        glm::vec3 intersectionPointModel = rayOriginModel + rayDirectionModel * closestDistance;
+        glm::vec4 intersectionPointWorld = modelMatrix * glm::vec4(intersectionPointModel, 1.0f);
+        distance = glm::distance(rayOrigin, glm::vec3(intersectionPointWorld));
+
+        // Transform normal to world space (use normal matrix for proper transformation)
+        glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(modelMatrix)));
+        outNormal = glm::normalize(normalMatrix * hitNormal);
+
+        return true;
+    }
+
+    return false;
+}
 #pragma endregion
 
 
@@ -4371,7 +4548,42 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
             // Check if Ctrl or Alt is held down
             bool ctrlPressed = (mods & GLFW_MOD_CONTROL);
             bool altPressed = (mods & GLFW_MOD_ALT);
-            if (ctrlPressed || altPressed) {
+
+            // Handle brush tool painting (when enabled and no modifiers pressed)
+            if (!ctrlPressed && !altPressed && preferences.brushToolSettings.enabled &&
+                preferences.brushToolSettings.selectedModelIndex >= 0) {
+
+                glm::vec3 rayOrigin, rayDirection, rayNear, rayFar;
+                calculateMouseRay(lastX, lastY, rayOrigin, rayDirection, rayNear, rayFar, (float)windowWidth / (float)windowHeight);
+
+                float closestDistance = std::numeric_limits<float>::max();
+                glm::vec3 hitPosition;
+                glm::vec3 hitNormal;
+                bool hitFound = false;
+
+                // Check intersection with all models for painting surface
+                for (int i = 0; i < currentScene.models.size(); i++) {
+                    const auto& model = currentScene.models[i];
+                    float distance;
+                    glm::vec3 surfaceNormal;
+                    if (rayIntersectsModel(rayOrigin, rayDirection, model, distance, surfaceNormal)) {
+                        if (distance < closestDistance) {
+                            closestDistance = distance;
+                            hitPosition = rayOrigin + rayDirection * distance;
+                            hitNormal = surfaceNormal;  // Use the actual surface normal
+                            hitFound = true;
+                        }
+                    }
+                }
+
+                // If we hit a surface, paint an instance
+                if (hitFound) {
+                    // Get the source model's scale
+                    glm::vec3 sourceModelScale = currentScene.models[preferences.brushToolSettings.selectedModelIndex].scale;
+                    brushTool.paintInstance(hitPosition, hitNormal, camera.Position, sourceModelScale);
+                }
+            }
+            else if (ctrlPressed || altPressed) {
                 glm::vec3 rayOrigin, rayDirection, rayNear, rayFar;
                 calculateMouseRay(lastX, lastY, rayOrigin, rayDirection, rayNear, rayFar, (float)windowWidth / (float)windowHeight);
 
@@ -4529,8 +4741,8 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                 }
             }
 
-            // Handle double-click (if not in selection mode)
-            if (!selectionMode) {
+            // Handle double-click (if not in selection mode and brush tool not enabled)
+            if (!selectionMode && !preferences.brushToolSettings.enabled) {
                 double currentTime = glfwGetTime();
                 if (currentTime - lastClickTime < doubleClickTime) {
                     if (cursorManager.isCursorPositionValid()) {
@@ -4547,7 +4759,8 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                 lastClickTime = currentTime;
             }
 
-            if (!camera.IsAnimating && !camera.IsOrbiting && !selectionMode) {
+            // Handle camera orbiting (if not animating, not in selection mode, and brush tool not enabled)
+            if (!camera.IsAnimating && !camera.IsOrbiting && !selectionMode && !preferences.brushToolSettings.enabled) {
                 leftMousePressed = true;
 
                 if (cursorManager.isCursorPositionValid()) {
