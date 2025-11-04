@@ -1,7 +1,7 @@
 {
     "camera": {
         "autoConvergence": true,
-        "convergence": 2.9134271144866943,
+        "convergence": 6.898512363433838,
         "convergenceCapMax": 40.0,
         "convergenceCapMin": 0.5,
         "convergenceDistanceFactor": 1.0,
@@ -31,7 +31,7 @@
         "bloomThreshold": 0.15000000596046448,
         "enableBloom": false,
         "enabled": true,
-        "exposure": 2.3499999046325684,
+        "exposure": 2.440000057220459,
         "toneMapOperator": 3
     },
     "lighting": {
@@ -78,7 +78,7 @@
         "lightSize": 0.0949999988079071,
         "numCascades": 4,
         "pcfKernelSize": 9,
-        "shadowSoftness": 11.65999984741211
+        "shadowSoftness": 4.5
     },
     "skybox": {
         "exposure": 0.05999999865889549,

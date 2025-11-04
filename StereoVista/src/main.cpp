@@ -2175,25 +2175,20 @@ int main() {
     }
 
     // ---- Initialize Bloom Renderer ----
-    std::cout << "Initializing bloom renderer..." << std::endl;
     bloomRenderer = new Engine::BloomRenderer();
     if (!bloomRenderer->initialize(windowWidth, windowHeight)) {
         std::cerr << "ERROR: Failed to initialize bloom renderer - HDR/Bloom effects will be disabled" << std::endl;
         delete bloomRenderer;
         bloomRenderer = nullptr;
     } else {
-        std::cout << "Bloom renderer initialized successfully" << std::endl;
-        
         // Ensure proper size is set
         bloomRenderer->resize(windowWidth, windowHeight);
-        
+
         // Validate the bloom system
         if (!bloomRenderer->validateBloomSystem()) {
             std::cerr << "ERROR: Bloom system validation failed - disabling bloom" << std::endl;
             delete bloomRenderer;
             bloomRenderer = nullptr;
-        } else {
-            std::cout << "Bloom system validation passed" << std::endl;
         }
     }
 
@@ -2900,13 +2895,15 @@ void cleanup() {
     // Clean up SpaceMouse input
     spaceMouseInput.Shutdown();
 
-    // Clean up GUI and GLFW resources
-    CleanupGUI();
-    glfwTerminate();
-}
+    // Clean up cursor preview before GUI shutdown
+    cursorPreview3D.cleanup();
 
-void terminateGLFW() {
+    // Clean up GUI before destroying window (ImGui needs valid OpenGL context)
+    CleanupGUI();
+
+    // Destroy window and terminate GLFW
     glfwDestroyWindow(Window::nativeWindow);
+    glfwTerminate();
 }
 
 float calculateLargestModelDimension() {
@@ -2936,6 +2933,11 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
     // Only set draw buffer if not using HDR (HDR uses MRT - Multiple Render Targets)
     if (!preferences.hdrSettings.enabled || bloomRenderer == nullptr) {
         glDrawBuffer(drawBuffer);
+    } else {
+        // When HDR is enabled, ensure HDR framebuffer is bound before clearing
+        // This prevents clearing the default framebuffer (which would erase the other eye's image in stereo mode)
+        Engine::BloomSettings& bloomSettings = bloomRenderer->getSettings();
+        glBindFramebuffer(GL_FRAMEBUFFER, bloomSettings.hdrFBO);
     }
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -4905,13 +4907,11 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                     }
                     else if (orbitFollowsCursor) {
                         // Center cursor mode - cursor should be at viewport center after centering animation
-                        std::cout << "[CursorFix] Center cursor mode - positioning cursor at screen center" << std::endl;
                         glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
                         Core::CursorSyncManager::getInstance().markSynchronized();
                     }
                     else {
                         // This shouldn't happen, but fallback to synchronization
-                        std::cout << "[CursorFix] Unexpected synchronization state - using fallback synchronization" << std::endl;
                         Core::CursorSynchronizer::synchronizeCursorPosition(
                             window,
                             Core::CursorSyncManager::getInstance().getWorldPosition(),
@@ -4927,9 +4927,7 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                 else {
                     // Standard orbit mode - calculate new cursor position based on captured 3D cursor
                     if (cursorManager.isCursorPositionValid()) {
-                        std::cout << "[CursorFix] Standard orbit mode - calculating new cursor position based on captured 3D cursor" << std::endl;
                         glm::vec3 originalCursorPos = capturedCursorPos; // Use the captured position from before orbiting
-                        std::cout << "[CursorFix] Original 3D cursor position: (" << originalCursorPos.x << ", " << originalCursorPos.y << ", " << originalCursorPos.z << ")" << std::endl;
 
                         // Project the original 3D cursor position to screen coordinates with the new camera view after orbiting
                         Core::CursorSynchronizer::synchronizeCursorPosition(
@@ -4944,7 +4942,6 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                     }
                     else {
                         // No valid cursor position - fallback to screen center
-                        std::cout << "[CursorFix] No valid cursor position - centering cursor on screen" << std::endl;
                         glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
                     }
                 }

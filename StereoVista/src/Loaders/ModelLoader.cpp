@@ -159,6 +159,12 @@ namespace Engine {
             processFlags |= aiProcess_PreTransformVertices;
         }
         
+        // Check if file exists before attempting to load (suppress errors for procedural models)
+        if (!std::filesystem::exists(path)) {
+            // Silently return for procedural models (cube, sphere, torus, etc.)
+            return;
+        }
+
         const aiScene* scene = importer.ReadFile(path, processFlags);
 
         if (!scene) {

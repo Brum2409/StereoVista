@@ -107,8 +107,6 @@ void BloomRenderer::resize(int width, int height) {
 }
 
 bool BloomRenderer::setupFramebuffers() {
-    std::cout << "Setting up bloom framebuffers (" << m_width << "x" << m_height << ")" << std::endl;
-    
     // Create HDR framebuffer with two color attachments
     glGenFramebuffers(1, &m_settings.hdrFBO);
     glBindFramebuffer(GL_FRAMEBUFFER, m_settings.hdrFBO);
@@ -179,9 +177,7 @@ bool BloomRenderer::setupFramebuffers() {
         }
         return false;
     }
-    
-    std::cout << "HDR framebuffer created successfully" << std::endl;
-    
+
     // Create ping-pong framebuffers for blur
     glGenFramebuffers(2, m_settings.bloomFBO);
     glGenTextures(2, m_settings.bloomColorBuffers);
@@ -225,9 +221,7 @@ bool BloomRenderer::setupFramebuffers() {
             return false;
         }
     }
-    
-    std::cout << "Bloom ping-pong framebuffers created successfully" << std::endl;
-    
+
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     return true;
 }
@@ -300,8 +294,7 @@ bool BloomRenderer::loadShaders() {
         } else {
             m_settings.finalShader->setInt("bloomBlur", 1);
         }
-        
-        std::cout << "Bloom shaders loaded successfully" << std::endl;
+
         return true;
     } catch (const std::exception& e) {
         std::cerr << "Failed to load bloom shaders: " << e.what() << std::endl;
@@ -505,8 +498,7 @@ bool BloomRenderer::validateBloomSystem() const {
         std::cerr << "Bloom validation failed: Quad VAO not created" << std::endl;
         return false;
     }
-    
-    std::cout << "Bloom system validation passed" << std::endl;
+
     return true;
 }
 

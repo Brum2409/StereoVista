@@ -4,8 +4,8 @@
 #include <chrono>
 
 // Debug logging control
-#define CURSOR_SYNC_DEBUG 1
-#define CURSOR_SYNC_PERFORMANCE 1
+#define CURSOR_SYNC_DEBUG 0
+#define CURSOR_SYNC_PERFORMANCE 0
 
 #if CURSOR_SYNC_DEBUG
 #define CURSOR_DEBUG_LOG(msg) std::cout << "[CursorSync] " << msg << std::endl

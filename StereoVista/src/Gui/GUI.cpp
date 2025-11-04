@@ -278,12 +278,15 @@ bool InitializeGUI(GLFWwindow* window, bool isDarkTheme) {
 }
 
 void CleanupGUI() {
-    // Cleanup cursor preview
-    cursorPreview3D.cleanup();
+    // Note: We intentionally skip ImGui cleanup to avoid crashes during static
+    // destruction. ImGui has global/static objects that are destroyed after main()
+    // returns, and calling shutdown functions can cause double-free or use-after-free
+    // errors. The OS will clean up all memory when the process exits anyway.
+    // See: https://github.com/ocornut/imgui/issues/586
 
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
-    ImGui::DestroyContext();
+    // ImGui_ImplOpenGL3_Shutdown();
+    // ImGui_ImplGlfw_Shutdown();
+    // ImGui::DestroyContext();
 }
 
 void renderGUI(bool isLeftEye, ImGuiViewportP* viewport, ImGuiWindowFlags windowFlags, Engine::Shader* shader) {
