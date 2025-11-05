@@ -1546,6 +1546,11 @@ void renderSettingsWindow() {
                 ImGui::SameLine(); DrawHelpMarker("Sets the focal point distance where left and right views converge");
             }
 
+            if (ImGui::Checkbox("Flip Eyes", &preferences.flipEyes)) {
+                settingsChanged = true;
+            }
+            ImGui::SameLine(); DrawHelpMarker("Swaps the left and right eye views for stereoscopic display");
+
             DrawSectionHeader("Movement");
 
             if (ImGui::SliderFloat("Mouse Sensitivity", &camera.MouseSensitivity, 0.01f, 0.08f, "%.3f")) {

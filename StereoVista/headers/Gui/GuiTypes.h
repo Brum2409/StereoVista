@@ -106,6 +106,9 @@ namespace GUI {
         float convergenceCapMin = 0.5f;
         float convergenceCapMax = 40.0f;
 
+        // Stereoscopic display settings
+        bool flipEyes = false;
+
         // Lighting settings
         LightingMode lightingMode = LIGHTING_SHADOW_MAPPING;
         bool enableShadows = true;

@@ -1,13 +1,14 @@
 {
     "camera": {
         "autoConvergence": true,
-        "convergence": 7.827729225158691,
+        "convergence": 9.778964042663574,
         "convergenceCapMax": 40.0,
         "convergenceCapMin": 0.5,
         "convergenceDistanceFactor": 1.0,
         "convergenceSmoothingSpeed": 4.900000095367432,
-        "enableConvergenceCap": false,
+        "enableConvergenceCap": true,
         "farPlane": 224.0,
+        "flipEyes": false,
         "fov": 48.1510009765625,
         "maxScrollVelocity": 7.204999923706055,
         "mouseSensitivity": 0.07999999821186066,
@@ -27,10 +28,10 @@
         "currentPreset": "Sphere"
     },
     "hdr": {
-        "bloomIntensity": 0.07000000029802322,
-        "bloomThreshold": 0.15000000596046448,
-        "enableBloom": false,
-        "enabled": true,
+        "bloomIntensity": 0.25999999046325684,
+        "bloomThreshold": 0.2800000011920929,
+        "enableBloom": true,
+        "enabled": false,
         "exposure": 2.440000057220459,
         "toneMapOperator": 3
     },

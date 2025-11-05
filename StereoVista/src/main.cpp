@@ -1438,6 +1438,7 @@ void savePreferences() {
     j["camera"]["enableConvergenceCap"] = preferences.enableConvergenceCap;
     j["camera"]["convergenceCapMin"] = preferences.convergenceCapMin;
     j["camera"]["convergenceCapMax"] = preferences.convergenceCapMax;
+    j["camera"]["flipEyes"] = preferences.flipEyes;
 
     // SpaceMouse settings
     j["spacemouse"]["enabled"] = preferences.spaceMouseEnabled;
@@ -1721,6 +1722,7 @@ void loadPreferences() {
             preferences.enableConvergenceCap = j["camera"].value("enableConvergenceCap", false);
             preferences.convergenceCapMin = j["camera"].value("convergenceCapMin", 0.5f);
             preferences.convergenceCapMax = j["camera"].value("convergenceCapMax", 40.0f);
+            preferences.flipEyes = j["camera"].value("flipEyes", false);
         }
 
         // SpaceMouse settings
@@ -2735,14 +2737,23 @@ int main() {
 
             if (isStereoWindow) {
                 // Render and apply HDR/bloom separately for each eye
+                // Swap eyes if flipEyes is enabled
 
-                // Left eye - output to right buffer to fix flipping issue
-                renderEye(GL_BACK_LEFT, leftProjection, leftView, activeShader, viewport, windowFlags, window, false);
-                bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_RIGHT);
+                if (preferences.flipEyes) {
+                    // Flipped: render left projection to right buffer, right projection to left buffer
+                    renderEye(GL_BACK_LEFT, leftProjection, leftView, activeShader, viewport, windowFlags, window, false);
+                    bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_RIGHT);
 
-                // Right eye - output to left buffer to fix flipping issue
-                renderEye(GL_BACK_RIGHT, rightProjection, rightView, activeShader, viewport, windowFlags, window, false);
-                bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_LEFT);
+                    renderEye(GL_BACK_RIGHT, rightProjection, rightView, activeShader, viewport, windowFlags, window, false);
+                    bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_LEFT);
+                } else {
+                    // Normal: render left to left, right to right
+                    renderEye(GL_BACK_LEFT, leftProjection, leftView, activeShader, viewport, windowFlags, window, false);
+                    bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_LEFT);
+
+                    renderEye(GL_BACK_RIGHT, rightProjection, rightView, activeShader, viewport, windowFlags, window, false);
+                    bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_RIGHT);
+                }
             }
             else {
                 // Mono view
@@ -2773,10 +2784,15 @@ int main() {
         else {
             // Non-HDR rendering path
             if (isStereoWindow) {
-                // Render left eye to left buffer (cursor position will be calculated here first time)
-                renderEye(GL_BACK_LEFT, leftProjection, leftView, activeShader, viewport, windowFlags, window, true);
-                // Render right eye to right buffer (cursor position will use cached value)
-                renderEye(GL_BACK_RIGHT, rightProjection, rightView, activeShader, viewport, windowFlags, window, true);
+                if (preferences.flipEyes) {
+                    // Flipped: swap left and right eye rendering
+                    renderEye(GL_BACK_LEFT, rightProjection, rightView, activeShader, viewport, windowFlags, window, true);
+                    renderEye(GL_BACK_RIGHT, leftProjection, leftView, activeShader, viewport, windowFlags, window, true);
+                } else {
+                    // Normal: render left eye to left buffer, right eye to right buffer
+                    renderEye(GL_BACK_LEFT, leftProjection, leftView, activeShader, viewport, windowFlags, window, true);
+                    renderEye(GL_BACK_RIGHT, rightProjection, rightView, activeShader, viewport, windowFlags, window, true);
+                }
             }
             else {
                 // Render mono view to default buffer (cursor position will be calculated here)
@@ -2791,12 +2807,22 @@ int main() {
         }
 
         if (preferences.radarEnabled) {
-            DrawRadar(isStereoWindow, camera, preferences.convergence,
-                view, projection,
-                leftView, leftProjection,
-                rightView, rightProjection,
-                activeShader, preferences.radarShowScene,
-                preferences.radarScale, preferences.radarPos);
+            // Swap left/right views for radar if flipEyes is enabled
+            if (preferences.flipEyes && isStereoWindow) {
+                DrawRadar(isStereoWindow, camera, preferences.convergence,
+                    view, projection,
+                    rightView, rightProjection,
+                    leftView, leftProjection,
+                    activeShader, preferences.radarShowScene,
+                    preferences.radarScale, preferences.radarPos);
+            } else {
+                DrawRadar(isStereoWindow, camera, preferences.convergence,
+                    view, projection,
+                    leftView, leftProjection,
+                    rightView, rightProjection,
+                    activeShader, preferences.radarShowScene,
+                    preferences.radarScale, preferences.radarPos);
+            }
         }
 
         // ---- Swap Buffers ----
@@ -2929,6 +2955,10 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
 
     // 2. Shadow mapping pass (only if using shadow mapping AND shadows are enabled)
     if (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING && enableShadows) {
+        // Temporarily disable wireframe mode for shadow mapping
+        // Shadow maps need filled polygons, not wireframe lines
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
         glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
         glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
         glClear(GL_DEPTH_BUFFER_BIT);
@@ -2943,18 +2973,24 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
         // Enable polygon offset to reduce peter panning - fine-tuned values
         glEnable(GL_POLYGON_OFFSET_FILL);
         glPolygonOffset(1.1f, 4.0f);  // Reduced factor for tighter attachment
-        
+
         // Render scene to depth buffer - disable culling to avoid issues with complex geometry
         glDisable(GL_CULL_FACE);
         renderModels(simpleDepthShader);
         glEnable(GL_CULL_FACE);
-        
+
         // Disable polygon offset
         glDisable(GL_POLYGON_OFFSET_FILL);
+
+        // Restore wireframe mode if it was enabled
+        glPolygonMode(GL_FRONT_AND_BACK, camera.wireframe ? GL_LINE : GL_FILL);
     }
 
     // 2.5. Point shadow mapping pass for all point lights
     if (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING && enableShadows && !pointLights.empty()) {
+        // Temporarily disable wireframe mode for point shadow mapping
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
         glViewport(0, 0, SHADOW_WIDTH_POINT, SHADOW_HEIGHT_POINT);
         glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO_point);
         glClear(GL_DEPTH_BUFFER_BIT);
@@ -2994,6 +3030,9 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
 
             glDisable(GL_POLYGON_OFFSET_FILL);
         }
+
+        // Restore wireframe mode if it was enabled
+        glPolygonMode(GL_FRONT_AND_BACK, camera.wireframe ? GL_LINE : GL_FILL);
     }
 
     // 3. Regular rendering pass
