@@ -1,0 +1,119 @@
+{
+    "activeProfile": "Default",
+    "profiles": [
+        {
+            "bindings": {
+                "CenterView": [
+                    {
+                        "alt": false,
+                        "ctrl": false,
+                        "keyCode": 67,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
+                ],
+                "CycleLighting": [
+                    {
+                        "alt": false,
+                        "ctrl": false,
+                        "keyCode": 76,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
+                ],
+                "DeleteObject": [
+                    {
+                        "alt": false,
+                        "ctrl": false,
+                        "keyCode": 261,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
+                ],
+                "ImportPointCloud": [
+                    {
+                        "alt": false,
+                        "ctrl": false,
+                        "keyCode": 73,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
+                ],
+                "ToggleCircleCursor": [
+                    {
+                        "alt": false,
+                        "ctrl": false,
+                        "keyCode": 85,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
+                ],
+                "ToggleGUI": [
+                    {
+                        "alt": false,
+                        "ctrl": false,
+                        "keyCode": 71,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
+                ],
+                "ToggleHDR": [
+                    {
+                        "alt": false,
+                        "ctrl": false,
+                        "keyCode": 74,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
+                ],
+                "TogglePlaneCursor": [
+                    {
+                        "alt": false,
+                        "ctrl": false,
+                        "keyCode": 79,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
+                ],
+                "ToggleRadar": [
+                    {
+                        "alt": false,
+                        "ctrl": false,
+                        "keyCode": 82,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
+                ],
+                "ToggleShadows": [
+                    {
+                        "alt": false,
+                        "ctrl": false,
+                        "keyCode": 75,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
+                ],
+                "ToggleVoxelViz": [
+                    {
+                        "alt": false,
+                        "ctrl": false,
+                        "keyCode": 86,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
+                ],
+                "ToggleWireframe": [
+                    {
+                        "alt": false,
+                        "ctrl": false,
+                        "keyCode": 81,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
+                ]
+            },
+            "name": "Default"
+        }
+    ],
+    "version": 1
+}

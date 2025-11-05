@@ -24,6 +24,7 @@
 #include "Core/CursorSynchronizer.h"
 #include "Core/CursorSyncState.h"
 #include "Tools/BrushTool.h"
+#include "Engine/ShortcutManager.h"
 
 // ---- GUI and Dialog ----
 #include "imgui/imgui_incl.h"
@@ -187,6 +188,9 @@ GUI::SkyboxConfig skyboxConfig;
 
 // ---- Preferences Structure ----
 GUI::ApplicationPreferences preferences;
+
+// ---- Shortcut Manager ----
+StereoVista::ShortcutManager shortcutManager;
 
 // ---- Scene Persistence ----
 static char saveFilename[256] = "scene.json"; // Buffer for saving scene filename
@@ -2193,76 +2197,34 @@ int main() {
     }
 
 
-    // ---- Create Temp Default scene
+    // ---- Load Initial Scene ----
+    // Try to load office.scene (relative to executable), fallback to simple cube
+    bool sceneLoaded = false;
+    try {
+        std::cout << "Attempting to load office.scene..." << std::endl;
+        currentScene = Engine::loadScene("office.scene", camera);
 
-    Engine::Model basePlatform = Engine::createCube(glm::vec3(0.3f, 0.3f, 0.3f), 1.0f, 0.0f);
-    basePlatform.scale = glm::vec3(4.0f, 0.2f, 4.0f);
-    basePlatform.name = "Base_Platform";
-    basePlatform.position = glm::vec3(0.0f, -1.0f, 0.0f);
-    currentScene.models.push_back(basePlatform);
+        // Sync lights from scene to global variables
+        pointLights = currentScene.pointLights;
+        spotLights = currentScene.spotLights;
 
+        sceneLoaded = true;
+        std::cout << "Successfully loaded office.scene" << std::endl;
+    }
+    catch (const std::exception& e) {
+        std::cout << "Could not load office.scene: " << e.what() << std::endl;
+        std::cout << "Creating fallback simple cube scene..." << std::endl;
+    }
 
-    Engine::Model centralCube = Engine::createCube(glm::vec3(1.0f, 0.2f, 0.2f), 1.0f, 0.8f);
-    centralCube.scale = glm::vec3(0.8f, 0.8f, 0.8f);
-    centralCube.name = "Central_Light_Cube";
-    centralCube.position = glm::vec3(0.0f, 0.0f, 0.0f);
-    currentScene.models.push_back(centralCube);
-
-
-    Engine::Model blueCube = Engine::createCube(glm::vec3(0.2f, 0.4f, 1.0f), 1.0f, 0.0f);
-    blueCube.scale = glm::vec3(0.6f, 0.6f, 0.6f);
-    blueCube.name = "Blue_Cube";
-    blueCube.position = glm::vec3(-1.5f, 0.2f, 1.5f);
-    currentScene.models.push_back(blueCube);
-
-
-    Engine::Model greenCube = Engine::createCube(glm::vec3(0.2f, 1.0f, 0.3f), 1.0f, 0.0f);
-    greenCube.scale = glm::vec3(0.5f, 1.2f, 0.5f);
-    greenCube.name = "Green_Tower";
-    greenCube.position = glm::vec3(1.2f, 0.6f, 1.0f);
-    currentScene.models.push_back(greenCube);
-
-
-    Engine::Model yellowCube = Engine::createCube(glm::vec3(1.0f, 1.0f, 0.3f), 1.0f, 0.4f);
-    yellowCube.scale = glm::vec3(0.4f, 0.4f, 0.4f);
-    yellowCube.name = "Yellow_Light";
-    yellowCube.position = glm::vec3(-1.8f, 0.5f, -1.8f);
-    currentScene.models.push_back(yellowCube);
-
-
-    Engine::Model purpleCube = Engine::createCube(glm::vec3(0.8f, 0.2f, 0.9f), 1.0f, 0.0f);
-    purpleCube.scale = glm::vec3(0.7f, 0.7f, 0.7f);
-    purpleCube.name = "Purple_Cube";
-    purpleCube.position = glm::vec3(1.5f, 0.35f, -1.5f);
-    currentScene.models.push_back(purpleCube);
-
-
-    Engine::Model orangeCube = Engine::createCube(glm::vec3(1.0f, 0.6f, 0.1f), 1.0f, 0.0f);
-    orangeCube.scale = glm::vec3(0.3f, 0.3f, 0.3f);
-    orangeCube.name = "Orange_Small";
-    orangeCube.position = glm::vec3(0.5f, 1.5f, 0.5f);
-    currentScene.models.push_back(orangeCube);
-
-
-    Engine::Model cyanCube = Engine::createCube(glm::vec3(0.2f, 0.9f, 0.9f), 1.0f, 0.1f);
-    cyanCube.scale = glm::vec3(0.4f, 0.8f, 0.4f);
-    cyanCube.name = "Cyan_Pillar";
-    cyanCube.position = glm::vec3(-2.5f, 0.4f, 0.0f);
-    currentScene.models.push_back(cyanCube);
-
-
-    Engine::Model whiteCube = Engine::createCube(glm::vec3(0.9f, 0.9f, 0.9f), 1.0f, 0.0f);
-    whiteCube.scale = glm::vec3(0.5f, 0.5f, 0.5f);
-    whiteCube.name = "White_Reflective";
-    whiteCube.position = glm::vec3(2.5f, 0.25f, 0.5f);
-    currentScene.models.push_back(whiteCube);
-
-    for (int i = 0; i < 3; i++) {
-        Engine::Model smallCube = Engine::createCube(glm::vec3(0.6f + i * 0.3f, 0.4f, 0.7f - i * 0.3f), 1.0f, 0.0f);
-        smallCube.scale = glm::vec3(0.2f, 0.2f, 0.2f);
-        smallCube.name = "Small_Detail_" + std::to_string(i);
-        smallCube.position = glm::vec3(-0.5f + i * 0.3f, -0.7f, -0.8f + i * 0.6f);
-        currentScene.models.push_back(smallCube);
+    // If scene loading failed, create a simple angled cube as fallback
+    if (!sceneLoaded) {
+        Engine::Model cube = Engine::createCube(glm::vec3(0.7f, 0.5f, 0.3f), 0.8f, 0.0f);
+        cube.scale = glm::vec3(1.0f, 1.0f, 1.0f);
+        cube.name = "Cube";
+        cube.position = glm::vec3(0.0f, 0.0f, -1.5f);
+        cube.rotation = glm::vec3(glm::radians(15.0f), glm::radians(25.0f), 0.0f);
+        currentScene.models.push_back(cube);
+        std::cout << "Fallback cube created" << std::endl;
     }
     
     currentModelIndex = 0;
@@ -2322,6 +2284,12 @@ int main() {
 
     loadPreferences();
     initializeVCTSettings();
+
+    // ---- Load Shortcuts ----
+    if (!shortcutManager.loadFromFile("shortcuts.json")) {
+        std::cout << "No shortcuts.json found, using defaults" << std::endl;
+        // ShortcutManager already has default profile from constructor
+    }
 
     // ---- Load Startup Scene ----
     if (preferences.loadStartupScene && !preferences.startupScenePath.empty()) {
@@ -2768,13 +2736,13 @@ int main() {
             if (isStereoWindow) {
                 // Render and apply HDR/bloom separately for each eye
 
-                // Left eye
+                // Left eye - output to right buffer to fix flipping issue
                 renderEye(GL_BACK_LEFT, leftProjection, leftView, activeShader, viewport, windowFlags, window, false);
-                bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_LEFT);
-
-                // Right eye
-                renderEye(GL_BACK_RIGHT, rightProjection, rightView, activeShader, viewport, windowFlags, window, false);
                 bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_RIGHT);
+
+                // Right eye - output to left buffer to fix flipping issue
+                renderEye(GL_BACK_RIGHT, rightProjection, rightView, activeShader, viewport, windowFlags, window, false);
+                bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_LEFT);
             }
             else {
                 // Mono view
@@ -2790,8 +2758,11 @@ int main() {
 
                 // Render GUI for the appropriate eye(s)
                 if (isStereoWindow) {
-                    // For stereo, render GUI to left eye only (typical approach)
+                    // For stereo, render GUI to both eyes
                     glDrawBuffer(GL_BACK_LEFT);
+                    renderGUI(true, viewport, windowFlags, activeShader);
+
+                    glDrawBuffer(GL_BACK_RIGHT);
                     renderGUI(true, viewport, windowFlags, activeShader);
                 } else {
                     // For mono, render GUI normally
@@ -5113,168 +5084,337 @@ void mouse_callback(GLFWwindow* window, double xposIn, double yposIn) {
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
     // Note: This handles special keys like GUI toggle, lighting mode changes
-    // Movement keys (WASD) are handled in Input::handleKeyInput which respects SpaceMouse input blocking
-    if (key == GLFW_KEY_G && action == GLFW_PRESS)
-    {
-        showGui = !showGui;
-        std::cout << "GUI visibility toggled. showGui = " << (showGui ? "true" : "false") << std::endl;
-    }
+    // Movement keys (WASD, Space, Shift, Escape) are handled in Input::handleKeyInput
+    // They remain hardcoded and are not customizable through the shortcut manager
 
-    if (key == GLFW_KEY_L && action == GLFW_PRESS) {
-        // Cycle through lighting modes: Shadow Mapping -> Voxel Cone Tracing -> Radiance -> Shadow Mapping
-        if (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING) {
-            currentLightingMode = GUI::LIGHTING_VOXEL_CONE_TRACING;
-        }
-        else if (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
-            currentLightingMode = GUI::LIGHTING_RADIANCE;
-        }
-        else {
-            currentLightingMode = GUI::LIGHTING_SHADOW_MAPPING;
-        }
-
-
-        // Reset OpenGL state when switching modes
-        glEnable(GL_DEPTH_TEST);
-        glEnable(GL_CULL_FACE);
-        glCullFace(GL_BACK);
-
-        // Make sure texture units are reset
-        for (int i = 0; i < 8; i++) {
-            glActiveTexture(GL_TEXTURE0 + i);
-            glBindTexture(GL_TEXTURE_2D, 0);
-            glBindTexture(GL_TEXTURE_3D, 0);
-        }
-        glActiveTexture(GL_TEXTURE0);
-
-        // If switching to VCT, update the voxel grid
-        if (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
-            voxelizer->update(camera.Position, currentScene.models);
-        }
-
-        // Update preferences
-        preferences.lightingMode = currentLightingMode;
-        savePreferences();
-    }
-
-    // Toggle shadows
-    if (key == GLFW_KEY_K && action == GLFW_PRESS) {
-        enableShadows = !enableShadows;
-        std::cout << "Shadows " << (enableShadows ? "enabled" : "disabled") << std::endl;
-
-        // Update preferences
-        preferences.enableShadows = enableShadows;
-        savePreferences();
-    }
-
-    // Toggle voxel visualization
-    if (key == GLFW_KEY_V && action == GLFW_PRESS) {
-        voxelizer->showDebugVisualization = !voxelizer->showDebugVisualization;
-        std::cout << "Voxel visualization " <<
-            (voxelizer->showDebugVisualization ? "enabled" : "disabled") << std::endl;
-    }
-
-    if (key == GLFW_KEY_C && action == GLFW_PRESS)
-    {
-        // Try to find a good center point
-        glm::vec3 centerPoint(0.0f);
-        int objectCount = 0;
-
-        // First, try to use the current cursor position if valid
-        if (cursorManager.isCursorPositionValid()) {
-            glfwSetCursorPos(window, windowWidth / 2, windowHeight / 2);
-            camera.StartCenteringAnimation(cursorManager.getCursorPosition());
-            std::cout << "Centering on cursor position" << std::endl;
-            return;
-        }
-
-        // If no cursor, calculate scene center
-        for (const auto& model : currentScene.models) {
-            centerPoint += model.position;
-            objectCount++;
-        }
-
-        for (const auto& pointCloud : currentScene.pointClouds) {
-            centerPoint += pointCloud.position;
-            objectCount++;
-        }
-
-        if (objectCount > 0) {
-            centerPoint /= objectCount;
-            camera.StartCenteringAnimation(centerPoint);
-            glfwSetCursorPos(window, windowWidth / 2, windowHeight / 2);
-            std::cout << "Centering on scene midpoint" << std::endl;
-        }
-        else {
-            // If no objects, center on the world origin
-            camera.StartCenteringAnimation(glm::vec3(0.0f));
-            glfwSetCursorPos(window, windowWidth / 2, windowHeight / 2);
-            std::cout << "Centering on world origin" << std::endl;
-        }
-    }
-
-    // Print cursor synchronization diagnostics
-    if (key == GLFW_KEY_Y && action == GLFW_PRESS) {
-        printCursorSyncDiagnostics();
-    }
-
-
-    // Handle Ctrl key
-    if (key == GLFW_KEY_LEFT_CONTROL || key == GLFW_KEY_RIGHT_CONTROL)
-    {
-        if (action == GLFW_PRESS)
-        {
-            ctrlPressed = true;
-            selectionMode = true;
-        }
-        else if (action == GLFW_RELEASE)
+    if (action != GLFW_PRESS) {
+        // Handle Ctrl key release separately (since it's used as a modifier)
+        if (key == GLFW_KEY_LEFT_CONTROL || key == GLFW_KEY_RIGHT_CONTROL)
         {
             ctrlPressed = false;
             selectionMode = false;
-
-            // Don't reset cursor position when releasing Ctrl key
-            // This allows the cursor to stay where it is when exiting selection mode
-            if (isMouseCaptured && isMovingModel) {
-                // Get cursor position before releasing capture
-                double mouseX, mouseY;
-                glfwGetCursorPos(window, &mouseX, &mouseY);
-
-                // When releasing Ctrl while moving a model, keep the cursor where it is
-                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-
-                // No need to reset cursor to center
-                isMovingModel = false;
-            }
+            // Don't stop dragging when Ctrl is released - only stop when mouse button is released
         }
+        return; // Only handle PRESS actions below
     }
 
-    // Handle Delete key
-    if (key == GLFW_KEY_DELETE && action == GLFW_PRESS)
+    // Handle Ctrl key press
+    if (key == GLFW_KEY_LEFT_CONTROL || key == GLFW_KEY_RIGHT_CONTROL)
     {
-        if (currentSelectedType == SelectedType::Model && currentSelectedIndex >= 0 && currentSelectedIndex < currentScene.models.size()) {
-            std::cout << "Deleting selected model: " << currentScene.models[currentSelectedIndex].name << std::endl;
-            
-            // Remove the selected model from the scene
-            currentScene.models.erase(currentScene.models.begin() + currentSelectedIndex);
-            
-            // Adjust selection indices after deletion
-            if (currentScene.models.empty()) {
-                currentSelectedIndex = -1; // No models left
-                currentSelectedType = SelectedType::None;
-            } else if (currentSelectedIndex >= currentScene.models.size()) {
-                currentSelectedIndex = currentScene.models.size() - 1; // Select last model if we deleted the last one
-            }
-            // If currentSelectedIndex < currentScene.models.size(), it stays the same (next model takes the same index)
-            
-            // Also update currentModelIndex if it was pointing to the deleted model
-            if (currentModelIndex == currentSelectedIndex) {
-                currentModelIndex = currentSelectedIndex;
-            } else if (currentModelIndex > currentSelectedIndex) {
-                currentModelIndex--; // Adjust if it was pointing to a model after the deleted one
-            }
-            
-            std::cout << "Model deleted successfully. Remaining models: " << currentScene.models.size() << std::endl;
-        } else {
-            std::cout << "No model selected or invalid selection" << std::endl;
+        ctrlPressed = true;
+        selectionMode = true;
+        return;
+    }
+
+    // Check if this key press matches any shortcut action
+    auto actionOpt = shortcutManager.getActionForKey(key, mods);
+
+    if (actionOpt.has_value()) {
+        StereoVista::ShortcutAction shortcutAction = actionOpt.value();
+
+        // Dispatch to appropriate action handler
+        switch (shortcutAction) {
+            case StereoVista::ShortcutAction::ToggleGUI:
+                showGui = !showGui;
+                std::cout << "GUI visibility toggled. showGui = " << (showGui ? "true" : "false") << std::endl;
+                break;
+
+            case StereoVista::ShortcutAction::CycleLighting:
+                // Cycle through lighting modes: Shadow Mapping -> Voxel Cone Tracing -> Radiance -> Shadow Mapping
+                if (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING) {
+                    currentLightingMode = GUI::LIGHTING_VOXEL_CONE_TRACING;
+                }
+                else if (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
+                    currentLightingMode = GUI::LIGHTING_RADIANCE;
+                }
+                else {
+                    currentLightingMode = GUI::LIGHTING_SHADOW_MAPPING;
+                }
+
+                // Reset OpenGL state when switching modes
+                glEnable(GL_DEPTH_TEST);
+                glEnable(GL_CULL_FACE);
+                glCullFace(GL_BACK);
+
+                // Make sure texture units are reset
+                for (int i = 0; i < 8; i++) {
+                    glActiveTexture(GL_TEXTURE0 + i);
+                    glBindTexture(GL_TEXTURE_2D, 0);
+                    glBindTexture(GL_TEXTURE_3D, 0);
+                }
+                glActiveTexture(GL_TEXTURE0);
+
+                // If switching to VCT, update the voxel grid
+                if (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
+                    voxelizer->update(camera.Position, currentScene.models);
+                }
+
+                // Update preferences
+                preferences.lightingMode = currentLightingMode;
+                savePreferences();
+                break;
+
+            case StereoVista::ShortcutAction::ToggleShadows:
+                enableShadows = !enableShadows;
+                std::cout << "Shadows " << (enableShadows ? "enabled" : "disabled") << std::endl;
+                preferences.enableShadows = enableShadows;
+                savePreferences();
+                break;
+
+            case StereoVista::ShortcutAction::ToggleVoxelViz:
+                voxelizer->showDebugVisualization = !voxelizer->showDebugVisualization;
+                std::cout << "Voxel visualization " <<
+                    (voxelizer->showDebugVisualization ? "enabled" : "disabled") << std::endl;
+                break;
+
+            case StereoVista::ShortcutAction::CenterView:
+                {
+                    // Try to find a good center point
+                    glm::vec3 centerPoint(0.0f);
+                    int objectCount = 0;
+
+                    // First, try to use the current cursor position if valid
+                    if (cursorManager.isCursorPositionValid()) {
+                        glfwSetCursorPos(window, windowWidth / 2, windowHeight / 2);
+                        camera.StartCenteringAnimation(cursorManager.getCursorPosition());
+                        std::cout << "Centering on cursor position" << std::endl;
+                        return;
+                    }
+
+                    // If no cursor, calculate scene center
+                    for (const auto& model : currentScene.models) {
+                        centerPoint += model.position;
+                        objectCount++;
+                    }
+
+                    for (const auto& pointCloud : currentScene.pointClouds) {
+                        centerPoint += pointCloud.position;
+                        objectCount++;
+                    }
+
+                    if (objectCount > 0) {
+                        centerPoint /= objectCount;
+                        camera.StartCenteringAnimation(centerPoint);
+                        glfwSetCursorPos(window, windowWidth / 2, windowHeight / 2);
+                        std::cout << "Centering on scene midpoint" << std::endl;
+                    }
+                    else {
+                        // If no objects, center on the world origin
+                        camera.StartCenteringAnimation(glm::vec3(0.0f));
+                        glfwSetCursorPos(window, windowWidth / 2, windowHeight / 2);
+                        std::cout << "Centering on world origin" << std::endl;
+                    }
+                }
+                break;
+
+            // View/Display Controls
+            case StereoVista::ShortcutAction::ToggleFPS:
+                showFPS = !showFPS;
+                std::cout << "FPS counter " << (showFPS ? "enabled" : "disabled") << std::endl;
+                break;
+
+            case StereoVista::ShortcutAction::ToggleWireframe:
+                camera.wireframe = !camera.wireframe;
+                std::cout << "Wireframe mode " << (camera.wireframe ? "enabled" : "disabled") << std::endl;
+                break;
+
+            case StereoVista::ShortcutAction::ToggleRadar:
+                preferences.radarEnabled = !preferences.radarEnabled;
+                std::cout << "Radar " << (preferences.radarEnabled ? "enabled" : "disabled") << std::endl;
+                savePreferences();
+                break;
+
+            // Camera Controls
+            case StereoVista::ShortcutAction::ToggleZoomToCursor:
+                camera.zoomToCursor = !camera.zoomToCursor;
+                std::cout << "Zoom to cursor " << (camera.zoomToCursor ? "enabled" : "disabled") << std::endl;
+                break;
+
+            case StereoVista::ShortcutAction::ToggleOrbitAroundCursor:
+                camera.orbitAroundCursor = !camera.orbitAroundCursor;
+                std::cout << "Orbit around cursor " << (camera.orbitAroundCursor ? "enabled" : "disabled") << std::endl;
+                break;
+
+            // Lighting
+            case StereoVista::ShortcutAction::ToggleHDR:
+                preferences.hdrSettings.enabled = !preferences.hdrSettings.enabled;
+                std::cout << "HDR " << (preferences.hdrSettings.enabled ? "enabled" : "disabled") << std::endl;
+                savePreferences();
+                break;
+
+            case StereoVista::ShortcutAction::ToggleBloom:
+                preferences.hdrSettings.enableBloom = !preferences.hdrSettings.enableBloom;
+                std::cout << "Bloom " << (preferences.hdrSettings.enableBloom ? "enabled" : "disabled") << std::endl;
+                savePreferences();
+                break;
+
+            case StereoVista::ShortcutAction::TogglePCSS:
+                preferences.shadowSettings.enablePCSS = !preferences.shadowSettings.enablePCSS;
+                std::cout << "PCSS (soft shadows) " << (preferences.shadowSettings.enablePCSS ? "enabled" : "disabled") << std::endl;
+                savePreferences();
+                break;
+
+            case StereoVista::ShortcutAction::ToggleSunLight:
+                sun.enabled = !sun.enabled;
+                std::cout << "Sun light " << (sun.enabled ? "enabled" : "disabled") << std::endl;
+                break;
+
+            // Materials & Rendering
+            case StereoVista::ShortcutAction::TogglePBR:
+                preferences.materialSettings.enablePBR = !preferences.materialSettings.enablePBR;
+                std::cout << "PBR materials " << (preferences.materialSettings.enablePBR ? "enabled" : "disabled") << std::endl;
+                savePreferences();
+                break;
+
+            // VCT
+            case StereoVista::ShortcutAction::ToggleVCTIndirectDiffuse:
+                preferences.vctSettings.indirectDiffuseLight = !preferences.vctSettings.indirectDiffuseLight;
+                std::cout << "VCT indirect diffuse " << (preferences.vctSettings.indirectDiffuseLight ? "enabled" : "disabled") << std::endl;
+                savePreferences();
+                break;
+
+            case StereoVista::ShortcutAction::ToggleVCTIndirectSpecular:
+                preferences.vctSettings.indirectSpecularLight = !preferences.vctSettings.indirectSpecularLight;
+                std::cout << "VCT indirect specular " << (preferences.vctSettings.indirectSpecularLight ? "enabled" : "disabled") << std::endl;
+                savePreferences();
+                break;
+
+            case StereoVista::ShortcutAction::ToggleVCTDirectLight:
+                preferences.vctSettings.directLight = !preferences.vctSettings.directLight;
+                std::cout << "VCT direct lighting " << (preferences.vctSettings.directLight ? "enabled" : "disabled") << std::endl;
+                savePreferences();
+                break;
+
+            case StereoVista::ShortcutAction::ToggleVCTSoftShadows:
+                preferences.vctSettings.shadows = !preferences.vctSettings.shadows;
+                std::cout << "VCT soft shadows " << (preferences.vctSettings.shadows ? "enabled" : "disabled") << std::endl;
+                savePreferences();
+                break;
+
+            // Raytracing
+            case StereoVista::ShortcutAction::ToggleRaytracing:
+                preferences.radianceSettings.enableRaytracing = !preferences.radianceSettings.enableRaytracing;
+                std::cout << "Raytracing " << (preferences.radianceSettings.enableRaytracing ? "enabled" : "disabled") << std::endl;
+                savePreferences();
+                break;
+
+            case StereoVista::ShortcutAction::ToggleIndirectLighting:
+                preferences.radianceSettings.enableIndirectLighting = !preferences.radianceSettings.enableIndirectLighting;
+                std::cout << "Indirect lighting " << (preferences.radianceSettings.enableIndirectLighting ? "enabled" : "disabled") << std::endl;
+                savePreferences();
+                break;
+
+            case StereoVista::ShortcutAction::ToggleEmissiveLighting:
+                preferences.radianceSettings.enableEmissiveLighting = !preferences.radianceSettings.enableEmissiveLighting;
+                std::cout << "Emissive lighting " << (preferences.radianceSettings.enableEmissiveLighting ? "enabled" : "disabled") << std::endl;
+                savePreferences();
+                break;
+
+            case StereoVista::ShortcutAction::ToggleBVH:
+                preferences.radianceSettings.enableBVH = !preferences.radianceSettings.enableBVH;
+                std::cout << "BVH acceleration " << (preferences.radianceSettings.enableBVH ? "enabled" : "disabled") << std::endl;
+                savePreferences();
+                break;
+
+            // 3D Cursor
+            case StereoVista::ShortcutAction::ToggleSphereCursor:
+                {
+                    auto* sphereCursor = cursorManager.getSphereCursor();
+                    if (sphereCursor) {
+                        sphereCursor->setVisible(!sphereCursor->isVisible());
+                        std::cout << "3D sphere cursor " << (sphereCursor->isVisible() ? "enabled" : "disabled") << std::endl;
+                    }
+                }
+                break;
+
+            case StereoVista::ShortcutAction::ToggleCircleCursor:
+                {
+                    auto* fragmentCursor = cursorManager.getFragmentCursor();
+                    if (fragmentCursor) {
+                        fragmentCursor->setVisible(!fragmentCursor->isVisible());
+                        std::cout << "2D circle cursor " << (fragmentCursor->isVisible() ? "enabled" : "disabled") << std::endl;
+                    }
+                }
+                break;
+
+            case StereoVista::ShortcutAction::TogglePlaneCursor:
+                {
+                    auto* planeCursor = cursorManager.getPlaneCursor();
+                    if (planeCursor) {
+                        planeCursor->setVisible(!planeCursor->isVisible());
+                        std::cout << "Surface plane cursor " << (planeCursor->isVisible() ? "enabled" : "disabled") << std::endl;
+                    }
+                }
+                break;
+
+            // Window Management
+            case StereoVista::ShortcutAction::OpenSettings:
+                showSettingsWindow = true;
+                std::cout << "Opening settings window" << std::endl;
+                break;
+
+            case StereoVista::ShortcutAction::OpenCursorSettings:
+                showCursorSettingsWindow = true;
+                std::cout << "Opening cursor settings" << std::endl;
+                break;
+
+            case StereoVista::ShortcutAction::OpenBrushTool:
+                showBrushToolWindow = true;
+                std::cout << "Opening brush tool window" << std::endl;
+                break;
+
+            // File Operations - these will trigger file dialogs through GUI
+            case StereoVista::ShortcutAction::ImportModel:
+                std::cout << "Import model shortcut triggered" << std::endl;
+                // File dialog will be opened via GUI system
+                break;
+
+            case StereoVista::ShortcutAction::ImportPointCloud:
+                std::cout << "Import point cloud shortcut triggered" << std::endl;
+                // File dialog will be opened via GUI system
+                break;
+
+            case StereoVista::ShortcutAction::SaveScene:
+                std::cout << "Save scene shortcut triggered" << std::endl;
+                // File dialog will be opened via GUI system
+                break;
+
+            case StereoVista::ShortcutAction::LoadScene:
+                std::cout << "Load scene shortcut triggered" << std::endl;
+                // File dialog will be opened via GUI system
+                break;
+
+            // Object Manipulation
+            case StereoVista::ShortcutAction::DeleteObject:
+                if (currentSelectedType == SelectedType::Model && currentSelectedIndex >= 0 && currentSelectedIndex < currentScene.models.size()) {
+                    std::cout << "Deleting selected model: " << currentScene.models[currentSelectedIndex].name << std::endl;
+
+                    // Remove the selected model from the scene
+                    currentScene.models.erase(currentScene.models.begin() + currentSelectedIndex);
+
+                    // Adjust selection indices after deletion
+                    if (currentScene.models.empty()) {
+                        currentSelectedIndex = -1;
+                        currentSelectedType = SelectedType::None;
+                    } else if (currentSelectedIndex >= currentScene.models.size()) {
+                        currentSelectedIndex = currentScene.models.size() - 1;
+                    }
+
+                    // Also update currentModelIndex if it was pointing to the deleted model
+                    if (currentModelIndex == currentSelectedIndex) {
+                        currentModelIndex = currentSelectedIndex;
+                    } else if (currentModelIndex > currentSelectedIndex) {
+                        currentModelIndex--;
+                    }
+
+                    std::cout << "Model deleted successfully. Remaining models: " << currentScene.models.size() << std::endl;
+                } else {
+                    std::cout << "No model selected or invalid selection" << std::endl;
+                }
+                break;
+
+            default:
+                break;
         }
     }
 }

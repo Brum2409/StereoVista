@@ -177,6 +177,7 @@
     <ClCompile Include="src\Engine\Input.cpp" />
     <ClCompile Include="src\Engine\OctreePointCloudManager.cpp" />
     <ClCompile Include="src\Engine\Shader.cpp" />
+    <ClCompile Include="src\Engine\ShortcutManager.cpp" />
     <ClCompile Include="src\Engine\SpaceMouseInput.cpp" />
     <ClCompile Include="src\Engine\Window.cpp" />
     <ClCompile Include="headers\libs\imgui\backends\imgui_impl_glfw.cpp" />
@@ -217,6 +218,7 @@
     <ClInclude Include="headers\engine\input.h" />
     <ClInclude Include="headers\Engine\OctreePointCloudManager.h" />
     <ClInclude Include="headers\engine\shader.h" />
+    <ClInclude Include="headers\Engine\ShortcutManager.h" />
     <ClInclude Include="headers\Engine\SpaceMouseInput.h" />
     <ClInclude Include="headers\engine\window.h" />
     <ClInclude Include="headers\Camera.h" />

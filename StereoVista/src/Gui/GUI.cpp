@@ -3,6 +3,7 @@
 #include "Engine/Core.h"
 #include "Engine/BVHDebug.h"
 #include "Tools/BrushTool.h"
+#include "Engine/ShortcutManager.h"
 #include <json.h>
 #include <fstream>
 #include <sstream>
@@ -90,6 +91,9 @@ extern std::string currentPresetName;
 extern bool isEditingPresetName;
 extern char editPresetNameBuffer[256];
 extern GUI::CursorPreview3D cursorPreview3D;
+
+// Shortcut manager
+extern StereoVista::ShortcutManager shortcutManager;
 
 // External function declarations
 extern void savePreferences();
@@ -2075,21 +2079,43 @@ void renderSettingsWindow() {
                 ImGui::Text("Other Controls");
                 ImGui::Separator();
 
-                ImGui::Text("G"); ImGui::NextColumn();
-                ImGui::Text("Toggle GUI"); ImGui::NextColumn();
+                // Dynamically display shortcuts from shortcut manager
+                const StereoVista::ShortcutProfile* activeProfile = shortcutManager.getActiveProfile();
+                if (activeProfile) {
+                    // Helper lambda to display a shortcut action
+                    auto displayAction = [&](StereoVista::ShortcutAction action) {
+                        const std::vector<StereoVista::KeyBinding>& bindings = activeProfile->getBindings(action);
+                        std::string bindingText = "Unbound";
 
-                ImGui::Text("Ctrl + Click"); ImGui::NextColumn();
-                ImGui::Text("Select object"); ImGui::NextColumn();
+                        if (!bindings.empty() && bindings[0].isValid()) {
+                            bindingText = bindings[0].toString();
+                            // If there's a secondary binding, add it
+                            if (bindings.size() > 1 && bindings[1].isValid()) {
+                                bindingText += " / " + bindings[1].toString();
+                            }
+                        }
 
-                ImGui::Text("Ctrl + Click + Drag"); ImGui::NextColumn();
-                ImGui::Text("Move Objects around"); ImGui::NextColumn();
+                        ImGui::Text("%s", bindingText.c_str()); ImGui::NextColumn();
+                        ImGui::Text("%s", StereoVista::ShortcutManager::getActionDescription(action).c_str()); ImGui::NextColumn();
+                    };
 
-                ImGui::Text("Delete"); ImGui::NextColumn();
-                ImGui::Text("Delete selected object"); ImGui::NextColumn();
+                    // Display all customizable shortcuts
+                    displayAction(StereoVista::ShortcutAction::ToggleGUI);
 
-                ImGui::Text("C"); ImGui::NextColumn();
-                ImGui::Text("Center the Scene to the Cursor/Selected Model/Scene Center"); ImGui::NextColumn();
+                    ImGui::Text("Ctrl + Click"); ImGui::NextColumn();
+                    ImGui::Text("Select object"); ImGui::NextColumn();
 
+                    ImGui::Text("Ctrl + Click + Drag"); ImGui::NextColumn();
+                    ImGui::Text("Move selected object"); ImGui::NextColumn();
+
+                    displayAction(StereoVista::ShortcutAction::DeleteObject);
+                    displayAction(StereoVista::ShortcutAction::CenterView);
+                    displayAction(StereoVista::ShortcutAction::CycleLighting);
+                    displayAction(StereoVista::ShortcutAction::ToggleShadows);
+                    displayAction(StereoVista::ShortcutAction::ToggleVoxelViz);
+                }
+
+                // Hardcoded non-customizable shortcut
                 ImGui::Text("Esc"); ImGui::NextColumn();
                 ImGui::Text("Exit application"); ImGui::NextColumn();
 
@@ -2189,11 +2215,416 @@ void renderSettingsWindow() {
             ImGui::EndTabItem();
         }
 
+        // ===========================
+        // SHORTCUTS TAB
+        // ===========================
+        if (ImGui::BeginTabItem("Shortcuts")) {
+            DrawSectionHeader("Shortcut Profiles");
+
+            // State variables for shortcut management (static to persist across frames)
+            static char profileNameBuffer[256] = "";
+            static bool isCreatingProfile = false;
+            static bool isRenamingProfile = false;
+            static std::string profileToRename = "";
+            static int captureActionIndex = -1;
+            static int captureSlot = -1;
+            static std::string conflictMessage = "";
+            static bool waitingForKeyPress = false;
+
+            // Profile selector
+            StereoVista::ShortcutProfile* activeProfile = shortcutManager.getActiveProfile();
+            if (activeProfile) {
+                const std::vector<std::string>& profileNames = shortcutManager.getProfileNames();
+
+                if (ImGui::BeginCombo("Active Profile", shortcutManager.getActiveProfileName().c_str())) {
+                    for (const auto& name : profileNames) {
+                        bool isSelected = (shortcutManager.getActiveProfileName() == name);
+                        if (ImGui::Selectable(name.c_str(), isSelected)) {
+                            shortcutManager.setActiveProfile(name);
+                            settingsChanged = true;
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+
+                // Profile management buttons
+                ImGui::SameLine();
+                if (ImGui::Button("New")) {
+                    isCreatingProfile = true;
+                    strcpy_s(profileNameBuffer, "New Profile");
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Rename")) {
+                    isRenamingProfile = true;
+                    profileToRename = shortcutManager.getActiveProfileName();
+                    strcpy_s(profileNameBuffer, profileToRename.c_str());
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Delete") && profileNames.size() > 1) {
+                    shortcutManager.deleteProfile(shortcutManager.getActiveProfileName());
+                    settingsChanged = true;
+                }
+                if (profileNames.size() <= 1 && ImGui::IsItemHovered()) {
+                    ImGui::BeginTooltip();
+                    ImGui::Text("Cannot delete the last profile");
+                    ImGui::EndTooltip();
+                }
+
+                // Import/Export buttons
+                ImGui::SameLine();
+                if (ImGui::Button("Import")) {
+                    auto result = pfd::open_file("Import Shortcut Profile", ".", {"JSON Files", "*.json"}).result();
+                    if (!result.empty()) {
+                        if (shortcutManager.importProfileFromFile(result[0])) {
+                            std::cout << "Profile imported successfully" << std::endl;
+                            settingsChanged = true;
+                        } else {
+                            std::cout << "Failed to import profile" << std::endl;
+                        }
+                    }
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Export")) {
+                    auto result = pfd::save_file("Export Shortcut Profile",
+                        shortcutManager.getActiveProfileName() + ".json",
+                        {"JSON Files", "*.json"}).result();
+                    if (!result.empty()) {
+                        if (shortcutManager.exportProfileToFile(shortcutManager.getActiveProfileName(), result)) {
+                            std::cout << "Profile exported successfully" << std::endl;
+                        } else {
+                            std::cout << "Failed to export profile" << std::endl;
+                        }
+                    }
+                }
+
+                // Profile creation popup
+                if (isCreatingProfile) {
+                    ImGui::OpenPopup("Create Profile");
+                    isCreatingProfile = false;
+                }
+                if (ImGui::BeginPopupModal("Create Profile", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    ImGui::Text("Enter profile name:");
+                    ImGui::InputText("##profilename", profileNameBuffer, 256);
+                    if (ImGui::Button("Create", ImVec2(120, 0))) {
+                        StereoVista::ShortcutProfile newProfile(profileNameBuffer);
+                        newProfile.bindings = activeProfile->bindings; // Copy current bindings
+                        shortcutManager.addProfile(newProfile);
+                        shortcutManager.setActiveProfile(profileNameBuffer);
+                        settingsChanged = true;
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
+
+                // Profile rename popup
+                if (isRenamingProfile) {
+                    ImGui::OpenPopup("Rename Profile");
+                    isRenamingProfile = false;
+                }
+                if (ImGui::BeginPopupModal("Rename Profile", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    ImGui::Text("Enter new profile name:");
+                    ImGui::InputText("##renameprofile", profileNameBuffer, 256);
+                    if (ImGui::Button("Rename", ImVec2(120, 0))) {
+                        shortcutManager.renameProfile(profileToRename, profileNameBuffer);
+                        settingsChanged = true;
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
+
+                DrawSectionHeader("Key Bindings");
+
+                // Show conflict message if any
+                if (!conflictMessage.empty()) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
+                    ImGui::TextWrapped("%s", conflictMessage.c_str());
+                    ImGui::PopStyleColor();
+                }
+
+                // Shortcut list in a scrollable region
+                ImGui::BeginChild("ShortcutList", ImVec2(0, 400), true);
+
+                // Table with columns: Action | Primary Binding | Secondary Binding
+                ImGui::Columns(3, "shortcutcolumns");
+                ImGui::SetColumnWidth(0, 250);
+                ImGui::SetColumnWidth(1, 200);
+                ImGui::SetColumnWidth(2, 200);
+
+                ImGui::Text("Action"); ImGui::NextColumn();
+                ImGui::Text("Primary Binding"); ImGui::NextColumn();
+                ImGui::Text("Secondary Binding"); ImGui::NextColumn();
+                ImGui::Separator();
+                ImGui::Columns(1); // Reset columns after header
+
+                // Helper lambda to render an action with its bindings
+                auto renderAction = [&](StereoVista::ShortcutAction action) {
+                    int i = static_cast<int>(action);
+                    std::string actionDesc = StereoVista::ShortcutManager::getActionDescription(action);
+                    const std::vector<StereoVista::KeyBinding>& bindings = activeProfile->getBindings(action);
+
+                    // Action name
+                    ImGui::Text("%s", actionDesc.c_str());
+                    ImGui::NextColumn();
+
+                    // Primary binding (slot 0)
+                    std::string primaryBinding = (bindings.size() > 0 && bindings[0].isValid())
+                        ? bindings[0].toString() : "Unbound";
+
+                    if (waitingForKeyPress && captureActionIndex == i && captureSlot == 0) {
+                        ImGui::Text("[Press any key...]");
+                    } else {
+                        if (ImGui::Button((primaryBinding + "##primary" + std::to_string(i)).c_str(), ImVec2(180, 0))) {
+                            captureActionIndex = i;
+                            captureSlot = 0;
+                            waitingForKeyPress = true;
+                            conflictMessage = "";
+                        }
+                    }
+                    ImGui::NextColumn();
+
+                    // Secondary binding (slot 1)
+                    std::string secondaryBinding = (bindings.size() > 1 && bindings[1].isValid())
+                        ? bindings[1].toString() : "Unbound";
+
+                    if (waitingForKeyPress && captureActionIndex == i && captureSlot == 1) {
+                        ImGui::Text("[Press any key...]");
+                    } else {
+                        if (ImGui::Button((secondaryBinding + "##secondary" + std::to_string(i)).c_str(), ImVec2(180, 0))) {
+                            captureActionIndex = i;
+                            captureSlot = 1;
+                            waitingForKeyPress = true;
+                            conflictMessage = "";
+                        }
+                    }
+                    ImGui::NextColumn();
+                };
+
+                // GROUP: View/Display Controls
+                if (ImGui::CollapsingHeader("View/Display Controls", ImGuiTreeNodeFlags_DefaultOpen)) {
+                    ImGui::Columns(3, "shortcutcolumns");
+                    ImGui::SetColumnWidth(0, 250);
+                    ImGui::SetColumnWidth(1, 200);
+                    ImGui::SetColumnWidth(2, 200);
+
+                    renderAction(StereoVista::ShortcutAction::ToggleGUI);
+                    renderAction(StereoVista::ShortcutAction::ToggleFPS);
+                    renderAction(StereoVista::ShortcutAction::ToggleWireframe);
+                    renderAction(StereoVista::ShortcutAction::ToggleRadar);
+                }
+
+                // GROUP: Camera Controls
+                ImGui::Columns(1);
+                if (ImGui::CollapsingHeader("Camera Controls", ImGuiTreeNodeFlags_DefaultOpen)) {
+                    ImGui::Columns(3, "shortcutcolumns");
+                    ImGui::SetColumnWidth(0, 250);
+                    ImGui::SetColumnWidth(1, 200);
+                    ImGui::SetColumnWidth(2, 200);
+
+                    renderAction(StereoVista::ShortcutAction::CenterView);
+                    renderAction(StereoVista::ShortcutAction::ToggleZoomToCursor);
+                    renderAction(StereoVista::ShortcutAction::ToggleOrbitAroundCursor);
+                }
+
+                // GROUP: Lighting
+                ImGui::Columns(1);
+                if (ImGui::CollapsingHeader("Lighting", ImGuiTreeNodeFlags_DefaultOpen)) {
+                    ImGui::Columns(3, "shortcutcolumns");
+                    ImGui::SetColumnWidth(0, 250);
+                    ImGui::SetColumnWidth(1, 200);
+                    ImGui::SetColumnWidth(2, 200);
+
+                    renderAction(StereoVista::ShortcutAction::CycleLighting);
+                    renderAction(StereoVista::ShortcutAction::ToggleShadows);
+                    renderAction(StereoVista::ShortcutAction::ToggleHDR);
+                    renderAction(StereoVista::ShortcutAction::ToggleBloom);
+                    renderAction(StereoVista::ShortcutAction::TogglePCSS);
+                    renderAction(StereoVista::ShortcutAction::ToggleSunLight);
+                }
+
+                // GROUP: Materials & Rendering
+                ImGui::Columns(1);
+                if (ImGui::CollapsingHeader("Materials & Rendering")) {
+                    ImGui::Columns(3, "shortcutcolumns");
+                    ImGui::SetColumnWidth(0, 250);
+                    ImGui::SetColumnWidth(1, 200);
+                    ImGui::SetColumnWidth(2, 200);
+
+                    renderAction(StereoVista::ShortcutAction::TogglePBR);
+                }
+
+                // GROUP: VCT (Voxel Cone Tracing)
+                ImGui::Columns(1);
+                if (ImGui::CollapsingHeader("VCT (Voxel Cone Tracing)")) {
+                    ImGui::Columns(3, "shortcutcolumns");
+                    ImGui::SetColumnWidth(0, 250);
+                    ImGui::SetColumnWidth(1, 200);
+                    ImGui::SetColumnWidth(2, 200);
+
+                    renderAction(StereoVista::ShortcutAction::ToggleVoxelViz);
+                    renderAction(StereoVista::ShortcutAction::ToggleVCTIndirectDiffuse);
+                    renderAction(StereoVista::ShortcutAction::ToggleVCTIndirectSpecular);
+                    renderAction(StereoVista::ShortcutAction::ToggleVCTDirectLight);
+                    renderAction(StereoVista::ShortcutAction::ToggleVCTSoftShadows);
+                }
+
+                // GROUP: Raytracing
+                ImGui::Columns(1);
+                if (ImGui::CollapsingHeader("Raytracing")) {
+                    ImGui::Columns(3, "shortcutcolumns");
+                    ImGui::SetColumnWidth(0, 250);
+                    ImGui::SetColumnWidth(1, 200);
+                    ImGui::SetColumnWidth(2, 200);
+
+                    renderAction(StereoVista::ShortcutAction::ToggleRaytracing);
+                    renderAction(StereoVista::ShortcutAction::ToggleIndirectLighting);
+                    renderAction(StereoVista::ShortcutAction::ToggleEmissiveLighting);
+                    renderAction(StereoVista::ShortcutAction::ToggleBVH);
+                }
+
+                // GROUP: 3D Cursor
+                ImGui::Columns(1);
+                if (ImGui::CollapsingHeader("3D Cursor")) {
+                    ImGui::Columns(3, "shortcutcolumns");
+                    ImGui::SetColumnWidth(0, 250);
+                    ImGui::SetColumnWidth(1, 200);
+                    ImGui::SetColumnWidth(2, 200);
+
+                    renderAction(StereoVista::ShortcutAction::ToggleSphereCursor);
+                    renderAction(StereoVista::ShortcutAction::ToggleCircleCursor);
+                    renderAction(StereoVista::ShortcutAction::TogglePlaneCursor);
+                }
+
+                // GROUP: Window Management
+                ImGui::Columns(1);
+                if (ImGui::CollapsingHeader("Window Management")) {
+                    ImGui::Columns(3, "shortcutcolumns");
+                    ImGui::SetColumnWidth(0, 250);
+                    ImGui::SetColumnWidth(1, 200);
+                    ImGui::SetColumnWidth(2, 200);
+
+                    renderAction(StereoVista::ShortcutAction::OpenSettings);
+                    renderAction(StereoVista::ShortcutAction::OpenCursorSettings);
+                    renderAction(StereoVista::ShortcutAction::OpenBrushTool);
+                }
+
+                // GROUP: File Operations
+                ImGui::Columns(1);
+                if (ImGui::CollapsingHeader("File Operations")) {
+                    ImGui::Columns(3, "shortcutcolumns");
+                    ImGui::SetColumnWidth(0, 250);
+                    ImGui::SetColumnWidth(1, 200);
+                    ImGui::SetColumnWidth(2, 200);
+
+                    renderAction(StereoVista::ShortcutAction::ImportModel);
+                    renderAction(StereoVista::ShortcutAction::ImportPointCloud);
+                    renderAction(StereoVista::ShortcutAction::SaveScene);
+                    renderAction(StereoVista::ShortcutAction::LoadScene);
+                }
+
+                // GROUP: Object Manipulation
+                ImGui::Columns(1);
+                if (ImGui::CollapsingHeader("Object Manipulation")) {
+                    ImGui::Columns(3, "shortcutcolumns");
+                    ImGui::SetColumnWidth(0, 250);
+                    ImGui::SetColumnWidth(1, 200);
+                    ImGui::SetColumnWidth(2, 200);
+
+                    renderAction(StereoVista::ShortcutAction::DeleteObject);
+                }
+
+                ImGui::Columns(1);
+                ImGui::EndChild();
+
+                // Key capture logic
+                if (waitingForKeyPress && captureActionIndex != -1) {
+                    ImGuiIO& io = ImGui::GetIO();
+
+                    // Check for key presses
+                    for (int key = GLFW_KEY_SPACE; key <= GLFW_KEY_LAST; ++key) {
+                        if (ImGui::IsKeyPressed((ImGuiKey)key, false)) {
+                            // Get modifiers
+                            bool ctrl = io.KeyCtrl;
+                            bool alt = io.KeyAlt;
+                            bool shift = io.KeyShift;
+
+                            // Don't capture modifier keys alone
+                            if (key == GLFW_KEY_LEFT_CONTROL || key == GLFW_KEY_RIGHT_CONTROL ||
+                                key == GLFW_KEY_LEFT_ALT || key == GLFW_KEY_RIGHT_ALT ||
+                                key == GLFW_KEY_LEFT_SHIFT || key == GLFW_KEY_RIGHT_SHIFT) {
+                                continue;
+                            }
+
+                            StereoVista::KeyBinding newBinding(key, ctrl, alt, shift);
+                            StereoVista::ShortcutAction targetAction = static_cast<StereoVista::ShortcutAction>(captureActionIndex);
+
+                            // Check for conflicts
+                            auto conflict = activeProfile->findConflict(newBinding, targetAction);
+                            if (conflict.has_value()) {
+                                conflictMessage = "Conflict! This key is already bound to: " +
+                                    StereoVista::ShortcutManager::getActionDescription(conflict.value());
+                            } else {
+                                // Set the binding
+                                activeProfile->setBinding(targetAction, newBinding, captureSlot);
+                                settingsChanged = true;
+                                conflictMessage = "";
+                            }
+
+                            waitingForKeyPress = false;
+                            captureActionIndex = -1;
+                            captureSlot = -1;
+                            break;
+                        }
+                    }
+
+                    // Allow ESC to cancel capture
+                    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+                        waitingForKeyPress = false;
+                        captureActionIndex = -1;
+                        captureSlot = -1;
+                        conflictMessage = "";
+                    }
+
+                    // Allow right-click to clear binding
+                    if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+                        StereoVista::ShortcutAction targetAction = static_cast<StereoVista::ShortcutAction>(captureActionIndex);
+                        activeProfile->clearBinding(targetAction, captureSlot);
+                        settingsChanged = true;
+                        waitingForKeyPress = false;
+                        captureActionIndex = -1;
+                        captureSlot = -1;
+                        conflictMessage = "";
+                    }
+                }
+
+                ImGui::Spacing();
+                ImGui::TextWrapped("Click a binding to change it. Press ESC to cancel. Right-click to clear a binding.");
+                ImGui::Spacing();
+
+                // Reset to defaults button
+                if (ImGui::Button("Reset All to Defaults", ImVec2(-1, 0))) {
+                    shortcutManager.resetActiveProfileToDefaults();
+                    settingsChanged = true;
+                }
+            }
+
+            ImGui::EndTabItem();
+        }
+
         ImGui::EndTabBar();
     }
 
     if (settingsChanged) {
         savePreferences();
+        // Save shortcuts when settings change
+        shortcutManager.saveToFile("shortcuts.json");
     }
 
     ImGui::End();

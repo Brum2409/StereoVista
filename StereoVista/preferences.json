@@ -1,7 +1,7 @@
 {
     "camera": {
         "autoConvergence": true,
-        "convergence": 6.898512363433838,
+        "convergence": 7.827729225158691,
         "convergenceCapMax": 40.0,
         "convergenceCapMin": 0.5,
         "convergenceDistanceFactor": 1.0,
