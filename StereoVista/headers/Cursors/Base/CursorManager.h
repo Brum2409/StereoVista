@@ -19,9 +19,12 @@ namespace Cursor {
 
         // Update cursor position based on ray casting
         void updateCursorPosition(GLFWwindow* window, const glm::mat4& projection, const glm::mat4& view, Engine::Shader* shader);
-        
+
         // Update cursor position with control over when to actually calculate
         void updateCursorPosition(GLFWwindow* window, const glm::mat4& projection, const glm::mat4& view, Engine::Shader* shader, bool forceRecalculate);
+
+        // Update cursor position with stereo support (checks both eye buffers)
+        void updateCursorPosition(GLFWwindow* window, const glm::mat4& projection, const glm::mat4& view, Engine::Shader* shader, bool forceRecalculate, bool isStereo, const glm::mat4* leftProjection = nullptr, const glm::mat4* leftView = nullptr, const glm::mat4* rightProjection = nullptr, const glm::mat4* rightView = nullptr);
         
         // Reset frame calculation flag (call at start of each frame)
         void resetFrameCalculationFlag();

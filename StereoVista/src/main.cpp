@@ -68,7 +68,7 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos);
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 
 // ---- Rendering Functions ----
-void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& view, Engine::Shader* shader, ImGuiViewportP* viewport, ImGuiWindowFlags windowFlags, GLFWwindow* window, bool renderGUIFlag = true);
+void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& view, Engine::Shader* shader, ImGuiViewportP* viewport, ImGuiWindowFlags windowFlags, GLFWwindow* window, bool renderGUIFlag = true, bool isStereo = false, const glm::mat4* leftProjection = nullptr, const glm::mat4* leftView = nullptr, const glm::mat4* rightProjection = nullptr, const glm::mat4* rightView = nullptr);
 void renderModels(Engine::Shader* shader);
 void renderPointClouds(Engine::Shader* shader);
 void renderLightVisualizations(Engine::Shader* shader);
@@ -2741,17 +2741,17 @@ int main() {
 
                 if (preferences.flipEyes) {
                     // Flipped: render left projection to right buffer, right projection to left buffer
-                    renderEye(GL_BACK_LEFT, leftProjection, leftView, activeShader, viewport, windowFlags, window, false);
+                    renderEye(GL_BACK_LEFT, leftProjection, leftView, activeShader, viewport, windowFlags, window, false, true, &leftProjection, &leftView, &rightProjection, &rightView);
                     bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_RIGHT);
 
-                    renderEye(GL_BACK_RIGHT, rightProjection, rightView, activeShader, viewport, windowFlags, window, false);
+                    renderEye(GL_BACK_RIGHT, rightProjection, rightView, activeShader, viewport, windowFlags, window, false, true, &leftProjection, &leftView, &rightProjection, &rightView);
                     bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_LEFT);
                 } else {
                     // Normal: render left to left, right to right
-                    renderEye(GL_BACK_LEFT, leftProjection, leftView, activeShader, viewport, windowFlags, window, false);
+                    renderEye(GL_BACK_LEFT, leftProjection, leftView, activeShader, viewport, windowFlags, window, false, true, &leftProjection, &leftView, &rightProjection, &rightView);
                     bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_LEFT);
 
-                    renderEye(GL_BACK_RIGHT, rightProjection, rightView, activeShader, viewport, windowFlags, window, false);
+                    renderEye(GL_BACK_RIGHT, rightProjection, rightView, activeShader, viewport, windowFlags, window, false, true, &leftProjection, &leftView, &rightProjection, &rightView);
                     bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_RIGHT);
                 }
             }
@@ -2786,12 +2786,12 @@ int main() {
             if (isStereoWindow) {
                 if (preferences.flipEyes) {
                     // Flipped: swap left and right eye rendering
-                    renderEye(GL_BACK_LEFT, rightProjection, rightView, activeShader, viewport, windowFlags, window, true);
-                    renderEye(GL_BACK_RIGHT, leftProjection, leftView, activeShader, viewport, windowFlags, window, true);
+                    renderEye(GL_BACK_LEFT, rightProjection, rightView, activeShader, viewport, windowFlags, window, true, true, &leftProjection, &leftView, &rightProjection, &rightView);
+                    renderEye(GL_BACK_RIGHT, leftProjection, leftView, activeShader, viewport, windowFlags, window, true, true, &leftProjection, &leftView, &rightProjection, &rightView);
                 } else {
                     // Normal: render left eye to left buffer, right eye to right buffer
-                    renderEye(GL_BACK_LEFT, leftProjection, leftView, activeShader, viewport, windowFlags, window, true);
-                    renderEye(GL_BACK_RIGHT, rightProjection, rightView, activeShader, viewport, windowFlags, window, true);
+                    renderEye(GL_BACK_LEFT, leftProjection, leftView, activeShader, viewport, windowFlags, window, true, true, &leftProjection, &leftView, &rightProjection, &rightView);
+                    renderEye(GL_BACK_RIGHT, rightProjection, rightView, activeShader, viewport, windowFlags, window, true, true, &leftProjection, &leftView, &rightProjection, &rightView);
                 }
             }
             else {
@@ -2925,7 +2925,7 @@ float calculateLargestModelDimension() {
 
 // ---- Rendering ----
 #pragma region Rendering
-void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& view, Engine::Shader* shader, ImGuiViewportP* viewport, ImGuiWindowFlags windowFlags, GLFWwindow* window, bool renderGUIFlag) {
+void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& view, Engine::Shader* shader, ImGuiViewportP* viewport, ImGuiWindowFlags windowFlags, GLFWwindow* window, bool renderGUIFlag, bool isStereo, const glm::mat4* leftProjection, const glm::mat4* leftView, const glm::mat4* rightProjection, const glm::mat4* rightView) {
     // Set the draw buffer and clear color and depth buffers
     // Only set draw buffer if not using HDR (HDR uses MRT - Multiple Render Targets)
     if (!preferences.hdrSettings.enabled || bloomRenderer == nullptr) {
@@ -3523,7 +3523,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4& projection, const glm::mat4& 
 
     // Calculate cursor position AFTER scene rendering but BEFORE cursor rendering
     // This ensures we read scene depth, not cursor depth from the buffer
-    cursorManager.updateCursorPosition(window, projection, view, shader, false);
+    cursorManager.updateCursorPosition(window, projection, view, shader, false, isStereo, leftProjection, leftView, rightProjection, rightView);
     
     // Update SpaceMouse cursor anchor when cursor position changes
     updateSpaceMouseCursorAnchor();

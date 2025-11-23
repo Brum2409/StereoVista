@@ -1,7 +1,7 @@
 {
     "camera": {
         "autoConvergence": true,
-        "convergence": 9.778964042663574,
+        "convergence": 0.7448713779449463,
         "convergenceCapMax": 40.0,
         "convergenceCapMin": 0.5,
         "convergenceDistanceFactor": 1.0,
@@ -31,7 +31,7 @@
         "bloomIntensity": 0.25999999046325684,
         "bloomThreshold": 0.2800000011920929,
         "enableBloom": true,
-        "enabled": false,
+        "enabled": true,
         "exposure": 2.440000057220459,
         "toneMapOperator": 3
     },

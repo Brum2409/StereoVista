@@ -44,11 +44,16 @@ namespace Cursor {
 
     // Updates 3D cursor position based on mouse position and depth buffer
     void CursorManager::updateCursorPosition(GLFWwindow* window, const glm::mat4& projection, const glm::mat4& view, Engine::Shader* shader) {
-        updateCursorPosition(window, projection, view, shader, true);
+        updateCursorPosition(window, projection, view, shader, true, false, nullptr, nullptr, nullptr, nullptr);
     }
-    
+
     // Updates 3D cursor position with control over when to actually calculate
     void CursorManager::updateCursorPosition(GLFWwindow* window, const glm::mat4& projection, const glm::mat4& view, Engine::Shader* shader, bool forceRecalculate) {
+        updateCursorPosition(window, projection, view, shader, forceRecalculate, false, nullptr, nullptr, nullptr, nullptr);
+    }
+
+    // Updates 3D cursor position with stereo support (checks both eye buffers)
+    void CursorManager::updateCursorPosition(GLFWwindow* window, const glm::mat4& projection, const glm::mat4& view, Engine::Shader* shader, bool forceRecalculate, bool isStereo, const glm::mat4* leftProjection, const glm::mat4* leftView, const glm::mat4* rightProjection, const glm::mat4* rightView) {
         // If we already calculated this frame and not forcing recalculation, return
         if (m_cursorPositionCalculatedThisFrame && !forceRecalculate) {
             return;
@@ -93,10 +98,58 @@ namespace Cursor {
 
         // Read depth at cursor position
         float depth = 0.0;
-        glReadPixels(m_lastX, (float)m_windowHeight - m_lastY, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &depth);
+        glm::mat4 selectedProjection = projection;
+        glm::mat4 selectedView = view;
 
-        // Convert cursor position to world space
-        glm::mat4 vpInv = glm::inverse(projection * view);
+        if (isStereo && leftProjection != nullptr && leftView != nullptr && rightProjection != nullptr && rightView != nullptr) {
+            // In stereo mode, check both eye buffers to find which has geometry under the cursor
+            float leftDepth = 0.0;
+            float rightDepth = 0.0;
+
+            // Read depth from left eye buffer
+            glReadBuffer(GL_BACK_LEFT);
+            glReadPixels(m_lastX, (float)m_windowHeight - m_lastY, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &leftDepth);
+
+            // Read depth from right eye buffer
+            glReadBuffer(GL_BACK_RIGHT);
+            glReadPixels(m_lastX, (float)m_windowHeight - m_lastY, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &rightDepth);
+
+            // Determine which eye has the closer (valid) depth
+            bool leftHit = leftDepth != 1.0;
+            bool rightHit = rightDepth != 1.0;
+
+            if (leftHit && rightHit) {
+                // Both eyes have hits - use the closer depth
+                if (leftDepth < rightDepth) {
+                    depth = leftDepth;
+                    selectedProjection = *leftProjection;
+                    selectedView = *leftView;
+                } else {
+                    depth = rightDepth;
+                    selectedProjection = *rightProjection;
+                    selectedView = *rightView;
+                }
+            } else if (leftHit) {
+                // Only left eye has a hit
+                depth = leftDepth;
+                selectedProjection = *leftProjection;
+                selectedView = *leftView;
+            } else if (rightHit) {
+                // Only right eye has a hit
+                depth = rightDepth;
+                selectedProjection = *rightProjection;
+                selectedView = *rightView;
+            } else {
+                // Neither eye has a hit
+                depth = 1.0;
+            }
+        } else {
+            // Mono mode - read from current buffer
+            glReadPixels(m_lastX, (float)m_windowHeight - m_lastY, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &depth);
+        }
+
+        // Convert cursor position to world space using selected projection/view matrices
+        glm::mat4 vpInv = glm::inverse(selectedProjection * selectedView);
         glm::vec4 ndc = glm::vec4(
             (m_lastX / (float)m_windowWidth) * 2.0 - 1.0,
             1.0 - (m_lastY / (float)m_windowHeight) * 2.0,
