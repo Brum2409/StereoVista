@@ -18,97 +18,86 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
-        fetch-depth: 0  # Needed so we can compare commits to last release
+        fetch-depth: 0  # Needed for git describe to find history
 
     # ---------------------------
     # Determine if code changed
     # ---------------------------
-    - name: Find latest tag
-      id: get_latest_tag
-      run: |
-        $tag = git describe --tags --abbrev=0 2>$null
-        echo "tag=$tag" >> $env:GITHUB_OUTPUT
-
-    - name: Check if code changed since last release
+    - name: Check for changes
       id: check_changes
       shell: pwsh
       run: |
-        $tag = "${{ steps.get_latest_tag.outputs.tag }}"
-
-        if ([string]::IsNullOrEmpty($tag)) {
-            Write-Host "No previous tag → mark as changed."
+        # Try to find the latest tag. Suppress error if none exists.
+        $tag = git describe --tags --abbrev=0 2>$null
+        
+        if (-not $tag) { 
+            Write-Host "No tags found. Treating as first release."
             echo "changed=true" >> $env:GITHUB_OUTPUT
             exit 0
         }
 
-        # Run git diff in CMD so its exit code doesn't break the step
-        cmd /c "git diff --quiet $tag HEAD"
-        $diffExit = $LASTEXITCODE
-
-        if ($diffExit -eq 0) {
-            Write-Host "No changes."
-            echo "changed=false" >> $env:GITHUB_OUTPUT
-        } elseif ($diffExit -eq 1) {
-            Write-Host "Changes detected."
+        Write-Host "Latest tag found: $tag"
+        
+        # Check if there are commits between the tag and HEAD
+        $diff = git diff --name-only $tag HEAD
+        
+        if ($diff) {
+            Write-Host "Changes detected since $tag."
             echo "changed=true" >> $env:GITHUB_OUTPUT
         } else {
-            Write-Host "git diff error code: $diffExit"
-            echo "changed=true" >> $env:GITHUB_OUTPUT  # Fail gracefully
+            Write-Host "No changes since $tag."
+            echo "changed=false" >> $env:GITHUB_OUTPUT
         }
 
-
-    - name: Stop if no code changed
-      if: steps.check_changes.outputs.changed == 'false'
-      run: |
-        Write-Host "No code changes since last release. Skipping release."
-        exit 0
-
     # ---------------------------
-    # Build
+    # Build (Only runs if changed)
     # ---------------------------
+    - name: Setup NuGet
+      if: steps.check_changes.outputs.changed == 'true'
+      uses: NuGet/setup-nuget@v1.2.0
+
     - name: Add MSBuild to PATH
-      uses: microsoft/setup-msbuild@v1.0.2
+      if: steps.check_changes.outputs.changed == 'true'
+      uses: microsoft/setup-msbuild@v2
 
     - name: Restore NuGet packages
+      if: steps.check_changes.outputs.changed == 'true'
       run: nuget restore ${{ env.SOLUTION_FILE_PATH }}
 
     - name: Build
+      if: steps.check_changes.outputs.changed == 'true'
       run: msbuild /m /p:Configuration=${{ env.BUILD_CONFIGURATION }} ${{ env.SOLUTION_FILE_PATH }}
 
     # ---------------------------
     # Collect built files
     # ---------------------------
-    - name: Create artifact folder
+    - name: Zip artifacts
+      if: steps.check_changes.outputs.changed == 'true'
       run: |
-        New-Item -ItemType Directory -Path release -Force
-        Get-ChildItem -Path . -Recurse -Filter Release -Directory |
+        New-Item -ItemType Directory -Path release_stage -Force
+        
+        # Find 'Release' folders, but EXCLUDE 'obj' folders to avoid intermediate files
+        Get-ChildItem -Path . -Recurse -Filter "Release" -Directory | 
+          Where-Object { $_.FullName -notmatch '\\obj\\' } |
           ForEach-Object {
-            Get-ChildItem -Path $_.FullName -Recurse -File |
-              Copy-Item -Destination release -Force
+            Write-Host "Copying files from: $($_.FullName)"
+            Get-ChildItem -Path $_.FullName -Recurse -File | 
+              Copy-Item -Destination release_stage -Force
           }
 
-    - name: Zip artifacts
-      run: |
-        Compress-Archive -Path release\* -DestinationPath build.zip -Force
+        Compress-Archive -Path release_stage\* -DestinationPath build.zip -Force
 
     # ---------------------------
     # Create Release
     # ---------------------------
     - name: Create Release
-      id: create_release
-      uses: actions/create-release@v1
+      if: steps.check_changes.outputs.changed == 'true'
+      uses: softprops/action-gh-release@v1
       with:
         tag_name: v0.0.${{ github.run_number }}
-        release_name: Release v0.0.${{ github.run_number }}
+        name: Release v0.0.${{ github.run_number }}
         draft: false
         prerelease: false
+        files: build.zip
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Upload Release Asset
-      uses: actions/upload-release-asset@v1
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: build.zip
-        asset_name: build.zip
-        asset_content_type: application/zip
