@@ -34,25 +34,26 @@ jobs:
       shell: pwsh
       run: |
         $tag = "${{ steps.get_latest_tag.outputs.tag }}"
+
         if ([string]::IsNullOrEmpty($tag)) {
-            Write-Host "No previous release tag. Marking as changed."
+            Write-Host "No previous tag → mark as changed."
             echo "changed=true" >> $env:GITHUB_OUTPUT
             exit 0
         }
 
-        # Run git diff but DO NOT allow the exit code to fail the step
-        git diff --quiet $tag HEAD
-        $diffExit = $LASTEXITCODE  # Save exit code before it breaks anything
+        # Run git diff in CMD so its exit code doesn't break the step
+        cmd /c "git diff --quiet $tag HEAD"
+        $diffExit = $LASTEXITCODE
 
         if ($diffExit -eq 0) {
-            Write-Host "No changes since last release."
+            Write-Host "No changes."
             echo "changed=false" >> $env:GITHUB_OUTPUT
         } elseif ($diffExit -eq 1) {
-            Write-Host "Changes detected since last release."
+            Write-Host "Changes detected."
             echo "changed=true" >> $env:GITHUB_OUTPUT
         } else {
-            Write-Host "git diff returned an unexpected error code: $diffExit"
-            exit 1
+            Write-Host "git diff error code: $diffExit"
+            echo "changed=true" >> $env:GITHUB_OUTPUT  # Fail gracefully
         }
 
 
