@@ -35,18 +35,24 @@ jobs:
       run: |
         $tag = "${{ steps.get_latest_tag.outputs.tag }}"
         if ([string]::IsNullOrEmpty($tag)) {
-            Write-Host "No previous release tag found. Marking as changed."
+            Write-Host "No previous release tag. Marking as changed."
             echo "changed=true" >> $env:GITHUB_OUTPUT
             exit 0
         }
 
+        # Run git diff but DO NOT allow the exit code to fail the step
         git diff --quiet $tag HEAD
-        if ($LASTEXITCODE -eq 0) {
+        $diffExit = $LASTEXITCODE  # Save exit code before it breaks anything
+
+        if ($diffExit -eq 0) {
             Write-Host "No changes since last release."
             echo "changed=false" >> $env:GITHUB_OUTPUT
-        } else {
+        } elseif ($diffExit -eq 1) {
             Write-Host "Changes detected since last release."
             echo "changed=true" >> $env:GITHUB_OUTPUT
+        } else {
+            Write-Host "git diff returned an unexpected error code: $diffExit"
+            exit 1
         }
 
 
