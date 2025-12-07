@@ -75,6 +75,48 @@ uniform float skyIntensity;
 uniform float emissiveIntensity;
 uniform float materialRoughness;
 
+// World-space irradiance caching uniforms
+uniform bool enableIrradianceCache;
+
+// Grid parameters
+uniform vec3 gridMin;
+uniform vec3 gridMax;
+uniform ivec3 gridResolution;
+
+// Irradiance cache entry structure (matches C++ and compute shader)
+struct IrradianceCacheEntry {
+    vec3 position;
+    float harmonicMeanDist;
+    vec3 normal;
+    float padding1;
+    vec3 irradiance;
+    float padding2;
+};
+
+// Grid cell structure
+struct GridCell {
+    uint entryStart;
+    uint entryCount;
+};
+
+// Cache buffer (binding = 3)
+layout(std430, binding = 3) readonly buffer IrradianceCacheBuffer {
+    uint cacheEntryCount;
+    uint maxCacheEntries;
+    uint padding1, padding2;
+    IrradianceCacheEntry entries[];
+};
+
+// Grid cell buffer (binding = 4)
+layout(std430, binding = 4) readonly buffer GridCellBuffer {
+    GridCell cells[];
+};
+
+// Indirection list (binding = 5)
+layout(std430, binding = 5) readonly buffer GridIndirectionBuffer {
+    uint entryIndices[];
+};
+
 // No camera uniforms needed - we use rasterized fragment position
 
 // Scene lights
@@ -482,25 +524,126 @@ vec3 rayColor(Ray initialRay, int maxDepth, inout uint rngState) {
     return finalColor;
 }
 
+// ---- IRRADIANCE CACHING HELPER FUNCTIONS ----
+
+// Convert world position to grid coordinates
+ivec3 worldToGrid(vec3 worldPos) {
+    vec3 normalized = (worldPos - gridMin) / (gridMax - gridMin);
+    normalized = clamp(normalized, 0.0, 0.999);
+    return ivec3(normalized * vec3(gridResolution));
+}
+
+// Get linear grid index
+uint gridIndex(ivec3 coord) {
+    if (any(lessThan(coord, ivec3(0))) || any(greaterThanEqual(coord, gridResolution))) {
+        return 0xFFFFFFFF; // Invalid
+    }
+    return uint(coord.x + coord.y * gridResolution.x + coord.z * gridResolution.x * gridResolution.y);
+}
+
+// Ward's weight function
+float wardWeight(vec3 entryPos, vec3 entryNormal, float harmonicMeanDist,
+                 vec3 queryPos, vec3 queryNormal) {
+    float dist = length(queryPos - entryPos);
+    float normalDot = max(0.0, dot(entryNormal, queryNormal));
+
+    // Ward's formula: w = 1 / (a + b)
+    // where a = ||x - P|| / R₀
+    // and b = sqrt(1 - N·n)
+    float a = dist / max(0.01, harmonicMeanDist);
+    float b = sqrt(max(0.0, 1.0 - normalDot));
+
+    return 1.0 / (a + b + 0.001); // Add epsilon to avoid division by zero
+}
+
+// Interpolate irradiance using Ward's algorithm
+vec3 interpolateFromCache(vec3 worldPos, vec3 normal) {
+    ivec3 cellCoord = worldToGrid(worldPos);
+
+    vec3 irradiance = vec3(0.0);
+    float totalWeight = 0.0;
+
+    // Search 3x3x3 neighborhood (27 cells)
+    for (int dz = -1; dz <= 1; dz++) {
+        for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                ivec3 neighborCell = cellCoord + ivec3(dx, dy, dz);
+                uint cellIdx = gridIndex(neighborCell);
+
+                if (cellIdx == 0xFFFFFFFF) continue;
+
+                GridCell cell = cells[cellIdx];
+
+                // Check all entries in this cell
+                for (uint i = 0; i < cell.entryCount; i++) {
+                    // Use indirection buffer to get actual entry index
+                    uint entryIdx = entryIndices[cell.entryStart + i];
+                    if (entryIdx >= cacheEntryCount) continue;
+
+                    IrradianceCacheEntry entry = entries[entryIdx];
+
+                    // Compute Ward weight
+                    float weight = wardWeight(entry.position, entry.normal,
+                                            entry.harmonicMeanDist,
+                                            worldPos, normal);
+
+                    if (weight > 0.01) {
+                        irradiance += entry.irradiance * weight;
+                        totalWeight += weight;
+                    }
+                }
+            }
+        }
+    }
+
+    // Normalize
+    if (totalWeight > 0.01) {
+        return irradiance / totalWeight;
+    }
+
+    // No valid cache entries found
+    return vec3(0.0);
+}
+
 // Main lighting calculation with PCG RNG
 vec3 calculateRadianceLighting(vec3 worldPos, vec3 normal, vec3 materialColor, float shininess, vec3 viewDir, inout uint rngState) {
     vec3 color = vec3(0.0);
-    
-    for (int i = 0; i < samplesPerPixel; i++) {
-        vec2 seed = worldPos.xy + float(i) * 0.1;
-        vec2 rand = random2(seed, rngState);
-        
-        vec3 rayDir = sampleCosineHemisphere(normal, rand);
-        
-        color += materialColor * rayColor(createRay(worldPos + 0.001 * normal, rayDir), maxBounces, rngState);
+
+    // Check if irradiance caching is enabled
+    if (enableIrradianceCache && cacheEntryCount > 0) {
+        // Try to interpolate from world-space cache
+        vec3 cachedIrradiance = interpolateFromCache(worldPos, normal);
+
+        // Check if interpolation was successful
+        if (length(cachedIrradiance) > 0.001) {
+            color = cachedIrradiance * materialColor;
+        } else {
+            // Fallback: compute directly if cache miss
+            for (int i = 0; i < samplesPerPixel; i++) {
+                vec2 seed = worldPos.xy + float(i) * 0.1;
+                vec2 rand = random2(seed, rngState);
+                vec3 rayDir = sampleCosineHemisphere(normal, rand);
+                color += materialColor * rayColor(createRay(worldPos + 0.001 * normal, rayDir), maxBounces, rngState);
+            }
+            color /= float(samplesPerPixel);
+        }
+
+    } else {
+        // Original path tracing code (no caching)
+        for (int i = 0; i < samplesPerPixel; i++) {
+            vec2 seed = worldPos.xy + float(i) * 0.1;
+            vec2 rand = random2(seed, rngState);
+            vec3 rayDir = sampleCosineHemisphere(normal, rand);
+            color += materialColor * rayColor(createRay(worldPos + 0.001 * normal, rayDir), maxBounces, rngState);
+        }
+        color /= float(samplesPerPixel);
     }
-    
-    color /= float(samplesPerPixel);
-    
+
+    // Add emissive contribution
     if (material.emissive > 0.0) {
         color += materialColor * material.emissive * emissiveIntensity;
     }
-    
+
     return color;
 }
 
@@ -527,7 +670,7 @@ void main() {
         ivec2 pixelCoord = ivec2(gl_FragCoord.xy);
         uint pixelIndex = uint(pixelCoord.y * 1920 + pixelCoord.x); // Approx. screen width
         uint rngState = pixelIndex + uint(gl_FragCoord.x * gl_FragCoord.y) * 719393u;
-        
+
         result = calculateRadianceLighting(worldPos, normal, materialColor, material.shininess, viewDir, rngState);
     } else {
         result = materialColor * 0.3;

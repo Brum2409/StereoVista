@@ -1,7 +1,7 @@
 {
     "camera": {
         "autoConvergence": true,
-        "convergence": 0.7448713779449463,
+        "convergence": 3.8717598915100098,
         "convergenceCapMax": 40.0,
         "convergenceCapMin": 0.5,
         "convergenceDistanceFactor": 1.0,
@@ -14,7 +14,7 @@
         "mouseSensitivity": 0.07999999821186066,
         "mouseSmoothingFactor": 1.0,
         "nearPlane": 0.009999999776482582,
-        "orbitAroundCursor": true,
+        "orbitAroundCursor": false,
         "orbitFollowsCursor": false,
         "scrollDeceleration": 10.178999900817871,
         "scrollMomentum": 1.0,
@@ -28,7 +28,7 @@
         "currentPreset": "Sphere"
     },
     "hdr": {
-        "bloomIntensity": 0.25999999046325684,
+        "bloomIntensity": 0.04399999976158142,
         "bloomThreshold": 0.2800000011920929,
         "enableBloom": true,
         "enabled": true,
@@ -71,6 +71,27 @@
         "scale": 0.03999999910593033,
         "showScene": true
     },
+    "radiance": {
+        "bvhDebugMaxDepth": 8,
+        "bvhDebugRenderMode": 0,
+        "emissiveIntensity": 1.0,
+        "enableBVH": true,
+        "enableEmissiveLighting": true,
+        "enableIndirectLighting": true,
+        "enableIrradianceCache": false,
+        "enableRaytracing": true,
+        "indirectIntensity": 0.30000001192092896,
+        "irradianceCacheDivisor": 2,
+        "irradianceCacheMaxDistance": 1.600000023841858,
+        "irradianceCacheNormalThreshold": 0.4399999976158142,
+        "irradianceCacheSamplesPerPixel": 3,
+        "materialRoughness": 0.5,
+        "maxBounces": 2,
+        "rayMaxDistance": 50.0,
+        "samplesPerPixel": 1,
+        "showBVHDebug": false,
+        "skyIntensity": 0.44999998807907104
+    },
     "shadows": {
         "cascadeSplitLambda": 0.5,
         "enableCascades": false,
@@ -79,7 +100,7 @@
         "lightSize": 0.0949999988079071,
         "numCascades": 4,
         "pcfKernelSize": 9,
-        "shadowSoftness": 4.5
+        "shadowSoftness": 6.010000228881836
     },
     "skybox": {
         "exposure": 0.05999999865889549,

@@ -105,6 +105,57 @@ namespace Engine {
             glDeleteShader(geometry);
     }
 
+    Shader::Shader(const std::string& computePath, bool isComputeShader) {
+        std::string computeCode;
+        std::ifstream cShaderFile;
+
+        cShaderFile.exceptions(std::ifstream::failbit | std::ifstream::badbit);
+
+        try {
+            cShaderFile.open(computePath);
+            std::stringstream cShaderStream;
+            cShaderStream << cShaderFile.rdbuf();
+            cShaderFile.close();
+            computeCode = cShaderStream.str();
+        }
+        catch (std::ifstream::failure& e) {
+            std::cout << "ERROR::SHADER::COMPUTE::FILE_NOT_SUCCESSFULLY_READ: " << e.what() << std::endl;
+            throw std::runtime_error("Compute shader file reading failed");
+        }
+
+        const char* cShaderCode = computeCode.c_str();
+
+        // Compile compute shader
+        GLuint compute;
+        int success;
+        char infoLog[512];
+
+        compute = glCreateShader(GL_COMPUTE_SHADER);
+        glShaderSource(compute, 1, &cShaderCode, NULL);
+        glCompileShader(compute);
+        glGetShaderiv(compute, GL_COMPILE_STATUS, &success);
+        if (!success) {
+            glGetShaderInfoLog(compute, 512, NULL, infoLog);
+            std::cout << "ERROR::SHADER::COMPUTE::COMPILATION_FAILED\n" << infoLog << std::endl;
+            throw std::runtime_error("Compute shader compilation failed");
+        }
+
+        // Shader program
+        shaderID = glCreateProgram();
+        glAttachShader(shaderID, compute);
+        glLinkProgram(shaderID);
+
+        glGetProgramiv(shaderID, GL_LINK_STATUS, &success);
+        if (!success) {
+            glGetProgramInfoLog(shaderID, 512, NULL, infoLog);
+            std::cout << "ERROR::SHADER::COMPUTE::PROGRAM::LINKING_FAILED\n" << infoLog << std::endl;
+            throw std::runtime_error("Compute shader program linking failed");
+        }
+
+        // Delete shader after linking
+        glDeleteShader(compute);
+    }
+
     Shader* loadShader(const std::string& vertexPath, const std::string& fragmentPath, const std::string& geometryPath) {
         std::vector<std::string> searchPaths = {
             "./shaders/",
@@ -137,6 +188,31 @@ namespace Engine {
         }
 
         throw std::runtime_error("Unable to find shader files");
+    }
+
+    Shader* loadComputeShader(const std::string& computePath) {
+        std::vector<std::string> searchPaths = {
+            "./shaders/",
+            "./",
+            "assets/shaders/"
+        };
+
+        for (const auto& basePath : searchPaths) {
+            std::string fullComputePath = basePath + computePath;
+
+            // Check if file exists
+            if (std::ifstream(fullComputePath).good()) {
+                try {
+                    return new Shader(fullComputePath, true);
+                }
+                catch (const std::exception& e) {
+                    std::cerr << "Error loading compute shader from " << fullComputePath
+                              << ": " << e.what() << std::endl;
+                }
+            }
+        }
+
+        throw std::runtime_error("Unable to find compute shader file: " + computePath);
     }
 
     // Use / Activate the shader

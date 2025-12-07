@@ -1460,6 +1460,23 @@ void renderSettingsWindow() {
 
                     ImGui::Unindent();
                 }
+
+                // Irradiance Caching Section
+                ImGui::Separator();
+                DrawSectionHeader("Irradiance Caching");
+
+                if (ImGui::Checkbox("Enable Irradiance Cache (World-Space Ward)", &preferences.radianceSettings.enableIrradianceCache)) {
+                    ::radianceSettings.enableIrradianceCache = preferences.radianceSettings.enableIrradianceCache;
+                    settingsChanged = true;
+                }
+                ImGui::SameLine(); DrawHelpMarker("Cache indirect lighting using Ward's algorithm for 3-5x performance boost");
+
+                if (preferences.radianceSettings.enableIrradianceCache) {
+                    ImGui::Indent();
+                    ImGui::Text("World-space cache with adaptive sampling");
+                    ImGui::Text("Note: Cache is populated via compute shader");
+                    ImGui::Unindent();
+                }
             }
 
             ImGui::EndTabItem();

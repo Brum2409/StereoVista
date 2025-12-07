@@ -164,6 +164,13 @@ namespace GUI {
             bool showBVHDebug = false;
             int bvhDebugMaxDepth = 3;
             int bvhDebugRenderMode = 1; // 0=DEPTH_TESTED, 1=ALWAYS_ON_TOP, 2=DEPTH_BIASED
+
+            // Irradiance caching settings
+            bool enableIrradianceCache = false;
+            int irradianceCacheDivisor = 4;              // Cache resolution divisor (2, 4, 8)
+            int irradianceCacheSamplesPerPixel = 4;      // Samples per cache pixel (higher quality)
+            float irradianceCacheMaxDistance = 2.0f;     // Max world-space interpolation distance
+            float irradianceCacheNormalThreshold = 0.5f; // Min dot(N,N) for validity
         } radianceSettings;
 
         // Scroll and movement settings

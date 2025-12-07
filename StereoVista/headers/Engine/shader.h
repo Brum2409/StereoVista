@@ -11,6 +11,8 @@ namespace Engine {
     public:
         // Modified constructor to optionally include geometry shader
         Shader(const std::string& vertexPath, const std::string& fragmentPath, const std::string& geometryPath = "");
+        // Compute shader only constructor
+        Shader(const std::string& computePath, bool isComputeShader);
         ~Shader() {
             if (shaderID != 0) {
                 glDeleteProgram(shaderID);
@@ -38,4 +40,6 @@ namespace Engine {
 
     // Modified shader loader function
     Shader* loadShader(const std::string& vertexPath, const std::string& fragmentPath, const std::string& geometryPath = "");
+    // Compute shader loader
+    Shader* loadComputeShader(const std::string& computePath);
 }
