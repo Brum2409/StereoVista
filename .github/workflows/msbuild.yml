@@ -9,7 +9,7 @@ env:
   BUILD_CONFIGURATION: Release
 
 permissions:
-  contents: write   # Needed to create releases
+  contents: write
 
 jobs:
   build:
@@ -17,7 +17,41 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Needed so we can compare commits to last release
 
+    # ---------------------------
+    # Determine if code changed
+    # ---------------------------
+    - name: Find latest tag
+      id: get_latest_tag
+      run: |
+        $tag = git describe --tags --abbrev=0 2>$null
+        echo "tag=$tag" >> $env:GITHUB_OUTPUT
+
+    - name: Check if code changed since last release
+      id: check_changes
+      run: |
+        if ("${{ steps.get_latest_tag.outputs.tag }}" -eq "") {
+          echo "changed=true" >> $env:GITHUB_OUTPUT
+        } else {
+          git diff --quiet ${{ steps.get_latest_tag.outputs.tag }} HEAD
+          if ($LASTEXITCODE -eq 0) {
+            echo "changed=false" >> $env:GITHUB_OUTPUT
+          } else {
+            echo "changed=true" >> $env:GITHUB_OUTPUT
+          }
+        }
+
+    - name: Stop if no code changed
+      if: steps.check_changes.outputs.changed == 'false'
+      run: |
+        Write-Host "No code changes since last release. Skipping release."
+        exit 0
+
+    # ---------------------------
+    # Build
+    # ---------------------------
     - name: Add MSBuild to PATH
       uses: microsoft/setup-msbuild@v1.0.2
 
@@ -27,14 +61,26 @@ jobs:
     - name: Build
       run: msbuild /m /p:Configuration=${{ env.BUILD_CONFIGURATION }} ${{ env.SOLUTION_FILE_PATH }}
 
-    # Adjust this to the actual path of your generated .exe/.dll/.zip
-    - name: Archive build artifacts
+    # ---------------------------
+    # Collect built files
+    # ---------------------------
+    - name: Create artifact folder
       run: |
-        mkdir release
-        copy /y **\bin\Release\* release\
+        New-Item -ItemType Directory -Path release -Force
+        Get-ChildItem -Path . -Recurse -Filter Release -Directory |
+          ForEach-Object {
+            Get-ChildItem -Path $_.FullName -Recurse -File |
+              Copy-Item -Destination release -Force
+          }
 
-    # Create release
-    - name: Create GitHub Release
+    - name: Zip artifacts
+      run: |
+        Compress-Archive -Path release\* -DestinationPath build.zip -Force
+
+    # ---------------------------
+    # Create Release
+    # ---------------------------
+    - name: Create Release
       id: create_release
       uses: actions/create-release@v1
       with:
@@ -45,11 +91,10 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    # Upload assets
     - name: Upload Release Asset
       uses: actions/upload-release-asset@v1
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: release/
-        asset_name: build_output.zip
+        asset_path: build.zip
+        asset_name: build.zip
         asset_content_type: application/zip
