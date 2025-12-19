@@ -7,7 +7,6 @@
 #include <string>
 #include <vector>
 
-
 namespace StereoVista {
 
 // All rebindable actions in the application

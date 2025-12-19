@@ -6,248 +6,266 @@
 #include <vector>
 
 namespace Engine {
-    class Shader;
-    class CursorPreset;
-}
+class Shader;
+class CursorPreset;
+} // namespace Engine
 
 namespace GUI {
-    enum SkyboxType {
-        SKYBOX_CUBEMAP,
-        SKYBOX_HDR,
-        SKYBOX_SOLID_COLOR,
-        SKYBOX_GRADIENT
-    };
+enum SkyboxType {
+  SKYBOX_CUBEMAP,
+  SKYBOX_HDR,
+  SKYBOX_SOLID_COLOR,
+  SKYBOX_GRADIENT
+};
 
-    enum LightingMode {
-        LIGHTING_SHADOW_MAPPING,
-        LIGHTING_VOXEL_CONE_TRACING,
-        LIGHTING_RADIANCE
-    };
+enum LightingMode {
+  LIGHTING_SHADOW_MAPPING,
+  LIGHTING_VOXEL_CONE_TRACING,
+  LIGHTING_RADIANCE
+};
 
-    struct VCTSettings {
-        // Lighting Components
-        bool indirectSpecularLight = true;
-        bool indirectDiffuseLight = true;
-        bool directLight = true;
-        bool shadows = true;
+struct VCTSettings {
+  // Lighting Components
+  bool indirectSpecularLight = true;
+  bool indirectDiffuseLight = true;
+  bool directLight = true;
+  bool shadows = true;
 
-        // Quality Settings
-        float voxelSize = 1.0f / 64.0f;
-        int diffuseConeCount = 9;     // Number of cones for indirect diffuse (1, 5, or 9)
-        float tracingMaxDistance = 1.41421356237; // Maximum distance for cone tracing in grid units (default: SQRT2)
-        int shadowSampleCount = 18;    // Number of samples for shadow cones
-        float shadowStepMultiplier = 0.15f; // Step size multiplier for shadows
-    };
+  // Quality Settings
+  float voxelSize = 1.0f / 64.0f;
+  int diffuseConeCount = 9; // Number of cones for indirect diffuse (1, 5, or 9)
+  float tracingMaxDistance = 1.41421356237; // Maximum distance for cone tracing
+                                            // in grid units (default: SQRT2)
+  int shadowSampleCount = 18;         // Number of samples for shadow cones
+  float shadowStepMultiplier = 0.15f; // Step size multiplier for shadows
+};
 
-    enum CursorScalingMode {
-        CURSOR_NORMAL,
-        CURSOR_FIXED,
-        CURSOR_CONSTRAINED_DYNAMIC,
-        CURSOR_LOGARITHMIC
-    };
+enum CursorScalingMode {
+  CURSOR_NORMAL,
+  CURSOR_FIXED,
+  CURSOR_CONSTRAINED_DYNAMIC,
+  CURSOR_LOGARITHMIC
+};
 
-    enum SpaceMouseAnchorMode {
-        SPACEMOUSE_ANCHOR_DISABLED,      // Use scene center (default)
-        SPACEMOUSE_ANCHOR_ON_START,      // Set anchor when navigation starts, keep it fixed
-        SPACEMOUSE_ANCHOR_CONTINUOUS     // Update anchor every frame during navigation
-    };
+enum SpaceMouseAnchorMode {
+  SPACEMOUSE_ANCHOR_DISABLED,  // Use scene center (default)
+  SPACEMOUSE_ANCHOR_ON_START,  // Set anchor when navigation starts, keep it
+                               // fixed
+  SPACEMOUSE_ANCHOR_CONTINUOUS // Update anchor every frame during navigation
+};
 
-    enum SpaceMouseNavigationMode {
-        SPACEMOUSE_NAV_CAD      // Pivot-based navigation (current behavior)
-    };
+enum SpaceMouseNavigationMode {
+  SPACEMOUSE_NAV_CAD // Pivot-based navigation (current behavior)
+};
 
-    // Structure definitions
-    struct SkyboxConfig {
-        SkyboxType type = SKYBOX_CUBEMAP;
-        glm::vec3 solidColor = glm::vec3(0.2f, 0.3f, 0.4f);
-        glm::vec3 gradientTopColor = glm::vec3(0.1f, 0.1f, 0.3f);
-        glm::vec3 gradientBottomColor = glm::vec3(0.7f, 0.7f, 1.0f);
-        int selectedCubemap = 0;  // Index of the selected predefined cubemap
-        std::string hdrPath = "";  // Path to HDR file
-    };
+// Structure definitions
+struct SkyboxConfig {
+  SkyboxType type = SKYBOX_CUBEMAP;
+  glm::vec3 solidColor = glm::vec3(0.2f, 0.3f, 0.4f);
+  glm::vec3 gradientTopColor = glm::vec3(0.1f, 0.1f, 0.3f);
+  glm::vec3 gradientBottomColor = glm::vec3(0.7f, 0.7f, 1.0f);
+  int selectedCubemap = 0;  // Index of the selected predefined cubemap
+  std::string hdrPath = ""; // Path to HDR file
+};
 
-    struct CubemapPreset {
-        std::string name;
-        std::string path;
-        std::string description;
-    };
+struct CubemapPreset {
+  std::string name;
+  std::string path;
+  std::string description;
+};
 
-    struct FragmentShaderCursorSettings {
-        float baseOuterRadius = 0.04f;
-        float baseOuterBorderThickness = 0.005f;
-        float baseInnerRadius = 0.004f;
-        float baseInnerBorderThickness = 0.005f;
-        glm::vec4 outerColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
-        glm::vec4 innerColor = glm::vec4(1.0f, 1.0f, 1.0f, 0.5f);
-    };
+struct FragmentShaderCursorSettings {
+  float baseOuterRadius = 0.04f;
+  float baseOuterBorderThickness = 0.005f;
+  float baseInnerRadius = 0.004f;
+  float baseInnerBorderThickness = 0.005f;
+  glm::vec4 outerColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
+  glm::vec4 innerColor = glm::vec4(1.0f, 1.0f, 1.0f, 0.5f);
+};
 
-    struct PlaneCursor {
-        GLuint VAO, VBO, EBO;
-        glm::vec4 color = glm::vec4(0.0f, 1.0f, 0.0f, 0.7f);
-        float diameter = 0.5f;
-        bool show = false;
-        Engine::Shader* shader = nullptr;
-    };
+struct PlaneCursor {
+  GLuint VAO, VBO, EBO;
+  glm::vec4 color = glm::vec4(0.0f, 1.0f, 0.0f, 0.7f);
+  float diameter = 0.5f;
+  bool show = false;
+  Engine::Shader *shader = nullptr;
+};
 
-    struct ApplicationPreferences {
-        bool isDarkTheme = true;
-        float separation = 0.5f;
-        float convergence = 2.6f;
-        float nearPlane = 0.1f;
-        float farPlane = 200.0f;
-        std::string currentPresetName = "Sphere";
-        float cameraSpeedFactor = 1.0f;
-        bool showFPS = true;
-        bool show3DCursor = true;
-        bool useNewStereoMethod = true;
-        float fov = 45.0f;
-        
-        // Automatic convergence settings
-        bool autoConvergence = false;
-        float convergenceDistanceFactor = 1.0f;
-        float convergenceSmoothingSpeed = 5.0f;
-        bool enableConvergenceCap = false;
-        float convergenceCapMin = 0.5f;
-        float convergenceCapMax = 40.0f;
+struct ApplicationPreferences {
+  bool isDarkTheme = true;
+  float separation = 0.5f;
+  float convergence = 2.6f;
+  float nearPlane = 0.1f;
+  float farPlane = 200.0f;
+  std::string currentPresetName = "Sphere";
+  float cameraSpeedFactor = 1.0f;
+  bool showFPS = true;
+  bool show3DCursor = true;
+  bool useNewStereoMethod = true;
+  float fov = 45.0f;
 
-        // Stereoscopic display settings
-        bool flipEyes = false;
+  // Automatic convergence settings
+  bool autoConvergence = false;
+  float convergenceDistanceFactor = 1.0f;
+  float convergenceSmoothingSpeed = 5.0f;
+  bool enableConvergenceCap = false;
+  float convergenceCapMin = 0.5f;
+  float convergenceCapMax = 40.0f;
 
-        // Lighting settings
-        LightingMode lightingMode = LIGHTING_SHADOW_MAPPING;
-        bool enableShadows = true;
-        VCTSettings vctSettings;
-        
-        // HDR rendering settings
-        struct HDRSettings {
-            bool enabled = true;
-            float exposure = 1.0f;
-            float bloomThreshold = 1.0f;
-            float bloomIntensity = 0.04f;
-            int toneMapOperator = 0; // 0=Reinhard, 1=ACES, 2=Filmic
-            bool enableBloom = false;
-        } hdrSettings;
-        
-        // Shadow quality settings
-        struct ShadowSettings {
-            int pcfKernelSize = 3; // 3, 5, 7, or 9
-            bool enablePCSS = false;
-            float lightSize = 0.1f; // For PCSS calculations
-            float shadowSoftness = 1.0f; // Softness multiplier for shadow filtering
-            bool enableCascades = false;
-            int numCascades = 4;
-            float cascadeSplitLambda = 0.5f;
-            bool enableIndirectLighting = false; // Enable voxel-based indirect lighting in shadow mapping mode
-        } shadowSettings;
-        
-        // Enhanced material settings
-        struct MaterialSettings {
-            bool enablePBR = true;
-            bool enableAO = true;
-            bool enableNormalMapping = true;
-            bool enableParallaxMapping = false;
-            float normalScale = 1.0f;
-            float heightScale = 0.02f;
-            float metallicFactor = 0.0f;
-            float roughnessFactor = 0.5f;
-        } materialSettings;
-        
-        // Radiance raytracing settings
-        struct RadianceSettings {
-            bool enableRaytracing = true;
-            int maxBounces = 2;
-            int samplesPerPixel = 1;
-            float rayMaxDistance = 50.0f;
-            bool enableIndirectLighting = true;
-            bool enableEmissiveLighting = true;
-            float indirectIntensity = 0.3f;
-            float skyIntensity = 1.0f;
-            float emissiveIntensity = 1.0f;
-            float materialRoughness = 0.5f;
-            bool enableBVH = true;
-            bool showBVHDebug = false;
-            int bvhDebugMaxDepth = 3;
-            int bvhDebugRenderMode = 1; // 0=DEPTH_TESTED, 1=ALWAYS_ON_TOP, 2=DEPTH_BIASED
+  // Stereoscopic display settings
+  bool flipEyes = false;
 
-            // Irradiance caching settings
-            bool enableIrradianceCache = false;
-            int irradianceCacheDivisor = 4;              // Cache resolution divisor (2, 4, 8)
-            int irradianceCacheSamplesPerPixel = 4;      // Samples per cache pixel (higher quality)
-            float irradianceCacheMaxDistance = 2.0f;     // Max world-space interpolation distance
-            float irradianceCacheNormalThreshold = 0.5f; // Min dot(N,N) for validity
-        } radianceSettings;
+  // Lighting settings
+  LightingMode lightingMode = LIGHTING_SHADOW_MAPPING;
+  bool enableShadows = true;
+  VCTSettings vctSettings;
 
-        // Scroll and movement settings
-        float scrollMomentum = 0.5f;
-        float maxScrollVelocity = 3.0f;
-        float scrollDeceleration = 10.0f;
-        bool useSmoothScrolling = true;
-        bool zoomToCursor = true;
-        bool orbitAroundCursor = true;
-        bool orbitFollowsCursor = false;
-        float mouseSmoothingFactor = 1.0f;
-        float mouseSensitivity = 0.17f;
+  // HDR rendering settings
+  struct HDRSettings {
+    bool enabled = true;
+    float exposure = 1.0f;
+    float bloomThreshold = 1.0f;
+    float bloomIntensity = 0.04f;
+    int toneMapOperator = 0; // 0=Reinhard, 1=ACES, 2=Filmic
+    bool enableBloom = false;
+  } hdrSettings;
 
-        bool showStereoVisualization = true;
+  // Shadow quality settings
+  struct ShadowSettings {
+    int pcfKernelSize = 3; // 3, 5, 7, or 9
+    bool enablePCSS = false;
+    float lightSize = 0.1f;      // For PCSS calculations
+    float shadowSoftness = 1.0f; // Softness multiplier for shadow filtering
+    bool enableCascades = false;
+    int numCascades = 4;
+    float cascadeSplitLambda = 0.5f;
+    bool enableIndirectLighting =
+        false; // Enable voxel-based indirect lighting in shadow mapping mode
+  } shadowSettings;
 
-        bool radarEnabled = false;
-        glm::vec2 radarPos = glm::vec2(0.8f, -0.8f);
-        float radarScale = 0.03f;
-        bool radarShowScene = true;
+  // Enhanced material settings
+  struct MaterialSettings {
+    bool enablePBR = true;
+    bool enableAO = true;
+    bool enableNormalMapping = true;
+    bool enableParallaxMapping = false;
+    float normalScale = 1.0f;
+    float heightScale = 0.02f;
+    float metallicFactor = 0.0f;
+    float roughnessFactor = 0.5f;
+  } materialSettings;
 
-        bool showZeroPlane = false;
+  // Radiance raytracing settings
+  struct RadianceSettings {
+    bool enableRaytracing = true;
+    int maxBounces = 2;
+    int samplesPerPixel = 1;
+    float rayMaxDistance = 50.0f;
+    bool enableIndirectLighting = true;
+    bool enableEmissiveLighting = true;
+    float indirectIntensity = 0.3f;
+    float skyIntensity = 1.0f;
+    float emissiveIntensity = 1.0f;
+    float materialRoughness = 0.5f;
+    bool enableBVH = true;
+    bool showBVHDebug = false;
+    int bvhDebugMaxDepth = 3;
+    int bvhDebugRenderMode =
+        1; // 0=DEPTH_TESTED, 1=ALWAYS_ON_TOP, 2=DEPTH_BIASED
 
-        // SpaceMouse settings
-        bool spaceMouseEnabled = true;
-        float spaceMouseDeadzone = 0.025f;
-        float spaceMouseTranslationSensitivity = 1.0f;
-        float spaceMouseRotationSensitivity = 1.0f;
-        SpaceMouseNavigationMode spaceMouseNavigationMode = SPACEMOUSE_NAV_CAD;
-        SpaceMouseAnchorMode spaceMouseAnchorMode = SPACEMOUSE_ANCHOR_DISABLED;
-        bool spaceMouseCenterCursor = false;
+    // Irradiance caching settings
+    bool enableIrradianceCache = false;
+    int irradianceCacheDivisor = 4; // Cache resolution divisor (2, 4, 8)
+    int irradianceCacheSamplesPerPixel =
+        4; // Samples per cache pixel (higher quality)
+    float irradianceCacheMaxDistance =
+        2.0f; // Max world-space interpolation distance
+    float irradianceCacheNormalThreshold = 0.5f; // Min dot(N,N) for validity
+  } radianceSettings;
 
-        int skyboxType = SKYBOX_CUBEMAP;
-        glm::vec3 skyboxSolidColor = glm::vec3(0.2f, 0.3f, 0.4f);
-        glm::vec3 skyboxGradientTop = glm::vec3(0.1f, 0.1f, 0.3f);
-        glm::vec3 skyboxGradientBottom = glm::vec3(0.7f, 0.7f, 1.0f);
-        int selectedCubemap = 0;
-        std::string skyboxHdrPath = "";
-        float skyboxExposure = 0.2f; // Exposure for HDR skyboxes (typical range: 0.1-0.5)
+  // Scroll and movement settings
+  float scrollMomentum = 0.5f;
+  float maxScrollVelocity = 3.0f;
+  float scrollDeceleration = 10.0f;
+  bool useSmoothScrolling = true;
+  bool zoomToCursor = true;
+  bool orbitAroundCursor = true;
+  bool orbitFollowsCursor = false;
+  float mouseSmoothingFactor = 1.0f;
+  float mouseSensitivity = 0.17f;
 
-        // Startup scene settings
-        bool loadStartupScene = false;
-        std::string startupScenePath = "";
-        
-        // Model Import Settings
-        struct ModelImportSettings {
-            bool flipUVs = false;                    // Toggle UV coordinate flipping
-            bool flipNormals = false;                // Flip normals (invert direction)
-            bool generateNormals = true;             // Generate normals if missing
-            bool generateSmoothNormals = false;      // Generate smooth normals instead of flat normals
-            bool calculateTangentSpace = true;       // Calculate tangent and bitangent vectors
-            bool joinIdenticalVertices = true;       // Join identical vertices to reduce redundancy
-            bool sortByPrimitiveType = true;         // Sort by primitive type for better performance
-            bool fixInfacingNormals = false;         // Fix inward-facing normals
-            bool removeRedundantMaterials = true;    // Remove redundant materials
-            bool optimizeMeshes = false;             // Optimize meshes for better performance
-            bool pretransformVertices = false;       // Pre-transform vertices by node hierarchy
-            bool autoScaleLargeModels = true;        // Automatically scale down oversized models to fit scene
-            float maxModelRadius = 5.0f;             // Maximum bounding sphere radius before auto-scaling
-        } modelImportSettings;
+  bool showStereoVisualization = true;
 
-        // Brush Tool Settings
-        struct BrushToolSettings {
-            bool enabled = false;                    // Brush tool enabled/disabled
-            float brushRadius = 0.5f;                // Radius of the brush area
-            int selectedModelIndex = -1;             // Currently selected model for painting
-            float minScale = 0.8f;                   // Minimum scale for painted instances
-            float maxScale = 1.2f;                   // Maximum scale for painted instances
-            float rotationRandomization = 1.0f;      // Rotation randomization amount (0.0 - 1.0)
-            bool alignToNormal = true;               // Align instances to surface normal
-            float colorVariation = 0.1f;             // Color variation for painted instances (0.0 - 1.0)
-            float density = 1.0f;                    // Instances per paint stroke
-            float minSpacing = 0.1f;                 // Minimum distance between instances
-            bool showBrushCursor = true;             // Show brush cursor indicator
-        } brushToolSettings;
-    };
-}
+  bool radarEnabled = false;
+  glm::vec2 radarPos = glm::vec2(0.8f, -0.8f);
+  float radarScale = 0.03f;
+  bool radarShowScene = true;
+
+  bool showZeroPlane = false;
+
+  bool enableSpawnAnimation = true;
+
+  // SpaceMouse settings
+  bool spaceMouseEnabled = true;
+  float spaceMouseDeadzone = 0.025f;
+  float spaceMouseTranslationSensitivity = 1.0f;
+  float spaceMouseRotationSensitivity = 1.0f;
+  SpaceMouseNavigationMode spaceMouseNavigationMode = SPACEMOUSE_NAV_CAD;
+  SpaceMouseAnchorMode spaceMouseAnchorMode = SPACEMOUSE_ANCHOR_DISABLED;
+  bool spaceMouseCenterCursor = false;
+
+  int skyboxType = SKYBOX_CUBEMAP;
+  glm::vec3 skyboxSolidColor = glm::vec3(0.2f, 0.3f, 0.4f);
+  glm::vec3 skyboxGradientTop = glm::vec3(0.1f, 0.1f, 0.3f);
+  glm::vec3 skyboxGradientBottom = glm::vec3(0.7f, 0.7f, 1.0f);
+  int selectedCubemap = 0;
+  std::string skyboxHdrPath = "";
+  float skyboxExposure =
+      0.2f; // Exposure for HDR skyboxes (typical range: 0.1-0.5)
+
+  // Startup scene settings
+  bool loadStartupScene = false;
+  std::string startupScenePath = "";
+
+  // Model Import Settings
+  struct ModelImportSettings {
+    bool flipUVs = false;        // Toggle UV coordinate flipping
+    bool flipNormals = false;    // Flip normals (invert direction)
+    bool generateNormals = true; // Generate normals if missing
+    bool generateSmoothNormals =
+        false; // Generate smooth normals instead of flat normals
+    bool calculateTangentSpace =
+        true; // Calculate tangent and bitangent vectors
+    bool joinIdenticalVertices =
+        true; // Join identical vertices to reduce redundancy
+    bool sortByPrimitiveType =
+        true; // Sort by primitive type for better performance
+    bool fixInfacingNormals = false;      // Fix inward-facing normals
+    bool removeRedundantMaterials = true; // Remove redundant materials
+    bool optimizeMeshes = false; // Optimize meshes for better performance
+    bool pretransformVertices =
+        false; // Pre-transform vertices by node hierarchy
+    bool autoScaleLargeModels =
+        true; // Automatically scale down oversized models to fit scene
+    float maxModelRadius =
+        5.0f; // Maximum bounding sphere radius before auto-scaling
+  } modelImportSettings;
+
+  // Brush Tool Settings
+  struct BrushToolSettings {
+    bool enabled = false;        // Brush tool enabled/disabled
+    float brushRadius = 0.5f;    // Radius of the brush area
+    int selectedModelIndex = -1; // Currently selected model for painting
+    float minScale = 0.8f;       // Minimum scale for painted instances
+    float maxScale = 1.2f;       // Maximum scale for painted instances
+    float rotationRandomization =
+        1.0f;                  // Rotation randomization amount (0.0 - 1.0)
+    bool alignToNormal = true; // Align instances to surface normal
+    float colorVariation =
+        0.1f;             // Color variation for painted instances (0.0 - 1.0)
+    float density = 1.0f; // Instances per paint stroke
+    float minSpacing = 0.1f;     // Minimum distance between instances
+    bool showBrushCursor = true; // Show brush cursor indicator
+  } brushToolSettings;
+};
+} // namespace GUI

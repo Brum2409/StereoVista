@@ -61,4 +61,5 @@ bool InitializeImGuiWithFonts(GLFWwindow* window, bool isDarkTheme);
 void UpdateGuiScale(int windowWidth, int windowHeight);
 float CalculateGuiScale(int windowWidth, int windowHeight);
 void RescaleImGuiFonts(GLFWwindow* window, bool isDarkTheme);
+void RebuildImGuiFontAtlas(bool isDarkTheme);
 void ApplyStylePreset(GuiStylePreset preset);

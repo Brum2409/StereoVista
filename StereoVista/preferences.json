@@ -1,7 +1,7 @@
 {
     "camera": {
         "autoConvergence": true,
-        "convergence": 9.69540786743164,
+        "convergence": 9.930397033691406,
         "convergenceCapMax": 41.900001525878906,
         "convergenceCapMin": 0.5,
         "convergenceDistanceFactor": 1.2999999523162842,
@@ -124,7 +124,7 @@
         "type": 1
     },
     "spacemouse": {
-        "anchorMode": 0,
+        "anchorMode": 1,
         "centerCursor": false,
         "deadzone": 0.12999999523162842,
         "enabled": true,
@@ -138,6 +138,7 @@
     },
     "ui": {
         "darkTheme": true,
+        "enableSpawnAnimation": true,
         "show3DCursor": true,
         "showFPS": true
     }

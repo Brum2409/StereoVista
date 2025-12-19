@@ -1460,6 +1460,7 @@ void savePreferences() {
   j["ui"]["darkTheme"] = preferences.isDarkTheme;
   j["ui"]["showFPS"] = preferences.showFPS;
   j["ui"]["show3DCursor"] = preferences.show3DCursor;
+  j["ui"]["enableSpawnAnimation"] = preferences.enableSpawnAnimation;
 
   // Radar settings
   j["radar"]["enabled"] = preferences.radarEnabled;
@@ -1802,6 +1803,8 @@ void loadPreferences() {
       preferences.isDarkTheme = j["ui"].value("darkTheme", true);
       preferences.showFPS = j["ui"].value("showFPS", true);
       preferences.show3DCursor = j["ui"].value("show3DCursor", true);
+      preferences.enableSpawnAnimation =
+          j["ui"].value("enableSpawnAnimation", true);
     }
 
     // Radar settings
@@ -1866,8 +1869,7 @@ void loadPreferences() {
       // Navigation mode with backward compatibility
       preferences.spaceMouseNavigationMode =
           static_cast<GUI::SpaceMouseNavigationMode>(j["spacemouse"].value(
-              "navigationMode",
-              static_cast<int>(GUI::SPACEMOUSE_NAV_CAD)));
+              "navigationMode", static_cast<int>(GUI::SPACEMOUSE_NAV_CAD)));
 
       // Handle backward compatibility with old useCursorAnchor setting
       if (j["spacemouse"].contains("useCursorAnchor")) {
@@ -2447,7 +2449,9 @@ int main() {
     // Start spawn animation for all loaded models
     for (auto &model : currentScene.models) {
       glm::vec3 targetScale = model.scale;
-      model.startSpawnAnimation(targetScale, 0.27f);
+      if (preferences.enableSpawnAnimation) {
+        model.startSpawnAnimation(targetScale, 1.1f);
+      }
     }
 
     sceneLoaded = true;
@@ -2465,6 +2469,10 @@ int main() {
     cube.name = "Cube";
     cube.position = glm::vec3(0.0f, 0.0f, -1.5f);
     cube.rotation = glm::vec3(glm::radians(15.0f), glm::radians(25.0f), 0.0f);
+    cube.scale = glm::vec3(1.0f);
+    if (preferences.enableSpawnAnimation) {
+      cube.startSpawnAnimation(glm::vec3(1.0f), 1.1f);
+    }
     currentScene.models.push_back(cube);
     std::cout << "Fallback cube created" << std::endl;
   }
@@ -2549,8 +2557,9 @@ int main() {
       // Start spawn animation for all loaded models
       for (auto &model : currentScene.models) {
         glm::vec3 targetScale = model.scale;
-        model.startSpawnAnimation(targetScale,
-                                  0.27f); // Animate over 0.27 seconds
+        if (preferences.enableSpawnAnimation) {
+          model.startSpawnAnimation(targetScale, 1.1f);
+        }
       }
       currentModelIndex = currentScene.models.empty() ? -1 : 0;
       updateSpaceMouseBounds();
@@ -2633,6 +2642,12 @@ int main() {
         static_cast<float>(glfwGetTime()); // Use static_cast for clarity
     deltaTime = currentFrame - lastFrame;
     lastFrame = currentFrame;
+
+    // Fix: Clamp deltaTime to prevent huge jumps after blocking operations
+    // (like file dialogs)
+    if (deltaTime > 0.1f) {
+      deltaTime = 0.1f;
+    }
 
     // Prevent division by zero or negative delta time issues
     if (deltaTime <= 0.0f) {
@@ -3346,7 +3361,8 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
                const glm::mat4 *leftProjection, const glm::mat4 *leftView,
                const glm::mat4 *rightProjection, const glm::mat4 *rightView) {
   // CRITICAL FIX: Calculate grid bounds ONCE and share between shaders
-  // This prevents coordinate system mismatch between cache population and lookup
+  // This prevents coordinate system mismatch between cache population and
+  // lookup
   glm::vec3 sharedGridMin, sharedGridMax;
   glm::ivec3 sharedGridRes;
   bool cacheEnabled = irradianceCache && irradianceCache->isInitialized() &&
@@ -3796,21 +3812,32 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       irradianceCache->bindBuffers();
 
       // Use SHARED grid bounds (same values as compute shader)
-      // This ensures worldToGrid() produces identical cell indices in both shaders
+      // This ensures worldToGrid() produces identical cell indices in both
+      // shaders
       shader->setVec3("gridMin", sharedGridMin);
       shader->setVec3("gridMax", sharedGridMax);
       glUniform3i(glGetUniformLocation(shader->getID(), "gridResolution"),
                   sharedGridRes.x, sharedGridRes.y, sharedGridRes.z);
 
-      // DIAGNOSTIC: Log grid bounds for debugging - should match compute shader values
+      // DIAGNOSTIC: Log grid bounds for debugging - should match compute shader
+      // values
       std::cout << "=== FRAGMENT SHADER GRID BOUNDS ===" << std::endl;
-      std::cout << "Grid bounds: Min(" << sharedGridMin.x << ", " << sharedGridMin.y << ", " << sharedGridMin.z << ")" << std::endl;
-      std::cout << "            Max(" << sharedGridMax.x << ", " << sharedGridMax.y << ", " << sharedGridMax.z << ")" << std::endl;
-      std::cout << "Grid resolution: " << sharedGridRes.x << "x" << sharedGridRes.y << "x" << sharedGridRes.z << std::endl;
-      std::cout << "Total grid cells: " << (sharedGridRes.x * sharedGridRes.y * sharedGridRes.z) << std::endl;
+      std::cout << "Grid bounds: Min(" << sharedGridMin.x << ", "
+                << sharedGridMin.y << ", " << sharedGridMin.z << ")"
+                << std::endl;
+      std::cout << "            Max(" << sharedGridMax.x << ", "
+                << sharedGridMax.y << ", " << sharedGridMax.z << ")"
+                << std::endl;
+      std::cout << "Grid resolution: " << sharedGridRes.x << "x"
+                << sharedGridRes.y << "x" << sharedGridRes.z << std::endl;
+      std::cout << "Total grid cells: "
+                << (sharedGridRes.x * sharedGridRes.y * sharedGridRes.z)
+                << std::endl;
 
       // Check if bounds are degenerate
-      if (sharedGridMin.x >= sharedGridMax.x || sharedGridMin.y >= sharedGridMax.y || sharedGridMin.z >= sharedGridMax.z) {
+      if (sharedGridMin.x >= sharedGridMax.x ||
+          sharedGridMin.y >= sharedGridMax.y ||
+          sharedGridMin.z >= sharedGridMax.z) {
         std::cerr << "ERROR: Degenerate grid bounds!" << std::endl;
       }
     }
@@ -3853,9 +3880,12 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
 
     // DIAGNOSTIC: Verify critical uniforms are set correctly
     std::cout << "=== SHADER UNIFORMS DEBUG ===" << std::endl;
-    std::cout << "enableRaytracing: " << radianceSettings.enableRaytracing << std::endl;
-    std::cout << "enableIrradianceCache: " << radianceSettings.enableIrradianceCache << std::endl;
-    std::cout << "samplesPerPixel: " << radianceSettings.samplesPerPixel << std::endl;
+    std::cout << "enableRaytracing: " << radianceSettings.enableRaytracing
+              << std::endl;
+    std::cout << "enableIrradianceCache: "
+              << radianceSettings.enableIrradianceCache << std::endl;
+    std::cout << "samplesPerPixel: " << radianceSettings.samplesPerPixel
+              << std::endl;
     std::cout << "maxBounces: " << radianceSettings.maxBounces << std::endl;
 
     // Verify the correct shader is active
@@ -4047,9 +4077,10 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
         irradianceCache->isInitialized() &&
         radianceSettings.enableIrradianceCache && triangleCount > 0) {
 
-      // CRITICAL FIX: Clear cache EVERY frame to prevent stale data accumulation
-      // The diagnostic output showed cache growing from 7663 to 8272 entries across frames
-      // This indicates it wasn't being cleared properly, causing zero/black irradiance values
+      // CRITICAL FIX: Clear cache EVERY frame to prevent stale data
+      // accumulation The diagnostic output showed cache growing from 7663 to
+      // 8272 entries across frames This indicates it wasn't being cleared
+      // properly, causing zero/black irradiance values
       irradianceCache->clear();
 
       // Use compute shader to populate cache
@@ -4059,18 +4090,25 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       irradianceCache->bindBuffers();
 
       // Use SHARED grid bounds (calculated once at beginning of renderEye)
-      // This ensures worldToGrid() produces identical cell indices in both shaders
+      // This ensures worldToGrid() produces identical cell indices in both
+      // shaders
       irradianceCacheComputeShader->setVec3("gridMin", sharedGridMin);
       irradianceCacheComputeShader->setVec3("gridMax", sharedGridMax);
       glUniform3i(glGetUniformLocation(irradianceCacheComputeShader->getID(),
                                        "gridResolution"),
                   sharedGridRes.x, sharedGridRes.y, sharedGridRes.z);
 
-      // DIAGNOSTIC: Log compute shader grid bounds - should match fragment shader
+      // DIAGNOSTIC: Log compute shader grid bounds - should match fragment
+      // shader
       std::cout << "=== COMPUTE SHADER GRID BOUNDS ===" << std::endl;
-      std::cout << "Grid bounds: Min(" << sharedGridMin.x << ", " << sharedGridMin.y << ", " << sharedGridMin.z << ")" << std::endl;
-      std::cout << "            Max(" << sharedGridMax.x << ", " << sharedGridMax.y << ", " << sharedGridMax.z << ")" << std::endl;
-      std::cout << "Grid resolution: " << sharedGridRes.x << "x" << sharedGridRes.y << "x" << sharedGridRes.z << std::endl;
+      std::cout << "Grid bounds: Min(" << sharedGridMin.x << ", "
+                << sharedGridMin.y << ", " << sharedGridMin.z << ")"
+                << std::endl;
+      std::cout << "            Max(" << sharedGridMax.x << ", "
+                << sharedGridMax.y << ", " << sharedGridMax.z << ")"
+                << std::endl;
+      std::cout << "Grid resolution: " << sharedGridRes.x << "x"
+                << sharedGridRes.y << "x" << sharedGridRes.z << std::endl;
 
       // Set sampling parameters
       // CRITICAL FIX: Ward recommends 32-64 samples for stable harmonic mean
@@ -4096,23 +4134,28 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       // Wait for compute to finish before fragment shader reads cache
       glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
-      // CRITICAL: Ensure GPU has fully completed all operations before CPU reads
+      // CRITICAL: Ensure GPU has fully completed all operations before CPU
+      // reads
       glFinish();
 
       // DIAGNOSTIC: Read back cache entry count from GPU
-      glBindBuffer(GL_SHADER_STORAGE_BUFFER, irradianceCache->getCacheBufferSSBO());
+      glBindBuffer(GL_SHADER_STORAGE_BUFFER,
+                   irradianceCache->getCacheBufferSSBO());
       uint32_t gpuEntryCount = 0;
-      glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(uint32_t), &gpuEntryCount);
+      glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(uint32_t),
+                         &gpuEntryCount);
       glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
       std::cout << "=== IRRADIANCE CACHE DEBUG ===" << std::endl;
       std::cout << "Cache entry count (GPU): " << gpuEntryCount << std::endl;
       std::cout << "Triangle count: " << triangleCount << std::endl;
-      std::cout << "Expected samples: ~" << (triangleCount / 4) << " (1 in 4 triangles, after validation)" << std::endl;
+      std::cout << "Expected samples: ~" << (triangleCount / 4)
+                << " (1 in 4 triangles, after validation)" << std::endl;
 
       // DIAGNOSTIC STEP 10: Read back first cache entry to verify data validity
       if (gpuEntryCount > 0) {
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, irradianceCache->getCacheBufferSSBO());
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER,
+                     irradianceCache->getCacheBufferSSBO());
 
         struct CacheEntry {
           glm::vec3 position;
@@ -4125,17 +4168,22 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
 
         // Read first entry (skip 16-byte header: 4 uint32s)
         CacheEntry firstEntry;
-        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 16 + 0 * sizeof(CacheEntry),
-                           sizeof(CacheEntry), &firstEntry);
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER,
+                           16 + 0 * sizeof(CacheEntry), sizeof(CacheEntry),
+                           &firstEntry);
 
         std::cout << "=== FIRST CACHE ENTRY DEBUG ===" << std::endl;
         std::cout << "Position: (" << firstEntry.position.x << ", "
-                  << firstEntry.position.y << ", " << firstEntry.position.z << ")" << std::endl;
+                  << firstEntry.position.y << ", " << firstEntry.position.z
+                  << ")" << std::endl;
         std::cout << "Normal: (" << firstEntry.normal.x << ", "
-                  << firstEntry.normal.y << ", " << firstEntry.normal.z << ")" << std::endl;
+                  << firstEntry.normal.y << ", " << firstEntry.normal.z << ")"
+                  << std::endl;
         std::cout << "Irradiance: (" << firstEntry.irradiance.x << ", "
-                  << firstEntry.irradiance.y << ", " << firstEntry.irradiance.z << ")" << std::endl;
-        std::cout << "Harmonic mean dist: " << firstEntry.harmonicMeanDist << std::endl;
+                  << firstEntry.irradiance.y << ", " << firstEntry.irradiance.z
+                  << ")" << std::endl;
+        std::cout << "Harmonic mean dist: " << firstEntry.harmonicMeanDist
+                  << std::endl;
 
         // DIAGNOSTIC: Calculate harmonic mean distance distribution statistics
         // This helps verify the Ward algorithm fixes are working correctly
@@ -4147,14 +4195,15 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
         for (uint32_t i = 0; i < sampleCount; i++) {
           CacheEntry entry;
           glGetBufferSubData(GL_SHADER_STORAGE_BUFFER,
-                            16 + i * sizeof(CacheEntry),
-                            sizeof(CacheEntry), &entry);
+                             16 + i * sizeof(CacheEntry), sizeof(CacheEntry),
+                             &entry);
 
           float hmd = entry.harmonicMeanDist;
 
           // Skip NaN/Inf values in statistics
           if (!std::isnan(hmd) && !std::isinf(hmd) && hmd > 0.0f) {
-            if (hmd >= 999.0f) hmd1000Count++;  // Count pathologically large values
+            if (hmd >= 999.0f)
+              hmd1000Count++; // Count pathologically large values
             minHMD = std::min(minHMD, hmd);
             maxHMD = std::max(maxHMD, hmd);
             avgHMD += hmd;
@@ -4165,11 +4214,13 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
         if (validCount > 0) {
           avgHMD /= validCount;
 
-          std::cout << "\n=== HARMONIC MEAN DISTANCE STATS (sampled " << sampleCount << " entries) ===" << std::endl;
+          std::cout << "\n=== HARMONIC MEAN DISTANCE STATS (sampled "
+                    << sampleCount << " entries) ===" << std::endl;
           std::cout << "Min HMD: " << minHMD << std::endl;
           std::cout << "Max HMD: " << maxHMD << std::endl;
           std::cout << "Avg HMD: " << avgHMD << std::endl;
-          std::cout << "Entries with HMD >= 999: " << hmd1000Count << " / " << sampleCount;
+          std::cout << "Entries with HMD >= 999: " << hmd1000Count << " / "
+                    << sampleCount;
           if (hmd1000Count > 0) {
             std::cout << " (" << (100.0f * hmd1000Count / sampleCount) << "%)";
           }
@@ -4177,11 +4228,17 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
 
           // Quality assessment based on Ward's recommendations
           if (avgHMD < 1.0f) {
-            std::cout << "⚠️ WARNING: Average HMD very small - may indicate too dense sampling" << std::endl;
+            std::cout << "⚠️ WARNING: Average HMD very small - may indicate too "
+                         "dense sampling"
+                      << std::endl;
           } else if (avgHMD > 50.0f) {
-            std::cout << "⚠️ WARNING: Average HMD very large - patches may be too big" << std::endl;
+            std::cout
+                << "⚠️ WARNING: Average HMD very large - patches may be too big"
+                << std::endl;
           } else {
-            std::cout << "✓ Harmonic mean distances in reasonable range (1-50 units)" << std::endl;
+            std::cout
+                << "✓ Harmonic mean distances in reasonable range (1-50 units)"
+                << std::endl;
           }
         }
 
@@ -4189,9 +4246,11 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       }
 
       if (gpuEntryCount == 0) {
-        std::cout << "ERROR: Compute shader ran but created NO entries!" << std::endl;
+        std::cout << "ERROR: Compute shader ran but created NO entries!"
+                  << std::endl;
         std::cout << "Possible causes:" << std::endl;
-        std::cout << "  - All triangles filtered by isCovered() check" << std::endl;
+        std::cout << "  - All triangles filtered by isCovered() check"
+                  << std::endl;
         std::cout << "  - Grid bounds don't cover scene geometry" << std::endl;
         std::cout << "  - Compute shader not executing properly" << std::endl;
       }
@@ -4207,7 +4266,8 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       // CRITICAL FIX: Set cache entry count for fragment shader!
       // Without this, fragment shader thinks cache is empty and skips lookup
       shader->setInt("cacheEntryCount", gpuEntryCount);
-      std::cout << "Set cacheEntryCount uniform to: " << gpuEntryCount << std::endl;
+      std::cout << "Set cacheEntryCount uniform to: " << gpuEntryCount
+                << std::endl;
 
       // DIAGNOSTIC: Check if grid cells are actually populated
       if (gpuEntryCount > 0) {
@@ -4217,7 +4277,8 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
           // NO padding - must match IrradianceCache.h structure exactly!
         };
 
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, irradianceCache->getGridCellsSSBO());
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER,
+                     irradianceCache->getGridCellsSSBO());
 
         uint32_t gridSize = sharedGridRes.x * sharedGridRes.y * sharedGridRes.z;
         uint32_t nonEmptyCells = 0;
@@ -4228,7 +4289,8 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
         uint32_t samplesToCheck = std::min(gridSize, 1000u);
         for (uint32_t i = 0; i < samplesToCheck; i++) {
           GridCell cell;
-          glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, i * sizeof(GridCell), sizeof(GridCell), &cell);
+          glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, i * sizeof(GridCell),
+                             sizeof(GridCell), &cell);
 
           if (cell.entryCount > 0) {
             nonEmptyCells++;
@@ -4239,16 +4301,25 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
 
         std::cout << "\n=== GRID CELL POPULATION DEBUG ===" << std::endl;
         std::cout << "Total grid cells: " << gridSize << std::endl;
-        std::cout << "Non-empty cells (sampled " << samplesToCheck << "): " << nonEmptyCells << std::endl;
-        std::cout << "Total entries in sampled cells: " << totalEntries << std::endl;
-        std::cout << "Max entries in a single cell: " << maxEntriesInCell << std::endl;
-        std::cout << "Avg entries per non-empty cell: " << (nonEmptyCells > 0 ? (float)totalEntries / nonEmptyCells : 0.0f) << std::endl;
+        std::cout << "Non-empty cells (sampled " << samplesToCheck
+                  << "): " << nonEmptyCells << std::endl;
+        std::cout << "Total entries in sampled cells: " << totalEntries
+                  << std::endl;
+        std::cout << "Max entries in a single cell: " << maxEntriesInCell
+                  << std::endl;
+        std::cout << "Avg entries per non-empty cell: "
+                  << (nonEmptyCells > 0 ? (float)totalEntries / nonEmptyCells
+                                        : 0.0f)
+                  << std::endl;
 
         if (nonEmptyCells == 0) {
-          std::cout << "ERROR: No grid cells populated! Cache lookup will fail!" << std::endl;
+          std::cout << "ERROR: No grid cells populated! Cache lookup will fail!"
+                    << std::endl;
           std::cout << "Possible causes:" << std::endl;
-          std::cout << "  - worldToGrid() returning out-of-bounds coordinates" << std::endl;
-          std::cout << "  - gridIndex() always returning 0xFFFFFFFF" << std::endl;
+          std::cout << "  - worldToGrid() returning out-of-bounds coordinates"
+                    << std::endl;
+          std::cout << "  - gridIndex() always returning 0xFFFFFFFF"
+                    << std::endl;
           std::cout << "  - Atomic operations on cells[] failing" << std::endl;
         }
 
@@ -4263,24 +4334,30 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
 
   GLboolean depthTestEnabled;
   glGetBooleanv(GL_DEPTH_TEST, &depthTestEnabled);
-  std::cout << "Depth test enabled: " << (depthTestEnabled ? "YES" : "NO") << std::endl;
+  std::cout << "Depth test enabled: " << (depthTestEnabled ? "YES" : "NO") <<
+  std::endl;
 
   GLboolean blendEnabled;
   glGetBooleanv(GL_BLEND, &blendEnabled);
-  std::cout << "Blending enabled: " << (blendEnabled ? "YES" : "NO") << std::endl;
+  std::cout << "Blending enabled: " << (blendEnabled ? "YES" : "NO") <<
+  std::endl;
 
   GLboolean cullFaceEnabled;
   glGetBooleanv(GL_CULL_FACE, &cullFaceEnabled);
-  std::cout << "Culling enabled: " << (cullFaceEnabled ? "YES" : "NO") << std::endl;
+  std::cout << "Culling enabled: " << (cullFaceEnabled ? "YES" : "NO") <<
+  std::endl;
 
   GLint depthFunc;
   glGetIntegerv(GL_DEPTH_FUNC, &depthFunc);
-  std::cout << "Depth func: " << depthFunc << " (GL_LESS=" << GL_LESS << ")" << std::endl;
+  std::cout << "Depth func: " << depthFunc << " (GL_LESS=" << GL_LESS << ")" <<
+  std::endl;
 
   GLboolean colorMask[4];
   glGetBooleanv(GL_COLOR_WRITEMASK, colorMask);
-  std::cout << "Color mask: R=" << (int)colorMask[0] << " G=" << (int)colorMask[1]
-            << " B=" << (int)colorMask[2] << " A=" << (int)colorMask[3] << std::endl;
+  std::cout << "Color mask: R=" << (int)colorMask[0] << " G=" <<
+  (int)colorMask[1]
+            << " B=" << (int)colorMask[2] << " A=" << (int)colorMask[3] <<
+  std::endl;
     */
   // Render scene - cache buffers still bound, fragment shader can read them
   renderModels(shader);
@@ -4640,7 +4717,6 @@ void renderPointClouds(Engine::Shader *shader) {
 
   for (auto &pointCloud : currentScene.pointClouds) {
 
-
     if (!pointCloud.visible) {
       continue;
     }
@@ -4666,8 +4742,11 @@ void renderPointClouds(Engine::Shader *shader) {
 
     // DIAGNOSTIC: Verify isPointCloud uniform is set
     GLint isPointCloudValue;
-    glGetUniformiv(shader->getID(), glGetUniformLocation(shader->getID(), "isPointCloud"), &isPointCloudValue);
-    std::cout << "  isPointCloud uniform value: " << isPointCloudValue << std::endl;
+    glGetUniformiv(shader->getID(),
+                   glGetUniformLocation(shader->getID(), "isPointCloud"),
+                   &isPointCloudValue);
+    std::cout << "  isPointCloud uniform value: " << isPointCloudValue
+              << std::endl;
 
     // Always use octree-based rendering (legacy system removed)
     if (pointCloud.octreeRoot) {

@@ -426,7 +426,8 @@ ShortcutProfile ShortcutManager::createDefaultProfile() {
   profile.setBinding(ShortcutAction::DeleteObject, KeyBinding(GLFW_KEY_DELETE),
                      0);
   profile.setBinding(ShortcutAction::ToggleSpaceMouseMode,
-                     KeyBinding(GLFW_KEY_M, true, false, true), 0);  // Ctrl+Shift+M
+                     KeyBinding(GLFW_KEY_M, true, false, true),
+                     0); // Ctrl+Shift+M
 
   // New actions start unbound - users can assign keys as needed
 
