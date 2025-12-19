@@ -152,7 +152,7 @@ Ray createRay(vec3 origin, vec3 direction) {
     return ray;
 }
 
-// Ray-triangle intersection (Möller–Trumbore)
+// Ray-triangle intersection (MÃ¶llerâ€“Trumbore)
 bool intersectTriangle(Ray ray, Triangle tri, out float t) {
     const float EPSILON = 0.0000001;
     vec3 edge1 = tri.v1 - tri.v0;
@@ -316,16 +316,30 @@ bool isCovered(vec3 position, vec3 normal) {
                 if (cellIdx == 0xFFFFFFFF) continue;
 
                 GridCell cell = cells[cellIdx];
-                for (uint i = 0; i < cell.entryCount; i++) {
+                
+                // Limit iterations and validate
+                uint maxIter = min(cell.entryCount, 16u);
+                for (uint i = 0; i < maxIter; i++) {
                     uint entryIdx = entryIndices[cell.entryStart + i];
+                    
+                    // Skip invalid entries (0xFFFFFFFF is sentinel for uninitialized)
+                    if (entryIdx == 0xFFFFFFFF || entryIdx >= cacheEntryCount) continue;
+                    
                     IrradianceCacheEntry entry = entries[entryIdx];
+
+                    // Validate entry data
+                    if (entry.harmonicMeanDist <= 0.0 || isnan(entry.harmonicMeanDist)) continue;
 
                     float dist = length(position - entry.position);
                     float normalDot = dot(normal, entry.normal);
 
                     // Ward's coverage test
+                    // CRITICAL FIX: Tighter threshold for better cache density
+                    // r < 0.5 = only mark as covered if within 0.5× harmonicMeanDist
+                    // normalDot > 0.707 = normals must be within ~45° (stricter than 60°)
+                    // This allows more cache entries to be created for better coverage
                     float r = dist / entry.harmonicMeanDist;
-                    if (r < 1.0 && normalDot > 0.5 && dist > 0.001) {
+                    if (r < 0.5 && normalDot > 0.707 && dist > 0.001) {
                         return true;
                     }
                 }
@@ -359,11 +373,13 @@ vec3 traceRay(vec3 origin, vec3 direction, out float hitDistance) {
 }
 
 // Compute irradiance with harmonic mean distance
+// Fixed to properly implement Ward's algorithm - only use actual geometry hits
 vec3 computeIrradiance(vec3 position, vec3 normal, out float harmonicMeanDist) {
     uint seed = uint(gl_GlobalInvocationID.x * 1973 + gl_GlobalInvocationID.y * 9277 + randomSeed * 26699);
 
     vec3 irradiance = vec3(0.0);
     float harmonicSum = 0.0;
+    int validSamples = 0;
 
     for (int i = 0; i < samplesPerEntry; i++) {
         vec3 direction = sampleCosineHemisphere(normal, seed);
@@ -374,11 +390,27 @@ vec3 computeIrradiance(vec3 position, vec3 normal, out float harmonicMeanDist) {
         float cosTheta = max(0.0, dot(direction, normal));
         irradiance += rayColor * cosTheta;
 
-        harmonicSum += 1.0 / max(0.1, hitDist);
+        // CRITICAL FIX: Only count hits to actual geometry for harmonic mean
+        // Sky hits (>= 100 units) are ignored to prevent artificial large patch sizes
+        // This follows Ward's algorithm - harmonic mean represents local feature size
+        if (hitDist < 100.0) {
+            harmonicSum += 1.0 / hitDist;
+            validSamples++;
+        }
     }
 
     irradiance /= float(samplesPerEntry);
-    harmonicMeanDist = float(samplesPerEntry) / max(0.001, harmonicSum);
+
+    // Compute harmonic mean from valid geometry hits only
+    if (validSamples > 0) {
+        harmonicMeanDist = float(validSamples) / harmonicSum;
+        // Cap at reasonable maximum to prevent pathological values
+        harmonicMeanDist = min(harmonicMeanDist, 50.0);
+    } else {
+        // No nearby geometry found - use moderate default value
+        // This prevents huge patches in open areas
+        harmonicMeanDist = 20.0;
+    }
 
     return irradiance;
 }
@@ -391,8 +423,9 @@ void main() {
         return;
     }
 
-    // Sample every 8th triangle for sparse coverage (adjustable)
-    if ((triangleIdx % 8) != 0) {
+    // CRITICAL FIX: Sample every 4th triangle for better coverage
+    // Was 8th, but this left too many gaps - doubling density improves quality
+    if ((triangleIdx % 4) != 0) {
         return;
     }
 
@@ -400,7 +433,20 @@ void main() {
 
     // Use triangle centroid as cache entry position
     vec3 position = (tri.v0 + tri.v1 + tri.v2) / 3.0;
-    vec3 normal = normalize(tri.normal);
+
+    // CRITICAL FIX: Validate triangle normal BEFORE normalizing to prevent NaN
+    // Degenerate triangles (zero-length normals) would produce NaN when normalized
+    float normalLength = length(tri.normal);
+    if (normalLength < 0.0001) {
+        // Skip degenerate triangle - cannot compute valid irradiance
+        return;
+    }
+    vec3 normal = tri.normal / normalLength;  // Safe normalization
+
+    // Validate position is not NaN/Inf
+    if (any(isnan(position)) || any(isinf(position))) {
+        return;
+    }
 
     // Check if this position needs a cache entry
     if (isCovered(position, normal)) {
@@ -411,6 +457,18 @@ void main() {
     float harmonicMeanDist;
     vec3 irradiance = computeIrradiance(position, normal, harmonicMeanDist);
 
+    // CRITICAL: Validate computed values before storing
+    // Reject entries with NaN/Inf values that would corrupt interpolation
+    if (any(isnan(irradiance)) || any(isinf(irradiance)) ||
+        isnan(harmonicMeanDist) || isinf(harmonicMeanDist)) {
+        return;
+    }
+
+    // If ray tracing produced no lighting, use ambient fallback to prevent invisible geometry
+    if (length(irradiance) < 0.001) {
+        irradiance = vec3(0.1, 0.1, 0.1); // 10% ambient light
+    }
+
     // Allocate cache entry
     uint entryIdx = atomicAdd(cacheEntryCount, 1);
 
@@ -418,29 +476,31 @@ void main() {
         return; // Cache full
     }
 
-    // Store entry
+    // Store entry - initialize ALL fields to prevent garbage in padding
     entries[entryIdx].position = position;
-    entries[entryIdx].normal = normal;
-    entries[entryIdx].irradiance = irradiance;
     entries[entryIdx].harmonicMeanDist = harmonicMeanDist;
+    entries[entryIdx].normal = normal;
+    entries[entryIdx].padding1 = 0.0;
+    entries[entryIdx].irradiance = irradiance;
+    entries[entryIdx].padding2 = 0.0;
 
     // Add to grid with proper indirection buffer management
     ivec3 cellCoord = worldToGrid(position);
     uint cellIdx = gridIndex(cellCoord);
 
     if (cellIdx != 0xFFFFFFFF) {
-        // Atomically allocate space for this entry within the cell
-        uint localIdx = atomicAdd(cells[cellIdx].entryCount, 1);
-
         // Pre-allocated indirection buffer: each cell gets maxEntriesPerCell slots
         const uint maxEntriesPerCell = 16;  // Maximum entries per grid cell
         uint indirectionBase = cellIdx * maxEntriesPerCell;
 
+        // Atomically allocate space for this entry within the cell
+        uint localIdx = atomicAdd(cells[cellIdx].entryCount, 1);
+
         if (localIdx < maxEntriesPerCell) {
-            // Set cell's start index on first entry
-            if (localIdx == 0) {
-                cells[cellIdx].entryStart = indirectionBase;
-            }
+            // Always set entryStart to the fixed indirection base for this cell
+            // This is idempotent and safe from race conditions since indirectionBase
+            // is always the same for a given cellIdx
+            cells[cellIdx].entryStart = indirectionBase;
 
             // Write entry index to indirection buffer
             entryIndices[indirectionBase + localIdx] = entryIdx;

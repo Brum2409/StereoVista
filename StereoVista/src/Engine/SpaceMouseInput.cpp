@@ -199,22 +199,26 @@ public:
     bool m_transactionActive;
     
     void RefreshPivotPosition() {
-        if (m_navlibHandle != 0 && m_parent->m_anchorMode != GUI::SPACEMOUSE_ANCHOR_DISABLED) {
+        // Refresh pivot when anchor mode is enabled
+        bool shouldRefresh = (m_parent->m_anchorMode != GUI::SPACEMOUSE_ANCHOR_DISABLED);
+
+        if (m_navlibHandle != 0 && shouldRefresh) {
             glm::vec3 pivotPoint = GetCurrentPivotPoint();
-            
+
             // Force NavLib to re-query the pivot position by writing the pivot position value
             navlib::value_t pivotValue;
             pivotValue.type = navlib::point_type;
             pivotValue.point.x = pivotPoint.x;
             pivotValue.point.y = pivotPoint.y;
             pivotValue.point.z = pivotPoint.z;
-            
+
             // Try to write the pivot position to force update
             navlib::NlWriteValue(m_navlibHandle, navlib::pivot_position_k, &pivotValue);
         }
     }
     
     glm::vec3 GetCurrentPivotPoint() const {
+        // Use anchor mode settings
         switch (m_parent->m_anchorMode) {
             case GUI::SPACEMOUSE_ANCHOR_ON_START:
                 return m_parent->m_navigationStartAnchor;
@@ -249,25 +253,27 @@ private:
         }
 
         const double* matrixData = &value->matrix[0];
-        glm::mat4 cameraMatrix = m_parent->ConvertNavlibMatrix(matrixData);
-        
+        glm::mat4 newCameraMatrix = m_parent->ConvertNavlibMatrix(matrixData);
+
+        // CAD MODE: Use pivot-based logic
+
         // Get current camera state for deadzone comparison
         glm::vec3 currentPosition = m_parent->m_camera->Position;
         glm::vec3 currentFront = m_parent->m_camera->Front;
         glm::vec3 currentUp = m_parent->m_camera->Up;
-        
-        glm::vec3 newPosition = glm::vec3(cameraMatrix[3]);
-        glm::vec3 newForward = -glm::normalize(glm::vec3(cameraMatrix[2]));
-        glm::vec3 newUp = glm::normalize(glm::vec3(cameraMatrix[1]));
+
+        glm::vec3 newPosition = glm::vec3(newCameraMatrix[3]);
+        glm::vec3 newForward = -glm::normalize(glm::vec3(newCameraMatrix[2]));
+        glm::vec3 newUp = glm::normalize(glm::vec3(newCameraMatrix[1]));
 
         // Apply deadzone filtering
         glm::vec3 positionDelta = newPosition - currentPosition;
         glm::vec3 forwardDelta = newForward - currentFront;
         glm::vec3 upDelta = newUp - currentUp;
-        
+
         float positionMagnitude = glm::length(positionDelta);
         float rotationMagnitude = glm::length(forwardDelta) + glm::length(upDelta);
-        
+
         // Only update if movement exceeds deadzone threshold
         if (positionMagnitude > m_parent->m_deadzone || rotationMagnitude > m_parent->m_deadzone * 0.1f) {
             m_parent->m_camera->Position = newPosition;
@@ -434,7 +440,8 @@ SpaceMouseInput::SpaceMouseInput()
     , m_cursorAnchor(0.0f)
     , m_anchorMode(GUI::SPACEMOUSE_ANCHOR_DISABLED)
     , m_centerCursor(false)
-    , m_navigationStartAnchor(0.0f) {
+    , m_navigationStartAnchor(0.0f)
+    , m_navigationMode(GUI::SPACEMOUSE_NAV_CAD) {
 }
 
 SpaceMouseInput::~SpaceMouseInput() {
@@ -482,7 +489,9 @@ void SpaceMouseInput::Update(float deltaTime) {
     if (!m_enabled || !m_navigationModel || !m_camera) {
         return;
     }
-    
+
+    // CAD mode is handled by NavLib callbacks automatically
+
     m_lastUpdateTime += deltaTime;
 }
 
@@ -529,6 +538,10 @@ void SpaceMouseInput::SetAnchorMode(GUI::SpaceMouseAnchorMode mode) {
 
 void SpaceMouseInput::SetCenterCursor(bool centerCursor) {
     m_centerCursor = centerCursor;
+}
+
+void SpaceMouseInput::SetNavigationMode(GUI::SpaceMouseNavigationMode mode) {
+    m_navigationMode = mode;
 }
 
 void SpaceMouseInput::RefreshPivotPosition() {

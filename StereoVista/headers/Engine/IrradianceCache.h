@@ -51,6 +51,11 @@ public:
   // Check if initialized
   bool isInitialized() const { return m_initialized; }
 
+  // Get buffer handles for debugging
+  GLuint getCacheBufferSSBO() const { return m_cacheBufferSSBO; }
+  GLuint getGridCellsSSBO() const { return m_gridCellBufferSSBO; }
+  GLuint getIndirectionSSBO() const { return m_indirectionBufferSSBO; }
+
 private:
   // OpenGL buffer objects
   GLuint m_cacheBufferSSBO;       // Main cache entries (binding = 3)

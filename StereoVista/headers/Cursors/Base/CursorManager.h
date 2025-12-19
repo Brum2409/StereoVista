@@ -76,6 +76,10 @@ namespace Cursor {
         const glm::vec3& getBackgroundCursorPosition() const { return m_backgroundCursorPosition; }
         bool hasBackgroundCursorPosition() const { return m_hasBackgroundCursorPosition; }
 
+        // Cursor inside window tracking
+        bool IsCursorInsideWindow() const { return m_cursorInsideWindow; }
+        void SetCursorInsideWindow(bool inside) { m_cursorInsideWindow = inside; }
+
     private:
         std::unique_ptr<SphereCursor> m_sphereCursor;
         std::unique_ptr<FragmentCursor> m_fragmentCursor;
@@ -102,7 +106,10 @@ namespace Cursor {
         // Mouse position
         float m_lastX;
         float m_lastY;
-        
+
+        // Cursor inside window tracking
+        bool m_cursorInsideWindow;
+
         // Helper function to calculate background cursor position
         glm::vec3 calculateBackgroundCursorPosition(GLFWwindow* window, const glm::mat4& projection, const glm::mat4& view);
     };

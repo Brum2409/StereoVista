@@ -57,6 +57,16 @@ namespace Engine {
             glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, cellCount * sizeof(GridCell), cells.data());
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
         }
+
+        // CRITICAL: Also clear the indirection buffer to prevent stale index reads
+        if (m_indirectionBufferSSBO != 0) {
+            const uint32_t maxEntriesPerCell = 16;
+            uint32_t indirectionSize = getGridCellCount() * maxEntriesPerCell;
+            std::vector<uint32_t> indirectionData(indirectionSize, 0xFFFFFFFF);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_indirectionBufferSSBO);
+            glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, indirectionSize * sizeof(uint32_t), indirectionData.data());
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        }
     }
 
     void IrradianceCache::setSceneBounds(const glm::vec3& minBounds, const glm::vec3& maxBounds) {
@@ -110,15 +120,35 @@ namespace Engine {
         const uint32_t maxEntriesPerCell = 16;  // Must match shader constant!
         uint32_t indirectionSize = cellCount * maxEntriesPerCell;
 
+        // CRITICAL: Initialize with 0xFFFFFFFF (invalid index) to detect uninitialized reads
+        std::vector<uint32_t> indirectionData(indirectionSize, 0xFFFFFFFF);
+
         glGenBuffers(1, &m_indirectionBufferSSBO);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_indirectionBufferSSBO);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, indirectionSize * sizeof(uint32_t), nullptr, GL_DYNAMIC_DRAW);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, indirectionSize * sizeof(uint32_t), indirectionData.data(), GL_DYNAMIC_DRAW);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
         std::cout << "Cache buffers created: "
                   << "CacheBuffer=" << (cacheBufferSize / 1024) << "KB, "
                   << "GridCells=" << cellCount << ", "
                   << "Indirection=" << indirectionSize << std::endl;
+
+        // VALIDATION: Read back header to verify initialization
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_cacheBufferSSBO);
+        uint32_t headerReadback[4] = {0};
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(headerReadback), headerReadback);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+        std::cout << "Cache buffer header after init:" << std::endl;
+        std::cout << "  cacheEntryCount: " << headerReadback[0] << std::endl;
+        std::cout << "  maxCacheEntries: " << headerReadback[1] << std::endl;
+
+        if (headerReadback[0] != 0) {
+            std::cerr << "ERROR: cacheEntryCount should be 0 after init!" << std::endl;
+        }
+        if (headerReadback[1] != m_maxEntries) {
+            std::cerr << "ERROR: maxCacheEntries mismatch!" << std::endl;
+        }
     }
 
     void IrradianceCache::destroyBuffers() {

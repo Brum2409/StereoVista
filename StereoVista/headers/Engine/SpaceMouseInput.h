@@ -75,7 +75,11 @@ public:
     // Set anchor mode and cursor centering options
     void SetAnchorMode(GUI::SpaceMouseAnchorMode mode);
     void SetCenterCursor(bool centerCursor);
-    
+
+    // Set navigation mode
+    void SetNavigationMode(GUI::SpaceMouseNavigationMode mode);
+    GUI::SpaceMouseNavigationMode GetNavigationMode() const { return m_navigationMode; }
+
     // Callbacks for extended functionality
     std::function<void()> OnNavigationStarted;
     std::function<void()> OnNavigationEnded;
@@ -111,7 +115,10 @@ private:
     GUI::SpaceMouseAnchorMode m_anchorMode;
     bool m_centerCursor;
     glm::vec3 m_navigationStartAnchor;
-    
+
+    // Navigation mode settings
+    GUI::SpaceMouseNavigationMode m_navigationMode;
+
     // Helper functions
     void UpdateCameraFromNavlib();
     glm::mat4 ConvertNavlibMatrix(const double* navlibMatrix) const;

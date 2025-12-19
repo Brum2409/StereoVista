@@ -68,6 +68,7 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
                            int mods);
 void mouse_callback(GLFWwindow *window, double xpos, double ypos);
 void framebuffer_size_callback(GLFWwindow *window, int width, int height);
+void cursor_enter_callback(GLFWwindow *window, int entered);
 
 // ---- Rendering Functions ----
 void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
@@ -406,6 +407,19 @@ void window_focus_callback(GLFWwindow *window, int focused) {
   } else {
     // The window lost input focus
     windowHasFocus = false;
+  }
+}
+
+void cursor_enter_callback(GLFWwindow *window, int entered) {
+  // Update cursor manager to track if cursor is inside window
+  cursorManager.SetCursorInsideWindow(entered == GLFW_TRUE);
+
+  // When cursor exits, immediately invalidate cursor position to prevent
+  // one frame of rendering at the window edge
+  if (entered == GLFW_FALSE) {
+    cursorManager.getSphereCursor()->setPositionValid(false);
+    cursorManager.getFragmentCursor()->setPositionValid(false);
+    cursorManager.getPlaneCursor()->setPositionValid(false);
   }
 }
 
@@ -1488,6 +1502,8 @@ void savePreferences() {
       preferences.spaceMouseTranslationSensitivity;
   j["spacemouse"]["rotationSensitivity"] =
       preferences.spaceMouseRotationSensitivity;
+  j["spacemouse"]["navigationMode"] =
+      static_cast<int>(preferences.spaceMouseNavigationMode);
   j["spacemouse"]["anchorMode"] =
       static_cast<int>(preferences.spaceMouseAnchorMode);
   j["spacemouse"]["centerCursor"] = preferences.spaceMouseCenterCursor;
@@ -1846,6 +1862,12 @@ void loadPreferences() {
           j["spacemouse"].value("translationSensitivity", 1.0f);
       preferences.spaceMouseRotationSensitivity =
           j["spacemouse"].value("rotationSensitivity", 1.0f);
+
+      // Navigation mode with backward compatibility
+      preferences.spaceMouseNavigationMode =
+          static_cast<GUI::SpaceMouseNavigationMode>(j["spacemouse"].value(
+              "navigationMode",
+              static_cast<int>(GUI::SPACEMOUSE_NAV_CAD)));
 
       // Handle backward compatibility with old useCursorAnchor setting
       if (j["spacemouse"].contains("useCursorAnchor")) {
@@ -2317,6 +2339,7 @@ int main() {
   glfwSetKeyCallback(window, key_callback);
   glfwSetMouseButtonCallback(window, mouse_button_callback);
   glfwSetWindowFocusCallback(window, window_focus_callback);
+  glfwSetCursorEnterCallback(window, cursor_enter_callback);
 
   voxelizer = new Engine::Voxelizer(128);
 
@@ -2420,6 +2443,12 @@ int main() {
     // Sync lights from scene to global variables
     pointLights = currentScene.pointLights;
     spotLights = currentScene.spotLights;
+
+    // Start spawn animation for all loaded models
+    for (auto &model : currentScene.models) {
+      glm::vec3 targetScale = model.scale;
+      model.startSpawnAnimation(targetScale, 0.27f);
+    }
 
     sceneLoaded = true;
     std::cout << "Successfully loaded office.scene" << std::endl;
@@ -2545,6 +2574,7 @@ int main() {
 
     // Apply SpaceMouse preferences
     spaceMouseInput.SetEnabled(preferences.spaceMouseEnabled);
+    spaceMouseInput.SetNavigationMode(preferences.spaceMouseNavigationMode);
     spaceMouseInput.SetDeadzone(preferences.spaceMouseDeadzone);
     spaceMouseInput.SetSensitivity(preferences.spaceMouseTranslationSensitivity,
                                    preferences.spaceMouseRotationSensitivity);
@@ -2678,8 +2708,37 @@ int main() {
           modelScrollVelocity * scrollSensitivity * distanceToModel;
 
       // Move model along camera's front direction
-      currentScene.models[currentSelectedIndex].position +=
-          camera.Front * adjustedVelocity * deltaTime;
+      glm::vec3 movement = camera.Front * adjustedVelocity * deltaTime;
+      currentScene.models[currentSelectedIndex].position += movement;
+
+      // Update grab point to move with the model
+      if (hasModelGrabPoint) {
+        modelGrabPoint += movement;
+
+        // Update cursor position to track the grab point on screen
+        glm::mat4 viewMatrix = camera.GetViewMatrix();
+        glm::mat4 projMatrix = camera.GetProjectionMatrix(
+            aspectRatio, preferences.nearPlane, preferences.farPlane);
+        glm::mat4 viewProjMatrix = projMatrix * viewMatrix;
+
+        // Project grab point to screen space
+        glm::vec4 grabScreenPos =
+            viewProjMatrix * glm::vec4(modelGrabPoint, 1.0f);
+        if (grabScreenPos.w > 0.0f) {
+          grabScreenPos /= grabScreenPos.w;
+
+          // Convert NDC to screen coordinates
+          float screenX = (grabScreenPos.x + 1.0f) * 0.5f * windowWidth;
+          float screenY = (1.0f - grabScreenPos.y) * 0.5f * windowHeight;
+
+          // Update hidden cursor position to track the grab point
+          glfwSetCursorPos(Window::nativeWindow, screenX, screenY);
+
+          // Update lastX/lastY to prevent jump on next mouse movement
+          lastX = screenX;
+          lastY = screenY;
+        }
+      }
 
       // Apply deceleration
       float deceleration = modelScrollDeceleration * deltaTime;
@@ -2708,6 +2767,26 @@ int main() {
       pointLights[currentSelectedIndex].position +=
           camera.Front * adjustedVelocity * deltaTime;
 
+      // Update cursor position to track the light on screen
+      glm::mat4 viewMatrix = camera.GetViewMatrix();
+      glm::mat4 projMatrix = camera.GetProjectionMatrix(
+          aspectRatio, preferences.nearPlane, preferences.farPlane);
+      glm::mat4 viewProjMatrix = projMatrix * viewMatrix;
+
+      glm::vec4 lightScreenPos =
+          viewProjMatrix *
+          glm::vec4(pointLights[currentSelectedIndex].position, 1.0f);
+      if (lightScreenPos.w > 0.0f) {
+        lightScreenPos /= lightScreenPos.w;
+
+        float screenX = (lightScreenPos.x + 1.0f) * 0.5f * windowWidth;
+        float screenY = (1.0f - lightScreenPos.y) * 0.5f * windowHeight;
+
+        glfwSetCursorPos(Window::nativeWindow, screenX, screenY);
+        lastX = screenX;
+        lastY = screenY;
+      }
+
       // Apply deceleration
       float deceleration = modelScrollDeceleration * deltaTime;
       if (abs(modelScrollVelocity) <= deceleration) {
@@ -2733,6 +2812,26 @@ int main() {
       // Move spot light along camera's front direction
       spotLights[currentSelectedIndex].position +=
           camera.Front * adjustedVelocity * deltaTime;
+
+      // Update cursor position to track the light on screen
+      glm::mat4 viewMatrix = camera.GetViewMatrix();
+      glm::mat4 projMatrix = camera.GetProjectionMatrix(
+          aspectRatio, preferences.nearPlane, preferences.farPlane);
+      glm::mat4 viewProjMatrix = projMatrix * viewMatrix;
+
+      glm::vec4 lightScreenPos =
+          viewProjMatrix *
+          glm::vec4(spotLights[currentSelectedIndex].position, 1.0f);
+      if (lightScreenPos.w > 0.0f) {
+        lightScreenPos /= lightScreenPos.w;
+
+        float screenX = (lightScreenPos.x + 1.0f) * 0.5f * windowWidth;
+        float screenY = (1.0f - lightScreenPos.y) * 0.5f * windowHeight;
+
+        glfwSetCursorPos(Window::nativeWindow, screenX, screenY);
+        lastX = screenX;
+        lastY = screenY;
+      }
 
       // Apply deceleration
       float deceleration = modelScrollDeceleration * deltaTime;
@@ -2760,114 +2859,142 @@ int main() {
       // --- Process Movement Based on Active Mode ---
       if (isMovingModel && currentSelectedType == SelectedType::Model &&
           currentSelectedIndex != -1) {
-        // Use proper screen-to-world space conversion for model dragging
-        // This ensures the cursor stays exactly on the model where it started
+        // Only update model position if there's actual mouse movement
+        // This prevents floating-point drift from projection/unprojection
+        // cycles
+        if (abs(totalXOffset) > 0.001f || abs(totalYOffset) > 0.001f) {
+          // Use the GRAB POINT as the reference for screen-space calculations
+          // This ensures the cursor stays exactly on the point where it grabbed
+          // the model
 
-        glm::vec3 modelPos = currentScene.models[currentSelectedIndex].position;
-        float distanceToModel = glm::distance(camera.Position, modelPos);
+          glm::mat4 view = camera.GetViewMatrix();
+          glm::mat4 projection = camera.GetProjectionMatrix(
+              aspectRatio, preferences.nearPlane, preferences.farPlane);
+          glm::mat4 viewProj = projection * view;
 
-        // Project model position to screen space
-        glm::mat4 view = camera.GetViewMatrix();
-        glm::mat4 projection = camera.GetProjectionMatrix(
-            aspectRatio, preferences.nearPlane, preferences.farPlane);
-        glm::mat4 viewProj = projection * view;
+          // Use grab point as reference, or model position if no grab point
+          glm::vec3 referencePoint =
+              hasModelGrabPoint
+                  ? modelGrabPoint
+                  : currentScene.models[currentSelectedIndex].position;
 
-        // Convert world space position to screen space
-        glm::vec4 modelScreenPos = viewProj * glm::vec4(modelPos, 1.0f);
-        modelScreenPos /= modelScreenPos.w; // Perspective divide
+          // Calculate offset from grab point to model center (to preserve after
+          // movement)
+          glm::vec3 grabToModelOffset =
+              currentScene.models[currentSelectedIndex].position -
+              referencePoint;
 
-        // Convert to screen coordinates
-        float screenX = (modelScreenPos.x + 1.0f) * 0.5f * windowWidth;
-        float screenY =
-            (1.0f - modelScreenPos.y) * 0.5f * windowHeight; // Flip Y
+          // Project the reference point (grab point) to screen space
+          glm::vec4 refScreenPos = viewProj * glm::vec4(referencePoint, 1.0f);
+          refScreenPos /= refScreenPos.w; // Perspective divide
 
-        // Apply mouse offset in screen space
-        screenX += totalXOffset;
-        screenY -= totalYOffset; // Invert Y to match cursor movement direction
+          // Convert to screen coordinates
+          float screenX = (refScreenPos.x + 1.0f) * 0.5f * windowWidth;
+          float screenY =
+              (1.0f - refScreenPos.y) * 0.5f * windowHeight; // Flip Y
 
-        // Convert back to NDC
-        glm::vec2 newNDC = glm::vec2((screenX / windowWidth) * 2.0f - 1.0f,
-                                     1.0f - (screenY / windowHeight) * 2.0f);
+          // Apply mouse offset in screen space
+          screenX += totalXOffset;
+          screenY -=
+              totalYOffset; // Invert Y to match cursor movement direction
 
-        // Project the new screen position back to world space at the same depth
-        glm::vec4 newWorldPos =
-            glm::vec4(newNDC.x, newNDC.y, modelScreenPos.z, 1.0f);
-        newWorldPos = glm::inverse(viewProj) * newWorldPos;
-        newWorldPos /= newWorldPos.w;
+          // Convert back to NDC
+          glm::vec2 newNDC = glm::vec2((screenX / windowWidth) * 2.0f - 1.0f,
+                                       1.0f - (screenY / windowHeight) * 2.0f);
 
-        // Update model position
-        currentScene.models[currentSelectedIndex].position =
-            glm::vec3(newWorldPos);
+          // Unproject to get the new grab point position in world space
+          glm::vec4 newGrabPointWorld =
+              glm::vec4(newNDC.x, newNDC.y, refScreenPos.z, 1.0f);
+          newGrabPointWorld = glm::inverse(viewProj) * newGrabPointWorld;
+          newGrabPointWorld /= newGrabPointWorld.w;
+
+          // Update grab point position
+          if (hasModelGrabPoint) {
+            modelGrabPoint = glm::vec3(newGrabPointWorld);
+          }
+
+          // Update model position by applying the same offset from the new grab
+          // point
+          currentScene.models[currentSelectedIndex].position =
+              glm::vec3(newGrabPointWorld) + grabToModelOffset;
+        }
       } else if (isMovingModel &&
                  currentSelectedType == SelectedType::PointLight &&
                  currentSelectedIndex != -1) {
-        // Point light dragging using same screen-to-world conversion as models
-        glm::vec3 lightPos = pointLights[currentSelectedIndex].position;
-        float distanceToLight = glm::distance(camera.Position, lightPos);
+        // Only update light position if there's actual mouse movement
+        if (abs(totalXOffset) > 0.001f || abs(totalYOffset) > 0.001f) {
+          // Point light dragging using same screen-to-world conversion as
+          // models
+          glm::vec3 lightPos = pointLights[currentSelectedIndex].position;
+          float distanceToLight = glm::distance(camera.Position, lightPos);
 
-        // Project light position to screen space
-        glm::mat4 view = camera.GetViewMatrix();
-        glm::mat4 projection = camera.GetProjectionMatrix(
-            aspectRatio, preferences.nearPlane, preferences.farPlane);
-        glm::mat4 viewProj = projection * view;
+          // Project light position to screen space
+          glm::mat4 view = camera.GetViewMatrix();
+          glm::mat4 projection = camera.GetProjectionMatrix(
+              aspectRatio, preferences.nearPlane, preferences.farPlane);
+          glm::mat4 viewProj = projection * view;
 
-        // Convert world space position to screen space
-        glm::vec4 lightScreenPos = viewProj * glm::vec4(lightPos, 1.0f);
-        lightScreenPos /= lightScreenPos.w; // Perspective divide
+          // Convert world space position to screen space
+          glm::vec4 lightScreenPos = viewProj * glm::vec4(lightPos, 1.0f);
+          lightScreenPos /= lightScreenPos.w; // Perspective divide
 
-        // Convert to NDC and add mouse offset
-        glm::vec2 currentNDC = glm::vec2(lightScreenPos.x, lightScreenPos.y);
-        glm::vec2 mouseOffsetNDC =
-            glm::vec2(totalXOffset / (windowWidth * 0.5f),
-                      totalYOffset / (windowHeight * 0.5f));
-        glm::vec2 newNDC = currentNDC + mouseOffsetNDC;
+          // Convert to NDC and add mouse offset
+          glm::vec2 currentNDC = glm::vec2(lightScreenPos.x, lightScreenPos.y);
+          glm::vec2 mouseOffsetNDC =
+              glm::vec2(totalXOffset / (windowWidth * 0.5f),
+                        totalYOffset / (windowHeight * 0.5f));
+          glm::vec2 newNDC = currentNDC + mouseOffsetNDC;
 
-        // Convert back to world space
-        glm::vec4 newWorldPos =
-            glm::vec4(newNDC.x, newNDC.y, lightScreenPos.z, 1.0f);
-        newWorldPos = glm::inverse(viewProj) * newWorldPos;
-        newWorldPos /= newWorldPos.w;
+          // Convert back to world space
+          glm::vec4 newWorldPos =
+              glm::vec4(newNDC.x, newNDC.y, lightScreenPos.z, 1.0f);
+          newWorldPos = glm::inverse(viewProj) * newWorldPos;
+          newWorldPos /= newWorldPos.w;
 
-        // Update point light position
-        pointLights[currentSelectedIndex].position = glm::vec3(newWorldPos);
+          // Update point light position
+          pointLights[currentSelectedIndex].position = glm::vec3(newWorldPos);
+        }
       } else if (isMovingModel &&
                  currentSelectedType == SelectedType::SpotLight &&
                  currentSelectedIndex != -1) {
-        // Spot light dragging using same screen-to-world conversion as models
-        glm::vec3 lightPos = spotLights[currentSelectedIndex].position;
-        float distanceToLight = glm::distance(camera.Position, lightPos);
+        // Only update light position if there's actual mouse movement
+        if (abs(totalXOffset) > 0.001f || abs(totalYOffset) > 0.001f) {
+          // Spot light dragging using same screen-to-world conversion as models
+          glm::vec3 lightPos = spotLights[currentSelectedIndex].position;
+          float distanceToLight = glm::distance(camera.Position, lightPos);
 
-        // Project light position to screen space
-        glm::mat4 view = camera.GetViewMatrix();
-        glm::mat4 projection = camera.GetProjectionMatrix(
-            aspectRatio, preferences.nearPlane, preferences.farPlane);
-        glm::mat4 viewProj = projection * view;
+          // Project light position to screen space
+          glm::mat4 view = camera.GetViewMatrix();
+          glm::mat4 projection = camera.GetProjectionMatrix(
+              aspectRatio, preferences.nearPlane, preferences.farPlane);
+          glm::mat4 viewProj = projection * view;
 
-        // Convert world space position to screen space
-        glm::vec4 lightScreenPos = viewProj * glm::vec4(lightPos, 1.0f);
-        lightScreenPos /= lightScreenPos.w; // Perspective divide
+          // Convert world space position to screen space
+          glm::vec4 lightScreenPos = viewProj * glm::vec4(lightPos, 1.0f);
+          lightScreenPos /= lightScreenPos.w; // Perspective divide
 
-        // Convert to NDC and add mouse offset
-        glm::vec2 currentNDC = glm::vec2(lightScreenPos.x, lightScreenPos.y);
-        glm::vec2 mouseOffsetNDC =
-            glm::vec2(totalXOffset / (windowWidth * 0.5f),
-                      totalYOffset / (windowHeight * 0.5f));
-        glm::vec2 newNDC = currentNDC + mouseOffsetNDC;
+          // Convert to NDC and add mouse offset
+          glm::vec2 currentNDC = glm::vec2(lightScreenPos.x, lightScreenPos.y);
+          glm::vec2 mouseOffsetNDC =
+              glm::vec2(totalXOffset / (windowWidth * 0.5f),
+                        totalYOffset / (windowHeight * 0.5f));
+          glm::vec2 newNDC = currentNDC + mouseOffsetNDC;
 
-        // Convert back to world space
-        glm::vec4 newWorldPos =
-            glm::vec4(newNDC.x, newNDC.y, lightScreenPos.z, 1.0f);
-        newWorldPos = glm::inverse(viewProj) * newWorldPos;
-        newWorldPos /= newWorldPos.w;
+          // Convert back to world space
+          glm::vec4 newWorldPos =
+              glm::vec4(newNDC.x, newNDC.y, lightScreenPos.z, 1.0f);
+          newWorldPos = glm::inverse(viewProj) * newWorldPos;
+          newWorldPos /= newWorldPos.w;
 
-        // Update spot light position
-        spotLights[currentSelectedIndex].position = glm::vec3(newWorldPos);
+          // Update spot light position
+          spotLights[currentSelectedIndex].position = glm::vec3(newWorldPos);
+        }
       } else if ((camera.IsOrbiting || camera.IsPanning || rightMousePressed) &&
                  !camera.IsAnimating) {
         // Pass the accumulated offsets directly to the camera's processing
-        // function. The Camera class handles applying its own MouseSensitivity
-        // and determining whether to Orbit, Pan, or Free-Look based on its
-        // internal state (IsOrbiting, IsPanning).
+        // function. The Camera class handles applying its own
+        // MouseSensitivity and determining whether to Orbit, Pan, or
+        // Free-Look based on its internal state (IsOrbiting, IsPanning).
         camera.ProcessMouseMovement(totalXOffset, totalYOffset);
       }
 
@@ -2882,8 +3009,9 @@ int main() {
     }
 
     // ---- Handle Keyboard Input ----
-    // Process continuous key presses (like WASD movement) after event polling.
-    // Don't process keyboard movement when SpaceMouse is actively navigating
+    // Process continuous key presses (like WASD movement) after event
+    // polling. Don't process keyboard movement when SpaceMouse is actively
+    // navigating
     if (!spaceMouseActive) {
       Input::handleKeyInput(
           camera, deltaTime); // Make sure handleKeyInput uses deltaTime
@@ -3217,6 +3345,32 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
                GLFWwindow *window, bool renderGUIFlag, bool isStereo,
                const glm::mat4 *leftProjection, const glm::mat4 *leftView,
                const glm::mat4 *rightProjection, const glm::mat4 *rightView) {
+  // CRITICAL FIX: Calculate grid bounds ONCE and share between shaders
+  // This prevents coordinate system mismatch between cache population and lookup
+  glm::vec3 sharedGridMin, sharedGridMax;
+  glm::ivec3 sharedGridRes;
+  bool cacheEnabled = irradianceCache && irradianceCache->isInitialized() &&
+                      radianceSettings.enableIrradianceCache;
+
+  if (cacheEnabled) {
+    // Calculate grid bounds from BVH root
+    if (bvhBuilt && !gpuBVHNodes.empty()) {
+      const auto &rootNode = gpuBVHNodes[0];
+      sharedGridMin = glm::vec3(rootNode.minX, rootNode.minY, rootNode.minZ);
+      sharedGridMax = glm::vec3(rootNode.maxX, rootNode.maxY, rootNode.maxZ);
+    } else {
+      // Fallback: use default bounds
+      sharedGridMin = glm::vec3(-10.0f, -10.0f, -10.0f);
+      sharedGridMax = glm::vec3(10.0f, 10.0f, 10.0f);
+    }
+
+    // Add 5% padding to avoid edge cases
+    glm::vec3 padding = (sharedGridMax - sharedGridMin) * 0.05f;
+    sharedGridMin -= padding;
+    sharedGridMax += padding;
+    sharedGridRes = irradianceCache->getGridResolution();
+  }
+
   // Set the draw buffer and clear color and depth buffers
   // Only set draw buffer if not using HDR (HDR uses MRT - Multiple Render
   // Targets)
@@ -3344,7 +3498,8 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
         pointShadowShader->setFloat("far_plane", far_plane);
         pointShadowShader->setInt("lightIndex", li);
 
-        // Render scene to this light's 6 faces in array layers via GS gl_Layer
+        // Render scene to this light's 6 faces in array layers via GS
+        // gl_Layer
         renderModels(pointShadowShader);
       }
 
@@ -3450,8 +3605,8 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
 
   // Shadow mapping specific setup
   if (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING) {
-    // Calculate light space matrix based on actual scene bounds (same as depth
-    // pass)
+    // Calculate light space matrix based on actual scene bounds (same as
+    // depth pass)
     lightSpaceMatrix = calculateLightSpaceMatrix();
 
     shader->setMat4("lightSpaceMatrix", lightSpaceMatrix);
@@ -3557,8 +3712,8 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     shader->setFloat("vctSettings.shadowStepMultiplier",
                      vctSettings.shadowStepMultiplier);
 
-    // Set default values for point shadow uniforms (not used in VCT but need to
-    // be defined)
+    // Set default values for point shadow uniforms (not used in VCT but need
+    // to be defined)
     shader->setVec3("lightPos", glm::vec3(0.0f));
     shader->setFloat("far_plane", 50.0f);
 
@@ -3640,18 +3795,24 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       // Bind cache SSBOs
       irradianceCache->bindBuffers();
 
-      // Set grid parameters
-      glm::vec3 gridMin, gridMax;
-      // TODO: Calculate scene bounds dynamically
-      gridMin = glm::vec3(-10, -10, -10);
-      gridMax = glm::vec3(10, 10, 10);
-
-      shader->setVec3("gridMin", gridMin);
-      shader->setVec3("gridMax", gridMax);
-
-      glm::ivec3 gridRes = irradianceCache->getGridResolution();
+      // Use SHARED grid bounds (same values as compute shader)
+      // This ensures worldToGrid() produces identical cell indices in both shaders
+      shader->setVec3("gridMin", sharedGridMin);
+      shader->setVec3("gridMax", sharedGridMax);
       glUniform3i(glGetUniformLocation(shader->getID(), "gridResolution"),
-                  gridRes.x, gridRes.y, gridRes.z);
+                  sharedGridRes.x, sharedGridRes.y, sharedGridRes.z);
+
+      // DIAGNOSTIC: Log grid bounds for debugging - should match compute shader values
+      std::cout << "=== FRAGMENT SHADER GRID BOUNDS ===" << std::endl;
+      std::cout << "Grid bounds: Min(" << sharedGridMin.x << ", " << sharedGridMin.y << ", " << sharedGridMin.z << ")" << std::endl;
+      std::cout << "            Max(" << sharedGridMax.x << ", " << sharedGridMax.y << ", " << sharedGridMax.z << ")" << std::endl;
+      std::cout << "Grid resolution: " << sharedGridRes.x << "x" << sharedGridRes.y << "x" << sharedGridRes.z << std::endl;
+      std::cout << "Total grid cells: " << (sharedGridRes.x * sharedGridRes.y * sharedGridRes.z) << std::endl;
+
+      // Check if bounds are degenerate
+      if (sharedGridMin.x >= sharedGridMax.x || sharedGridMin.y >= sharedGridMax.y || sharedGridMin.z >= sharedGridMax.z) {
+        std::cerr << "ERROR: Degenerate grid bounds!" << std::endl;
+      }
     }
 
     // No camera matrices needed - using rasterized fragment positions
@@ -3689,6 +3850,22 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     shader->setVec3("sun.direction", sun.direction);
     shader->setVec3("sun.color", sun.color);
     shader->setFloat("sun.intensity", sun.intensity);
+
+    // DIAGNOSTIC: Verify critical uniforms are set correctly
+    std::cout << "=== SHADER UNIFORMS DEBUG ===" << std::endl;
+    std::cout << "enableRaytracing: " << radianceSettings.enableRaytracing << std::endl;
+    std::cout << "enableIrradianceCache: " << radianceSettings.enableIrradianceCache << std::endl;
+    std::cout << "samplesPerPixel: " << radianceSettings.samplesPerPixel << std::endl;
+    std::cout << "maxBounces: " << radianceSettings.maxBounces << std::endl;
+
+    // Verify the correct shader is active
+    GLint currentProgram = 0;
+    glGetIntegerv(GL_CURRENT_PROGRAM, &currentProgram);
+    std::cout << "Current shader program ID: " << currentProgram << std::endl;
+    std::cout << "Radiance shader ID: " << shader->getID() << std::endl;
+    if (currentProgram != (GLint)shader->getID()) {
+      std::cout << "ERROR: Wrong shader is active!" << std::endl;
+    }
 
     // Check if scene has changed to determine if we need to recalculate
     // triangle data
@@ -3738,11 +3915,11 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
               // Calculate triangle normal
               glm::vec3 normal = normalize(cross(v1 - v0, v2 - v0));
 
-              // Pack triangle data into buffer (matches shader Triangle struct
-              // layout) struct Triangle { vec3 v0, v1, v2; vec3 normal; vec3
-              // color; float emissiveness; float shininess; int materialId; }
-              // std430 layout: vec3 takes 3 floats, then next vec3 starts at
-              // next 4-float boundary
+              // Pack triangle data into buffer (matches shader Triangle
+              // struct layout) struct Triangle { vec3 v0, v1, v2; vec3
+              // normal; vec3 color; float emissiveness; float shininess; int
+              // materialId; } std430 layout: vec3 takes 3 floats, then next
+              // vec3 starts at next 4-float boundary
               triangleData.insert(triangleData.end(),
                                   {v0.x, v0.y, v0.z}); // vec3 v0
               triangleData.push_back(0.0f); // padding for vec3 alignment
@@ -3763,8 +3940,8 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
                   model.emissive); // float emissiveness (no padding needed,
                                    // fills vec3 slot)
               triangleData.push_back(model.shininess); // float shininess
-              // For int materialId, we need to use reinterpret_cast to pack as
-              // float bits
+              // For int materialId, we need to use reinterpret_cast to pack
+              // as float bits
               int materialId = triangleCount;
               triangleData.push_back(*reinterpret_cast<float *>(
                   &materialId));            // int materialId packed as float
@@ -3861,7 +4038,8 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     shader->setInt("numBVHNodes", static_cast<int>(gpuBVHNodes.size()));
     shader->setBool("enableBVH", enableBVH && bvhBuilt);
 
-    // Disable ground plane for pure raytracing (was causing unwanted lighting)
+    // Disable ground plane for pure raytracing (was causing unwanted
+    // lighting)
     shader->setBool("hasGroundPlane", false);
 
     // Populate irradiance cache using compute shader
@@ -3869,10 +4047,10 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
         irradianceCache->isInitialized() &&
         radianceSettings.enableIrradianceCache && triangleCount > 0) {
 
-      // Clear cache when scene changes
-      if (sceneChanged) {
-        irradianceCache->clear();
-      }
+      // CRITICAL FIX: Clear cache EVERY frame to prevent stale data accumulation
+      // The diagnostic output showed cache growing from 7663 to 8272 entries across frames
+      // This indicates it wasn't being cleared properly, causing zero/black irradiance values
+      irradianceCache->clear();
 
       // Use compute shader to populate cache
       irradianceCacheComputeShader->use();
@@ -3880,33 +4058,24 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       // Bind cache SSBOs (bindings 3, 4, 5)
       irradianceCache->bindBuffers();
 
-      // Calculate dynamic scene bounds from BVH
-      glm::vec3 gridMin, gridMax;
-
-      if (bvhBuilt && !gpuBVHNodes.empty()) {
-        // Use BVH root node bounds (most efficient)
-        const auto &rootNode = gpuBVHNodes[0];
-        gridMin = glm::vec3(rootNode.minX, rootNode.minY, rootNode.minZ);
-        gridMax = glm::vec3(rootNode.maxX, rootNode.maxY, rootNode.maxZ);
-      } else {
-        // Fallback: use default bounds
-        gridMin = glm::vec3(-10.0f, -10.0f, -10.0f);
-        gridMax = glm::vec3(10.0f, 10.0f, 10.0f);
-      }
-
-      // Add 5% padding to avoid edge cases
-      glm::vec3 padding = (gridMax - gridMin) * 0.05f;
-      gridMin -= padding;
-      gridMax += padding;
-      irradianceCacheComputeShader->setVec3("gridMin", gridMin);
-      irradianceCacheComputeShader->setVec3("gridMax", gridMax);
-      glm::ivec3 gridRes = irradianceCache->getGridResolution();
+      // Use SHARED grid bounds (calculated once at beginning of renderEye)
+      // This ensures worldToGrid() produces identical cell indices in both shaders
+      irradianceCacheComputeShader->setVec3("gridMin", sharedGridMin);
+      irradianceCacheComputeShader->setVec3("gridMax", sharedGridMax);
       glUniform3i(glGetUniformLocation(irradianceCacheComputeShader->getID(),
                                        "gridResolution"),
-                  gridRes.x, gridRes.y, gridRes.z);
+                  sharedGridRes.x, sharedGridRes.y, sharedGridRes.z);
+
+      // DIAGNOSTIC: Log compute shader grid bounds - should match fragment shader
+      std::cout << "=== COMPUTE SHADER GRID BOUNDS ===" << std::endl;
+      std::cout << "Grid bounds: Min(" << sharedGridMin.x << ", " << sharedGridMin.y << ", " << sharedGridMin.z << ")" << std::endl;
+      std::cout << "            Max(" << sharedGridMax.x << ", " << sharedGridMax.y << ", " << sharedGridMax.z << ")" << std::endl;
+      std::cout << "Grid resolution: " << sharedGridRes.x << "x" << sharedGridRes.y << "x" << sharedGridRes.z << std::endl;
 
       // Set sampling parameters
-      irradianceCacheComputeShader->setInt("samplesPerEntry", 16);
+      // CRITICAL FIX: Ward recommends 32-64 samples for stable harmonic mean
+      // Higher sample count = more accurate local feature size estimates
+      irradianceCacheComputeShader->setInt("samplesPerEntry", 32);
       irradianceCacheComputeShader->setFloat("minSpacing", 0.5f);
       irradianceCacheComputeShader->setFloat("randomSeed",
                                              static_cast<float>(glfwGetTime()));
@@ -3927,11 +4096,192 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       // Wait for compute to finish before fragment shader reads cache
       glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
+      // CRITICAL: Ensure GPU has fully completed all operations before CPU reads
+      glFinish();
+
+      // DIAGNOSTIC: Read back cache entry count from GPU
+      glBindBuffer(GL_SHADER_STORAGE_BUFFER, irradianceCache->getCacheBufferSSBO());
+      uint32_t gpuEntryCount = 0;
+      glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(uint32_t), &gpuEntryCount);
+      glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+      std::cout << "=== IRRADIANCE CACHE DEBUG ===" << std::endl;
+      std::cout << "Cache entry count (GPU): " << gpuEntryCount << std::endl;
+      std::cout << "Triangle count: " << triangleCount << std::endl;
+      std::cout << "Expected samples: ~" << (triangleCount / 4) << " (1 in 4 triangles, after validation)" << std::endl;
+
+      // DIAGNOSTIC STEP 10: Read back first cache entry to verify data validity
+      if (gpuEntryCount > 0) {
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, irradianceCache->getCacheBufferSSBO());
+
+        struct CacheEntry {
+          glm::vec3 position;
+          float harmonicMeanDist;
+          glm::vec3 normal;
+          float padding1;
+          glm::vec3 irradiance;
+          float padding2;
+        };
+
+        // Read first entry (skip 16-byte header: 4 uint32s)
+        CacheEntry firstEntry;
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 16 + 0 * sizeof(CacheEntry),
+                           sizeof(CacheEntry), &firstEntry);
+
+        std::cout << "=== FIRST CACHE ENTRY DEBUG ===" << std::endl;
+        std::cout << "Position: (" << firstEntry.position.x << ", "
+                  << firstEntry.position.y << ", " << firstEntry.position.z << ")" << std::endl;
+        std::cout << "Normal: (" << firstEntry.normal.x << ", "
+                  << firstEntry.normal.y << ", " << firstEntry.normal.z << ")" << std::endl;
+        std::cout << "Irradiance: (" << firstEntry.irradiance.x << ", "
+                  << firstEntry.irradiance.y << ", " << firstEntry.irradiance.z << ")" << std::endl;
+        std::cout << "Harmonic mean dist: " << firstEntry.harmonicMeanDist << std::endl;
+
+        // DIAGNOSTIC: Calculate harmonic mean distance distribution statistics
+        // This helps verify the Ward algorithm fixes are working correctly
+        float minHMD = 1e10f, maxHMD = 0.0f, avgHMD = 0.0f;
+        int hmd1000Count = 0, validCount = 0;
+
+        // Sample up to 100 entries to get distribution statistics
+        uint32_t sampleCount = std::min(gpuEntryCount, 100u);
+        for (uint32_t i = 0; i < sampleCount; i++) {
+          CacheEntry entry;
+          glGetBufferSubData(GL_SHADER_STORAGE_BUFFER,
+                            16 + i * sizeof(CacheEntry),
+                            sizeof(CacheEntry), &entry);
+
+          float hmd = entry.harmonicMeanDist;
+
+          // Skip NaN/Inf values in statistics
+          if (!std::isnan(hmd) && !std::isinf(hmd) && hmd > 0.0f) {
+            if (hmd >= 999.0f) hmd1000Count++;  // Count pathologically large values
+            minHMD = std::min(minHMD, hmd);
+            maxHMD = std::max(maxHMD, hmd);
+            avgHMD += hmd;
+            validCount++;
+          }
+        }
+
+        if (validCount > 0) {
+          avgHMD /= validCount;
+
+          std::cout << "\n=== HARMONIC MEAN DISTANCE STATS (sampled " << sampleCount << " entries) ===" << std::endl;
+          std::cout << "Min HMD: " << minHMD << std::endl;
+          std::cout << "Max HMD: " << maxHMD << std::endl;
+          std::cout << "Avg HMD: " << avgHMD << std::endl;
+          std::cout << "Entries with HMD >= 999: " << hmd1000Count << " / " << sampleCount;
+          if (hmd1000Count > 0) {
+            std::cout << " (" << (100.0f * hmd1000Count / sampleCount) << "%)";
+          }
+          std::cout << std::endl;
+
+          // Quality assessment based on Ward's recommendations
+          if (avgHMD < 1.0f) {
+            std::cout << "⚠️ WARNING: Average HMD very small - may indicate too dense sampling" << std::endl;
+          } else if (avgHMD > 50.0f) {
+            std::cout << "⚠️ WARNING: Average HMD very large - patches may be too big" << std::endl;
+          } else {
+            std::cout << "✓ Harmonic mean distances in reasonable range (1-50 units)" << std::endl;
+          }
+        }
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+      }
+
+      if (gpuEntryCount == 0) {
+        std::cout << "ERROR: Compute shader ran but created NO entries!" << std::endl;
+        std::cout << "Possible causes:" << std::endl;
+        std::cout << "  - All triangles filtered by isCovered() check" << std::endl;
+        std::cout << "  - Grid bounds don't cover scene geometry" << std::endl;
+        std::cout << "  - Compute shader not executing properly" << std::endl;
+      }
+
       // DON'T unbind cache buffers here - fragment shader needs to read them
       // during rendering! irradianceCache->unbindBuffers();
+
+      // CRITICAL FIX: Switch back to the radiance shader after compute shader!
+      // Without this, the compute shader (which has no vertex/fragment stages)
+      // remains active and geometry won't be rasterized!
+      shader->use();
+
+      // CRITICAL FIX: Set cache entry count for fragment shader!
+      // Without this, fragment shader thinks cache is empty and skips lookup
+      shader->setInt("cacheEntryCount", gpuEntryCount);
+      std::cout << "Set cacheEntryCount uniform to: " << gpuEntryCount << std::endl;
+
+      // DIAGNOSTIC: Check if grid cells are actually populated
+      if (gpuEntryCount > 0) {
+        struct GridCell {
+          uint32_t entryStart;
+          uint32_t entryCount;
+          // NO padding - must match IrradianceCache.h structure exactly!
+        };
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, irradianceCache->getGridCellsSSBO());
+
+        uint32_t gridSize = sharedGridRes.x * sharedGridRes.y * sharedGridRes.z;
+        uint32_t nonEmptyCells = 0;
+        uint32_t totalEntries = 0;
+        uint32_t maxEntriesInCell = 0;
+
+        // Sample first 1000 cells to check population
+        uint32_t samplesToCheck = std::min(gridSize, 1000u);
+        for (uint32_t i = 0; i < samplesToCheck; i++) {
+          GridCell cell;
+          glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, i * sizeof(GridCell), sizeof(GridCell), &cell);
+
+          if (cell.entryCount > 0) {
+            nonEmptyCells++;
+            totalEntries += cell.entryCount;
+            maxEntriesInCell = std::max(maxEntriesInCell, cell.entryCount);
+          }
+        }
+
+        std::cout << "\n=== GRID CELL POPULATION DEBUG ===" << std::endl;
+        std::cout << "Total grid cells: " << gridSize << std::endl;
+        std::cout << "Non-empty cells (sampled " << samplesToCheck << "): " << nonEmptyCells << std::endl;
+        std::cout << "Total entries in sampled cells: " << totalEntries << std::endl;
+        std::cout << "Max entries in a single cell: " << maxEntriesInCell << std::endl;
+        std::cout << "Avg entries per non-empty cell: " << (nonEmptyCells > 0 ? (float)totalEntries / nonEmptyCells : 0.0f) << std::endl;
+
+        if (nonEmptyCells == 0) {
+          std::cout << "ERROR: No grid cells populated! Cache lookup will fail!" << std::endl;
+          std::cout << "Possible causes:" << std::endl;
+          std::cout << "  - worldToGrid() returning out-of-bounds coordinates" << std::endl;
+          std::cout << "  - gridIndex() always returning 0xFFFFFFFF" << std::endl;
+          std::cout << "  - Atomic operations on cells[] failing" << std::endl;
+        }
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+      }
     }
   }
 
+  /*
+  // DIAGNOSTIC: Verify OpenGL state before rendering
+  std::cout << "=== OPENGL STATE DEBUG ===" << std::endl;
+
+  GLboolean depthTestEnabled;
+  glGetBooleanv(GL_DEPTH_TEST, &depthTestEnabled);
+  std::cout << "Depth test enabled: " << (depthTestEnabled ? "YES" : "NO") << std::endl;
+
+  GLboolean blendEnabled;
+  glGetBooleanv(GL_BLEND, &blendEnabled);
+  std::cout << "Blending enabled: " << (blendEnabled ? "YES" : "NO") << std::endl;
+
+  GLboolean cullFaceEnabled;
+  glGetBooleanv(GL_CULL_FACE, &cullFaceEnabled);
+  std::cout << "Culling enabled: " << (cullFaceEnabled ? "YES" : "NO") << std::endl;
+
+  GLint depthFunc;
+  glGetIntegerv(GL_DEPTH_FUNC, &depthFunc);
+  std::cout << "Depth func: " << depthFunc << " (GL_LESS=" << GL_LESS << ")" << std::endl;
+
+  GLboolean colorMask[4];
+  glGetBooleanv(GL_COLOR_WRITEMASK, colorMask);
+  std::cout << "Color mask: R=" << (int)colorMask[0] << " G=" << (int)colorMask[1]
+            << " B=" << (int)colorMask[2] << " A=" << (int)colorMask[3] << std::endl;
+    */
   // Render scene - cache buffers still bound, fragment shader can read them
   renderModels(shader);
   renderPointClouds(shader);
@@ -3947,9 +4297,10 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     bvhDebugRenderer.render(view, projection);
   }
 
-  // Calculate distance to nearest object AFTER scene rendering but BEFORE zero
-  // plane This ensures zero plane doesn't interfere with distance calculation
-  // Only calculate once per frame (left eye for stereo, or single eye for mono)
+  // Calculate distance to nearest object AFTER scene rendering but BEFORE
+  // zero plane This ensures zero plane doesn't interfere with distance
+  // calculation Only calculate once per frame (left eye for stereo, or single
+  // eye for mono)
   static bool distanceCalculatedThisFrame = false;
   static double lastFrameTime = 0.0;
   double currentFrameTime = glfwGetTime();
@@ -3982,7 +4333,8 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
               glm::clamp(autoConvergenceValue, preferences.convergenceCapMin,
                          preferences.convergenceCapMax);
         } else {
-          // Default clamp to reasonable bounds: Min: near plane, Max: far plane
+          // Default clamp to reasonable bounds: Min: near plane, Max: far
+          // plane
           autoConvergenceValue =
               glm::clamp(autoConvergenceValue, preferences.nearPlane,
                          preferences.farPlane);
@@ -4004,8 +4356,9 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
         glm::mix(preferences.convergence, targetConvergence, lerpFactor);
     preferences.convergence = preferences.convergence;
   } else {
-    // When auto convergence is off, keep target in sync with actual convergence
-    // so when it's turned back on, it starts from the current value
+    // When auto convergence is off, keep target in sync with actual
+    // convergence so when it's turned back on, it starts from the current
+    // value
     targetConvergence = preferences.convergence;
   }
 
@@ -4016,8 +4369,9 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
 
   renderSkybox(projection, view, shader);
 
-  // Calculate cursor position AFTER scene rendering but BEFORE cursor rendering
-  // This ensures we read scene depth, not cursor depth from the buffer
+  // Calculate cursor position AFTER scene rendering but BEFORE cursor
+  // rendering This ensures we read scene depth, not cursor depth from the
+  // buffer
   cursorManager.updateCursorPosition(window, projection, view, shader, false,
                                      isStereo, leftProjection, leftView,
                                      rightProjection, rightView);
@@ -4025,7 +4379,8 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   // Update SpaceMouse cursor anchor when cursor position changes
   updateSpaceMouseCursorAnchor();
 
-  // Update shader uniforms for cursors (use active shader, not original shader)
+  // Update shader uniforms for cursors (use active shader, not original
+  // shader)
   cursorManager.updateShaderUniforms(shader);
 
   // Render orbit center if needed
@@ -4278,13 +4633,17 @@ void renderModels(Engine::Shader *shader) {
 }
 
 void renderPointClouds(Engine::Shader *shader) {
-  // Skip point cloud rendering for depth pass as points don't cast good shadows
+  // Skip point cloud rendering for depth pass as points don't cast good
+  // shadows
   if (shader == simpleDepthShader)
     return;
 
   for (auto &pointCloud : currentScene.pointClouds) {
-    if (!pointCloud.visible)
+
+
+    if (!pointCloud.visible) {
       continue;
+    }
 
     glm::mat4 modelMatrix = glm::mat4(1.0f);
     modelMatrix = glm::translate(modelMatrix, pointCloud.position);
@@ -4305,14 +4664,19 @@ void renderPointClouds(Engine::Shader *shader) {
 
     shader->setBool("isPointCloud", true);
 
+    // DIAGNOSTIC: Verify isPointCloud uniform is set
+    GLint isPointCloudValue;
+    glGetUniformiv(shader->getID(), glGetUniformLocation(shader->getID(), "isPointCloud"), &isPointCloudValue);
+    std::cout << "  isPointCloud uniform value: " << isPointCloudValue << std::endl;
+
     // Always use octree-based rendering (legacy system removed)
     if (pointCloud.octreeRoot) {
       // Update LOD system for current camera position
       glm::vec3 cameraPosition = camera.Position;
       OctreePointCloudManager::updateLOD(pointCloud, cameraPosition);
 
-      // Bind VAO for octree rendering (octree nodes use their own VBOs but need
-      // the VAO for attributes)
+      // Bind VAO for octree rendering (octree nodes use their own VBOs but
+      // need the VAO for attributes)
       glBindVertexArray(pointCloud.vao);
 
       // Render visible octree nodes
@@ -5303,6 +5667,26 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
           if (ctrlPressed || altPressed) {
             selectionMode = true;
             isMovingModel = true;
+
+            // Calculate and store the grab point on the model
+            // This is the world-space position where the ray intersects the
+            // model
+            glm::vec3 grabRayOrigin, grabRayDirection, grabRayNear, grabRayFar;
+            calculateMouseRay(lastX, lastY, grabRayOrigin, grabRayDirection,
+                              grabRayNear, grabRayFar,
+                              (float)windowWidth / (float)windowHeight);
+            float grabDistance;
+            if (rayIntersectsModel(grabRayOrigin, grabRayDirection,
+                                   currentScene.models[currentSelectedIndex],
+                                   grabDistance)) {
+              modelGrabPoint = grabRayOrigin + grabRayDirection * grabDistance;
+              hasModelGrabPoint = true;
+            } else {
+              // Fallback: use model center as grab point
+              modelGrabPoint =
+                  currentScene.models[currentSelectedIndex].position;
+              hasModelGrabPoint = true;
+            }
           }
         } else if (closestPointLightIndex != -1) {
           currentSelectedType = SelectedType::PointLight;
@@ -5359,9 +5743,10 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
                 camera.Position + camera.Front * camera.OrbitDistance;
             camera.StartCenteringAnimation(centerPoint);
           }
-          // Don't set cursor position here - let it be handled after centering
-          // animation completes The cursor will naturally be at screen center
-          // since we're centering the view on the cursor position
+          // Don't set cursor position here - let it be handled after
+          // centering animation completes The cursor will naturally be at
+          // screen center since we're centering the view on the cursor
+          // position
         }
         lastClickTime = currentTime;
       }
@@ -5409,8 +5794,8 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
             glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
             glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
           } else {
-            // Standard orbiting mode - preserve cursor 3D position and convert
-            // to 2D after orbiting
+            // Standard orbiting mode - preserve cursor 3D position and
+            // convert to 2D after orbiting
             std::cout << "Standard orbit mode - will convert 3D cursor "
                          "position to 2D after orbiting"
                       << std::endl;
@@ -5489,8 +5874,8 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
         if (Core::CursorSyncManager::getInstance().needsSynchronization()) {
           // Check which mode we're in based on camera settings
           if (camera.orbitAroundCursor) {
-            // Around cursor mode - use synchronization to restore cursor to 3D
-            // position
+            // Around cursor mode - use synchronization to restore cursor to
+            // 3D position
             std::cout << "[CursorFix] Around cursor mode - using cursor "
                          "synchronization"
                       << std::endl;
@@ -5536,8 +5921,37 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
             glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
           }
         }
+      } else {
+        // Model was being moved - synchronize cursor position to final grab
+        // point
+        if (hasModelGrabPoint) {
+          // Project the final grab point position to screen coordinates
+          glm::mat4 viewMatrix = camera.GetViewMatrix();
+          glm::mat4 projMatrix = camera.GetProjectionMatrix(
+              aspectRatio, preferences.nearPlane, preferences.farPlane);
+          glm::mat4 viewProjMatrix = projMatrix * viewMatrix;
+
+          glm::vec4 grabScreenPos =
+              viewProjMatrix * glm::vec4(modelGrabPoint, 1.0f);
+          if (grabScreenPos.w > 0.0f) {
+            grabScreenPos /= grabScreenPos.w;
+
+            // Convert NDC to screen coordinates
+            float screenX = (grabScreenPos.x + 1.0f) * 0.5f * windowWidth;
+            float screenY = (1.0f - grabScreenPos.y) * 0.5f * windowHeight;
+
+            // Set cursor position to the final grab point location
+            glfwSetCursorPos(window, screenX, screenY);
+
+            // Update lastX/lastY
+            lastX = screenX;
+            lastY = screenY;
+          }
+        }
       }
 
+      // Reset model grab point tracking
+      hasModelGrabPoint = false;
       isMovingModel = false;
       selectionMode = false;
     }
@@ -5633,7 +6047,8 @@ void mouse_callback(GLFWwindow *window, double xposIn, double yposIn) {
   // --- Handle first mouse input OR first input after regaining focus ---
   if (firstMouse || justRegainedFocus) {
     // This is the first event, or the first one after regaining focus.
-    // Treat the current position as the starting point. Don't calculate offset.
+    // Treat the current position as the starting point. Don't calculate
+    // offset.
     lastX = xpos;
     lastY = ypos;
     firstMouse = false;
@@ -5655,7 +6070,8 @@ void mouse_callback(GLFWwindow *window, double xposIn, double yposIn) {
   lastY = ypos;
 
   // --- ImGui Check ---
-  // If ImGui wants the mouse *after* we've calculated delta and updated lastX/Y
+  // If ImGui wants the mouse *after* we've calculated delta and updated
+  // lastX/Y
   if (ImGui::GetIO().WantCaptureMouse) {
     // Don't accumulate the delta if ImGui wants it
     // Reset accumulators to prevent processing stale input on next non-ImGui
@@ -5689,22 +6105,23 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
   // Input::handleKeyInput They remain hardcoded and are not customizable
   // through the shortcut manager
 
-  if (action != GLFW_PRESS) {
-    // Handle Ctrl key release separately (since it's used as a modifier)
-    if (key == GLFW_KEY_LEFT_CONTROL || key == GLFW_KEY_RIGHT_CONTROL) {
+  // Handle Ctrl key separately (since it's used as a modifier)
+  if (key == GLFW_KEY_LEFT_CONTROL || key == GLFW_KEY_RIGHT_CONTROL) {
+    if (action == GLFW_PRESS) {
+      ctrlPressed = true;
+      selectionMode = true;
+    } else if (action == GLFW_RELEASE) {
       ctrlPressed = false;
       selectionMode = false;
-      // Don't stop dragging when Ctrl is released - only stop when mouse button
-      // is released
+      // Don't stop dragging when Ctrl is released - only stop when mouse
+      // button is released
     }
-    return; // Only handle PRESS actions below
+    // Ignore GLFW_REPEAT for Ctrl key - just keep the current state
+    return;
   }
 
-  // Handle Ctrl key press
-  if (key == GLFW_KEY_LEFT_CONTROL || key == GLFW_KEY_RIGHT_CONTROL) {
-    ctrlPressed = true;
-    selectionMode = true;
-    return;
+  if (action != GLFW_PRESS) {
+    return; // Only handle PRESS actions below for other keys
   }
 
   // Check if this key press matches any shortcut action
@@ -5840,6 +6257,15 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
       std::cout << "Orbit around cursor "
                 << (camera.orbitAroundCursor ? "enabled" : "disabled")
                 << std::endl;
+      break;
+
+    case StereoVista::ShortcutAction::ToggleSpaceMouseMode:
+      if (spaceMouseInitialized && preferences.spaceMouseEnabled) {
+        // SpaceMouse is always in CAD (Pivot) mode
+        std::cout << "SpaceMouse mode: CAD (Pivot)" << std::endl;
+      } else {
+        std::cout << "SpaceMouse not available" << std::endl;
+      }
       break;
 
     // Lighting
@@ -6059,7 +6485,8 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
           currentSelectedIndex = currentScene.models.size() - 1;
         }
 
-        // Also update currentModelIndex if it was pointing to the deleted model
+        // Also update currentModelIndex if it was pointing to the deleted
+        // model
         if (currentModelIndex == currentSelectedIndex) {
           currentModelIndex = currentSelectedIndex;
         } else if (currentModelIndex > currentSelectedIndex) {

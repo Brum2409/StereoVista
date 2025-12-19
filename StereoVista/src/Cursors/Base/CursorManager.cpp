@@ -16,7 +16,8 @@ CursorManager::CursorManager()
       m_backgroundCursorPosition(0.0f), m_hasBackgroundCursorPosition(false),
       m_showOrbitCenter(false), m_orbitCenterColor(0.0f, 1.0f, 0.0f, 0.7f),
       m_orbitCenterSphereRadius(0.2f), m_windowWidth(1920),
-      m_windowHeight(1080), m_lastX(0.0f), m_lastY(0.0f) {
+      m_windowHeight(1080), m_lastX(0.0f), m_lastY(0.0f),
+      m_cursorInsideWindow(true) {
   m_sphereCursor = std::make_unique<SphereCursor>();
   m_fragmentCursor = std::make_unique<FragmentCursor>();
   m_planeCursor = std::make_unique<PlaneCursor>();
@@ -68,6 +69,10 @@ void CursorManager::updateCursorPosition(
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
     return;
   }
+  // Skip if cursor is outside the window to prevent edge rendering
+  if (!m_cursorInsideWindow) {
+    return;
+  }
 
   // During orbiting, maintain cursor at the captured position
   if (camera.IsOrbiting) {
@@ -101,10 +106,26 @@ void CursorManager::updateCursorPosition(
   m_windowWidth = windowWidth;
   m_windowHeight = windowHeight;
 
+  // Additional bounds check: ensure cursor is actually within window dimensions
+  // This prevents edge rendering if callback order causes position update before enter callback
+  if (m_lastX < 0.0f || m_lastX >= static_cast<float>(m_windowWidth) ||
+      m_lastY < 0.0f || m_lastY >= static_cast<float>(m_windowHeight)) {
+    // Cursor is outside window bounds - invalidate and return
+    m_cursorPositionValid = false;
+    m_sphereCursor->setPositionValid(false);
+    m_fragmentCursor->setPositionValid(false);
+    m_planeCursor->setPositionValid(false);
+    m_cursorPositionCalculatedThisFrame = true;
+    return;
+  }
+
   // Read depth at cursor position
   float depth = 0.0;
   glm::mat4 selectedProjection = projection;
   glm::mat4 selectedView = view;
+
+  // Depth threshold for detecting skybox/background (anything at or very close to far plane)
+  const float DEPTH_THRESHOLD = 0.9999f;
 
   if (isStereo && leftProjection != nullptr && leftView != nullptr &&
       rightProjection != nullptr && rightView != nullptr) {
@@ -125,9 +146,9 @@ void CursorManager::updateCursorPosition(
     glReadPixels(m_lastX, (float)m_windowHeight - m_lastY, 1, 1,
                  GL_DEPTH_COMPONENT, GL_FLOAT, &rightDepth);
 
-    // Determine which eye has geometry (depth != 1.0 means hit)
-    bool leftHit = leftDepth != 1.0f;
-    bool rightHit = rightDepth != 1.0f;
+    // Determine which eye has geometry (depth < threshold means hit on actual geometry, not skybox)
+    bool leftHit = leftDepth < DEPTH_THRESHOLD;
+    bool rightHit = rightDepth < DEPTH_THRESHOLD;
 
     // 3D cursor should render if EITHER eye has a hit (OR logic)
     // Windows cursor only if BOTH are on background (neither has hit)
@@ -162,7 +183,7 @@ void CursorManager::updateCursorPosition(
                             depth * 2.0 - 1.0, 1.0);
   auto worldPosH = vpInv * ndc;
   auto worldPos = worldPosH / worldPosH.w;
-  auto isHit = depth != 1.0;
+  auto isHit = depth < DEPTH_THRESHOLD;
 
   // Update cursor properties based on whether it hit geometry
   if (isHit && (m_sphereCursor->isVisible() || m_fragmentCursor->isVisible() ||
@@ -221,6 +242,11 @@ void CursorManager::resetFrameCalculationFlag() {
 // Render visible 3D cursors in the scene
 void CursorManager::renderCursors(const glm::mat4 &projection,
                                   const glm::mat4 &view) {
+  // Don't render 3D cursor if mouse cursor has exited the window
+  if (!m_cursorInsideWindow) {
+    return;
+  }
+
   if (m_sphereCursor->isVisible()) {
     m_sphereCursor->render(projection, view, camera.Position);
   }

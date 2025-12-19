@@ -52,6 +52,10 @@ namespace GUI {
         SPACEMOUSE_ANCHOR_CONTINUOUS     // Update anchor every frame during navigation
     };
 
+    enum SpaceMouseNavigationMode {
+        SPACEMOUSE_NAV_CAD      // Pivot-based navigation (current behavior)
+    };
+
     // Structure definitions
     struct SkyboxConfig {
         SkyboxType type = SKYBOX_CUBEMAP;
@@ -198,6 +202,7 @@ namespace GUI {
         float spaceMouseDeadzone = 0.025f;
         float spaceMouseTranslationSensitivity = 1.0f;
         float spaceMouseRotationSensitivity = 1.0f;
+        SpaceMouseNavigationMode spaceMouseNavigationMode = SPACEMOUSE_NAV_CAD;
         SpaceMouseAnchorMode spaceMouseAnchorMode = SPACEMOUSE_ANCHOR_DISABLED;
         bool spaceMouseCenterCursor = false;
 

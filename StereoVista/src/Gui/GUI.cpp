@@ -2006,6 +2006,14 @@ void renderSettingsWindow() {
                 ImGui::SameLine(); DrawHelpMarker("Enable or disable 3DConnexion SpaceMouse input");
 
                 if (preferences.spaceMouseEnabled) {
+                    ImGui::Spacing();
+                    ImGui::Text("Navigation Mode: CAD (Pivot)");
+                    ImGui::SameLine(); DrawHelpMarker("Pivot-based navigation: rotate around a pivot point. Best for inspecting 3D models.");
+
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
                     if (ImGui::SliderFloat("Deadzone", &preferences.spaceMouseDeadzone, 0.0f, 0.5f, "%.2f")) {
                         spaceMouseInput.SetDeadzone(preferences.spaceMouseDeadzone);
                         settingsChanged = true;
@@ -2024,38 +2032,41 @@ void renderSettingsWindow() {
                     }
                     ImGui::SameLine(); DrawHelpMarker("Controls how sensitive rotation movements are");
 
-                    ImGui::Spacing();
-                    ImGui::Text("Anchor Point Mode:");
+                    // Only show anchor mode settings in CAD mode
+                    if (preferences.spaceMouseNavigationMode == GUI::SPACEMOUSE_NAV_CAD) {
+                        ImGui::Spacing();
+                        ImGui::Text("Anchor Point Mode:");
 
-                    int currentMode = static_cast<int>(preferences.spaceMouseAnchorMode);
-                    bool modeChanged = false;
+                        int currentMode = static_cast<int>(preferences.spaceMouseAnchorMode);
+                        bool modeChanged = false;
 
-                    if (ImGui::RadioButton("Scene Center", &currentMode, static_cast<int>(GUI::SPACEMOUSE_ANCHOR_DISABLED))) {
-                        modeChanged = true;
+                        if (ImGui::RadioButton("Scene Center", &currentMode, static_cast<int>(GUI::SPACEMOUSE_ANCHOR_DISABLED))) {
+                            modeChanged = true;
+                        }
+                        ImGui::SameLine(); DrawHelpMarker("Use the scene center as the SpaceMouse pivot point");
+
+                        if (ImGui::RadioButton("Cursor on Start", &currentMode, static_cast<int>(GUI::SPACEMOUSE_ANCHOR_ON_START))) {
+                            modeChanged = true;
+                        }
+                        ImGui::SameLine(); DrawHelpMarker("Set anchor to cursor position when SpaceMouse navigation starts, then keep it fixed");
+
+                        if (ImGui::RadioButton("Follow Cursor", &currentMode, static_cast<int>(GUI::SPACEMOUSE_ANCHOR_CONTINUOUS))) {
+                            modeChanged = true;
+                        }
+                        ImGui::SameLine(); DrawHelpMarker("Continuously update anchor to follow the cursor position");
+
+                        if (modeChanged) {
+                            preferences.spaceMouseAnchorMode = static_cast<GUI::SpaceMouseAnchorMode>(currentMode);
+                            settingsChanged = true;
+                            updateSpaceMouseCursorAnchor();
+                            spaceMouseInput.RefreshPivotPosition();
+                        }
+
+                        if (ImGui::Checkbox("Center Cursor During Navigation", &preferences.spaceMouseCenterCursor)) {
+                            settingsChanged = true;
+                        }
+                        ImGui::SameLine(); DrawHelpMarker("Keep the mouse cursor fixed at the screen center while using SpaceMouse");
                     }
-                    ImGui::SameLine(); DrawHelpMarker("Use the scene center as the SpaceMouse pivot point");
-
-                    if (ImGui::RadioButton("Cursor on Start", &currentMode, static_cast<int>(GUI::SPACEMOUSE_ANCHOR_ON_START))) {
-                        modeChanged = true;
-                    }
-                    ImGui::SameLine(); DrawHelpMarker("Set anchor to cursor position when SpaceMouse navigation starts, then keep it fixed");
-
-                    if (ImGui::RadioButton("Follow Cursor", &currentMode, static_cast<int>(GUI::SPACEMOUSE_ANCHOR_CONTINUOUS))) {
-                        modeChanged = true;
-                    }
-                    ImGui::SameLine(); DrawHelpMarker("Continuously update anchor to follow the cursor position");
-
-                    if (modeChanged) {
-                        preferences.spaceMouseAnchorMode = static_cast<GUI::SpaceMouseAnchorMode>(currentMode);
-                        settingsChanged = true;
-                        updateSpaceMouseCursorAnchor();
-                        spaceMouseInput.RefreshPivotPosition();
-                    }
-
-                    if (ImGui::Checkbox("Center Cursor During Navigation", &preferences.spaceMouseCenterCursor)) {
-                        settingsChanged = true;
-                    }
-                    ImGui::SameLine(); DrawHelpMarker("Keep the mouse cursor fixed at the screen center while using SpaceMouse");
                 }
             }
             else {

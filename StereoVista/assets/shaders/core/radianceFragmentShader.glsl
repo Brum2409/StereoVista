@@ -224,7 +224,7 @@ vec2 random2(vec2 co, inout uint state) {
     );
 }
 
-// Ray-triangle intersection (Möller–Trumbore)
+// Ray-triangle intersection (MÃ¶llerâ€“Trumbore)
 bool intersectTriangle(Ray ray, Triangle tri, out float t) {
     const float EPSILON = 0.0000001;
     vec3 edge1 = tri.v1 - tri.v0;
@@ -542,15 +542,29 @@ uint gridIndex(ivec3 coord) {
 }
 
 // Ward's weight function
+// Fixed to properly implement Ward's recommended interpolation radius
 float wardWeight(vec3 entryPos, vec3 entryNormal, float harmonicMeanDist,
                  vec3 queryPos, vec3 queryNormal) {
+    // Validate inputs to prevent garbage reads from causing issues
+    if (isnan(harmonicMeanDist) || isinf(harmonicMeanDist) || harmonicMeanDist <= 0.0) {
+        return 0.0;
+    }
+
     float dist = length(queryPos - entryPos);
+
+    // CRITICAL FIX: Ward recommends cutoff at 1-2x harmonicMeanDist, NOT 10x
+    // Larger multiplier = huge patches with poor spatial resolution
+    // Smaller multiplier = tighter, more accurate interpolation
+    if (dist > harmonicMeanDist * 2.0) {
+        return 0.0;
+    }
+
     float normalDot = max(0.0, dot(entryNormal, queryNormal));
 
     // Ward's formula: w = 1 / (a + b)
     // where a = ||x - P|| / R₀
     // and b = sqrt(1 - N·n)
-    float a = dist / max(0.01, harmonicMeanDist);
+    float a = dist / harmonicMeanDist;
     float b = sqrt(max(0.0, 1.0 - normalDot));
 
     return 1.0 / (a + b + 0.001); // Add epsilon to avoid division by zero
@@ -575,10 +589,12 @@ vec3 interpolateFromCache(vec3 worldPos, vec3 normal) {
                 GridCell cell = cells[cellIdx];
 
                 // Check all entries in this cell
-                for (uint i = 0; i < cell.entryCount; i++) {
+                for (uint i = 0; i < cell.entryCount && i < 16u; i++) {
                     // Use indirection buffer to get actual entry index
                     uint entryIdx = entryIndices[cell.entryStart + i];
-                    if (entryIdx >= cacheEntryCount) continue;
+                    
+                    // Skip invalid entries (0xFFFFFFFF is our sentinel for uninitialized)
+                    if (entryIdx == 0xFFFFFFFFu || entryIdx >= cacheEntryCount) continue;
 
                     IrradianceCacheEntry entry = entries[entryIdx];
 
@@ -587,8 +603,13 @@ vec3 interpolateFromCache(vec3 worldPos, vec3 normal) {
                                             entry.harmonicMeanDist,
                                             worldPos, normal);
 
-                    if (weight > 0.01) {
-                        irradiance += entry.irradiance * weight;
+                    // Validate weight and entry data to prevent garbage accumulation
+                    // CRITICAL FIX: Higher threshold filters distant contributions for better quality
+                    // 0.1 threshold ensures only meaningful neighbors contribute
+                    if (weight > 0.1 && !any(isnan(entry.irradiance)) && !any(isinf(entry.irradiance))) {
+                        // Clamp irradiance to reasonable range to prevent blowouts
+                        vec3 clampedIrradiance = clamp(entry.irradiance, vec3(0.0), vec3(100.0));
+                        irradiance += clampedIrradiance * weight;
                         totalWeight += weight;
                     }
                 }
@@ -597,7 +618,8 @@ vec3 interpolateFromCache(vec3 worldPos, vec3 normal) {
     }
 
     // Normalize
-    if (totalWeight > 0.01) {
+    // Use matching threshold for consistency
+    if (totalWeight > 0.1) {
         return irradiance / totalWeight;
     }
 
@@ -614,29 +636,47 @@ vec3 calculateRadianceLighting(vec3 worldPos, vec3 normal, vec3 materialColor, f
         // Try to interpolate from world-space cache
         vec3 cachedIrradiance = interpolateFromCache(worldPos, normal);
 
-        // Check if interpolation was successful
+        // Check if cache lookup succeeded
         if (length(cachedIrradiance) > 0.001) {
+            // Cache hit - use cached irradiance
             color = cachedIrradiance * materialColor;
         } else {
-            // Fallback: compute directly if cache miss
-            for (int i = 0; i < samplesPerPixel; i++) {
+            // Cache miss - use standard path tracing as fallback
+            // CRITICAL FIX: Use 4 samples minimum for cache misses to reduce noise
+            // 1 sample produces extreme grain, 4 samples gives acceptable quality
+            int fallbackSamples = max(samplesPerPixel, 4);
+
+            for (int i = 0; i < fallbackSamples; i++) {
                 vec2 seed = worldPos.xy + float(i) * 0.1;
                 vec2 rand = random2(seed, rngState);
                 vec3 rayDir = sampleCosineHemisphere(normal, rand);
                 color += materialColor * rayColor(createRay(worldPos + 0.001 * normal, rayDir), maxBounces, rngState);
             }
-            color /= float(samplesPerPixel);
-        }
 
+            if (fallbackSamples > 0) {
+                color /= float(fallbackSamples);
+            }
+
+            // SAFETY: Guarantee minimum visibility (10% ambient)
+            color = max(color, materialColor * 0.1);
+        }
     } else {
-        // Original path tracing code (no caching)
-        for (int i = 0; i < samplesPerPixel; i++) {
+        // Cache disabled or empty - use standard path tracing
+        int samples = max(samplesPerPixel, 1); // Ensure at least 1 sample
+
+        for (int i = 0; i < samples; i++) {
             vec2 seed = worldPos.xy + float(i) * 0.1;
             vec2 rand = random2(seed, rngState);
             vec3 rayDir = sampleCosineHemisphere(normal, rand);
             color += materialColor * rayColor(createRay(worldPos + 0.001 * normal, rayDir), maxBounces, rngState);
         }
-        color /= float(samplesPerPixel);
+
+        if (samples > 0) {
+            color /= float(samples);
+        }
+
+        // SAFETY: Guarantee minimum visibility (10% ambient)
+        color = max(color, materialColor * 0.1);
     }
 
     // Add emissive contribution
@@ -652,20 +692,20 @@ void main() {
         FragColor = vec4(fs_in.VertexColor * fs_in.Intensity, 1.0);
         return;
     }
-    
+
     vec3 materialColor = material.objectColor;
-    
+
     if (material.hasTexture > 0.5 && material.numDiffuseTextures > 0) {
         vec4 texColor = texture(material.textures[0], fs_in.TexCoords);
         materialColor = texColor.rgb;
     }
-    
+
     vec3 worldPos = fs_in.FragPos;
     vec3 normal = normalize(fs_in.Normal);
     vec3 viewDir = normalize(viewPos - worldPos);
-    
+
     vec3 result = vec3(0.0);
-    
+
     if (enableRaytracing) {
         ivec2 pixelCoord = ivec2(gl_FragCoord.xy);
         uint pixelIndex = uint(pixelCoord.y * 1920 + pixelCoord.x); // Approx. screen width
