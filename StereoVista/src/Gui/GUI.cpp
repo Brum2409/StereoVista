@@ -1881,6 +1881,10 @@ void renderSettingsWindow() {
                                40.0f, "%.1f")) {
           settingsChanged = true;
         }
+        // Lock cursor position while adjusting convergence to prevent it from
+        // sliding
+        cursorManager.setPositionLocked(ImGui::IsItemActive());
+
         ImGui::SameLine();
         DrawHelpMarker("Sets the focal point distance where left and right "
                        "views converge");

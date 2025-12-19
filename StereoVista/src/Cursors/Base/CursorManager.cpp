@@ -3,7 +3,6 @@
 #include <imgui.h>
 #include <iostream>
 
-
 extern Camera camera;
 extern int windowWidth;
 extern int windowHeight;
@@ -17,7 +16,7 @@ CursorManager::CursorManager()
       m_showOrbitCenter(false), m_orbitCenterColor(0.0f, 1.0f, 0.0f, 0.7f),
       m_orbitCenterSphereRadius(0.2f), m_windowWidth(1920),
       m_windowHeight(1080), m_lastX(0.0f), m_lastY(0.0f),
-      m_cursorInsideWindow(true) {
+      m_cursorInsideWindow(true), m_positionLocked(false) {
   m_sphereCursor = std::make_unique<SphereCursor>();
   m_fragmentCursor = std::make_unique<FragmentCursor>();
   m_planeCursor = std::make_unique<PlaneCursor>();
@@ -74,6 +73,13 @@ void CursorManager::updateCursorPosition(
     return;
   }
 
+  // If position is locked, don't update (keeps cursor stationary during
+  // parameter adjustments)
+  if (m_positionLocked) {
+    m_cursorPositionCalculatedThisFrame = true;
+    return;
+  }
+
   // During orbiting, maintain cursor at the captured position
   if (camera.IsOrbiting) {
     // The cursor position should already be set via setCapturedCursorPosition
@@ -107,7 +113,8 @@ void CursorManager::updateCursorPosition(
   m_windowHeight = windowHeight;
 
   // Additional bounds check: ensure cursor is actually within window dimensions
-  // This prevents edge rendering if callback order causes position update before enter callback
+  // This prevents edge rendering if callback order causes position update
+  // before enter callback
   if (m_lastX < 0.0f || m_lastX >= static_cast<float>(m_windowWidth) ||
       m_lastY < 0.0f || m_lastY >= static_cast<float>(m_windowHeight)) {
     // Cursor is outside window bounds - invalidate and return
@@ -124,7 +131,8 @@ void CursorManager::updateCursorPosition(
   glm::mat4 selectedProjection = projection;
   glm::mat4 selectedView = view;
 
-  // Depth threshold for detecting skybox/background (anything at or very close to far plane)
+  // Depth threshold for detecting skybox/background (anything at or very close
+  // to far plane)
   const float DEPTH_THRESHOLD = 0.9999f;
 
   if (isStereo && leftProjection != nullptr && leftView != nullptr &&
@@ -146,7 +154,8 @@ void CursorManager::updateCursorPosition(
     glReadPixels(m_lastX, (float)m_windowHeight - m_lastY, 1, 1,
                  GL_DEPTH_COMPONENT, GL_FLOAT, &rightDepth);
 
-    // Determine which eye has geometry (depth < threshold means hit on actual geometry, not skybox)
+    // Determine which eye has geometry (depth < threshold means hit on actual
+    // geometry, not skybox)
     bool leftHit = leftDepth < DEPTH_THRESHOLD;
     bool rightHit = rightDepth < DEPTH_THRESHOLD;
 

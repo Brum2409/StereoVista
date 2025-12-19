@@ -60,12 +60,13 @@ enum SpaceMouseNavigationMode {
 
 // Structure definitions
 struct SkyboxConfig {
-  SkyboxType type = SKYBOX_CUBEMAP;
+  SkyboxType type = SKYBOX_HDR;
   glm::vec3 solidColor = glm::vec3(0.2f, 0.3f, 0.4f);
   glm::vec3 gradientTopColor = glm::vec3(0.1f, 0.1f, 0.3f);
   glm::vec3 gradientBottomColor = glm::vec3(0.7f, 0.7f, 1.0f);
-  int selectedCubemap = 0;  // Index of the selected predefined cubemap
-  std::string hdrPath = ""; // Path to HDR file
+  int selectedCubemap = 0; // Index of the selected predefined cubemap
+  std::string hdrPath =
+      "skybox/HDR/table_mountain_2_puresky_4k.hdr"; // Path to HDR file
 };
 
 struct CubemapPreset {
@@ -214,12 +215,12 @@ struct ApplicationPreferences {
   SpaceMouseAnchorMode spaceMouseAnchorMode = SPACEMOUSE_ANCHOR_DISABLED;
   bool spaceMouseCenterCursor = false;
 
-  int skyboxType = SKYBOX_CUBEMAP;
+  int skyboxType = SKYBOX_HDR;
   glm::vec3 skyboxSolidColor = glm::vec3(0.2f, 0.3f, 0.4f);
   glm::vec3 skyboxGradientTop = glm::vec3(0.1f, 0.1f, 0.3f);
   glm::vec3 skyboxGradientBottom = glm::vec3(0.7f, 0.7f, 1.0f);
   int selectedCubemap = 0;
-  std::string skyboxHdrPath = "";
+  std::string skyboxHdrPath = "skybox/HDR/table_mountain_2_puresky_4k.hdr";
   float skyboxExposure =
       0.2f; // Exposure for HDR skyboxes (typical range: 0.1-0.5)
 
