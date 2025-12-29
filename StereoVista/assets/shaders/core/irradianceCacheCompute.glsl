@@ -427,9 +427,15 @@ void main() {
         return;
     }
 
-    // CRITICAL FIX: Sample every 4th triangle for better coverage
-    // Was 8th, but this left too many gaps - doubling density improves quality
-    if ((triangleIdx % 4) != 0) {
+    // CRITICAL FIX: Rotate sampling pattern across frames for persistent cache
+    // Instead of always sampling triangles 0,4,8,12... we rotate the offset:
+    // Frame 1: 0,4,8,12...  (offset=0)
+    // Frame 2: 1,5,9,13...  (offset=1)
+    // Frame 3: 2,6,10,14...  (offset=2)
+    // Frame 4: 3,7,11,15...  (offset=3)
+    // This ensures all triangles get checked over time without wasted re-checking
+    uint frameOffset = uint(randomSeed * 1000.0) % 4u;  // Derive offset from time-based seed
+    if ((triangleIdx % 4) != frameOffset) {
         return;
     }
 

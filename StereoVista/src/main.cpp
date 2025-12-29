@@ -4310,15 +4310,33 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
       }
 
+      // NOTE: With persistent caching, 0 entries on first frame is an error,
+      // but slow growth on later frames is expected (isCovered() filters duplicates)
+      static uint32_t lastEntryCount = 0;
+
+      // Detect cache clear (count decreased) and reset tracking
+      if (gpuEntryCount < lastEntryCount) {
+        lastEntryCount = 0;
+        std::cout << "Cache was cleared - resetting tracking" << std::endl;
+      }
+
+      uint32_t entriesAdded = gpuEntryCount - lastEntryCount;
+
       if (gpuEntryCount == 0) {
-        std::cout << "ERROR: Compute shader ran but created NO entries!"
-                  << std::endl;
+        std::cout << "WARNING: Cache still empty after compute shader!" << std::endl;
         std::cout << "Possible causes:" << std::endl;
-        std::cout << "  - All triangles filtered by isCovered() check"
+        std::cout << "  - All triangles filtered by isCovered() check (cache may be fully populated)"
                   << std::endl;
         std::cout << "  - Grid bounds don't cover scene geometry" << std::endl;
         std::cout << "  - Compute shader not executing properly" << std::endl;
+      } else {
+        std::cout << "Cache population: +" << entriesAdded << " new entries this frame (total: "
+                  << gpuEntryCount << ")" << std::endl;
+        if (entriesAdded == 0 && lastEntryCount > 0) {
+          std::cout << "  (Cache stable - all sampled positions already covered)" << std::endl;
+        }
       }
+      lastEntryCount = gpuEntryCount;
 
       skip_compute_dispatch:
       // DON'T unbind cache buffers here - fragment shader needs to read them
