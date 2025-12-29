@@ -639,7 +639,11 @@ vec3 calculateRadianceLighting(vec3 worldPos, vec3 normal, vec3 materialColor, f
         // Check if cache lookup succeeded
         if (length(cachedIrradiance) > 0.001) {
             // Cache hit - use cached irradiance
-            color = cachedIrradiance * materialColor;
+            // CRITICAL FIX: Apply Lambertian BRDF = ρ/π
+            // The cache stores irradiance E = (π/N) × Σ Li
+            // Outgoing radiance: L_out = BRDF × E = (ρ/π) × E
+            // This division by π ensures consistency with the fallback path tracer
+            color = (cachedIrradiance * materialColor) / 3.14159265359;
         } else {
             // Cache miss - use standard path tracing as fallback
             // CRITICAL FIX: Use 4 samples minimum for cache misses to reduce noise
