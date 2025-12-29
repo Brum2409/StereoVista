@@ -46,6 +46,7 @@ enum class ShortcutAction {
   ToggleIndirectLighting, // Toggle indirect lighting (RT)
   ToggleEmissiveLighting, // Toggle emissive lighting
   ToggleBVH,              // Toggle BVH acceleration
+  ClearIrradianceCache,   // Clear irradiance cache (forces recomputation)
 
   // 3D Cursor
   ToggleSphereCursor, // Toggle 3D sphere cursor

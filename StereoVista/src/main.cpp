@@ -4005,6 +4005,13 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
         updateBVHBuffers();
         bvhBuffersUploaded = true;
 
+        // Clear irradiance cache when scene geometry changes
+        // Cached irradiance values are no longer valid for new/moved geometry
+        if (irradianceCache && irradianceCache->isInitialized()) {
+          irradianceCache->clear();
+          std::cout << "Irradiance cache cleared due to scene change" << std::endl;
+        }
+
         // Update debug renderer if debug is enabled
         if (showBVHDebug) {
           // Get max depth from GUI settings
@@ -4077,11 +4084,11 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
         irradianceCache->isInitialized() &&
         radianceSettings.enableIrradianceCache && triangleCount > 0) {
 
-      // CRITICAL FIX: Clear cache EVERY frame to prevent stale data
-      // accumulation The diagnostic output showed cache growing from 7663 to
-      // 8272 entries across frames This indicates it wasn't being cleared
-      // properly, causing zero/black irradiance values
-      irradianceCache->clear();
+      // NOTE: Cache is persistent across frames - Ward's algorithm incrementally
+      // populates the cache where needed. Cache is only cleared when:
+      // 1. Scene geometry changes (BVH rebuild)
+      // 2. User manually clears it (Ctrl+Shift+I shortcut)
+      // This allows the cache to build up coverage over time for better performance.
 
       // Use compute shader to populate cache
       irradianceCacheComputeShader->use();
@@ -6532,6 +6539,15 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
                                                            : "disabled")
                 << std::endl;
       savePreferences();
+      break;
+
+    case StereoVista::ShortcutAction::ClearIrradianceCache:
+      if (irradianceCache && irradianceCache->isInitialized()) {
+        irradianceCache->clear();
+        std::cout << "Irradiance cache cleared - will repopulate on next frame" << std::endl;
+      } else {
+        std::cout << "Irradiance cache not initialized" << std::endl;
+      }
       break;
 
     // 3D Cursor

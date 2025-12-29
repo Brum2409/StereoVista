@@ -428,6 +428,9 @@ ShortcutProfile ShortcutManager::createDefaultProfile() {
   profile.setBinding(ShortcutAction::ToggleSpaceMouseMode,
                      KeyBinding(GLFW_KEY_M, true, false, true),
                      0); // Ctrl+Shift+M
+  profile.setBinding(ShortcutAction::ClearIrradianceCache,
+                     KeyBinding(GLFW_KEY_I, true, false, true),
+                     0); // Ctrl+Shift+I
 
   // New actions start unbound - users can assign keys as needed
 
@@ -586,6 +589,8 @@ std::string ShortcutManager::getActionName(ShortcutAction action) {
     return "ToggleEmissiveLighting";
   case ShortcutAction::ToggleBVH:
     return "ToggleBVH";
+  case ShortcutAction::ClearIrradianceCache:
+    return "ClearIrradianceCache";
 
   // 3D Cursor
   case ShortcutAction::ToggleSphereCursor:
@@ -683,6 +688,8 @@ std::string ShortcutManager::getActionDescription(ShortcutAction action) {
     return "Toggle Emissive Lighting";
   case ShortcutAction::ToggleBVH:
     return "Toggle BVH Acceleration";
+  case ShortcutAction::ClearIrradianceCache:
+    return "Clear Irradiance Cache";
 
   // 3D Cursor
   case ShortcutAction::ToggleSphereCursor:
