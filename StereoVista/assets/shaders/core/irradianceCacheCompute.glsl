@@ -387,8 +387,12 @@ vec3 computeIrradiance(vec3 position, vec3 normal, out float harmonicMeanDist) {
         float hitDist;
         vec3 rayColor = traceRay(position + normal * 0.001, direction, hitDist);
 
-        float cosTheta = max(0.0, dot(direction, normal));
-        irradiance += rayColor * cosTheta;
+        // CRITICAL FIX: With cosine-weighted sampling (PDF = cos(θ)/π),
+        // the Monte Carlo estimator is: E = (1/N) * Σ [Li * cos(θ) / (cos(θ)/π)]
+        // The cosine terms cancel, leaving: E = (π/N) * Σ Li
+        // Therefore we multiply by π, NOT cos(θ)
+        // Reference: PBRT Book Section 13.6.3 "Cosine-Weighted Hemisphere Sampling"
+        irradiance += rayColor * 3.14159265359;  // π factor (cos terms cancelled)
 
         // CRITICAL FIX: Only count hits to actual geometry for harmonic mean
         // Sky hits (>= 100 units) are ignored to prevent artificial large patch sizes
@@ -423,9 +427,15 @@ void main() {
         return;
     }
 
-    // CRITICAL FIX: Sample every 4th triangle for better coverage
-    // Was 8th, but this left too many gaps - doubling density improves quality
-    if ((triangleIdx % 4) != 0) {
+    // CRITICAL FIX: Rotate sampling pattern across frames for persistent cache
+    // Instead of always sampling triangles 0,4,8,12... we rotate the offset:
+    // Frame 1: 0,4,8,12...  (offset=0)
+    // Frame 2: 1,5,9,13...  (offset=1)
+    // Frame 3: 2,6,10,14...  (offset=2)
+    // Frame 4: 3,7,11,15...  (offset=3)
+    // This ensures all triangles get checked over time without wasted re-checking
+    uint frameOffset = uint(randomSeed * 1000.0) % 4u;  // Derive offset from time-based seed
+    if ((triangleIdx % 4) != frameOffset) {
         return;
     }
 
@@ -497,10 +507,13 @@ void main() {
         uint localIdx = atomicAdd(cells[cellIdx].entryCount, 1);
 
         if (localIdx < maxEntriesPerCell) {
-            // Always set entryStart to the fixed indirection base for this cell
-            // This is idempotent and safe from race conditions since indirectionBase
-            // is always the same for a given cellIdx
-            cells[cellIdx].entryStart = indirectionBase;
+            // OPTIMIZATION: Only the first thread to allocate in this cell sets entryStart
+            // This avoids redundant writes and is clearer than having all threads write
+            // the same value. Since indirectionBase is deterministic (cellIdx * 16),
+            // all threads would write the same value anyway.
+            if (localIdx == 0) {
+                cells[cellIdx].entryStart = indirectionBase;
+            }
 
             // Write entry index to indirection buffer
             entryIndices[indirectionBase + localIdx] = entryIdx;

@@ -4005,6 +4005,13 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
         updateBVHBuffers();
         bvhBuffersUploaded = true;
 
+        // Clear irradiance cache when scene geometry changes
+        // Cached irradiance values are no longer valid for new/moved geometry
+        if (irradianceCache && irradianceCache->isInitialized()) {
+          irradianceCache->clear();
+          std::cout << "Irradiance cache cleared due to scene change" << std::endl;
+        }
+
         // Update debug renderer if debug is enabled
         if (showBVHDebug) {
           // Get max depth from GUI settings
@@ -4077,17 +4084,53 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
         irradianceCache->isInitialized() &&
         radianceSettings.enableIrradianceCache && triangleCount > 0) {
 
-      // CRITICAL FIX: Clear cache EVERY frame to prevent stale data
-      // accumulation The diagnostic output showed cache growing from 7663 to
-      // 8272 entries across frames This indicates it wasn't being cleared
-      // properly, causing zero/black irradiance values
-      irradianceCache->clear();
+      // NOTE: Cache is persistent across frames - Ward's algorithm incrementally
+      // populates the cache where needed. Cache is only cleared when:
+      // 1. Scene geometry changes (BVH rebuild)
+      // 2. User manually clears it (Ctrl+Shift+I shortcut)
+      // This allows the cache to build up coverage over time for better performance.
 
       // Use compute shader to populate cache
       irradianceCacheComputeShader->use();
 
+      // CRITICAL FIX: Explicitly bind ALL required SSBOs before compute shader dispatch
+      // The compute shader needs access to:
+      // - Triangle buffer (binding 0)
+      // - BVH nodes (binding 1)
+      // - Triangle indices (binding 2)
+      // - Cache buffers (bindings 3, 4, 5)
+
+      std::cout << "=== BINDING SSBOs FOR COMPUTE SHADER ===" << std::endl;
+
+      // Bind triangle buffer (binding 0)
+      if (triangleSSBO != 0) {
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, triangleSSBO);
+        std::cout << "Bound triangle SSBO " << triangleSSBO << " to binding 0" << std::endl;
+      } else {
+        std::cerr << "ERROR: Triangle SSBO is 0!" << std::endl;
+      }
+
+      // Bind BVH buffers (bindings 1, 2) if BVH is enabled
+      if (enableBVH && bvhBuilt) {
+        if (bvhNodeSSBO != 0) {
+          glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, bvhNodeSSBO);
+          std::cout << "Bound BVH node SSBO " << bvhNodeSSBO << " to binding 1" << std::endl;
+        } else {
+          std::cerr << "ERROR: BVH node SSBO is 0!" << std::endl;
+        }
+        if (triangleIndexSSBO != 0) {
+          glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, triangleIndexSSBO);
+          std::cout << "Bound triangle index SSBO " << triangleIndexSSBO << " to binding 2" << std::endl;
+        } else {
+          std::cerr << "ERROR: Triangle index SSBO is 0!" << std::endl;
+        }
+      } else {
+        std::cout << "BVH not enabled or not built - using linear traversal" << std::endl;
+      }
+
       // Bind cache SSBOs (bindings 3, 4, 5)
       irradianceCache->bindBuffers();
+      std::cout << "Bound cache SSBOs to bindings 3, 4, 5" << std::endl;
 
       // Use SHARED grid bounds (calculated once at beginning of renderEye)
       // This ensures worldToGrid() produces identical cell indices in both
@@ -4126,10 +4169,32 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       irradianceCacheComputeShader->setFloat("rayMaxDistance",
                                              radianceSettings.rayMaxDistance);
 
+      std::cout << "=== COMPUTE SHADER PARAMETERS ===" << std::endl;
+      std::cout << "numTriangles: " << triangleCount << std::endl;
+      std::cout << "numBVHNodes: " << gpuBVHNodes.size() << std::endl;
+      std::cout << "enableBVH: " << (enableBVH && bvhBuilt) << std::endl;
+      std::cout << "samplesPerEntry: 32" << std::endl;
+
+      // CRITICAL CHECK: Verify we have triangles to process
+      if (triangleCount == 0) {
+        std::cerr << "ERROR: triangleCount is 0! Cannot populate irradiance cache." << std::endl;
+        std::cerr << "This means no scene geometry was uploaded to the GPU." << std::endl;
+        // Don't dispatch if there are no triangles
+        goto skip_compute_dispatch;
+      }
+
       // Dispatch compute shader
       // Work groups process triangles in batches of 64
       GLuint numWorkGroups = (triangleCount + 63) / 64;
+      std::cout << "Dispatching compute shader: " << numWorkGroups << " work groups" << std::endl;
+      std::cout << "This will process " << triangleCount << " triangles (sampling every 4th)" << std::endl;
       glDispatchCompute(numWorkGroups, 1, 1);
+
+      // Check for OpenGL errors after dispatch
+      GLenum err = glGetError();
+      if (err != GL_NO_ERROR) {
+        std::cerr << "OpenGL error after glDispatchCompute: 0x" << std::hex << err << std::dec << std::endl;
+      }
 
       // Wait for compute to finish before fragment shader reads cache
       glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
@@ -4245,16 +4310,35 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
       }
 
+      // NOTE: With persistent caching, 0 entries on first frame is an error,
+      // but slow growth on later frames is expected (isCovered() filters duplicates)
+      static uint32_t lastEntryCount = 0;
+
+      // Detect cache clear (count decreased) and reset tracking
+      if (gpuEntryCount < lastEntryCount) {
+        lastEntryCount = 0;
+        std::cout << "Cache was cleared - resetting tracking" << std::endl;
+      }
+
+      uint32_t entriesAdded = gpuEntryCount - lastEntryCount;
+
       if (gpuEntryCount == 0) {
-        std::cout << "ERROR: Compute shader ran but created NO entries!"
-                  << std::endl;
+        std::cout << "WARNING: Cache still empty after compute shader!" << std::endl;
         std::cout << "Possible causes:" << std::endl;
-        std::cout << "  - All triangles filtered by isCovered() check"
+        std::cout << "  - All triangles filtered by isCovered() check (cache may be fully populated)"
                   << std::endl;
         std::cout << "  - Grid bounds don't cover scene geometry" << std::endl;
         std::cout << "  - Compute shader not executing properly" << std::endl;
+      } else {
+        std::cout << "Cache population: +" << entriesAdded << " new entries this frame (total: "
+                  << gpuEntryCount << ")" << std::endl;
+        if (entriesAdded == 0 && lastEntryCount > 0) {
+          std::cout << "  (Cache stable - all sampled positions already covered)" << std::endl;
+        }
       }
+      lastEntryCount = gpuEntryCount;
 
+      skip_compute_dispatch:
       // DON'T unbind cache buffers here - fragment shader needs to read them
       // during rendering! irradianceCache->unbindBuffers();
 
@@ -4263,10 +4347,10 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       // remains active and geometry won't be rasterized!
       shader->use();
 
-      // CRITICAL FIX: Set cache entry count for fragment shader!
-      // Without this, fragment shader thinks cache is empty and skips lookup
-      shader->setInt("cacheEntryCount", gpuEntryCount);
-      std::cout << "Set cacheEntryCount uniform to: " << gpuEntryCount
+      // NOTE: cacheEntryCount is read from the SSBO header, not from a uniform
+      // The fragment shader accesses it as: IrradianceCacheBuffer.cacheEntryCount
+      // No need to set it as a uniform - it's already in the buffer at offset 0
+      std::cout << "Fragment shader will read cacheEntryCount from SSBO: " << gpuEntryCount
                 << std::endl;
 
       // DIAGNOSTIC: Check if grid cells are actually populated
@@ -6473,6 +6557,15 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
                                                            : "disabled")
                 << std::endl;
       savePreferences();
+      break;
+
+    case StereoVista::ShortcutAction::ClearIrradianceCache:
+      if (irradianceCache && irradianceCache->isInitialized()) {
+        irradianceCache->clear();
+        std::cout << "Irradiance cache cleared - will repopulate on next frame" << std::endl;
+      } else {
+        std::cout << "Irradiance cache not initialized" << std::endl;
+      }
       break;
 
     // 3D Cursor
