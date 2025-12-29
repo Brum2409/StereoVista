@@ -387,8 +387,12 @@ vec3 computeIrradiance(vec3 position, vec3 normal, out float harmonicMeanDist) {
         float hitDist;
         vec3 rayColor = traceRay(position + normal * 0.001, direction, hitDist);
 
-        float cosTheta = max(0.0, dot(direction, normal));
-        irradiance += rayColor * cosTheta;
+        // CRITICAL FIX: With cosine-weighted sampling (PDF = cos(θ)/π),
+        // the Monte Carlo estimator is: E = (1/N) * Σ [Li * cos(θ) / (cos(θ)/π)]
+        // The cosine terms cancel, leaving: E = (π/N) * Σ Li
+        // Therefore we multiply by π, NOT cos(θ)
+        // Reference: PBRT Book Section 13.6.3 "Cosine-Weighted Hemisphere Sampling"
+        irradiance += rayColor * 3.14159265359;  // π factor (cos terms cancelled)
 
         // CRITICAL FIX: Only count hits to actual geometry for harmonic mean
         // Sky hits (>= 100 units) are ignored to prevent artificial large patch sizes
