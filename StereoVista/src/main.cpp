@@ -4086,8 +4086,44 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       // Use compute shader to populate cache
       irradianceCacheComputeShader->use();
 
+      // CRITICAL FIX: Explicitly bind ALL required SSBOs before compute shader dispatch
+      // The compute shader needs access to:
+      // - Triangle buffer (binding 0)
+      // - BVH nodes (binding 1)
+      // - Triangle indices (binding 2)
+      // - Cache buffers (bindings 3, 4, 5)
+
+      std::cout << "=== BINDING SSBOs FOR COMPUTE SHADER ===" << std::endl;
+
+      // Bind triangle buffer (binding 0)
+      if (triangleSSBO != 0) {
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, triangleSSBO);
+        std::cout << "Bound triangle SSBO " << triangleSSBO << " to binding 0" << std::endl;
+      } else {
+        std::cerr << "ERROR: Triangle SSBO is 0!" << std::endl;
+      }
+
+      // Bind BVH buffers (bindings 1, 2) if BVH is enabled
+      if (enableBVH && bvhBuilt) {
+        if (bvhNodeSSBO != 0) {
+          glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, bvhNodeSSBO);
+          std::cout << "Bound BVH node SSBO " << bvhNodeSSBO << " to binding 1" << std::endl;
+        } else {
+          std::cerr << "ERROR: BVH node SSBO is 0!" << std::endl;
+        }
+        if (triangleIndexSSBO != 0) {
+          glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, triangleIndexSSBO);
+          std::cout << "Bound triangle index SSBO " << triangleIndexSSBO << " to binding 2" << std::endl;
+        } else {
+          std::cerr << "ERROR: Triangle index SSBO is 0!" << std::endl;
+        }
+      } else {
+        std::cout << "BVH not enabled or not built - using linear traversal" << std::endl;
+      }
+
       // Bind cache SSBOs (bindings 3, 4, 5)
       irradianceCache->bindBuffers();
+      std::cout << "Bound cache SSBOs to bindings 3, 4, 5" << std::endl;
 
       // Use SHARED grid bounds (calculated once at beginning of renderEye)
       // This ensures worldToGrid() produces identical cell indices in both
@@ -4126,10 +4162,32 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       irradianceCacheComputeShader->setFloat("rayMaxDistance",
                                              radianceSettings.rayMaxDistance);
 
+      std::cout << "=== COMPUTE SHADER PARAMETERS ===" << std::endl;
+      std::cout << "numTriangles: " << triangleCount << std::endl;
+      std::cout << "numBVHNodes: " << gpuBVHNodes.size() << std::endl;
+      std::cout << "enableBVH: " << (enableBVH && bvhBuilt) << std::endl;
+      std::cout << "samplesPerEntry: 32" << std::endl;
+
+      // CRITICAL CHECK: Verify we have triangles to process
+      if (triangleCount == 0) {
+        std::cerr << "ERROR: triangleCount is 0! Cannot populate irradiance cache." << std::endl;
+        std::cerr << "This means no scene geometry was uploaded to the GPU." << std::endl;
+        // Don't dispatch if there are no triangles
+        goto skip_compute_dispatch;
+      }
+
       // Dispatch compute shader
       // Work groups process triangles in batches of 64
       GLuint numWorkGroups = (triangleCount + 63) / 64;
+      std::cout << "Dispatching compute shader: " << numWorkGroups << " work groups" << std::endl;
+      std::cout << "This will process " << triangleCount << " triangles (sampling every 4th)" << std::endl;
       glDispatchCompute(numWorkGroups, 1, 1);
+
+      // Check for OpenGL errors after dispatch
+      GLenum err = glGetError();
+      if (err != GL_NO_ERROR) {
+        std::cerr << "OpenGL error after glDispatchCompute: 0x" << std::hex << err << std::dec << std::endl;
+      }
 
       // Wait for compute to finish before fragment shader reads cache
       glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
@@ -4255,6 +4313,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
         std::cout << "  - Compute shader not executing properly" << std::endl;
       }
 
+      skip_compute_dispatch:
       // DON'T unbind cache buffers here - fragment shader needs to read them
       // during rendering! irradianceCache->unbindBuffers();
 
