@@ -4322,10 +4322,10 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       // remains active and geometry won't be rasterized!
       shader->use();
 
-      // CRITICAL FIX: Set cache entry count for fragment shader!
-      // Without this, fragment shader thinks cache is empty and skips lookup
-      shader->setInt("cacheEntryCount", gpuEntryCount);
-      std::cout << "Set cacheEntryCount uniform to: " << gpuEntryCount
+      // NOTE: cacheEntryCount is read from the SSBO header, not from a uniform
+      // The fragment shader accesses it as: IrradianceCacheBuffer.cacheEntryCount
+      // No need to set it as a uniform - it's already in the buffer at offset 0
+      std::cout << "Fragment shader will read cacheEntryCount from SSBO: " << gpuEntryCount
                 << std::endl;
 
       // DIAGNOSTIC: Check if grid cells are actually populated

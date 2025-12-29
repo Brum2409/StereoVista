@@ -501,10 +501,13 @@ void main() {
         uint localIdx = atomicAdd(cells[cellIdx].entryCount, 1);
 
         if (localIdx < maxEntriesPerCell) {
-            // Always set entryStart to the fixed indirection base for this cell
-            // This is idempotent and safe from race conditions since indirectionBase
-            // is always the same for a given cellIdx
-            cells[cellIdx].entryStart = indirectionBase;
+            // OPTIMIZATION: Only the first thread to allocate in this cell sets entryStart
+            // This avoids redundant writes and is clearer than having all threads write
+            // the same value. Since indirectionBase is deterministic (cellIdx * 16),
+            // all threads would write the same value anyway.
+            if (localIdx == 0) {
+                cells[cellIdx].entryStart = indirectionBase;
+            }
 
             // Write entry index to indirection buffer
             entryIndices[indirectionBase + localIdx] = entryIdx;
