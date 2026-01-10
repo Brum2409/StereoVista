@@ -22,7 +22,8 @@ struct GridCell {
 layout(std430, binding = 3) buffer IrradianceCacheBuffer {
     uint cacheEntryCount;
     uint maxCacheEntries;
-    uint padding1, padding2;
+    uint debugGridAttempts;   // DEBUG: How many times we tried to add to grid
+    uint debugGridSuccesses;  // DEBUG: How many times cellIdx was valid
     IrradianceCacheEntry entries[];
 };
 
@@ -498,7 +499,13 @@ void main() {
     ivec3 cellCoord = worldToGrid(position);
     uint cellIdx = gridIndex(cellCoord);
 
+    // DEBUG: Count how many times we attempt grid insertion
+    atomicAdd(debugGridAttempts, 1);
+
     if (cellIdx != 0xFFFFFFFF) {
+        // DEBUG: Count how many times cellIdx is valid
+        atomicAdd(debugGridSuccesses, 1);
+
         // Pre-allocated indirection buffer: each cell gets maxEntriesPerCell slots
         const uint maxEntriesPerCell = 16;  // Maximum entries per grid cell
         uint indirectionBase = cellIdx * maxEntriesPerCell;

@@ -4153,6 +4153,41 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       std::cout << "Grid resolution: " << sharedGridRes.x << "x"
                 << sharedGridRes.y << "x" << sharedGridRes.z << std::endl;
 
+      // CRITICAL VALIDATION: Verify uniforms are actually set in the shader
+      GLuint computeProgramID = irradianceCacheComputeShader->getID();
+      GLint gridMinLoc = glGetUniformLocation(computeProgramID, "gridMin");
+      GLint gridMaxLoc = glGetUniformLocation(computeProgramID, "gridMax");
+      GLint gridResLoc = glGetUniformLocation(computeProgramID, "gridResolution");
+
+      std::cout << "=== COMPUTE SHADER UNIFORM VALIDATION ===" << std::endl;
+      std::cout << "gridMin location: " << gridMinLoc << std::endl;
+      std::cout << "gridMax location: " << gridMaxLoc << std::endl;
+      std::cout << "gridResolution location: " << gridResLoc << std::endl;
+
+      if (gridMinLoc == -1 || gridMaxLoc == -1 || gridResLoc == -1) {
+        std::cerr << "ERROR: One or more grid uniforms not found in compute shader!" << std::endl;
+        std::cerr << "This means the shader cannot perform worldToGrid() correctly!" << std::endl;
+      }
+
+      // Read back uniform values to verify they were set
+      glm::vec3 readbackGridMin, readbackGridMax;
+      glm::ivec3 readbackGridRes;
+      if (gridMinLoc != -1) {
+        glGetUniformfv(computeProgramID, gridMinLoc, &readbackGridMin.x);
+        std::cout << "gridMin readback: (" << readbackGridMin.x << ", "
+                  << readbackGridMin.y << ", " << readbackGridMin.z << ")" << std::endl;
+      }
+      if (gridMaxLoc != -1) {
+        glGetUniformfv(computeProgramID, gridMaxLoc, &readbackGridMax.x);
+        std::cout << "gridMax readback: (" << readbackGridMax.x << ", "
+                  << readbackGridMax.y << ", " << readbackGridMax.z << ")" << std::endl;
+      }
+      if (gridResLoc != -1) {
+        glGetUniformiv(computeProgramID, gridResLoc, &readbackGridRes.x);
+        std::cout << "gridResolution readback: " << readbackGridRes.x << "x"
+                  << readbackGridRes.y << "x" << readbackGridRes.z << std::endl;
+      }
+
       // Set sampling parameters
       // CRITICAL FIX: Ward recommends 32-64 samples for stable harmonic mean
       // Higher sample count = more accurate local feature size estimates
@@ -4175,6 +4210,9 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       std::cout << "enableBVH: " << (enableBVH && bvhBuilt) << std::endl;
       std::cout << "samplesPerEntry: 32" << std::endl;
 
+      // Declare variable that needs to be accessible after goto label
+      uint32_t gpuEntryCount = 0;
+
       // CRITICAL CHECK: Verify we have triangles to process
       if (triangleCount == 0) {
         std::cerr << "ERROR: triangleCount is 0! Cannot populate irradiance cache." << std::endl;
@@ -4183,6 +4221,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
         goto skip_compute_dispatch;
       }
 
+      { // Scope block to allow goto to skip variable initializations
       // Dispatch compute shader
       // Work groups process triangles in batches of 64
       GLuint numWorkGroups = (triangleCount + 63) / 64;
@@ -4203,19 +4242,29 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       // reads
       glFinish();
 
-      // DIAGNOSTIC: Read back cache entry count from GPU
+      // DIAGNOSTIC: Read back cache entry count and debug counters from GPU
       glBindBuffer(GL_SHADER_STORAGE_BUFFER,
                    irradianceCache->getCacheBufferSSBO());
-      uint32_t gpuEntryCount = 0;
-      glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(uint32_t),
-                         &gpuEntryCount);
+      uint32_t headerData[4] = {0};
+      glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(headerData),
+                         headerData);
       glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+      gpuEntryCount = headerData[0];
+      uint32_t debugGridAttempts = headerData[2];
+      uint32_t debugGridSuccesses = headerData[3];
 
       std::cout << "=== IRRADIANCE CACHE DEBUG ===" << std::endl;
       std::cout << "Cache entry count (GPU): " << gpuEntryCount << std::endl;
       std::cout << "Triangle count: " << triangleCount << std::endl;
       std::cout << "Expected samples: ~" << (triangleCount / 4)
                 << " (1 in 4 triangles, after validation)" << std::endl;
+      std::cout << "DEBUG: Grid insertion attempts: " << debugGridAttempts << std::endl;
+      std::cout << "DEBUG: Grid insertions with valid cellIdx: " << debugGridSuccesses << std::endl;
+      if (debugGridAttempts > 0 && debugGridSuccesses == 0) {
+        std::cerr << "ERROR: ALL grid cell indices are invalid (0xFFFFFFFF)!" << std::endl;
+        std::cerr << "This means worldToGrid() or gridIndex() is broken!" << std::endl;
+      }
 
       // DIAGNOSTIC STEP 10: Read back first cache entry to verify data validity
       if (gpuEntryCount > 0) {
@@ -4337,6 +4386,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
         }
       }
       lastEntryCount = gpuEntryCount;
+      } // End scope block
 
       skip_compute_dispatch:
       // DON'T unbind cache buffers here - fragment shader needs to read them
@@ -4346,6 +4396,14 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       // Without this, the compute shader (which has no vertex/fragment stages)
       // remains active and geometry won't be rasterized!
       shader->use();
+
+      // CRITICAL: Always read the current cache entry count from GPU buffer
+      // This ensures we have the correct value regardless of code path taken
+      glBindBuffer(GL_SHADER_STORAGE_BUFFER,
+                   irradianceCache->getCacheBufferSSBO());
+      glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(uint32_t),
+                         &gpuEntryCount);
+      glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
       // NOTE: cacheEntryCount is read from the SSBO header, not from a uniform
       // The fragment shader accesses it as: IrradianceCacheBuffer.cacheEntryCount

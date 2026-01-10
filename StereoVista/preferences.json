@@ -1,7 +1,7 @@
 {
     "camera": {
         "autoConvergence": true,
-        "convergence": 9.930397033691406,
+        "convergence": 10.639272689819336,
         "convergenceCapMax": 41.900001525878906,
         "convergenceCapMin": 0.5,
         "convergenceDistanceFactor": 1.2999999523162842,
@@ -18,7 +18,7 @@
         "orbitFollowsCursor": false,
         "scrollDeceleration": 2.0,
         "scrollMomentum": 0.12999999523162842,
-        "separation": 0.05000000074505806,
+        "separation": 0.09000000357627869,
         "speedFactor": 0.9869999885559082,
         "useNewStereoMethod": true,
         "useSmoothScrolling": true,
@@ -78,7 +78,7 @@
         "enableBVH": true,
         "enableEmissiveLighting": true,
         "enableIndirectLighting": true,
-        "enableIrradianceCache": false,
+        "enableIrradianceCache": true,
         "enableRaytracing": true,
         "indirectIntensity": 0.30000001192092896,
         "irradianceCacheDivisor": 2,
