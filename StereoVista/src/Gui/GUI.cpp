@@ -1210,6 +1210,7 @@ void renderSettingsWindow() {
     // RENDERING TAB
     // ===========================
     if (ImGui::BeginTabItem("Rendering")) {
+      ImGui::PushID("RenderingTab");
       DrawSectionHeader("Lighting System");
 
       const char *lightingModes[] = {
@@ -1766,6 +1767,7 @@ void renderSettingsWindow() {
         }
       }
 
+      ImGui::PopID();
       ImGui::EndTabItem();
     }
 
@@ -1773,6 +1775,7 @@ void renderSettingsWindow() {
     // CAMERA TAB
     // ===========================
     if (ImGui::BeginTabItem("Camera")) {
+      ImGui::PushID("CameraTab");
       DrawSectionHeader("View Settings");
 
       if (ImGui::SliderFloat("Field of View", &camera.Zoom, 1.0f, 120.0f,
@@ -2011,6 +2014,7 @@ void renderSettingsWindow() {
         ImGui::Unindent();
       }
 
+      ImGui::PopID();
       ImGui::EndTabItem();
     }
 
@@ -2018,6 +2022,7 @@ void renderSettingsWindow() {
     // ENVIRONMENT TAB
     // ===========================
     if (ImGui::BeginTabItem("Environment")) {
+      ImGui::PushID("EnvironmentTab");
       DrawSectionHeader("Skybox");
 
       const char *skyboxTypes[] = {"Cubemap", "HDR", "Solid Color", "Gradient"};
@@ -2211,6 +2216,7 @@ void renderSettingsWindow() {
       ImGui::SameLine();
       DrawHelpMarker("Default specular diffusion for new objects");
 
+      ImGui::PopID();
       ImGui::EndTabItem();
     }
 
@@ -2218,6 +2224,7 @@ void renderSettingsWindow() {
     // DISPLAY TAB
     // ===========================
     if (ImGui::BeginTabItem("Display")) {
+      ImGui::PushID("DisplayTab");
       DrawSectionHeader("Interface");
 
       if (ImGui::Checkbox("Dark Theme", &isDarkTheme)) {
@@ -2326,6 +2333,7 @@ void renderSettingsWindow() {
         }
       }
 
+      ImGui::PopID();
       ImGui::EndTabItem();
     }
 
@@ -2333,6 +2341,7 @@ void renderSettingsWindow() {
     // INPUT TAB
     // ===========================
     if (ImGui::BeginTabItem("Input")) {
+      ImGui::PushID("InputTab");
       DrawSectionHeader("Mouse Settings");
 
       if (ImGui::SliderFloat("Mouse Sensitivity", &camera.MouseSensitivity,
@@ -2668,6 +2677,7 @@ void renderSettingsWindow() {
         ImGui::Columns(1);
       }
 
+      ImGui::PopID();
       ImGui::EndTabItem();
     }
 
@@ -2675,6 +2685,7 @@ void renderSettingsWindow() {
     // IMPORT TAB
     // ===========================
     if (ImGui::BeginTabItem("Import")) {
+      ImGui::PushID("ImportTab");
       DrawSectionHeader("Model Import Options");
 
       if (ImGui::Checkbox("Flip UV Coordinates",
@@ -2805,6 +2816,7 @@ void renderSettingsWindow() {
         settingsChanged = true;
       }
 
+      ImGui::PopID();
       ImGui::EndTabItem();
     }
 
@@ -2812,6 +2824,7 @@ void renderSettingsWindow() {
     // SHORTCUTS TAB
     // ===========================
     if (ImGui::BeginTabItem("Shortcuts")) {
+      ImGui::PushID("ShortcutsTab");
       DrawSectionHeader("Shortcut Profiles");
 
       // State variables for shortcut management (static to persist across
@@ -3247,6 +3260,7 @@ void renderSettingsWindow() {
         }
       }
 
+      ImGui::PopID();
       ImGui::EndTabItem();
     }
 
@@ -3515,6 +3529,7 @@ void renderCursorSettingsWindow() {
 
     // 3D Sphere Tab
     if (ImGui::BeginTabItem("3D Sphere")) {
+      ImGui::PushID("3DSphereTab");
       bool sphereVisible = sphereCursor->isVisible();
       if (ImGui::Checkbox("Enable 3D Sphere", &sphereVisible)) {
         sphereCursor->setVisible(sphereVisible);
@@ -3565,11 +3580,13 @@ void renderCursorSettingsWindow() {
           }
         }
       }
+      ImGui::PopID();
       ImGui::EndTabItem();
     }
 
     // 2D Circle Tab
     if (ImGui::BeginTabItem("2D Circle")) {
+      ImGui::PushID("2DCircleTab");
       bool fragmentVisible = fragmentCursor->isVisible();
       if (ImGui::Checkbox("Enable 2D Circle", &fragmentVisible)) {
         fragmentCursor->setVisible(fragmentVisible);
@@ -3614,11 +3631,13 @@ void renderCursorSettingsWindow() {
           fragmentCursor->setInnerColor(innerColor);
         }
       }
+      ImGui::PopID();
       ImGui::EndTabItem();
     }
 
     // Surface Plane Tab
     if (ImGui::BeginTabItem("Surface Plane")) {
+      ImGui::PushID("SurfacePlaneTab");
       bool planeVisible = planeCursor->isVisible();
       if (ImGui::Checkbox("Enable Surface Plane", &planeVisible)) {
         planeCursor->setVisible(planeVisible);
@@ -3640,11 +3659,13 @@ void renderCursorSettingsWindow() {
         ImGui::TextWrapped("The plane cursor aligns to surface normals and "
                            "shows the tangent plane at the cursor position.");
       }
+      ImGui::PopID();
       ImGui::EndTabItem();
     }
 
     // Orbit Visualization Tab
     if (ImGui::BeginTabItem("Orbit Center")) {
+      ImGui::PushID("OrbitCenterTab");
       DrawSectionHeader("Orbit Visualization");
 
       bool showOrbitCenter = cursorManager.isShowOrbitCenter();
@@ -3676,6 +3697,7 @@ void renderCursorSettingsWindow() {
       ImGui::TextWrapped("• Around Cursor: At the 3D cursor position");
       ImGui::TextWrapped("• Follow Cursor: View centers on cursor first");
 
+      ImGui::PopID();
       ImGui::EndTabItem();
     }
 
