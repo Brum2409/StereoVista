@@ -15,6 +15,8 @@
 #include <fstream>
 #include <iostream>
 #include <json.h>
+#include <map>
+#include <set>
 #include <sstream>
 #include <utility>
 
@@ -432,34 +434,187 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         ImGui::PopFont();
         ImGui::SameLine();
       }
+
+      // Static variables for scene loading dialog
+      static std::string pendingSceneToLoad = "";
+      static bool showLoadSceneDialog = false;
+
+      // Helper lambda to load and replace scene
+      auto loadAndReplaceScene = [&](const std::string& sceneFile) {
+        try {
+          // Clear all existing objects
+          currentScene.models.clear();
+          currentScene.pointClouds.clear();
+          pointLights.clear();
+          spotLights.clear();
+          currentSelectedType = SelectedType::None;
+          currentSelectedIndex = -1;
+          currentSelectedMeshIndex = -1;
+
+          // Load new scene
+          currentScene = Engine::loadScene(sceneFile, camera);
+          pointLights = currentScene.pointLights;
+          for (auto &pl : pointLights) {
+            pl.castShadows = true;
+          }
+          spotLights = currentScene.spotLights;
+
+          for (auto &model : currentScene.models) {
+            glm::vec3 targetScale = model.scale;
+            if (preferences.enableSpawnAnimation) {
+              model.startSpawnAnimation(targetScale, 1.1f);
+            }
+          }
+          currentSelectedIndex = currentScene.models.empty() ? -1 : 0;
+          updateSpaceMouseBounds();
+        } catch (const std::exception &e) {
+          std::cerr << "Failed to load scene: " << e.what() << std::endl;
+        }
+      };
+
+      // Helper lambda to load and merge scene
+      auto loadAndMergeScene = [&](const std::string& sceneFile) {
+        try {
+          // Load new scene and merge with existing
+          Engine::Scene newScene = Engine::loadScene(sceneFile, camera);
+
+          // Merge models
+          for (auto &model : newScene.models) {
+            glm::vec3 targetScale = model.scale;
+            if (preferences.enableSpawnAnimation) {
+              model.startSpawnAnimation(targetScale, 1.1f);
+            }
+            currentScene.models.push_back(model);
+          }
+
+          // Merge point clouds
+          for (auto &pc : newScene.pointClouds) {
+            currentScene.pointClouds.push_back(std::move(pc));
+          }
+
+          // Merge point lights
+          for (auto &pl : newScene.pointLights) {
+            pl.castShadows = true;
+            pointLights.push_back(pl);
+          }
+
+          // Merge spot lights
+          for (auto &sl : newScene.spotLights) {
+            spotLights.push_back(sl);
+          }
+
+          updateSpaceMouseBounds();
+        } catch (const std::exception &e) {
+          std::cerr << "Failed to load scene: " << e.what() << std::endl;
+        }
+      };
+
+      // Helper lambda to load scene (first load or based on preference)
+      auto loadSceneWithPreference = [&](const std::string& sceneFile) {
+        currentScene = Engine::loadScene(sceneFile, camera);
+        pointLights = currentScene.pointLights;
+        for (auto &pl : pointLights) {
+          pl.castShadows = true;
+        }
+        spotLights = currentScene.spotLights;
+
+        for (auto &model : currentScene.models) {
+          glm::vec3 targetScale = model.scale;
+          if (preferences.enableSpawnAnimation) {
+            model.startSpawnAnimation(targetScale, 1.1f);
+          }
+        }
+        currentSelectedIndex = currentScene.models.empty() ? -1 : 0;
+        updateSpaceMouseBounds();
+      };
+
       if (ImGui::MenuItem(sceneMenuText.c_str())) {
         auto selection =
             pfd::open_file("Select a scene file to load", ".",
                            {"Scene Files", "*.scene", "All Files", "*"})
                 .result();
         if (!selection.empty()) {
-          try {
-            currentScene = Engine::loadScene(selection[0], camera);
-            pointLights = currentScene.pointLights;
-            // Ensure default: all point lights cast shadows unless specified
-            // otherwise
-            for (auto &pl : pointLights) {
-              pl.castShadows = true;
-            }
-            spotLights = currentScene.spotLights;
+          // Check if there are existing objects in the scene
+          bool hasExistingObjects = !currentScene.models.empty() ||
+                                    !currentScene.pointClouds.empty() ||
+                                    !pointLights.empty() ||
+                                    !spotLights.empty();
 
-            for (auto &model : currentScene.models) {
-              glm::vec3 targetScale = model.scale;
-              if (preferences.enableSpawnAnimation) {
-                model.startSpawnAnimation(targetScale, 1.1f);
-              }
+          if (hasExistingObjects) {
+            // Check user preference for scene loading behavior
+            if (preferences.sceneLoadingBehavior == GUI::SCENE_LOAD_ALWAYS_REPLACE) {
+              // Auto-replace: clear existing and load new
+              loadAndReplaceScene(selection[0]);
+            } else if (preferences.sceneLoadingBehavior == GUI::SCENE_LOAD_ALWAYS_MERGE) {
+              // Auto-merge: keep existing and add new
+              loadAndMergeScene(selection[0]);
+            } else {
+              // Always ask: show dialog
+              pendingSceneToLoad = selection[0];
+              showLoadSceneDialog = true;
             }
-            currentSelectedIndex = currentScene.models.empty() ? -1 : 0;
-            updateSpaceMouseBounds();
-          } catch (const std::exception &e) {
-            std::cerr << "Failed to load scene: " << e.what() << std::endl;
+          } else {
+            // No existing objects, just load directly
+            try {
+              loadSceneWithPreference(selection[0]);
+            } catch (const std::exception &e) {
+              std::cerr << "Failed to load scene: " << e.what() << std::endl;
+            }
           }
         }
+      }
+
+      // Load Scene Dialog Modal
+      if (showLoadSceneDialog) {
+        ImGui::OpenPopup("Load Scene");
+        showLoadSceneDialog = false;
+      }
+
+      if (ImGui::BeginPopupModal("Load Scene", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("An existing scene is already loaded.");
+        ImGui::Spacing();
+        ImGui::Text("How would you like to load the new scene?");
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Replace button - clear existing scene
+        if (ImGui::Button("Replace (Clear Existing)", ImVec2(200, 0))) {
+          loadAndReplaceScene(pendingSceneToLoad);
+          ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        DrawHelpMarker("Remove all existing objects and load the new scene");
+
+        ImGui::Spacing();
+
+        // Merge button - keep existing scene
+        if (ImGui::Button("Merge (Keep Existing)", ImVec2(200, 0))) {
+          loadAndMergeScene(pendingSceneToLoad);
+          ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        DrawHelpMarker("Add new scene objects to the existing scene");
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Cancel button
+        if (ImGui::Button("Cancel", ImVec2(-1, 0))) {
+          ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Hint about settings
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+        ImGui::TextWrapped("Tip: You can set a default behavior in Settings > Display > Scene Loading");
+        ImGui::PopStyleColor();
+
+        ImGui::EndPopup();
       }
 
       if (ImGui::MenuItem("Save Scene...")) {
@@ -794,7 +949,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
     ImGui::Columns(2, "ObjectColumns", false);
     ImGui::SetColumnWidth(0, 60);
 
-    // Sun Object
+    // Sun Object (always at top, ungrouped)
     ImGui::PushID("sun");
     bool sunVisible = sun.enabled;
     if (ImGui::Checkbox("##visible", &sunVisible))
@@ -819,12 +974,45 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
     ImGui::NextColumn();
     ImGui::PopID();
 
-    // Models List
+    // Group objects by sourceScenePath
+    std::map<std::string, std::vector<int>> sceneModels;
+    std::map<std::string, std::vector<int>> scenePointClouds;
+    std::map<std::string, std::vector<int>> scenePointLights;
+    std::map<std::string, std::vector<int>> sceneSpotLights;
+
+    // Collect models by scene
     for (int i = 0; i < currentScene.models.size(); i++) {
+      sceneModels[currentScene.models[i].sourceScenePath].push_back(i);
+    }
+
+    // Collect point clouds by scene
+    for (int i = 0; i < currentScene.pointClouds.size(); i++) {
+      scenePointClouds[currentScene.pointClouds[i].sourceScenePath].push_back(i);
+    }
+
+    // Collect point lights by scene
+    for (int i = 0; i < pointLights.size(); i++) {
+      scenePointLights[pointLights[i].sourceScenePath].push_back(i);
+    }
+
+    // Collect spot lights by scene
+    for (int i = 0; i < spotLights.size(); i++) {
+      sceneSpotLights[spotLights[i].sourceScenePath].push_back(i);
+    }
+
+    // Get all unique scene paths
+    std::set<std::string> allScenePaths;
+    for (const auto& pair : sceneModels) allScenePaths.insert(pair.first);
+    for (const auto& pair : scenePointClouds) allScenePaths.insert(pair.first);
+    for (const auto& pair : scenePointLights) allScenePaths.insert(pair.first);
+    for (const auto& pair : sceneSpotLights) allScenePaths.insert(pair.first);
+
+    // Helper lambda to render a model
+    auto renderModel = [&](int i) {
       std::string modelName = currentScene.models[i].name;
       if (strlen(searchBuffer) > 0 &&
           modelName.find(searchBuffer) == std::string::npos)
-        continue;
+        return;
 
       ImGui::PushID(i);
       ImGui::AlignTextToFramePadding();
@@ -848,8 +1036,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       if (isModelSelected && currentSelectedMeshIndex == -1)
         flags |= ImGuiTreeNodeFlags_Selected;
 
-      // Render model icon with FontAwesome and the model name separately to
-      // ensure proper fonts are used
+      // Render model icon with FontAwesome and the model name separately
       if (g_Fonts.icons) {
         ImGui::PushFont(g_Fonts.icons);
         ImGui::Text(ICON_FA_CUBE);
@@ -915,69 +1102,14 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         ImGui::TreePop();
       }
       ImGui::PopID();
-    }
+    };
 
-    // Point Lights List
-    for (int i = 0; i < pointLights.size(); i++) {
-      ImGui::PushID(i + currentScene.models.size() + 1000);
-      bool isSelected = (currentSelectedIndex == i &&
-                         currentSelectedType == SelectedType::PointLight);
-
-      ImGui::AlignTextToFramePadding();
-      ImGui::Text("");
-      ImGui::NextColumn();
-
-      ImGui::AlignTextToFramePadding();
-      // Use FontAwesome icons with PushFont/PopFont approach for separate fonts
-      if (g_Fonts.icons) {
-        ImGui::PushFont(g_Fonts.icons);
-        ImGui::Text(ICON_FA_LIGHTBULB);
-        ImGui::PopFont();
-        ImGui::SameLine();
-      }
-      std::string lightText = "Point Light " + std::to_string(i + 1);
-      if (ImGui::Selectable(lightText.c_str(), isSelected,
-                            ImGuiSelectableFlags_SpanAllColumns)) {
-        currentSelectedType = SelectedType::PointLight;
-        currentSelectedIndex = i;
-        currentSelectedMeshIndex = -1;
-      }
-      ImGui::NextColumn();
-      ImGui::PopID();
-    }
-
-    // Spot Lights List
-    for (int i = 0; i < spotLights.size(); i++) {
-      ImGui::PushID(i + currentScene.models.size() + 2000);
-      bool isSelected = (currentSelectedIndex == i &&
-                         currentSelectedType == SelectedType::SpotLight);
-
-      ImGui::AlignTextToFramePadding();
-      // Render spot light with FontAwesome icon. Using bullseye as a spotlight
-      // metaphor.
-      if (g_Fonts.icons) {
-        ImGui::PushFont(g_Fonts.icons);
-        ImGui::Text(ICON_FA_BULLSEYE);
-        ImGui::PopFont();
-        ImGui::SameLine();
-      }
-      std::string spotText = "Spot Light " + std::to_string(i + 1);
-      if (ImGui::Selectable(spotText.c_str(), isSelected,
-                            ImGuiSelectableFlags_SpanAllColumns)) {
-        currentSelectedType = SelectedType::SpotLight;
-        currentSelectedIndex = i;
-        currentSelectedMeshIndex = -1;
-      }
-      ImGui::NextColumn();
-      ImGui::PopID();
-    }
-
-    // Point Clouds List
-    for (int i = 0; i < currentScene.pointClouds.size(); i++) {
+    // Helper lambda to render a point cloud
+    auto renderPointCloud = [&](int i) {
       std::string pcName = currentScene.pointClouds[i].name;
       if (strlen(searchBuffer) > 0 &&
           pcName.find(searchBuffer) == std::string::npos)
-        continue;
+        return;
 
       ImGui::PushID(i + currentScene.models.size());
       bool isSelected = (currentSelectedIndex == i &&
@@ -1003,6 +1135,251 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         currentSelectedMeshIndex = -1;
       }
       ImGui::NextColumn();
+      ImGui::PopID();
+    };
+
+    // Helper lambda to render a point light
+    auto renderPointLight = [&](int i) {
+      ImGui::PushID(i + currentScene.models.size() + 1000);
+      bool isSelected = (currentSelectedIndex == i &&
+                         currentSelectedType == SelectedType::PointLight);
+
+      ImGui::AlignTextToFramePadding();
+      ImGui::Text("");
+      ImGui::NextColumn();
+
+      ImGui::AlignTextToFramePadding();
+      if (g_Fonts.icons) {
+        ImGui::PushFont(g_Fonts.icons);
+        ImGui::Text(ICON_FA_LIGHTBULB);
+        ImGui::PopFont();
+        ImGui::SameLine();
+      }
+      std::string lightText = "Point Light " + std::to_string(i + 1);
+      if (ImGui::Selectable(lightText.c_str(), isSelected,
+                            ImGuiSelectableFlags_SpanAllColumns)) {
+        currentSelectedType = SelectedType::PointLight;
+        currentSelectedIndex = i;
+        currentSelectedMeshIndex = -1;
+      }
+      ImGui::NextColumn();
+      ImGui::PopID();
+    };
+
+    // Helper lambda to render a spot light
+    auto renderSpotLight = [&](int i) {
+      ImGui::PushID(i + currentScene.models.size() + 2000);
+      bool isSelected = (currentSelectedIndex == i &&
+                         currentSelectedType == SelectedType::SpotLight);
+
+      ImGui::AlignTextToFramePadding();
+      if (g_Fonts.icons) {
+        ImGui::PushFont(g_Fonts.icons);
+        ImGui::Text(ICON_FA_BULLSEYE);
+        ImGui::PopFont();
+        ImGui::SameLine();
+      }
+      std::string spotText = "Spot Light " + std::to_string(i + 1);
+      if (ImGui::Selectable(spotText.c_str(), isSelected,
+                            ImGuiSelectableFlags_SpanAllColumns)) {
+        currentSelectedType = SelectedType::SpotLight;
+        currentSelectedIndex = i;
+        currentSelectedMeshIndex = -1;
+      }
+      ImGui::NextColumn();
+      ImGui::PopID();
+    };
+
+    // First, render ungrouped objects (empty sourceScenePath)
+    if (sceneModels.count("") > 0) {
+      for (int idx : sceneModels[""]) {
+        renderModel(idx);
+      }
+    }
+    if (scenePointClouds.count("") > 0) {
+      for (int idx : scenePointClouds[""]) {
+        renderPointCloud(idx);
+      }
+    }
+    if (scenePointLights.count("") > 0) {
+      for (int idx : scenePointLights[""]) {
+        renderPointLight(idx);
+      }
+    }
+    if (sceneSpotLights.count("") > 0) {
+      for (int idx : sceneSpotLights[""]) {
+        renderSpotLight(idx);
+      }
+    }
+
+    // Then, render grouped scenes
+    for (const auto& scenePath : allScenePaths) {
+      if (scenePath.empty()) continue; // Skip empty path (already rendered)
+
+      // Extract scene name from path
+      std::filesystem::path path(scenePath);
+      std::string sceneName = path.stem().string();
+
+      // Count total objects in this scene
+      int totalObjects = 0;
+      if (sceneModels.count(scenePath)) totalObjects += sceneModels[scenePath].size();
+      if (scenePointClouds.count(scenePath)) totalObjects += scenePointClouds[scenePath].size();
+      if (scenePointLights.count(scenePath)) totalObjects += scenePointLights[scenePath].size();
+      if (sceneSpotLights.count(scenePath)) totalObjects += sceneSpotLights[scenePath].size();
+
+      if (totalObjects == 0) continue;
+
+      ImGui::PushID(scenePath.c_str());
+
+      // Calculate master visibility state for this scene
+      bool anyVisible = false;
+      bool allVisible = true;
+      int visibleCount = 0;
+      int totalVisibleObjects = 0;
+
+      if (sceneModels.count(scenePath)) {
+        for (int idx : sceneModels[scenePath]) {
+          totalVisibleObjects++;
+          if (currentScene.models[idx].visible) {
+            anyVisible = true;
+            visibleCount++;
+          } else {
+            allVisible = false;
+          }
+        }
+      }
+      if (scenePointClouds.count(scenePath)) {
+        for (int idx : scenePointClouds[scenePath]) {
+          totalVisibleObjects++;
+          if (currentScene.pointClouds[idx].visible) {
+            anyVisible = true;
+            visibleCount++;
+          } else {
+            allVisible = false;
+          }
+        }
+      }
+
+      // Master visibility toggle
+      bool masterVisible = allVisible;
+      if (visibleCount > 0 && visibleCount < totalVisibleObjects) {
+        // Mixed state - show as partially checked
+        ImGui::PushItemFlag(ImGuiItemFlags_MixedValue, true);
+      }
+
+      if (ImGui::Checkbox("##scenevisible", &masterVisible)) {
+        // Toggle all objects in this scene
+        if (sceneModels.count(scenePath)) {
+          for (int idx : sceneModels[scenePath]) {
+            currentScene.models[idx].visible = masterVisible;
+          }
+        }
+        if (scenePointClouds.count(scenePath)) {
+          for (int idx : scenePointClouds[scenePath]) {
+            currentScene.pointClouds[idx].visible = masterVisible;
+          }
+        }
+      }
+
+      if (visibleCount > 0 && visibleCount < totalVisibleObjects) {
+        ImGui::PopItemFlag();
+      }
+
+      ImGui::NextColumn();
+
+      // Scene group header
+      ImGuiTreeNodeFlags sceneFlags = ImGuiTreeNodeFlags_OpenOnArrow |
+                                      ImGuiTreeNodeFlags_SpanAvailWidth;
+
+      if (g_Fonts.icons) {
+        ImGui::PushFont(g_Fonts.icons);
+        ImGui::Text(ICON_FA_FOLDER);
+        ImGui::PopFont();
+        ImGui::SameLine();
+      }
+
+      bool sceneOpen = ImGui::TreeNodeEx(
+        (sceneName + " (" + std::to_string(totalObjects) + ")").c_str(),
+        sceneFlags);
+
+      // Context menu for scene group
+      if (ImGui::BeginPopupContextItem()) {
+        if (ImGui::MenuItem("Delete Scene")) {
+          // Mark for deletion
+          std::vector<int> modelsToDelete;
+          std::vector<int> pointCloudsToDelete;
+          std::vector<int> pointLightsToDelete;
+          std::vector<int> spotLightsToDelete;
+
+          if (sceneModels.count(scenePath)) {
+            modelsToDelete = sceneModels[scenePath];
+          }
+          if (scenePointClouds.count(scenePath)) {
+            pointCloudsToDelete = scenePointClouds[scenePath];
+          }
+          if (scenePointLights.count(scenePath)) {
+            pointLightsToDelete = scenePointLights[scenePath];
+          }
+          if (sceneSpotLights.count(scenePath)) {
+            spotLightsToDelete = sceneSpotLights[scenePath];
+          }
+
+          // Sort in descending order to avoid index issues
+          std::sort(modelsToDelete.rbegin(), modelsToDelete.rend());
+          std::sort(pointCloudsToDelete.rbegin(), pointCloudsToDelete.rend());
+          std::sort(pointLightsToDelete.rbegin(), pointLightsToDelete.rend());
+          std::sort(spotLightsToDelete.rbegin(), spotLightsToDelete.rend());
+
+          // Delete objects
+          for (int idx : modelsToDelete) {
+            currentScene.models.erase(currentScene.models.begin() + idx);
+          }
+          for (int idx : pointCloudsToDelete) {
+            currentScene.pointClouds.erase(currentScene.pointClouds.begin() + idx);
+          }
+          for (int idx : pointLightsToDelete) {
+            pointLights.erase(pointLights.begin() + idx);
+          }
+          for (int idx : spotLightsToDelete) {
+            spotLights.erase(spotLights.begin() + idx);
+          }
+
+          // Clear selection if needed
+          currentSelectedType = SelectedType::None;
+          currentSelectedIndex = -1;
+          currentSelectedMeshIndex = -1;
+        }
+        ImGui::EndPopup();
+      }
+
+      ImGui::NextColumn();
+
+      if (sceneOpen) {
+        // Render all objects in this scene group
+        if (sceneModels.count(scenePath)) {
+          for (int idx : sceneModels[scenePath]) {
+            renderModel(idx);
+          }
+        }
+        if (scenePointClouds.count(scenePath)) {
+          for (int idx : scenePointClouds[scenePath]) {
+            renderPointCloud(idx);
+          }
+        }
+        if (scenePointLights.count(scenePath)) {
+          for (int idx : scenePointLights[scenePath]) {
+            renderPointLight(idx);
+          }
+        }
+        if (sceneSpotLights.count(scenePath)) {
+          for (int idx : sceneSpotLights[scenePath]) {
+            renderSpotLight(idx);
+          }
+        }
+
+        ImGui::TreePop();
+      }
+
       ImGui::PopID();
     }
 
@@ -2332,6 +2709,21 @@ void renderSettingsWindow() {
           settingsChanged = true;
         }
       }
+
+      ImGui::Spacing();
+      DrawSectionHeader("Scene Loading");
+
+      const char *sceneLoadingBehaviors[] = {"Always Ask", "Always Replace Existing", "Always Merge (Keep Existing)"};
+      int currentBehavior = static_cast<int>(preferences.sceneLoadingBehavior);
+      if (ImGui::Combo("When Loading Scene", &currentBehavior, sceneLoadingBehaviors, 3)) {
+        preferences.sceneLoadingBehavior = static_cast<GUI::SceneLoadingBehavior>(currentBehavior);
+        settingsChanged = true;
+      }
+      ImGui::SameLine();
+      DrawHelpMarker("Choose default behavior when loading a scene file while another scene is already loaded:\n"
+                     "• Always Ask: Show dialog each time\n"
+                     "• Always Replace: Clear existing scene\n"
+                     "• Always Merge: Keep existing scene and add new objects");
 
       ImGui::PopID();
       ImGui::EndTabItem();

@@ -1530,6 +1530,9 @@ void savePreferences() {
   j["startup"]["loadScene"] = preferences.loadStartupScene;
   j["startup"]["scenePath"] = preferences.startupScenePath;
 
+  // Scene loading behavior
+  j["startup"]["sceneLoadingBehavior"] = static_cast<int>(preferences.sceneLoadingBehavior);
+
   // Save lighting settings
   j["lighting"]["mode"] = static_cast<int>(preferences.lightingMode);
   j["lighting"]["enableShadows"] = preferences.enableShadows;
@@ -1923,6 +1926,8 @@ void loadPreferences() {
     if (j.contains("startup")) {
       preferences.loadStartupScene = j["startup"].value("loadScene", false);
       preferences.startupScenePath = j["startup"].value("scenePath", "");
+      preferences.sceneLoadingBehavior = static_cast<GUI::SceneLoadingBehavior>(
+        j["startup"].value("sceneLoadingBehavior", static_cast<int>(GUI::SCENE_LOAD_ALWAYS_ASK)));
     }
 
     // Cursor settings

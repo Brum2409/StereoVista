@@ -573,6 +573,9 @@ namespace Engine {
                         model.refractiveIndex = modelJson.value("refractiveIndex", 1.0f);
                         model.transparency = modelJson.value("transparency", 0.0f);
 
+                        // Set source scene path for grouping in GUI
+                        model.sourceScenePath = filename;
+
                         scene.models.push_back(model);
                     }
                     catch (const std::exception& e) {
@@ -613,6 +616,9 @@ namespace Engine {
                             pointCloudJson["scale"][2].get<float>()
                         );
 
+                        // Set source scene path for grouping in GUI
+                        pointCloud.sourceScenePath = filename;
+
                         scene.pointClouds.push_back(std::move(pointCloud));
                     }
                     catch (const std::exception& e) {
@@ -637,7 +643,10 @@ namespace Engine {
                             pointLightJson["color"][2].get<float>()
                         );
                         pointLight.intensity = pointLightJson.value("intensity", 1.0f);
-                        
+
+                        // Set source scene path for grouping in GUI
+                        pointLight.sourceScenePath = filename;
+
                         scene.pointLights.push_back(pointLight);
                     }
                     catch (const std::exception& e) {
@@ -669,7 +678,10 @@ namespace Engine {
                         spotLight.intensity = spotLightJson.value("intensity", 1.0f);
                         spotLight.innerCutOff = spotLightJson.value("innerCutOff", 0.9f);
                         spotLight.outerCutOff = spotLightJson.value("outerCutOff", 0.82f);
-                        
+
+                        // Set source scene path for grouping in GUI
+                        spotLight.sourceScenePath = filename;
+
                         scene.spotLights.push_back(spotLight);
                     }
                     catch (const std::exception& e) {
