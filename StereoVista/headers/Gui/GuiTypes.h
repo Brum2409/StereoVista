@@ -58,6 +58,12 @@ enum SpaceMouseNavigationMode {
   SPACEMOUSE_NAV_CAD // Pivot-based navigation (current behavior)
 };
 
+enum SceneLoadingBehavior {
+  SCENE_LOAD_ALWAYS_ASK,    // Show dialog to ask user (default)
+  SCENE_LOAD_ALWAYS_REPLACE, // Always clear existing scene
+  SCENE_LOAD_ALWAYS_MERGE    // Always keep existing scene
+};
+
 // Structure definitions
 struct SkyboxConfig {
   SkyboxType type = SKYBOX_HDR;
@@ -227,6 +233,9 @@ struct ApplicationPreferences {
   // Startup scene settings
   bool loadStartupScene = false;
   std::string startupScenePath = "";
+
+  // Scene loading behavior
+  SceneLoadingBehavior sceneLoadingBehavior = SCENE_LOAD_ALWAYS_ASK;
 
   // Model Import Settings
   struct ModelImportSettings {
