@@ -112,7 +112,7 @@ namespace Engine {
     struct PointCloud {
         std::string name;
         std::string filePath;
-        std::string sourceScenePath; // Path to the scene file this object was loaded from
+        std::string sourceScenePath = ""; // Path to the scene file this object was loaded from (empty = manually created)
         std::vector<PointCloudPoint> points; // Raw points for initial loading
         glm::vec3 position;
         glm::vec3 rotation;
@@ -280,7 +280,7 @@ namespace Engine {
 
     const int MAX_LIGHTS = 16;
     struct PointLight {
-        std::string sourceScenePath; // Path to the scene file this object was loaded from
+        std::string sourceScenePath = ""; // Path to the scene file this object was loaded from (empty = manually created)
         glm::vec3 position;
         glm::vec3 color;
         float intensity;
@@ -291,7 +291,7 @@ namespace Engine {
     };
 
     struct SpotLight {
-        std::string sourceScenePath; // Path to the scene file this object was loaded from
+        std::string sourceScenePath = ""; // Path to the scene file this object was loaded from (empty = manually created)
         glm::vec3 position;
         glm::vec3 direction;
         glm::vec3 color;

@@ -67,7 +67,7 @@ namespace Engine {
         // Public properties
         std::string name;
         std::string path;
-        std::string sourceScenePath; // Path to the scene file this object was loaded from
+        std::string sourceScenePath = ""; // Path to the scene file this object was loaded from (empty = manually created)
         glm::vec3 position = glm::vec3(0.0f);
         glm::vec3 scale = glm::vec3(1.0f);
         glm::vec3 rotation = glm::vec3(0.0f);
