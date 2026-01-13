@@ -3689,7 +3689,7 @@ void renderBrushToolWindow() {
   extern Tools::BrushTool brushTool;
 
   ImGui::SetNextWindowSize(ImVec2(450, 650), ImGuiCond_FirstUseEver);
-  ImGui::Begin("Brush Tool", nullptr);
+  ImGui::Begin("Brush Tool", &showBrushToolWindow);
 
   DrawSectionHeader("Brush Tool Settings");
 
