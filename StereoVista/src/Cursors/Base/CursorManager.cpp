@@ -2,6 +2,7 @@
 #include <GLFW/glfw3.h>
 #include <imgui.h>
 #include <iostream>
+#include <algorithm>
 
 extern Camera camera;
 extern int windowWidth;
@@ -130,6 +131,7 @@ void CursorManager::updateCursorPosition(
   float depth = 0.0;
   glm::mat4 selectedProjection = projection;
   glm::mat4 selectedView = view;
+  float cursorX = m_lastX;  // Adjusted cursor X position for stereo hit detection
 
   // Depth threshold for detecting skybox/background (anything at or very close
   // to far plane)
@@ -138,21 +140,49 @@ void CursorManager::updateCursorPosition(
   if (isStereo && leftProjection != nullptr && leftView != nullptr &&
       rightProjection != nullptr && rightView != nullptr) {
     // In stereo mode, check both eye buffers to find which has geometry under
-    // the cursor The 3D cursor should be rendered if EITHER eye has an object
-    // under the cursor The Windows cursor should only be displayed when BOTH
-    // eyes are over background
-    float leftDepth = 0.0;
-    float rightDepth = 0.0;
+    // the cursor. To handle stereo disparity (objects appearing at different
+    // horizontal positions in each eye), we check a horizontal range of pixels.
+    // This ensures the cursor activates on "first contact" with either eye's
+    // projection, regardless of whether the object is in front (pop-out) or
+    // behind (depth) the zero plane.
 
-    // Read depth from left eye buffer
+    // Calculate horizontal search range based on maximum expected stereo disparity
+    // Typical comfortable stereo disparity is ~3-5% of screen width
+    // We use 6% to be conservative and handle edge cases
+    const int searchRadius = static_cast<int>(m_windowWidth * 0.06f);
+    const int sampleStep = 3; // Sample every 3rd pixel for performance
+
+    float leftDepth = 1.0f;
+    float rightDepth = 1.0f;
+    int leftHitX = -1;   // Track X position of best left eye hit
+    int rightHitX = -1;  // Track X position of best right eye hit
+
+    // Calculate search bounds, clamped to window
+    int searchMinX = std::max(0, static_cast<int>(m_lastX) - searchRadius);
+    int searchMaxX = std::min(m_windowWidth - 1, static_cast<int>(m_lastX) + searchRadius);
+    int pixelY = static_cast<int>((float)m_windowHeight - m_lastY);
+
+    // Search left eye buffer for closest hit
     glReadBuffer(GL_BACK_LEFT);
-    glReadPixels(m_lastX, (float)m_windowHeight - m_lastY, 1, 1,
-                 GL_DEPTH_COMPONENT, GL_FLOAT, &leftDepth);
+    for (int x = searchMinX; x <= searchMaxX; x += sampleStep) {
+      float sampleDepth;
+      glReadPixels(x, pixelY, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &sampleDepth);
+      if (sampleDepth < leftDepth) {
+        leftDepth = sampleDepth;
+        leftHitX = x;
+      }
+    }
 
-    // Read depth from right eye buffer
+    // Search right eye buffer for closest hit
     glReadBuffer(GL_BACK_RIGHT);
-    glReadPixels(m_lastX, (float)m_windowHeight - m_lastY, 1, 1,
-                 GL_DEPTH_COMPONENT, GL_FLOAT, &rightDepth);
+    for (int x = searchMinX; x <= searchMaxX; x += sampleStep) {
+      float sampleDepth;
+      glReadPixels(x, pixelY, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &sampleDepth);
+      if (sampleDepth < rightDepth) {
+        rightDepth = sampleDepth;
+        rightHitX = x;
+      }
+    }
 
     // Determine which eye has geometry (depth < threshold means hit on actual
     // geometry, not skybox)
@@ -163,16 +193,19 @@ void CursorManager::updateCursorPosition(
     // Windows cursor only if BOTH are on background (neither has hit)
     if (leftHit || rightHit) {
       // At least one eye has a hit - render 3D cursor
-      // Use the first valid hit for world position calculation
-      // Prefer left eye if both have hits, otherwise use whichever has the hit
-      if (leftHit) {
+      // Choose the closest hit (smallest depth value) for accurate world position
+      if (leftHit && (!rightHit || leftDepth <= rightDepth)) {
         depth = leftDepth;
         selectedProjection = *leftProjection;
         selectedView = *leftView;
+        // Use the X position where the hit was found for accurate 3D positioning
+        cursorX = static_cast<float>(leftHitX);
       } else {
         depth = rightDepth;
         selectedProjection = *rightProjection;
         selectedView = *rightView;
+        // Use the X position where the hit was found for accurate 3D positioning
+        cursorX = static_cast<float>(rightHitX);
       }
     } else {
       // Neither eye has a hit - show Windows cursor, hide 3D cursor
@@ -185,9 +218,9 @@ void CursorManager::updateCursorPosition(
   }
 
   // Convert cursor position to world space using selected projection/view
-  // matrices
+  // matrices. Use cursorX which may be adjusted for stereo hit detection.
   glm::mat4 vpInv = glm::inverse(selectedProjection * selectedView);
-  glm::vec4 ndc = glm::vec4((m_lastX / (float)m_windowWidth) * 2.0 - 1.0,
+  glm::vec4 ndc = glm::vec4((cursorX / (float)m_windowWidth) * 2.0 - 1.0,
                             1.0 - (m_lastY / (float)m_windowHeight) * 2.0,
                             depth * 2.0 - 1.0, 1.0);
   auto worldPosH = vpInv * ndc;
