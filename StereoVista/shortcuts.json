@@ -110,6 +110,15 @@
                         "mouseButton": -1,
                         "shift": false
                     }
+                ],
+                "ToggleZeroPlane": [
+                    {
+                        "alt": false,
+                        "ctrl": false,
+                        "keyCode": 78,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
                 ]
             },
             "name": "Default"

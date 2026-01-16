@@ -3450,6 +3450,7 @@ void renderSettingsWindow() {
           renderAction(StereoVista::ShortcutAction::ToggleFPS);
           renderAction(StereoVista::ShortcutAction::ToggleWireframe);
           renderAction(StereoVista::ShortcutAction::ToggleRadar);
+          renderAction(StereoVista::ShortcutAction::ToggleZeroPlane);
         }
 
         // GROUP: Camera Controls
