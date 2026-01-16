@@ -1,7 +1,7 @@
 {
     "camera": {
         "autoConvergence": true,
-        "convergence": 10.639272689819336,
+        "convergence": 3.141042470932007,
         "convergenceCapMax": 41.900001525878906,
         "convergenceCapMin": 0.5,
         "convergenceDistanceFactor": 1.2999999523162842,
@@ -32,7 +32,7 @@
         "bloomThreshold": 0.33000001311302185,
         "enableBloom": true,
         "enabled": true,
-        "exposure": 2.359999895095825,
+        "exposure": 2.190000057220459,
         "toneMapOperator": 3
     },
     "lighting": {
@@ -78,7 +78,7 @@
         "enableBVH": true,
         "enableEmissiveLighting": true,
         "enableIndirectLighting": true,
-        "enableIrradianceCache": true,
+        "enableIrradianceCache": false,
         "enableRaytracing": true,
         "indirectIntensity": 0.30000001192092896,
         "irradianceCacheDivisor": 2,
@@ -88,7 +88,7 @@
         "materialRoughness": 0.5,
         "maxBounces": 2,
         "rayMaxDistance": 50.0,
-        "samplesPerPixel": 3,
+        "samplesPerPixel": 1,
         "showBVHDebug": false,
         "skyIntensity": 0.11999999731779099
     },
@@ -134,6 +134,7 @@
     },
     "startup": {
         "loadScene": false,
+        "sceneLoadingBehavior": 0,
         "scenePath": "C:\\Users\\Benbrem\\Downloads\\Arbeit\\ModelScenes\\Test.scene"
     },
     "ui": {

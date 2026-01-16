@@ -332,6 +332,100 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
 
   // MAIN MENU BAR
   // ========================
+
+  // Static variables for scene loading dialog (must be outside menu scope)
+  static std::string pendingSceneToLoad = "";
+  static bool showLoadSceneDialog = false;
+
+  // Helper lambda to load and replace scene
+  auto loadAndReplaceScene = [&](const std::string& sceneFile) {
+    try {
+      // Clear all existing objects
+      currentScene.models.clear();
+      currentScene.pointClouds.clear();
+      pointLights.clear();
+      spotLights.clear();
+      currentSelectedType = SelectedType::None;
+      currentSelectedIndex = -1;
+      currentSelectedMeshIndex = -1;
+
+      // Load new scene
+      currentScene = Engine::loadScene(sceneFile, camera);
+      pointLights = currentScene.pointLights;
+      for (auto &pl : pointLights) {
+        pl.castShadows = true;
+      }
+      spotLights = currentScene.spotLights;
+
+      for (auto &model : currentScene.models) {
+        glm::vec3 targetScale = model.scale;
+        if (preferences.enableSpawnAnimation) {
+          model.startSpawnAnimation(targetScale, 1.1f);
+        }
+      }
+      currentSelectedIndex = currentScene.models.empty() ? -1 : 0;
+      updateSpaceMouseBounds();
+    } catch (const std::exception &e) {
+      std::cerr << "Failed to load scene: " << e.what() << std::endl;
+    }
+  };
+
+  // Helper lambda to load and merge scene
+  auto loadAndMergeScene = [&](const std::string& sceneFile) {
+    try {
+      // Load new scene and merge with existing
+      Engine::Scene newScene = Engine::loadScene(sceneFile, camera);
+
+      // Merge models
+      for (auto &model : newScene.models) {
+        glm::vec3 targetScale = model.scale;
+        if (preferences.enableSpawnAnimation) {
+          model.startSpawnAnimation(targetScale, 1.1f);
+        }
+        currentScene.models.push_back(model);
+      }
+
+      // Merge point clouds
+      for (auto &pc : newScene.pointClouds) {
+        currentScene.pointClouds.push_back(std::move(pc));
+      }
+
+      // Merge point lights
+      for (auto &pl : newScene.pointLights) {
+        pl.castShadows = true;
+        pointLights.push_back(pl);
+      }
+
+      // Merge spot lights
+      for (auto &sl : newScene.spotLights) {
+        spotLights.push_back(sl);
+      }
+
+      updateSpaceMouseBounds();
+    } catch (const std::exception &e) {
+      std::cerr << "Failed to load scene: " << e.what() << std::endl;
+    }
+  };
+
+  // Helper lambda to load scene (first load or based on preference)
+  auto loadSceneWithPreference = [&](const std::string& sceneFile) {
+    currentScene = Engine::loadScene(sceneFile, camera);
+    pointLights = currentScene.pointLights;
+    for (auto &pl : pointLights) {
+      pl.castShadows = true;
+    }
+    spotLights = currentScene.spotLights;
+
+    for (auto &model : currentScene.models) {
+      glm::vec3 targetScale = model.scale;
+      if (preferences.enableSpawnAnimation) {
+        model.startSpawnAnimation(targetScale, 1.1f);
+      }
+    }
+    currentSelectedIndex = currentScene.models.empty() ? -1 : 0;
+    updateSpaceMouseBounds();
+  };
+
   if (ImGui::BeginMainMenuBar()) {
     // File Menu
     if (ImGui::BeginMenu("File")) {
@@ -435,99 +529,6 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         ImGui::SameLine();
       }
 
-      // Static variables for scene loading dialog
-      static std::string pendingSceneToLoad = "";
-      static bool showLoadSceneDialog = false;
-
-      // Helper lambda to load and replace scene
-      auto loadAndReplaceScene = [&](const std::string& sceneFile) {
-        try {
-          // Clear all existing objects
-          currentScene.models.clear();
-          currentScene.pointClouds.clear();
-          pointLights.clear();
-          spotLights.clear();
-          currentSelectedType = SelectedType::None;
-          currentSelectedIndex = -1;
-          currentSelectedMeshIndex = -1;
-
-          // Load new scene
-          currentScene = Engine::loadScene(sceneFile, camera);
-          pointLights = currentScene.pointLights;
-          for (auto &pl : pointLights) {
-            pl.castShadows = true;
-          }
-          spotLights = currentScene.spotLights;
-
-          for (auto &model : currentScene.models) {
-            glm::vec3 targetScale = model.scale;
-            if (preferences.enableSpawnAnimation) {
-              model.startSpawnAnimation(targetScale, 1.1f);
-            }
-          }
-          currentSelectedIndex = currentScene.models.empty() ? -1 : 0;
-          updateSpaceMouseBounds();
-        } catch (const std::exception &e) {
-          std::cerr << "Failed to load scene: " << e.what() << std::endl;
-        }
-      };
-
-      // Helper lambda to load and merge scene
-      auto loadAndMergeScene = [&](const std::string& sceneFile) {
-        try {
-          // Load new scene and merge with existing
-          Engine::Scene newScene = Engine::loadScene(sceneFile, camera);
-
-          // Merge models
-          for (auto &model : newScene.models) {
-            glm::vec3 targetScale = model.scale;
-            if (preferences.enableSpawnAnimation) {
-              model.startSpawnAnimation(targetScale, 1.1f);
-            }
-            currentScene.models.push_back(model);
-          }
-
-          // Merge point clouds
-          for (auto &pc : newScene.pointClouds) {
-            currentScene.pointClouds.push_back(std::move(pc));
-          }
-
-          // Merge point lights
-          for (auto &pl : newScene.pointLights) {
-            pl.castShadows = true;
-            pointLights.push_back(pl);
-          }
-
-          // Merge spot lights
-          for (auto &sl : newScene.spotLights) {
-            spotLights.push_back(sl);
-          }
-
-          updateSpaceMouseBounds();
-        } catch (const std::exception &e) {
-          std::cerr << "Failed to load scene: " << e.what() << std::endl;
-        }
-      };
-
-      // Helper lambda to load scene (first load or based on preference)
-      auto loadSceneWithPreference = [&](const std::string& sceneFile) {
-        currentScene = Engine::loadScene(sceneFile, camera);
-        pointLights = currentScene.pointLights;
-        for (auto &pl : pointLights) {
-          pl.castShadows = true;
-        }
-        spotLights = currentScene.spotLights;
-
-        for (auto &model : currentScene.models) {
-          glm::vec3 targetScale = model.scale;
-          if (preferences.enableSpawnAnimation) {
-            model.startSpawnAnimation(targetScale, 1.1f);
-          }
-        }
-        currentSelectedIndex = currentScene.models.empty() ? -1 : 0;
-        updateSpaceMouseBounds();
-      };
-
       if (ImGui::MenuItem(sceneMenuText.c_str())) {
         auto selection =
             pfd::open_file("Select a scene file to load", ".",
@@ -564,59 +565,6 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         }
       }
 
-      // Load Scene Dialog Modal
-      if (showLoadSceneDialog) {
-        ImGui::OpenPopup("Load Scene");
-        showLoadSceneDialog = false;
-      }
-
-      if (ImGui::BeginPopupModal("Load Scene", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("An existing scene is already loaded.");
-        ImGui::Spacing();
-        ImGui::Text("How would you like to load the new scene?");
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        // Replace button - clear existing scene
-        if (ImGui::Button("Replace (Clear Existing)", ImVec2(200, 0))) {
-          loadAndReplaceScene(pendingSceneToLoad);
-          ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        DrawHelpMarker("Remove all existing objects and load the new scene");
-
-        ImGui::Spacing();
-
-        // Merge button - keep existing scene
-        if (ImGui::Button("Merge (Keep Existing)", ImVec2(200, 0))) {
-          loadAndMergeScene(pendingSceneToLoad);
-          ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        DrawHelpMarker("Add new scene objects to the existing scene");
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        // Cancel button
-        if (ImGui::Button("Cancel", ImVec2(-1, 0))) {
-          ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        // Hint about settings
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
-        ImGui::TextWrapped("Tip: You can set a default behavior in Settings > Display > Scene Loading");
-        ImGui::PopStyleColor();
-
-        ImGui::EndPopup();
-      }
-
       if (ImGui::MenuItem("Save Scene...")) {
         auto destination =
             pfd::save_file("Select a file to save scene", ".",
@@ -640,6 +588,63 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       }
 
       ImGui::EndMenu();
+    }
+
+    // Load Scene Dialog Modal (must be outside menu scope for popup to work correctly)
+    if (showLoadSceneDialog) {
+      ImGui::OpenPopup("Load Scene");
+      showLoadSceneDialog = false;
+    }
+
+    // Center the popup in the viewport (both horizontally and vertically)
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+
+    if (ImGui::BeginPopupModal("Load Scene", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
+      ImGui::Text("An existing scene is already loaded.");
+      ImGui::Spacing();
+      ImGui::Text("How would you like to load the new scene?");
+      ImGui::Spacing();
+      ImGui::Separator();
+      ImGui::Spacing();
+
+      // Replace button - clear existing scene
+      if (ImGui::Button("Replace (Clear Existing)", ImVec2(200, 0))) {
+        loadAndReplaceScene(pendingSceneToLoad);
+        ImGui::CloseCurrentPopup();
+      }
+      ImGui::SameLine();
+      DrawHelpMarker("Remove all existing objects and load the new scene");
+
+      ImGui::Spacing();
+
+      // Merge button - keep existing scene
+      if (ImGui::Button("Merge (Keep Existing)", ImVec2(200, 0))) {
+        loadAndMergeScene(pendingSceneToLoad);
+        ImGui::CloseCurrentPopup();
+      }
+      ImGui::SameLine();
+      DrawHelpMarker("Add new scene objects to the existing scene");
+
+      ImGui::Spacing();
+      ImGui::Separator();
+      ImGui::Spacing();
+
+      // Cancel button
+      if (ImGui::Button("Cancel", ImVec2(-1, 0))) {
+        ImGui::CloseCurrentPopup();
+      }
+
+      ImGui::Spacing();
+      ImGui::Separator();
+      ImGui::Spacing();
+
+      // Hint about settings
+      ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+      ImGui::TextWrapped("Tip: You can set a default behavior in Settings > Display > Scene Loading");
+      ImGui::PopStyleColor();
+
+      ImGui::EndPopup();
     }
 
     // Create Menu
@@ -930,7 +935,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
   // ========================
   ImGui::SetNextWindowPos(ImVec2(0, ImGui::GetFrameHeight()));
   ImGui::SetNextWindowSize(
-      ImVec2(320, viewport->Size.y - ImGui::GetFrameHeight()));
+      ImVec2(320 * g_GuiScale.currentScale, viewport->Size.y - ImGui::GetFrameHeight()));
   // Ensure only the Scene Hierarchy window itself has square corners (keep
   // inner elements rounded)
   ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
@@ -945,9 +950,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
                            sizeof(searchBuffer));
   ImGui::Separator();
 
-  if (ImGui::BeginChild("ObjectList", ImVec2(0, 250), true)) {
+  if (ImGui::BeginChild("ObjectList", ImVec2(0, 250 * g_GuiScale.currentScale), true)) {
     ImGui::Columns(2, "ObjectColumns", false);
-    ImGui::SetColumnWidth(0, 60);
+    ImGui::SetColumnWidth(0, 60 * g_GuiScale.currentScale);
 
     // Sun Object (always at top, ungrouped)
     ImGui::PushID("sun");

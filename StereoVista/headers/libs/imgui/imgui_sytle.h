@@ -27,8 +27,22 @@ struct ImGuiFonts {
     ImFont* icons = nullptr;
 };
 
-// Forward declaration
-struct GuiScaleSettings;
+// GUI Scale Settings
+struct GuiScaleSettings {
+  float currentScale = 1.0f;
+  int lastWindowWidth = 0;
+  int lastWindowHeight = 0;
+  bool needsRescale = false;
+  bool needsFontRebuild = false;
+  float lastFontScale = 0.0f;
+
+  static constexpr float MIN_SCALE = 0.5f;
+  static constexpr float MAX_SCALE = 2.0f;
+  static constexpr int MIN_WINDOW_WIDTH = 800;
+  static constexpr int MIN_WINDOW_HEIGHT = 600;
+  static constexpr int REFERENCE_WIDTH = 1920;
+  static constexpr int REFERENCE_HEIGHT = 1080;
+};
 
 // Style presets
 enum class GuiStylePreset {
