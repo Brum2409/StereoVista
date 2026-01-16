@@ -541,6 +541,8 @@ std::string ShortcutManager::getActionName(ShortcutAction action) {
     return "ToggleWireframe";
   case ShortcutAction::ToggleRadar:
     return "ToggleRadar";
+  case ShortcutAction::ToggleZeroPlane:
+    return "ToggleZeroPlane";
 
   // Camera Controls
   case ShortcutAction::CenterView:
@@ -638,6 +640,8 @@ std::string ShortcutManager::getActionDescription(ShortcutAction action) {
     return "Toggle Wireframe Mode";
   case ShortcutAction::ToggleRadar:
     return "Toggle Radar/Mini-Map";
+  case ShortcutAction::ToggleZeroPlane:
+    return "Toggle Zero Plane";
 
   // Camera Controls
   case ShortcutAction::CenterView:

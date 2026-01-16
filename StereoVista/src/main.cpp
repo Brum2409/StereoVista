@@ -6471,6 +6471,14 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
       savePreferences();
       break;
 
+    case StereoVista::ShortcutAction::ToggleZeroPlane:
+      preferences.showZeroPlane = !preferences.showZeroPlane;
+      std::cout << "Zero plane "
+                << (preferences.showZeroPlane ? "enabled" : "disabled")
+                << std::endl;
+      savePreferences();
+      break;
+
     // Camera Controls
     case StereoVista::ShortcutAction::ToggleZoomToCursor:
       camera.zoomToCursor = !camera.zoomToCursor;

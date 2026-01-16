@@ -16,6 +16,7 @@ enum class ShortcutAction {
   ToggleFPS,       // Toggle FPS counter
   ToggleWireframe, // Toggle wireframe mode
   ToggleRadar,     // Toggle radar/mini-map
+  ToggleZeroPlane, // Toggle zero plane visibility
 
   // Camera Controls
   CenterView,              // C - Center on cursor/selected/scene
