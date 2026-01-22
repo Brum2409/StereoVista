@@ -191,6 +191,9 @@ namespace Engine {
         // CRITICAL: Pass the actual grid size to the shader
         m_voxelShader->setFloat("gridSize", m_voxelGridSize);
 
+        // Pass resolution for triangle dilation (conservative rasterization)
+        m_voxelShader->setInt("voxelResolution", m_resolution);
+
         // Voxelize each model
         for (const auto& model : models) {
             // Skip invisible models
