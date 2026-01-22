@@ -68,7 +68,7 @@ namespace Engine {
         glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
 
-        glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA8,
+        glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA16F,
             m_resolution, m_resolution, m_resolution,
             0, GL_RGBA, GL_FLOAT, nullptr);
 
@@ -154,7 +154,7 @@ namespace Engine {
         glClearTexImage(m_voxelTexture, 0, GL_RGBA, GL_FLOAT, nullptr);
 
         // Bind voxel texture for writing
-        glBindImageTexture(0, m_voxelTexture, 0, GL_TRUE, 0, GL_READ_WRITE, GL_RGBA8);
+        glBindImageTexture(0, m_voxelTexture, 0, GL_TRUE, 0, GL_READ_WRITE, GL_RGBA16F);
 
         // Use standard resolution viewport
         int voxelizationRes = m_resolution;

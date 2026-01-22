@@ -39,7 +39,7 @@ uniform vec3 cameraPosition;
 uniform int mipmapLevel;  // Current mipmap level
 uniform float gridSize;   // Actual voxel grid size
 
-layout(rgba8, binding = 0) uniform image3D texture3D;
+layout(rgba16f, binding = 0) uniform image3D texture3D;
 
 in vec3 worldPositionFrag;
 in vec3 normalFrag;
