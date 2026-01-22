@@ -124,16 +124,18 @@ void main() {
         // Set alpha based on transparency
         float alpha = 1.0 - material.transparency;
         vec4 voxelColor = vec4(finalColor, alpha);
-        
-        // Atomic max blending for better overlapping fragment handling
-        // Read existing value and blend with new color
+
+        // Alpha compositing (Porter-Duff "over" operator)
+        // This properly blends overlapping fragments instead of just taking max
         vec4 existingColor = imageLoad(texture3D, storageCoord);
-        vec4 blendedColor = max(existingColor, voxelColor);
-        
+        float oneMinusExistingAlpha = 1.0 - existingColor.a;
+        vec4 blendedColor;
+        blendedColor.rgb = existingColor.rgb + voxelColor.rgb * voxelColor.a * oneMinusExistingAlpha;
+        blendedColor.a = existingColor.a + voxelColor.a * oneMinusExistingAlpha;
+
         // Write to the voxel grid
         imageStore(texture3D, storageCoord, blendedColor);
-        
-        
+
         // Fill in additional voxels at higher mipmap levels for proper LOD
         if (mipmapLevel > 0) {
             for (int x = 0; x < stride && storageCoord.x + x < texDim.x; x++) {
@@ -141,9 +143,12 @@ void main() {
                     for (int z = 0; z < stride && storageCoord.z + z < texDim.z; z++) {
                         if (x == 0 && y == 0 && z == 0) continue; // Skip the center voxel
                         ivec3 neighborCoord = storageCoord + ivec3(x, y, z);
-                        
+
                         vec4 existingMip = imageLoad(texture3D, neighborCoord);
-                        vec4 blendedMip = max(existingMip, voxelColor);
+                        float oneMinusMipAlpha = 1.0 - existingMip.a;
+                        vec4 blendedMip;
+                        blendedMip.rgb = existingMip.rgb + voxelColor.rgb * voxelColor.a * oneMinusMipAlpha;
+                        blendedMip.a = existingMip.a + voxelColor.a * oneMinusMipAlpha;
                         imageStore(texture3D, neighborCoord, blendedMip);
                     }
                 }
