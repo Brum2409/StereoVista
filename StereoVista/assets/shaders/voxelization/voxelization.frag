@@ -38,8 +38,9 @@ uniform int numberOfLights;
 uniform vec3 cameraPosition;
 uniform int mipmapLevel;  // Current mipmap level
 uniform float gridSize;   // Actual voxel grid size
+uniform vec3 gridCenter;  // Grid center position in world space
 
-layout(rgba8, binding = 0) uniform image3D texture3D;
+layout(rgba16f, binding = 0) uniform image3D texture3D;
 
 in vec3 worldPositionFrag;
 in vec3 normalFrag;
@@ -53,12 +54,13 @@ vec3 calculatePointLight(const PointLight light) {
     return diff * POINT_LIGHT_INTENSITY * attenuation * light.color;
 }
 
-bool isInsideCube(const vec3 p, float e) { 
-    // Check if the world position is within the voxel grid bounds
+bool isInsideCube(const vec3 p, float e) {
+    // Check if the world position is within the voxel grid bounds (centered at gridCenter)
     float halfGrid = gridSize * 0.5;
-    return abs(p.x) < halfGrid + e && 
-           abs(p.y) < halfGrid + e && 
-           abs(p.z) < halfGrid + e; 
+    vec3 relativePos = p - gridCenter;
+    return abs(relativePos.x) < halfGrid + e &&
+           abs(relativePos.y) < halfGrid + e &&
+           abs(relativePos.z) < halfGrid + e;
 }
 
 void main() {
@@ -94,8 +96,9 @@ void main() {
     finalColor = clamp(finalColor, vec3(0.0), vec3(1.0));
 
     // Convert world position to normalized voxel coordinates [0,1]
+    // Grid is centered at gridCenter, so offset the position first
     float halfGrid = gridSize * 0.5;
-    vec3 normalizedPos = (worldPositionFrag + halfGrid) / gridSize;
+    vec3 normalizedPos = (worldPositionFrag - gridCenter + halfGrid) / gridSize;
     
     // Get texture dimensions
     ivec3 texDim = imageSize(texture3D);
@@ -124,16 +127,18 @@ void main() {
         // Set alpha based on transparency
         float alpha = 1.0 - material.transparency;
         vec4 voxelColor = vec4(finalColor, alpha);
-        
-        // Atomic max blending for better overlapping fragment handling
-        // Read existing value and blend with new color
+
+        // Alpha compositing (Porter-Duff "over" operator)
+        // This properly blends overlapping fragments instead of just taking max
         vec4 existingColor = imageLoad(texture3D, storageCoord);
-        vec4 blendedColor = max(existingColor, voxelColor);
-        
+        float oneMinusExistingAlpha = 1.0 - existingColor.a;
+        vec4 blendedColor;
+        blendedColor.rgb = existingColor.rgb + voxelColor.rgb * voxelColor.a * oneMinusExistingAlpha;
+        blendedColor.a = existingColor.a + voxelColor.a * oneMinusExistingAlpha;
+
         // Write to the voxel grid
         imageStore(texture3D, storageCoord, blendedColor);
-        
-        
+
         // Fill in additional voxels at higher mipmap levels for proper LOD
         if (mipmapLevel > 0) {
             for (int x = 0; x < stride && storageCoord.x + x < texDim.x; x++) {
@@ -141,9 +146,12 @@ void main() {
                     for (int z = 0; z < stride && storageCoord.z + z < texDim.z; z++) {
                         if (x == 0 && y == 0 && z == 0) continue; // Skip the center voxel
                         ivec3 neighborCoord = storageCoord + ivec3(x, y, z);
-                        
+
                         vec4 existingMip = imageLoad(texture3D, neighborCoord);
-                        vec4 blendedMip = max(existingMip, voxelColor);
+                        float oneMinusMipAlpha = 1.0 - existingMip.a;
+                        vec4 blendedMip;
+                        blendedMip.rgb = existingMip.rgb + voxelColor.rgb * voxelColor.a * oneMinusMipAlpha;
+                        blendedMip.a = existingMip.a + voxelColor.a * oneMinusMipAlpha;
                         imageStore(texture3D, neighborCoord, blendedMip);
                     }
                 }
