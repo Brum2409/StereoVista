@@ -29,9 +29,23 @@ namespace Engine {
 
         GLuint getVoxelTexture() const { return m_voxelTexture; }
         float getVoxelGridSize() const { return m_voxelGridSize; }
-        void setVoxelGridSize(float size) { m_voxelGridSize = size; }
+        void setVoxelGridSize(float size) {
+            if (m_voxelGridSize != size) {
+                m_voxelGridSize = size;
+                m_needsRevoxelization = true;
+            }
+        }
         glm::vec3 getGridCenter() const { return m_gridCenter; }
-        void setGridCenter(const glm::vec3& center) { m_gridCenter = center; }
+        void setGridCenter(const glm::vec3& center) {
+            if (m_gridCenter != center) {
+                m_gridCenter = center;
+                m_needsRevoxelization = true;
+            }
+        }
+
+        // Dirty flag for caching - skip re-voxelization if scene hasn't changed
+        void markDirty() { m_needsRevoxelization = true; }
+        bool isDirty() const { return m_needsRevoxelization; }
 
         // Auto-fit grid to scene bounds with optional padding factor (1.1 = 10% padding)
         void autoFitGridToScene(const std::vector<Model>& models, float paddingFactor = 1.1f);
@@ -90,6 +104,7 @@ namespace Engine {
         float m_voxelGridSize;
         glm::vec3 m_gridCenter = glm::vec3(0.0f);  // Grid center position in world space
         GLuint m_voxelTexture;
+        bool m_needsRevoxelization = true;  // Dirty flag - true on first run
 
         Shader* m_voxelShader;
 

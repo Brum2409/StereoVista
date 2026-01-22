@@ -150,6 +150,11 @@ namespace Engine {
     // This function was moved to the constructor
 
     void Voxelizer::update(const glm::vec3& cameraPos, const std::vector<Model>& models) {
+        // Skip re-voxelization if nothing changed (caching)
+        if (!m_needsRevoxelization) {
+            return;
+        }
+
         // Clear voxel texture
         glClearTexImage(m_voxelTexture, 0, GL_RGBA, GL_FLOAT, nullptr);
 
@@ -269,6 +274,9 @@ namespace Engine {
 
         // Mark voxel data as needing update for visualization
         m_voxelDataNeedsUpdate = true;
+
+        // Clear dirty flag - voxelization is now up to date
+        m_needsRevoxelization = false;
 
         // Reset state
         glEnable(GL_DEPTH_TEST);
@@ -542,9 +550,10 @@ namespace Engine {
         // Ensure minimum grid size to avoid degenerate cases
         gridSize = std::max(gridSize, 0.1f);
 
-        // Apply the computed values
+        // Apply the computed values and mark dirty for re-voxelization
         m_gridCenter = center;
         m_voxelGridSize = gridSize;
+        m_needsRevoxelization = true;
 
         std::cout << "Auto-fit grid: center=(" << center.x << ", " << center.y << ", " << center.z
                   << "), size=" << gridSize << std::endl;
