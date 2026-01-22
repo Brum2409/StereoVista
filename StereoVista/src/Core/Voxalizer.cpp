@@ -525,7 +525,7 @@ namespace Engine {
                 if (!mesh.visible) continue;
 
                 for (const auto& vertex : mesh.vertices) {
-                    glm::vec4 worldPos = modelMatrix * glm::vec4(vertex.Position, 1.0f);
+                    glm::vec4 worldPos = modelMatrix * glm::vec4(vertex.position, 1.0f);
                     sceneBounds.expand(glm::vec3(worldPos));
                 }
             }
