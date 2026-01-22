@@ -188,8 +188,9 @@ namespace Engine {
         // Pass the current mipmap level to the shader
         m_voxelShader->setInt("mipmapLevel", m_state);
 
-        // CRITICAL: Pass the actual grid size to the shader
+        // CRITICAL: Pass the actual grid size and center to the shader
         m_voxelShader->setFloat("gridSize", m_voxelGridSize);
+        m_voxelShader->setVec3("gridCenter", m_gridCenter);
 
         // Pass resolution for triangle dilation (conservative rasterization)
         m_voxelShader->setInt("voxelResolution", m_resolution);
@@ -338,12 +339,12 @@ namespace Engine {
                             float nz = ((float)z + 0.5f) / (float)effectiveSamples;
 
                             // Convert back to world space using the SAME mapping as voxelization shader
-                            // This must match the voxelization.frag: normalizedPos = (worldPos + halfGrid) / gridSize
+                            // This must match the voxelization.frag: normalizedPos = (worldPos - gridCenter + halfGrid) / gridSize
                             float halfGrid = m_voxelGridSize * 0.5f;
                             glm::vec3 position(
-                                (nx * m_voxelGridSize) - halfGrid,
-                                (ny * m_voxelGridSize) - halfGrid,
-                                (nz * m_voxelGridSize) - halfGrid
+                                (nx * m_voxelGridSize) - halfGrid + m_gridCenter.x,
+                                (ny * m_voxelGridSize) - halfGrid + m_gridCenter.y,
+                                (nz * m_voxelGridSize) - halfGrid + m_gridCenter.z
                             );
 
                             // Calculate distance from camera
@@ -494,6 +495,59 @@ namespace Engine {
     void Voxelizer::decreaseState() {
         m_state = std::max(m_state - 1, 0);
         m_voxelDataNeedsUpdate = true;  // Add this line
+    }
+
+    void Voxelizer::autoFitGridToScene(const std::vector<Model>& models, float paddingFactor) {
+        // Compute scene AABB using the existing AABB struct from BVH.h
+        AABB sceneBounds;
+
+        for (const auto& model : models) {
+            if (!model.visible) continue;
+
+            // Build model transformation matrix
+            glm::mat4 modelMatrix = glm::mat4(1.0f);
+            modelMatrix = glm::translate(modelMatrix, model.position);
+            modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.x), glm::vec3(1, 0, 0));
+            modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.y), glm::vec3(0, 1, 0));
+            modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.z), glm::vec3(0, 0, 1));
+            modelMatrix = glm::scale(modelMatrix, model.scale);
+
+            // Expand bounds with all mesh vertices (transformed to world space)
+            for (const auto& mesh : model.getMeshes()) {
+                if (!mesh.visible) continue;
+
+                for (const auto& vertex : mesh.vertices) {
+                    glm::vec4 worldPos = modelMatrix * glm::vec4(vertex.Position, 1.0f);
+                    sceneBounds.expand(glm::vec3(worldPos));
+                }
+            }
+        }
+
+        // Check if we found any valid geometry
+        if (!sceneBounds.isValid()) {
+            std::cerr << "Warning: No visible geometry found for auto-fit grid" << std::endl;
+            return;
+        }
+
+        // Compute grid center and size
+        glm::vec3 center = sceneBounds.getCenter();
+        glm::vec3 size = sceneBounds.getSize();
+
+        // Use the largest dimension to create a cubic grid (voxels are cubic)
+        float maxDimension = std::max({size.x, size.y, size.z});
+
+        // Apply padding factor to ensure geometry doesn't touch grid edges
+        float gridSize = maxDimension * paddingFactor;
+
+        // Ensure minimum grid size to avoid degenerate cases
+        gridSize = std::max(gridSize, 0.1f);
+
+        // Apply the computed values
+        m_gridCenter = center;
+        m_voxelGridSize = gridSize;
+
+        std::cout << "Auto-fit grid: center=(" << center.x << ", " << center.y << ", " << center.z
+                  << "), size=" << gridSize << std::endl;
     }
 
 } // namespace Engine

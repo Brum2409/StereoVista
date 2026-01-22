@@ -12,6 +12,7 @@ out vec3 normalFrag;
 out vec2 texCoordFrag;
 
 uniform float gridSize;
+uniform vec3 gridCenter;      // Grid center position in world space
 uniform int voxelResolution;  // Voxel grid resolution for dilation calculation
 
 // Dilate a triangle in 2D to ensure conservative rasterization
@@ -73,7 +74,7 @@ void main() {
     if (absFaceNormal.x >= absFaceNormal.y && absFaceNormal.x >= absFaceNormal.z) {
         // Project onto YZ plane (X is dominant)
         for (int i = 0; i < 3; ++i) {
-            vec3 p = worldPositionGeom[i] * scale;
+            vec3 p = (worldPositionGeom[i] - gridCenter) * scale;
             projected[i] = vec2(p.y, p.z);
         }
 
@@ -96,7 +97,7 @@ void main() {
     } else if (absFaceNormal.y >= absFaceNormal.z) {
         // Project onto XZ plane (Y is dominant)
         for (int i = 0; i < 3; ++i) {
-            vec3 p = worldPositionGeom[i] * scale;
+            vec3 p = (worldPositionGeom[i] - gridCenter) * scale;
             projected[i] = vec2(p.x, p.z);
         }
 
@@ -119,7 +120,7 @@ void main() {
     } else {
         // Project onto XY plane (Z is dominant)
         for (int i = 0; i < 3; ++i) {
-            vec3 p = worldPositionGeom[i] * scale;
+            vec3 p = (worldPositionGeom[i] - gridCenter) * scale;
             projected[i] = vec2(p.x, p.y);
         }
 

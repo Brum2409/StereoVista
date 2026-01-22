@@ -38,6 +38,7 @@ uniform int numberOfLights;
 uniform vec3 cameraPosition;
 uniform int mipmapLevel;  // Current mipmap level
 uniform float gridSize;   // Actual voxel grid size
+uniform vec3 gridCenter;  // Grid center position in world space
 
 layout(rgba16f, binding = 0) uniform image3D texture3D;
 
@@ -53,12 +54,13 @@ vec3 calculatePointLight(const PointLight light) {
     return diff * POINT_LIGHT_INTENSITY * attenuation * light.color;
 }
 
-bool isInsideCube(const vec3 p, float e) { 
-    // Check if the world position is within the voxel grid bounds
+bool isInsideCube(const vec3 p, float e) {
+    // Check if the world position is within the voxel grid bounds (centered at gridCenter)
     float halfGrid = gridSize * 0.5;
-    return abs(p.x) < halfGrid + e && 
-           abs(p.y) < halfGrid + e && 
-           abs(p.z) < halfGrid + e; 
+    vec3 relativePos = p - gridCenter;
+    return abs(relativePos.x) < halfGrid + e &&
+           abs(relativePos.y) < halfGrid + e &&
+           abs(relativePos.z) < halfGrid + e;
 }
 
 void main() {
@@ -94,8 +96,9 @@ void main() {
     finalColor = clamp(finalColor, vec3(0.0), vec3(1.0));
 
     // Convert world position to normalized voxel coordinates [0,1]
+    // Grid is centered at gridCenter, so offset the position first
     float halfGrid = gridSize * 0.5;
-    vec3 normalizedPos = (worldPositionFrag + halfGrid) / gridSize;
+    vec3 normalizedPos = (worldPositionFrag - gridCenter + halfGrid) / gridSize;
     
     // Get texture dimensions
     ivec3 texDim = imageSize(texture3D);
