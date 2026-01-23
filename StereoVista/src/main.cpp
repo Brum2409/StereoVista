@@ -4017,6 +4017,11 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
           std::cout << "Irradiance cache cleared due to scene change" << std::endl;
         }
 
+        // Mark voxelizer dirty so it re-voxelizes with new geometry
+        if (voxelizer) {
+          voxelizer->markDirty();
+        }
+
         // Update debug renderer if debug is enabled
         if (showBVHDebug) {
           // Get max depth from GUI settings
@@ -5876,6 +5881,11 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
             currentSelectedIndex = currentScene.models.size() - 1;
             std::cout << "Model duplicated: " << duplicatedModel.name
                       << std::endl;
+
+            // Mark voxelizer dirty for re-voxelization
+            if (voxelizer) {
+              voxelizer->markDirty();
+            }
           } else {
             // Normal Ctrl+drag - select existing model
             currentSelectedIndex = closestModelIndex;

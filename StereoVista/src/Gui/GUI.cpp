@@ -365,6 +365,11 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       }
       currentSelectedIndex = currentScene.models.empty() ? -1 : 0;
       updateSpaceMouseBounds();
+
+      // Mark voxelizer dirty for re-voxelization with new scene
+      if (voxelizer) {
+        voxelizer->markDirty();
+      }
     } catch (const std::exception &e) {
       std::cerr << "Failed to load scene: " << e.what() << std::endl;
     }
@@ -402,6 +407,11 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       }
 
       updateSpaceMouseBounds();
+
+      // Mark voxelizer dirty for re-voxelization with merged geometry
+      if (voxelizer) {
+        voxelizer->markDirty();
+      }
     } catch (const std::exception &e) {
       std::cerr << "Failed to load scene: " << e.what() << std::endl;
     }
@@ -424,6 +434,11 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
     }
     currentSelectedIndex = currentScene.models.empty() ? -1 : 0;
     updateSpaceMouseBounds();
+
+    // Mark voxelizer dirty for re-voxelization with new scene
+    if (voxelizer) {
+      voxelizer->markDirty();
+    }
   };
 
   if (ImGui::BeginMainMenuBar()) {
@@ -457,6 +472,11 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
               currentSelectedIndex = currentScene.models.size() - 1;
               currentSelectedType = SelectedType::Model;
               updateSpaceMouseBounds();
+
+              // Mark voxelizer dirty for re-voxelization
+              if (voxelizer) {
+                voxelizer->markDirty();
+              }
             } catch (const std::exception &e) {
               std::cerr << "Failed to load model: " << e.what() << std::endl;
             }
@@ -665,6 +685,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         currentSelectedIndex = currentScene.models.size() - 1;
         currentSelectedType = SelectedType::Model;
         updateSpaceMouseBounds();
+        if (voxelizer) voxelizer->markDirty();
       }
 
       if (ImGui::MenuItem("Sphere")) {
@@ -681,6 +702,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         currentSelectedIndex = currentScene.models.size() - 1;
         currentSelectedType = SelectedType::Model;
         updateSpaceMouseBounds();
+        if (voxelizer) voxelizer->markDirty();
       }
 
       if (ImGui::MenuItem("Cylinder")) {
@@ -697,6 +719,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         currentSelectedIndex = currentScene.models.size() - 1;
         currentSelectedType = SelectedType::Model;
         updateSpaceMouseBounds();
+        if (voxelizer) voxelizer->markDirty();
       }
 
       if (ImGui::MenuItem("Plane")) {
@@ -713,6 +736,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         currentSelectedIndex = currentScene.models.size() - 1;
         currentSelectedType = SelectedType::Model;
         updateSpaceMouseBounds();
+        if (voxelizer) voxelizer->markDirty();
       }
 
       if (ImGui::MenuItem("Torus")) {
@@ -729,6 +753,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         currentSelectedIndex = currentScene.models.size() - 1;
         currentSelectedType = SelectedType::Model;
         updateSpaceMouseBounds();
+        if (voxelizer) voxelizer->markDirty();
       }
 
       ImGui::Separator();
@@ -1347,6 +1372,11 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
           }
           for (int idx : spotLightsToDelete) {
             spotLights.erase(spotLights.begin() + idx);
+          }
+
+          // Mark voxelizer dirty if models were deleted
+          if (!modelsToDelete.empty() && voxelizer) {
+            voxelizer->markDirty();
           }
 
           // Clear selection if needed
@@ -4809,6 +4839,11 @@ void deleteSelectedModel() {
     currentSelectedIndex = -1;
     currentSelectedType = SelectedType::None;
     updateSpaceMouseBounds();
+
+    // Mark voxelizer dirty for re-voxelization
+    if (voxelizer) {
+      voxelizer->markDirty();
+    }
   }
 }
 
