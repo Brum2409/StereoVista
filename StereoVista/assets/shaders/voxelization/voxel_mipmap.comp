@@ -1,0 +1,59 @@
+#version 450 core
+
+// Compute shader for alpha-weighted mipmap generation
+// This prevents light bleeding by properly weighting colors by their alpha values
+// Standard box filtering (glGenerateMipmap) treats empty voxels equally, causing artifacts
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+
+// Source mipmap level (read)
+layout(rgba16f, binding = 0) uniform readonly image3D srcMip;
+
+// Destination mipmap level (write)
+layout(rgba16f, binding = 1) uniform writeonly image3D dstMip;
+
+void main() {
+    ivec3 dstCoord = ivec3(gl_GlobalInvocationID.xyz);
+    ivec3 dstSize = imageSize(dstMip);
+
+    // Early out if outside destination bounds
+    if (any(greaterThanEqual(dstCoord, dstSize))) {
+        return;
+    }
+
+    // Source coordinates (2x2x2 block maps to 1 destination voxel)
+    ivec3 srcCoord = dstCoord * 2;
+
+    // Sample all 8 voxels in the 2x2x2 block
+    vec4 v000 = imageLoad(srcMip, srcCoord + ivec3(0, 0, 0));
+    vec4 v001 = imageLoad(srcMip, srcCoord + ivec3(0, 0, 1));
+    vec4 v010 = imageLoad(srcMip, srcCoord + ivec3(0, 1, 0));
+    vec4 v011 = imageLoad(srcMip, srcCoord + ivec3(0, 1, 1));
+    vec4 v100 = imageLoad(srcMip, srcCoord + ivec3(1, 0, 0));
+    vec4 v101 = imageLoad(srcMip, srcCoord + ivec3(1, 0, 1));
+    vec4 v110 = imageLoad(srcMip, srcCoord + ivec3(1, 1, 0));
+    vec4 v111 = imageLoad(srcMip, srcCoord + ivec3(1, 1, 1));
+
+    // Alpha-weighted color averaging
+    // This ensures bright/opaque voxels contribute more than dark/transparent ones
+    float totalAlpha = v000.a + v001.a + v010.a + v011.a +
+                       v100.a + v101.a + v110.a + v111.a;
+
+    vec4 result;
+
+    if (totalAlpha > 0.001) {
+        // Weight colors by their alpha values
+        vec3 weightedColor = v000.rgb * v000.a + v001.rgb * v001.a +
+                             v010.rgb * v010.a + v011.rgb * v011.a +
+                             v100.rgb * v100.a + v101.rgb * v101.a +
+                             v110.rgb * v110.a + v111.rgb * v111.a;
+
+        result.rgb = weightedColor / totalAlpha;
+        result.a = totalAlpha / 8.0; // Average alpha
+    } else {
+        // All voxels are empty
+        result = vec4(0.0);
+    }
+
+    imageStore(dstMip, dstCoord, result);
+}

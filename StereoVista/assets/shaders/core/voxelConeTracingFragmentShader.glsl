@@ -21,7 +21,7 @@ const int LIGHTING_VOXEL_CONE_TRACING = 1;
 #define SQRT2 1.414213
 #define ISQRT2 0.707106
 #define MIPMAP_HARDCAP 5.4f
-#define DIFFUSE_INDIRECT_FACTOR 0.52f
+#define DIFFUSE_INDIRECT_FACTOR 0.75f  // Increased for stronger GI with 60-degree cones
 #define SPECULAR_FACTOR 4.0f
 #define SPECULAR_POWER 65.0f
 

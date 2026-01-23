@@ -9,6 +9,7 @@ namespace Engine {
         , m_voxelGridSize(10.0f)
         , m_voxelTexture(0)
         , m_voxelShader(nullptr)
+        , m_mipmapComputeShader(nullptr)
         , m_voxelCubeShader(nullptr)
         , m_cubeVAO(0)
         , m_cubeVBO(0)
@@ -38,6 +39,11 @@ namespace Engine {
                 "voxelization/voxel_cube.vert",
                 "voxelization/voxel_cube.frag"
             );
+
+            // Load compute shader for alpha-weighted mipmap generation
+            m_mipmapComputeShader = Engine::loadComputeShader(
+                "voxelization/voxel_mipmap.comp"
+            );
         }
         catch (const std::exception& e) {
             std::cerr << "Failed to load voxelization shaders: " << e.what() << std::endl;
@@ -56,6 +62,7 @@ namespace Engine {
 
         delete m_voxelShader;
         delete m_voxelCubeShader;
+        delete m_mipmapComputeShader;
     }
 
     void Voxelizer::initializeVoxelTexture() {
@@ -268,9 +275,8 @@ namespace Engine {
             }
         }
 
-        // Generate mipmaps for 3D texture
-        glBindTexture(GL_TEXTURE_3D, m_voxelTexture);
-        glGenerateMipmap(GL_TEXTURE_3D);
+        // Generate mipmaps using compute shader for alpha-weighted averaging
+        generateMipmaps();
 
         // Mark voxel data as needing update for visualization
         m_voxelDataNeedsUpdate = true;
@@ -557,6 +563,45 @@ namespace Engine {
 
         std::cout << "Auto-fit grid: center=(" << center.x << ", " << center.y << ", " << center.z
                   << "), size=" << gridSize << std::endl;
+    }
+
+    void Voxelizer::generateMipmaps() {
+        if (!m_mipmapComputeShader) {
+            // Fallback to standard mipmap generation if compute shader failed to load
+            glBindTexture(GL_TEXTURE_3D, m_voxelTexture);
+            glGenerateMipmap(GL_TEXTURE_3D);
+            return;
+        }
+
+        // Calculate number of mipmap levels
+        int numLevels = static_cast<int>(std::floor(std::log2(m_resolution))) + 1;
+
+        m_mipmapComputeShader->use();
+
+        // Generate each mipmap level using compute shader
+        int srcSize = m_resolution;
+        for (int level = 0; level < numLevels - 1; level++) {
+            int dstSize = std::max(1, srcSize / 2);
+
+            // Bind source mipmap level for reading
+            glBindImageTexture(0, m_voxelTexture, level, GL_TRUE, 0, GL_READ_ONLY, GL_RGBA16F);
+
+            // Bind destination mipmap level for writing
+            glBindImageTexture(1, m_voxelTexture, level + 1, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+
+            // Dispatch compute shader
+            // Work groups of 8x8x8, so we need ceiling division
+            int groupsX = (dstSize + 7) / 8;
+            int groupsY = (dstSize + 7) / 8;
+            int groupsZ = (dstSize + 7) / 8;
+
+            glDispatchCompute(groupsX, groupsY, groupsZ);
+
+            // Memory barrier to ensure writes are visible for next level
+            glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+
+            srcSize = dstSize;
+        }
     }
 
 } // namespace Engine

@@ -73,10 +73,9 @@ namespace Engine {
             glClearTexImage(m_voxelTexture, 0, GL_RGBA, GL_FLOAT, nullptr);
         }
 
-        void generateMipmaps() {
-            glBindTexture(GL_TEXTURE_3D, m_voxelTexture);
-            glGenerateMipmap(GL_TEXTURE_3D);
-        }
+        // Generate mipmaps using compute shader for alpha-weighted averaging
+        // This prevents light bleeding by properly weighting colors by alpha
+        void generateMipmaps();
 
         // Method to re-initialize the voxel texture with a new resolution
         void resizeVoxelTexture(int newResolution) {
@@ -107,6 +106,7 @@ namespace Engine {
         bool m_needsRevoxelization = true;  // Dirty flag - true on first run
 
         Shader* m_voxelShader;
+        Shader* m_mipmapComputeShader;  // Compute shader for alpha-weighted mipmap generation
 
         // Visualization variables
         int m_state = 0; // Mipmap level for visualization
