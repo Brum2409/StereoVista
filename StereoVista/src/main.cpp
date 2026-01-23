@@ -2013,7 +2013,7 @@ void loadPreferences() {
       preferences.vctSettings.voxelSize =
           j["vct"].value("voxelSize", 1.0f / 64.0f);
       preferences.vctSettings.diffuseConeCount =
-          j["vct"].value("diffuseConeCount", 9);
+          j["vct"].value("diffuseConeCount", 6);
       preferences.vctSettings.tracingMaxDistance =
           j["vct"].value("tracingMaxDistance", 1.41421356237f);
       preferences.vctSettings.shadowSampleCount =
@@ -2115,7 +2115,7 @@ void initializeVCTSettings() {
   vctSettings.voxelSize = 1.0f / 64.0f;
 
   // Quality settings
-  vctSettings.diffuseConeCount = 9; // Default: high quality with 9 cones
+  vctSettings.diffuseConeCount = 6; // Default: high quality with 6 cones (60° aperture)
   vctSettings.tracingMaxDistance = 1.41421356237; // Default maximum distance
   vctSettings.shadowSampleCount = 10;             // Default shadow samples
   vctSettings.shadowStepMultiplier = 0.15f;       // Default step multiplier

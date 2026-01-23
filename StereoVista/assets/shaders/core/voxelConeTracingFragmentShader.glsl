@@ -1341,9 +1341,10 @@ float traceShadowCone(vec3 from, vec3 direction, float targetDistance) {
 // Improved diffuse voxel cone tracing with better sampling
 vec3 traceDiffuseVoxelCone(vec3 from, vec3 direction) {
     direction = normalize(direction);
-    
-    // Cone parameters - wider cone for diffuse lighting
-    const float CONE_SPREAD = 0.325; // ~18.6 degrees
+
+    // Cone parameters - 60 degree aperture for proper diffuse GI coverage
+    // tan(30°) = 0.577 gives us a 60° full cone aperture (30° half-angle)
+    const float CONE_SPREAD = 0.577;
     const float MIN_CONE_RADIUS = voxelSize;
     
     vec4 acc = vec4(0.0);
@@ -1363,8 +1364,10 @@ vec3 traceDiffuseVoxelCone(vec3 from, vec3 direction) {
         
         // Calculate cone radius and appropriate mipmap level
         float coneRadius = max(MIN_CONE_RADIUS, CONE_SPREAD * dist);
-        float level = max(0.0, log2(coneRadius / voxelSize * 1.2)); // Slightly faster LOD
-        level = min(level, MIPMAP_HARDCAP);
+        // Use cone diameter for mipmap level calculation (more accurate)
+        float diameter = 2.0 * coneRadius;
+        float level = log2(diameter / voxelSize);
+        level = clamp(level, 0.0, MIPMAP_HARDCAP);
         
         vec3 texCoord = worldToVoxelCoord(samplePos);
         
@@ -1534,67 +1537,72 @@ vec3 traceRefractiveVoxelCone(vec3 from, vec3 direction) {
     return acc.rgb;
 }
 
-// Calculate indirect diffuse lighting with configurable number of cones
+// Calculate indirect diffuse lighting using standard 6-cone hemispherical distribution
+// Based on Crassin's original VCT paper - 6 cones with 60° aperture provide good hemisphere coverage
 vec3 calculateIndirectDiffuseLight(vec3 normal, vec3 baseColor) {
-    // Weight values for different cone types
-    const float w[3] = {1.5, 0.8, 0.6}; // weights (center, side, corner)
-    const float ANGLE_MIX = 0.6; // Angle for side cones
-    
-    // Calculate orthogonal base vectors
-    vec3 ortho = normalize(orthogonal(normal));
-    vec3 ortho2 = normalize(cross(ortho, normal));
-    
-    // Calculate corner vectors if needed
-    vec3 corner = normalize(0.5 * (ortho + ortho2));
-    vec3 corner2 = normalize(0.5 * (ortho - ortho2));
-    
-    // Start position with offset
-    const float CONE_OFFSET = -0.015;
-    vec3 N_OFFSET = normal * (1.0 + 3.8 * ISQRT2) * voxelSize;
-    vec3 C_ORIGIN = fs_in.FragPos + N_OFFSET;
-    
+    // Build orthonormal basis around the normal (tangent space)
+    vec3 tangent = normalize(orthogonal(normal));
+    vec3 bitangent = normalize(cross(tangent, normal));
+
+    // Standard 6-cone directions in tangent space
+    // These directions are pre-computed to evenly cover the hemisphere with 60° cones
+    // Cone 0: pointing along normal (up)
+    // Cones 1-5: arranged in a ring at ~60° from normal, 72° apart
+    const float CONE_ANGLE = 0.866025; // cos(30°) - cones tilted 60° from normal base
+    const float RING_ANGLE = 0.5;      // sin(30°) - radial distance in tangent plane
+
+    // Pre-computed directions for the 5 side cones (72° apart = 2π/5)
+    // These are in tangent space: (tangent_x, bitangent_y, normal_z)
+    const vec3 sideDirections[5] = vec3[](
+        vec3(0.0,          RING_ANGLE,  CONE_ANGLE),  // 0°
+        vec3(0.4755,       0.1545,      CONE_ANGLE),  // 72°  (sin(72°), cos(72°) * RING_ANGLE)
+        vec3(0.2939,      -0.4045,      CONE_ANGLE),  // 144°
+        vec3(-0.2939,     -0.4045,      CONE_ANGLE),  // 216°
+        vec3(-0.4755,      0.1545,      CONE_ANGLE)   // 288°
+    );
+
+    // Cone weights - center cone gets slightly more weight
+    const float centerWeight = 0.25;
+    const float sideWeight = 0.15;
+
+    // Starting position offset along normal to avoid self-intersection
+    vec3 startOffset = normal * (1.0 + 4.0 * ISQRT2) * voxelSize;
+    vec3 traceOrigin = fs_in.FragPos + startOffset;
+
     // Accumulate indirect diffuse light
     vec3 acc = vec3(0.0);
-    
-    // Get the cone count from settings
+
+    // Get cone count from settings (1, 5, or 6 for new system)
     int coneCount = vctSettings.diffuseConeCount;
-    
-    // Always trace the center cone
-    acc += w[0] * traceDiffuseVoxelCone(C_ORIGIN + CONE_OFFSET * normal, normal);
-    
-    // Trace side cones if using 5 or more cones
+
+    // Trace center cone (always)
+    acc += centerWeight * traceDiffuseVoxelCone(traceOrigin, normal);
+
+    // Trace side cones for better hemisphere coverage
     if (coneCount >= 5) {
-        vec3 s1 = normalize(mix(normal, ortho, ANGLE_MIX));
-        vec3 s2 = normalize(mix(normal, -ortho, ANGLE_MIX));
-        vec3 s3 = normalize(mix(normal, ortho2, ANGLE_MIX));
-        vec3 s4 = normalize(mix(normal, -ortho2, ANGLE_MIX));
-        
-        acc += w[1] * traceDiffuseVoxelCone(C_ORIGIN + CONE_OFFSET * ortho, s1);
-        acc += w[1] * traceDiffuseVoxelCone(C_ORIGIN - CONE_OFFSET * ortho, s2);
-        acc += w[1] * traceDiffuseVoxelCone(C_ORIGIN + CONE_OFFSET * ortho2, s3);
-        acc += w[1] * traceDiffuseVoxelCone(C_ORIGIN - CONE_OFFSET * ortho2, s4);
+        // Determine how many side cones to trace
+        int sideCones = (coneCount >= 6) ? 5 : 4;
+
+        for (int i = 0; i < sideCones; i++) {
+            // Transform direction from tangent space to world space
+            vec3 localDir = sideDirections[i];
+            vec3 worldDir = normalize(
+                localDir.x * tangent +
+                localDir.y * bitangent +
+                localDir.z * normal
+            );
+
+            acc += sideWeight * traceDiffuseVoxelCone(traceOrigin, worldDir);
+        }
     }
-    
-    // Trace corner cones if using 9 cones
-    if (coneCount >= 9) {
-        vec3 c1 = normalize(mix(normal, corner, ANGLE_MIX));
-        vec3 c2 = normalize(mix(normal, -corner, ANGLE_MIX));
-        vec3 c3 = normalize(mix(normal, corner2, ANGLE_MIX));
-        vec3 c4 = normalize(mix(normal, -corner2, ANGLE_MIX));
-        
-        acc += w[2] * traceDiffuseVoxelCone(C_ORIGIN + CONE_OFFSET * corner, c1);
-        acc += w[2] * traceDiffuseVoxelCone(C_ORIGIN - CONE_OFFSET * corner, c2);
-        acc += w[2] * traceDiffuseVoxelCone(C_ORIGIN + CONE_OFFSET * corner2, c3);
-        acc += w[2] * traceDiffuseVoxelCone(C_ORIGIN - CONE_OFFSET * corner2, c4);
-    }
-    
-    // Add slight noise to break up patterns
+
+    // Add subtle noise to reduce banding artifacts
     float noise = fract(sin(dot(fs_in.FragPos.xy, vec2(12.9898, 78.233))) * 43758.5453);
-    float noiseAmount = 0.03;
-    
-    // Apply material properties with subtle noise
-    return DIFFUSE_INDIRECT_FACTOR * material.diffuseReflectivity * 
-           acc * baseColor * (1.0 + noise * noiseAmount - noiseAmount/2.0);
+    float noiseAmount = 0.02;
+
+    // Apply material properties with energy conservation
+    return DIFFUSE_INDIRECT_FACTOR * material.diffuseReflectivity *
+           acc * baseColor * (1.0 + noise * noiseAmount - noiseAmount * 0.5);
 }
 
 vec3 calculateIndirectSpecularLight(vec3 viewDirection) {

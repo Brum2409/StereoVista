@@ -33,7 +33,7 @@ struct VCTSettings {
 
   // Quality Settings
   float voxelSize = 1.0f / 64.0f;
-  int diffuseConeCount = 9; // Number of cones for indirect diffuse (1, 5, or 9)
+  int diffuseConeCount = 6; // Number of cones for indirect diffuse (1, 5, or 6)
   float tracingMaxDistance = 1.41421356237; // Maximum distance for cone tracing
                                             // in grid units (default: SQRT2)
   int shadowSampleCount = 18;         // Number of samples for shadow cones

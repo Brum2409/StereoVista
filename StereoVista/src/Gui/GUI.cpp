@@ -1874,7 +1874,7 @@ void renderSettingsWindow() {
         }
         ImGui::SameLine();
         if (ImGui::Button("High", ImVec2(100, 0))) {
-          preferences.vctSettings.diffuseConeCount = 9;
+          preferences.vctSettings.diffuseConeCount = 6;
           preferences.vctSettings.shadowSampleCount = 15;
           preferences.vctSettings.shadowStepMultiplier = 0.1f;
           preferences.vctSettings.tracingMaxDistance = 2.0f;
@@ -1885,7 +1885,7 @@ void renderSettingsWindow() {
 
         ImGui::Spacing();
 
-        const char *coneOptions[] = {"1 (Fast)", "5 (Balanced)", "9 (Quality)"};
+        const char *coneOptions[] = {"1 (Fast)", "5 (Balanced)", "6 (Quality)"};
         int coneIndex = preferences.vctSettings.diffuseConeCount <= 1   ? 0
                         : preferences.vctSettings.diffuseConeCount <= 5 ? 1
                                                                         : 2;
@@ -1899,7 +1899,7 @@ void renderSettingsWindow() {
             preferences.vctSettings.diffuseConeCount = 5;
             break;
           case 2:
-            preferences.vctSettings.diffuseConeCount = 9;
+            preferences.vctSettings.diffuseConeCount = 6;
             break;
           }
           vctSettings.diffuseConeCount =
@@ -1909,7 +1909,8 @@ void renderSettingsWindow() {
         ImGui::SameLine();
         DrawHelpMarker(
             "Controls the number of cones used for indirect diffuse "
-            "lighting.\nMore cones = better quality but slower performance");
+            "lighting.\n6 cones with 60° aperture provides optimal hemisphere "
+            "coverage.\nMore cones = better quality but slower performance");
 
         if (ImGui::SliderFloat("Trace Distance",
                                &preferences.vctSettings.tracingMaxDistance,
