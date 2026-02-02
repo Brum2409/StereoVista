@@ -6005,7 +6005,7 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
             // Capture cursor state for synchronization
             Core::CursorSyncManager::getInstance().captureState(
                 capturedCursorPos, Core::CameraOperationType::Orbiting,
-                camera.GetProjectionMatrix(aspectRatio, 0.1f, 100.0f),
+                camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane),
                 camera.GetViewMatrix(), windowWidth, windowHeight);
 
             // Enable mouse capture when orbiting starts
@@ -6022,7 +6022,7 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
             // Capture cursor state for synchronization
             Core::CursorSyncManager::getInstance().captureState(
                 capturedCursorPos, Core::CameraOperationType::Orbiting,
-                camera.GetProjectionMatrix(aspectRatio, 0.1f, 100.0f),
+                camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane),
                 camera.GetViewMatrix(), windowWidth, windowHeight);
 
             isMouseCaptured = true;
@@ -6076,7 +6076,7 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
           // Capture cursor state for synchronization
           Core::CursorSyncManager::getInstance().captureState(
               capturedCursorPos, Core::CameraOperationType::Orbiting,
-              camera.GetProjectionMatrix(aspectRatio, 0.1f, 100.0f),
+              camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane),
               camera.GetViewMatrix(), windowWidth, windowHeight);
 
           camera.StartOrbiting();
@@ -6118,7 +6118,7 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
             Core::CursorSynchronizer::synchronizeCursorPosition(
                 window,
                 Core::CursorSyncManager::getInstance().getWorldPosition(),
-                camera.GetProjectionMatrix(aspectRatio, 0.1f, 100.0f),
+                camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane),
                 camera.GetViewMatrix(), windowWidth, windowHeight,
                 isStereoWindow);
             Core::CursorSyncManager::getInstance().markSynchronized();
@@ -6132,7 +6132,7 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
             Core::CursorSynchronizer::synchronizeCursorPosition(
                 window,
                 Core::CursorSyncManager::getInstance().getWorldPosition(),
-                camera.GetProjectionMatrix(aspectRatio, 0.1f, 100.0f),
+                camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane),
                 camera.GetViewMatrix(), windowWidth, windowHeight,
                 isStereoWindow);
             Core::CursorSyncManager::getInstance().markSynchronized();
@@ -6149,7 +6149,7 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
             // with the new camera view after orbiting
             Core::CursorSynchronizer::synchronizeCursorPosition(
                 window, originalCursorPos,
-                camera.GetProjectionMatrix(aspectRatio, 0.1f, 100.0f),
+                camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane),
                 camera.GetViewMatrix(), windowWidth, windowHeight,
                 isStereoWindow);
           } else {
@@ -6203,7 +6203,7 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
 
       Core::CursorSyncManager::getInstance().captureState(
           cursorPos, Core::CameraOperationType::Panning,
-          camera.GetProjectionMatrix(aspectRatio, 0.1f, 100.0f),
+          camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane),
           camera.GetViewMatrix(), windowWidth, windowHeight);
 
       camera.StartPanning();
@@ -6221,7 +6221,7 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
       if (Core::CursorSyncManager::getInstance().needsSynchronization()) {
         Core::CursorSynchronizer::synchronizeCursorPosition(
             window, Core::CursorSyncManager::getInstance().getWorldPosition(),
-            camera.GetProjectionMatrix(aspectRatio, 0.1f, 100.0f),
+            camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane),
             camera.GetViewMatrix(), windowWidth, windowHeight, isStereoWindow);
         Core::CursorSyncManager::getInstance().markSynchronized();
       }
@@ -6242,7 +6242,7 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
 
       Core::CursorSyncManager::getInstance().captureState(
           cursorPos, Core::CameraOperationType::Rotating,
-          camera.GetProjectionMatrix(aspectRatio, 0.1f, 100.0f),
+          camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane),
           camera.GetViewMatrix(), windowWidth, windowHeight);
 
       // Enable mouse capture for right button rotation
@@ -6259,7 +6259,7 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
       if (Core::CursorSyncManager::getInstance().needsSynchronization()) {
         Core::CursorSynchronizer::synchronizeCursorPosition(
             window, Core::CursorSyncManager::getInstance().getWorldPosition(),
-            camera.GetProjectionMatrix(aspectRatio, 0.1f, 100.0f),
+            camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane),
             camera.GetViewMatrix(), windowWidth, windowHeight, isStereoWindow);
         Core::CursorSyncManager::getInstance().markSynchronized();
       }
@@ -6767,7 +6767,7 @@ void printCursorSyncDiagnostics() {
   if (cursorManager.isCursorPositionValid()) {
     glm::vec3 cursorPos = cursorManager.getCursorPosition();
     glm::mat4 projection =
-        camera.GetProjectionMatrix(aspectRatio, 0.1f, 100.0f);
+        camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane);
     glm::mat4 view = camera.GetViewMatrix();
 
     Core::CursorSynchronizer::printDiagnostics(cursorPos, projection, view,
