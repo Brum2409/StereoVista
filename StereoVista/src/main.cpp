@@ -6115,12 +6115,15 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
             std::cout << "[CursorFix] Around cursor mode - using cursor "
                          "synchronization"
                       << std::endl;
+            // Note: Pass false for stereo mode since stereo matrices aren't available here.
+            // Using mono projection for cursor positioning is sufficient and avoids
+            // incorrect averaging with invalid default stereo matrices.
             Core::CursorSynchronizer::synchronizeCursorPosition(
                 window,
                 Core::CursorSyncManager::getInstance().getWorldPosition(),
                 camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane),
                 camera.GetViewMatrix(), windowWidth, windowHeight,
-                isStereoWindow);
+                false);
             Core::CursorSyncManager::getInstance().markSynchronized();
           } else if (orbitFollowsCursor) {
             // Center cursor mode - cursor should be at viewport center after
@@ -6129,12 +6132,13 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
             Core::CursorSyncManager::getInstance().markSynchronized();
           } else {
             // This shouldn't happen, but fallback to synchronization
+            // Note: Pass false for stereo mode since stereo matrices aren't available here.
             Core::CursorSynchronizer::synchronizeCursorPosition(
                 window,
                 Core::CursorSyncManager::getInstance().getWorldPosition(),
                 camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane),
                 camera.GetViewMatrix(), windowWidth, windowHeight,
-                isStereoWindow);
+                false);
             Core::CursorSyncManager::getInstance().markSynchronized();
           }
         } else {
@@ -6147,11 +6151,12 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
 
             // Project the original 3D cursor position to screen coordinates
             // with the new camera view after orbiting
+            // Note: Pass false for stereo mode since stereo matrices aren't available here.
             Core::CursorSynchronizer::synchronizeCursorPosition(
                 window, originalCursorPos,
                 camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane),
                 camera.GetViewMatrix(), windowWidth, windowHeight,
-                isStereoWindow);
+                false);
           } else {
             // No valid cursor position - fallback to screen center
             glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
@@ -6218,11 +6223,12 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
       camera.StopPanning();
 
       // Synchronize cursor position after panning
+      // Note: Pass false for stereo mode since stereo matrices aren't available here.
       if (Core::CursorSyncManager::getInstance().needsSynchronization()) {
         Core::CursorSynchronizer::synchronizeCursorPosition(
             window, Core::CursorSyncManager::getInstance().getWorldPosition(),
             camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane),
-            camera.GetViewMatrix(), windowWidth, windowHeight, isStereoWindow);
+            camera.GetViewMatrix(), windowWidth, windowHeight, false);
         Core::CursorSyncManager::getInstance().markSynchronized();
       }
 
@@ -6256,11 +6262,12 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
       rightMousePressed = false;
 
       // Synchronize cursor position after rotation
+      // Note: Pass false for stereo mode since stereo matrices aren't available here.
       if (Core::CursorSyncManager::getInstance().needsSynchronization()) {
         Core::CursorSynchronizer::synchronizeCursorPosition(
             window, Core::CursorSyncManager::getInstance().getWorldPosition(),
             camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane),
-            camera.GetViewMatrix(), windowWidth, windowHeight, isStereoWindow);
+            camera.GetViewMatrix(), windowWidth, windowHeight, false);
         Core::CursorSyncManager::getInstance().markSynchronized();
       }
 

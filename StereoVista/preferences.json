@@ -1,7 +1,7 @@
 {
     "camera": {
         "autoConvergence": true,
-        "convergence": 9.930055618286133,
+        "convergence": 6.54204797744751,
         "convergenceCapMax": 41.900001525878906,
         "convergenceCapMin": 0.5,
         "convergenceDistanceFactor": 1.2999999523162842,
@@ -97,10 +97,10 @@
         "enableCascades": false,
         "enableIndirectLighting": false,
         "enablePCSS": false,
-        "lightSize": 0.0949999988079071,
+        "lightSize": 0.009999999776482582,
         "numCascades": 4,
         "pcfKernelSize": 9,
-        "shadowSoftness": 6.010000228881836
+        "shadowSoftness": 1.9900000095367432
     },
     "skybox": {
         "exposure": 0.05999999865889549,
