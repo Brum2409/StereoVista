@@ -36,7 +36,6 @@ uniform Material material;
 uniform PointLight pointLights[MAX_LIGHTS];
 uniform int numberOfLights;
 uniform vec3 cameraPosition;
-uniform int mipmapLevel;  // Current mipmap level
 uniform float gridSize;   // Actual voxel grid size
 uniform vec3 gridCenter;  // Grid center position in world space
 
@@ -99,63 +98,29 @@ void main() {
     // Grid is centered at gridCenter, so offset the position first
     float halfGrid = gridSize * 0.5;
     vec3 normalizedPos = (worldPositionFrag - gridCenter + halfGrid) / gridSize;
-    
-    // Get texture dimensions
+
+    // Get texture dimensions (always writes to level 0; mipmaps are
+    // generated afterwards by the compute shader).
     ivec3 texDim = imageSize(texture3D);
-    
-    // Account for mipmap level - compute the effective resolution
-    int effectiveRes = texDim.x >> mipmapLevel;
-    if (effectiveRes < 1) effectiveRes = 1;
-    
-    // Scale from [0,1] to [0, effectiveRes-1]
-    vec3 voxelPos = normalizedPos * float(effectiveRes);
-    
-    // Convert to integer coordinates with rounding
-    ivec3 baseVoxelCoord = ivec3(floor(voxelPos));
-    
-    // Calculate the stride for this mipmap level
-    int stride = 1 << mipmapLevel;
-    
-    // Calculate the final storage coordinates
-    ivec3 storageCoord = baseVoxelCoord * stride;
-    
-    // Check bounds before writing
-    if (storageCoord.x >= 0 && storageCoord.x < texDim.x &&
-        storageCoord.y >= 0 && storageCoord.y < texDim.y &&
-        storageCoord.z >= 0 && storageCoord.z < texDim.z) {
-        
-        // Set alpha based on transparency
-        float alpha = 1.0 - material.transparency;
-        vec4 voxelColor = vec4(finalColor, alpha);
 
-        // Alpha compositing (Porter-Duff "over" operator)
-        // This properly blends overlapping fragments instead of just taking max
-        vec4 existingColor = imageLoad(texture3D, storageCoord);
-        float oneMinusExistingAlpha = 1.0 - existingColor.a;
-        vec4 blendedColor;
-        blendedColor.rgb = existingColor.rgb + voxelColor.rgb * voxelColor.a * oneMinusExistingAlpha;
-        blendedColor.a = existingColor.a + voxelColor.a * oneMinusExistingAlpha;
+    // Scale from [0,1] to integer voxel coordinates
+    ivec3 voxelCoord = ivec3(floor(normalizedPos * float(texDim.x)));
 
-        // Write to the voxel grid
-        imageStore(texture3D, storageCoord, blendedColor);
+    // Clamp to valid range
+    voxelCoord = clamp(voxelCoord, ivec3(0), texDim - 1);
 
-        // Fill in additional voxels at higher mipmap levels for proper LOD
-        if (mipmapLevel > 0) {
-            for (int x = 0; x < stride && storageCoord.x + x < texDim.x; x++) {
-                for (int y = 0; y < stride && storageCoord.y + y < texDim.y; y++) {
-                    for (int z = 0; z < stride && storageCoord.z + z < texDim.z; z++) {
-                        if (x == 0 && y == 0 && z == 0) continue; // Skip the center voxel
-                        ivec3 neighborCoord = storageCoord + ivec3(x, y, z);
+    // Set alpha based on transparency
+    float alpha = 1.0 - material.transparency;
+    vec4 voxelColor = vec4(finalColor, alpha);
 
-                        vec4 existingMip = imageLoad(texture3D, neighborCoord);
-                        float oneMinusMipAlpha = 1.0 - existingMip.a;
-                        vec4 blendedMip;
-                        blendedMip.rgb = existingMip.rgb + voxelColor.rgb * voxelColor.a * oneMinusMipAlpha;
-                        blendedMip.a = existingMip.a + voxelColor.a * oneMinusMipAlpha;
-                        imageStore(texture3D, neighborCoord, blendedMip);
-                    }
-                }
-            }
-        }
-    }
+    // Alpha compositing (Porter-Duff "over" operator)
+    // This properly blends overlapping fragments instead of just taking max
+    vec4 existingColor = imageLoad(texture3D, voxelCoord);
+    float oneMinusExistingAlpha = 1.0 - existingColor.a;
+    vec4 blendedColor;
+    blendedColor.rgb = existingColor.rgb + voxelColor.rgb * voxelColor.a * oneMinusExistingAlpha;
+    blendedColor.a = existingColor.a + voxelColor.a * oneMinusExistingAlpha;
+
+    // Write to the voxel grid
+    imageStore(texture3D, voxelCoord, blendedColor);
 }

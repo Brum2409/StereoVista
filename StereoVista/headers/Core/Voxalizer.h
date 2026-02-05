@@ -2,6 +2,7 @@
 #include "Engine/Core.h"
 #include "Engine/Shader.h"
 #include "Engine/BVH.h"
+#include "Engine/Data.h"
 #include "Loaders/ModelLoader.h"
 
 namespace Engine {
@@ -47,6 +48,31 @@ namespace Engine {
         // Dirty flag for caching - skip re-voxelization if scene hasn't changed
         void markDirty() { m_needsRevoxelization = true; }
         bool isDirty() const { return m_needsRevoxelization; }
+
+        // Sync scene lights into the voxelizer so that voxelized lighting
+        // matches the actual scene.  Intensity is baked into color.
+        // Only marks dirty when the light list actually changed.
+        void setLights(const std::vector<Engine::PointLight>& sceneLights) {
+            // Build the new list and compare
+            std::vector<VoxelLight> newLights;
+            newLights.reserve(sceneLights.size());
+            for (const auto& sl : sceneLights) {
+                newLights.push_back({ sl.position, sl.color * sl.intensity });
+            }
+            if (newLights.size() != m_lights.size()) {
+                m_lights = std::move(newLights);
+                m_needsRevoxelization = true;
+                return;
+            }
+            for (size_t i = 0; i < newLights.size(); ++i) {
+                if (newLights[i].position != m_lights[i].position ||
+                    newLights[i].color != m_lights[i].color) {
+                    m_lights = std::move(newLights);
+                    m_needsRevoxelization = true;
+                    return;
+                }
+            }
+        }
 
         // Auto-fit grid to scene bounds with optional padding factor (1.1 = 10% padding)
         void autoFitGridToScene(const std::vector<Model>& models, float paddingFactor = 1.1f);
@@ -126,13 +152,13 @@ namespace Engine {
         GLuint m_voxelInstanceVBO;
         bool m_voxelDataNeedsUpdate = true;
 
-        // Lights for voxelization
-        struct PointLight {
+        // Lights for voxelization (renamed to avoid collision with Engine::PointLight)
+        struct VoxelLight {
             glm::vec3 position;
             glm::vec3 color;
         };
 
-        std::vector<PointLight> m_lights;
+        std::vector<VoxelLight> m_lights;
 
         void initializeVoxelTexture();
         void initializeVisualization();

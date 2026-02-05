@@ -3467,6 +3467,10 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING &&
        preferences.shadowSettings.enableIndirectLighting);
   if (needsVoxelization) {
+    // Keep voxelizer lights in sync with the scene so voxelized
+    // lighting matches the actual point lights (not just the default).
+    voxelizer->setLights(pointLights);
+
     voxelizer->update(camera.Position, currentScene.models);
   }
 

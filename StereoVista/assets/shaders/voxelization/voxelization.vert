@@ -7,7 +7,6 @@ layout(location = 2) in vec2 texCoord;  // Added texture coordinates input
 uniform mat4 M;
 uniform mat4 V;
 uniform mat4 P;
-uniform int mipmapLevel;
 
 out vec3 worldPositionGeom;
 out vec3 normalGeom;

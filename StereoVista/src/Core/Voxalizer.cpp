@@ -20,11 +20,7 @@ namespace Engine {
         initializeVoxelTexture();
         initializeVisualization();
 
-        // Setup default light
-        m_lights.push_back({
-            glm::vec3(0.0f, 5.0f, 0.0f),
-            glm::vec3(1.0f, 1.0f, 1.0f)
-            });
+        // Lights are synced from the scene via setLights() before each update.
 
         try {
             // Load voxelization shader
@@ -200,11 +196,6 @@ namespace Engine {
             m_voxelShader->setVec3(lightName + ".color", m_lights[i].color);
         }
 
-        // Always voxelize at full resolution (level 0).
-        // m_state is the debug *visualization* mipmap level and must not
-        // affect the actual voxelization quality.
-        m_voxelShader->setInt("mipmapLevel", 0);
-
         // CRITICAL: Pass the actual grid size and center to the shader
         m_voxelShader->setFloat("gridSize", m_voxelGridSize);
         m_voxelShader->setVec3("gridCenter", m_gridCenter);
@@ -225,12 +216,8 @@ namespace Engine {
             modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.z), glm::vec3(0, 0, 1));
             modelMatrix = glm::scale(modelMatrix, model.scale);
 
-            // CRITICAL: Always use a fixed scaling factor
-            // This ensures objects are voxelized at the correct scale regardless of grid size
-            glm::mat4 scaledModel = glm::scale(modelMatrix, glm::vec3(1.0f));
-
             // Set transformation matrices
-            m_voxelShader->setMat4("M", scaledModel);
+            m_voxelShader->setMat4("M", modelMatrix);
             m_voxelShader->setMat4("V", glm::mat4(1.0f)); // Identity for voxelization
             m_voxelShader->setMat4("P", glm::mat4(1.0f)); // Identity for voxelization
 
@@ -280,8 +267,15 @@ namespace Engine {
             }
         }
 
+        // Ensure all imageStore writes from the voxelization pass are visible
+        // before the compute shader reads them for mipmap generation.
+        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+
         // Generate mipmaps using compute shader for alpha-weighted averaging
         generateMipmaps();
+
+        // Ensure mipmaps are visible for subsequent texture sampling (cone tracing).
+        glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
 
         // Mark voxel data as needing update for visualization
         m_voxelDataNeedsUpdate = true;
