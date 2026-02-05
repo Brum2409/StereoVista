@@ -201,6 +201,12 @@ struct ApplicationPreferences {
   float mouseSmoothingFactor = 1.0f;
   float mouseSensitivity = 0.17f;
 
+  // Orbit center visualization settings
+  bool showOrbitCenter = false;
+  bool alwaysShowOrbitCenter = false;
+  glm::vec4 orbitCenterColor = glm::vec4(0.0f, 1.0f, 0.0f, 0.7f);
+  float orbitCenterSphereRadius = 0.2f;
+
   bool showStereoVisualization = true;
 
   bool radarEnabled = false;

@@ -1486,6 +1486,17 @@ void savePreferences() {
   j["camera"]["orbitFollowsCursor"] = preferences.orbitFollowsCursor;
   j["camera"]["mouseSmoothingFactor"] = preferences.mouseSmoothingFactor;
   j["camera"]["mouseSensitivity"] = preferences.mouseSensitivity;
+
+  // Orbit center visualization settings
+  j["camera"]["showOrbitCenter"] = preferences.showOrbitCenter;
+  j["camera"]["alwaysShowOrbitCenter"] = preferences.alwaysShowOrbitCenter;
+  j["camera"]["orbitCenterColor"] = {
+      preferences.orbitCenterColor.r,
+      preferences.orbitCenterColor.g,
+      preferences.orbitCenterColor.b,
+      preferences.orbitCenterColor.a
+  };
+  j["camera"]["orbitCenterSphereRadius"] = preferences.orbitCenterSphereRadius;
   j["camera"]["autoConvergence"] = preferences.autoConvergence;
   j["camera"]["convergenceDistanceFactor"] =
       preferences.convergenceDistanceFactor;
@@ -1676,6 +1687,12 @@ void applyPreferencesToProgram() {
   mouseSmoothingFactor = preferences.mouseSmoothingFactor;
   camera.MouseSensitivity = preferences.mouseSensitivity;
 
+  // Apply orbit center visualization settings
+  cursorManager.setShowOrbitCenter(preferences.showOrbitCenter);
+  cursorManager.setAlwaysShowOrbitCenter(preferences.alwaysShowOrbitCenter);
+  cursorManager.setOrbitCenterColor(preferences.orbitCenterColor);
+  cursorManager.setOrbitCenterSphereRadius(preferences.orbitCenterSphereRadius);
+
   skyboxConfig.type = static_cast<GUI::SkyboxType>(preferences.skyboxType);
   skyboxConfig.solidColor = preferences.skyboxSolidColor;
   skyboxConfig.gradientTopColor = preferences.skyboxGradientTop;
@@ -1845,6 +1862,21 @@ void loadPreferences() {
           j["camera"].value("mouseSmoothingFactor", 1.0f);
       preferences.mouseSensitivity =
           j["camera"].value("mouseSensitivity", 0.17f);
+
+      // Load orbit center visualization settings
+      preferences.showOrbitCenter = j["camera"].value("showOrbitCenter", false);
+      preferences.alwaysShowOrbitCenter = j["camera"].value("alwaysShowOrbitCenter", false);
+      if (j["camera"].contains("orbitCenterColor") && j["camera"]["orbitCenterColor"].is_array() &&
+          j["camera"]["orbitCenterColor"].size() >= 4) {
+        preferences.orbitCenterColor = glm::vec4(
+            j["camera"]["orbitCenterColor"][0].get<float>(),
+            j["camera"]["orbitCenterColor"][1].get<float>(),
+            j["camera"]["orbitCenterColor"][2].get<float>(),
+            j["camera"]["orbitCenterColor"][3].get<float>()
+        );
+      }
+      preferences.orbitCenterSphereRadius = j["camera"].value("orbitCenterSphereRadius", 0.2f);
+
       preferences.autoConvergence = j["camera"].value("autoConvergence", false);
       preferences.convergenceDistanceFactor =
           j["camera"].value("convergenceDistanceFactor", 1.0f);
@@ -4614,7 +4646,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
 
   // Render orbit center if needed
   if (!orbitFollowsCursor && cursorManager.isShowOrbitCenter() &&
-      camera.IsOrbiting) {
+      (camera.IsOrbiting || cursorManager.isAlwaysShowOrbitCenter())) {
     cursorManager.renderOrbitCenter(projection, view, camera.OrbitPoint);
   }
 

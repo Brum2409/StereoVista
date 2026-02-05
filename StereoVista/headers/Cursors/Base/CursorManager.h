@@ -59,6 +59,8 @@ public:
   // Orbit center properties
   bool isShowOrbitCenter() const { return m_showOrbitCenter; }
   void setShowOrbitCenter(bool show) { m_showOrbitCenter = show; }
+  bool isAlwaysShowOrbitCenter() const { return m_alwaysShowOrbitCenter; }
+  void setAlwaysShowOrbitCenter(bool show) { m_alwaysShowOrbitCenter = show; }
   const glm::vec4 &getOrbitCenterColor() const { return m_orbitCenterColor; }
   void setOrbitCenterColor(const glm::vec4 &color) {
     m_orbitCenterColor = color;
@@ -121,6 +123,7 @@ private:
 
   // Orbit center properties
   bool m_showOrbitCenter;
+  bool m_alwaysShowOrbitCenter;
   glm::vec4 m_orbitCenterColor;
   float m_orbitCenterSphereRadius;
 
