@@ -1973,15 +1973,40 @@ void renderSettingsWindow() {
 
         ImGui::Checkbox("Show Voxels", &voxelizer->showDebugVisualization);
         ImGui::SameLine();
-        DrawHelpMarker("Visualize the voxel grid");
+        DrawHelpMarker("Visualize the voxel grid as colored cubes");
 
         if (voxelizer->showDebugVisualization) {
+          // Mipmap level selector
+          int mipLevel = voxelizer->getDebugMipLevel();
+          int maxMip = voxelizer->getMaxMipLevels() - 1;
+          if (ImGui::SliderInt("Mip Level", &mipLevel, 0, maxMip)) {
+            voxelizer->setDebugMipLevel(mipLevel);
+          }
+          ImGui::SameLine();
+          {
+            int res = voxelizer->getResolution() >> voxelizer->getDebugMipLevel();
+            char buf[64];
+            snprintf(buf, sizeof(buf), "Effective resolution: %dx%dx%d", res, res, res);
+            DrawHelpMarker(buf);
+          }
+
+          // Visualization mode combo
+          {
+            const char* vizModes[] = { "Color", "Luminance", "Alpha", "Emissive" };
+            int currentViz = static_cast<int>(voxelizer->visualizationMode);
+            if (ImGui::Combo("Viz Mode", &currentViz, vizModes, IM_ARRAYSIZE(vizModes))) {
+              voxelizer->visualizationMode = static_cast<Engine::Voxelizer::VisualizationMode>(currentViz);
+            }
+          }
+
+          ImGui::Separator();
+
           if (ImGui::SliderFloat("Voxel Size", &voxelizer->debugVoxelSize,
                                  0.001f, 0.1f, "%.4f")) {
           }
           ImGui::SameLine();
           DrawHelpMarker(
-              "Visual size of debug voxel cubes (affected by mipmap level)");
+              "Visual size of debug voxel cubes (scaled by 2^mipLevel)");
 
           if (ImGui::SliderFloat("Opacity", &voxelizer->voxelOpacity, 0.0f,
                                  1.0f, "%.2f")) {
@@ -1991,6 +2016,10 @@ void renderSettingsWindow() {
                                  &voxelizer->voxelColorIntensity, 0.0f, 5.0f,
                                  "%.1f")) {
           }
+
+          ImGui::Checkbox("Wireframe", &voxelizer->debugWireframe);
+          ImGui::SameLine();
+          DrawHelpMarker("Render voxel cubes as wireframe outlines");
         }
       } else if (preferences.lightingMode == GUI::LIGHTING_RADIANCE) {
         ImGui::Spacing();

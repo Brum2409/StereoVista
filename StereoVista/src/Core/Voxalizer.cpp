@@ -460,13 +460,28 @@ namespace Engine {
             return;
         }
 
-        // Setup rendering state for solid voxel cubes
-        glDisable(GL_BLEND);
+        // Save polygon mode so we can restore it after wireframe
+        GLint prevPolygonMode[2];
+        glGetIntegerv(GL_POLYGON_MODE, prevPolygonMode);
+
+        // Setup rendering state
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LESS);
-        
-        // Disable face culling to show all cube faces for debugging
         glDisable(GL_CULL_FACE);
+
+        // Enable alpha blending when opacity < 1 for see-through voxels
+        if (voxelOpacity < 1.0f) {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glDepthMask(GL_FALSE); // Don't write depth for transparent voxels
+        } else {
+            glDisable(GL_BLEND);
+        }
+
+        if (debugWireframe) {
+            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+            glLineWidth(1.0f);
+        }
 
         // Use voxel cube shader
         m_voxelCubeShader->use();
@@ -482,7 +497,7 @@ namespace Engine {
         // Set visualization mode uniform
         m_voxelCubeShader->setInt("visualizationMode", static_cast<int>(visualizationMode));
 
-        // Set base voxel size (level 0) - independent of grid size as per NVIDIA paper
+        // Set base voxel size (level 0)
         m_voxelCubeShader->setFloat("baseVoxelSize", debugVoxelSize);
         m_voxelCubeShader->setInt("resolution", m_resolution);
 
@@ -497,6 +512,13 @@ namespace Engine {
 
         // Reset state
         glBindVertexArray(0);
+        if (debugWireframe) {
+            glPolygonMode(GL_FRONT_AND_BACK, prevPolygonMode[0]);
+        }
+        if (voxelOpacity < 1.0f) {
+            glDepthMask(GL_TRUE);
+            glDisable(GL_BLEND);
+        }
     }
 
     void Voxelizer::increaseState() {

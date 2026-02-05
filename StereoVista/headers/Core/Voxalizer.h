@@ -18,8 +18,9 @@ namespace Engine {
 
         bool showDebugVisualization = false;
         float debugVoxelSize = 0.02f;  // Fixed size for debug voxel display (independent of grid size)
-        float voxelOpacity = 0.5f;   // Controls transparency of visualized voxels
+        float voxelOpacity = 1.0f;   // Controls transparency of visualized voxels
         float voxelColorIntensity = 1.0f; // Controls brightness of voxel colors
+        bool debugWireframe = false;  // Render voxel cubes as wireframe
         VisualizationMode visualizationMode = VISUALIZATION_NORMAL;
 
         Voxelizer(int resolution = 128);
@@ -76,6 +77,20 @@ namespace Engine {
 
         // Auto-fit grid to scene bounds with optional padding factor (1.1 = 10% padding)
         void autoFitGridToScene(const std::vector<Model>& models, float paddingFactor = 1.1f);
+
+        // Mipmap level for debug visualization
+        int getDebugMipLevel() const { return m_state; }
+        void setDebugMipLevel(int level) {
+            int maxLevels = getMaxMipLevels();
+            int clamped = std::clamp(level, 0, maxLevels - 1);
+            if (m_state != clamped) {
+                m_state = clamped;
+                m_voxelDataNeedsUpdate = true;
+            }
+        }
+        int getMaxMipLevels() const {
+            return static_cast<int>(std::floor(std::log2(m_resolution))) + 1;
+        }
 
         // Change visualization state (mipmap level)
         void increaseState();
