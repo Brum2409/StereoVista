@@ -4100,20 +4100,37 @@ void renderCursorSettingsWindow() {
       bool showOrbitCenter = cursorManager.isShowOrbitCenter();
       if (ImGui::Checkbox("Show Orbit Center", &showOrbitCenter)) {
         cursorManager.setShowOrbitCenter(showOrbitCenter);
+        preferences.showOrbitCenter = showOrbitCenter;
+        savePreferences();
       }
       ImGui::SameLine();
       DrawHelpMarker("Display a marker at the camera's orbit pivot point");
 
       if (showOrbitCenter) {
+        bool alwaysShowOrbitCenter = cursorManager.isAlwaysShowOrbitCenter();
+        if (ImGui::Checkbox("Always Show Orbit Center", &alwaysShowOrbitCenter)) {
+          cursorManager.setAlwaysShowOrbitCenter(alwaysShowOrbitCenter);
+          preferences.alwaysShowOrbitCenter = alwaysShowOrbitCenter;
+          savePreferences();
+        }
+        ImGui::SameLine();
+        DrawHelpMarker("Keep the orbit center visible even when not orbiting");
+      }
+
+      if (showOrbitCenter) {
         glm::vec4 orbitColor = cursorManager.getOrbitCenterColor();
         if (ImGui::ColorEdit3("Marker Color", glm::value_ptr(orbitColor))) {
           cursorManager.setOrbitCenterColor(orbitColor);
+          preferences.orbitCenterColor = orbitColor;
+          savePreferences();
         }
 
         float orbitSize = cursorManager.getOrbitCenterSphereRadius();
         if (ImGui::SliderFloat("Marker Size", &orbitSize, 0.01f, 1.0f,
                                "%.2f")) {
           cursorManager.setOrbitCenterSphereRadius(orbitSize);
+          preferences.orbitCenterSphereRadius = orbitSize;
+          savePreferences();
         }
       }
 

@@ -13,7 +13,8 @@ CursorManager::CursorManager()
     : m_cursorPosition(0.0f), m_cursorPositionValid(false),
       m_cursorPositionCalculatedThisFrame(false),
       m_backgroundCursorPosition(0.0f), m_hasBackgroundCursorPosition(false),
-      m_showOrbitCenter(false), m_orbitCenterColor(0.0f, 1.0f, 0.0f, 0.7f),
+      m_showOrbitCenter(false), m_alwaysShowOrbitCenter(false),
+      m_orbitCenterColor(0.0f, 1.0f, 0.0f, 0.7f),
       m_orbitCenterSphereRadius(0.2f), m_windowWidth(1920),
       m_windowHeight(1080), m_lastX(0.0f), m_lastY(0.0f),
       m_cursorInsideWindow(true), m_positionLocked(false) {
