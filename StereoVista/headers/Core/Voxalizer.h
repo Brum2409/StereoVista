@@ -29,6 +29,7 @@ namespace Engine {
 
         GLuint getVoxelTexture() const { return m_voxelTexture; }
         float getVoxelGridSize() const { return m_voxelGridSize; }
+        int getResolution() const { return m_resolution; }
         void setVoxelGridSize(float size) {
             if (m_voxelGridSize != size) {
                 m_voxelGridSize = size;

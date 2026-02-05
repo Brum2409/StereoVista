@@ -162,8 +162,11 @@ namespace Engine {
             return;
         }
 
-        // Clear voxel texture
-        glClearTexImage(m_voxelTexture, 0, GL_RGBA, GL_FLOAT, nullptr);
+        // Clear all mipmap levels of the voxel texture to avoid stale data
+        int numLevels = static_cast<int>(std::floor(std::log2(m_resolution))) + 1;
+        for (int level = 0; level < numLevels; level++) {
+            glClearTexImage(m_voxelTexture, level, GL_RGBA, GL_FLOAT, nullptr);
+        }
 
         // Bind voxel texture for writing
         glBindImageTexture(0, m_voxelTexture, 0, GL_TRUE, 0, GL_READ_WRITE, GL_RGBA16F);
@@ -197,8 +200,10 @@ namespace Engine {
             m_voxelShader->setVec3(lightName + ".color", m_lights[i].color);
         }
 
-        // Pass the current mipmap level to the shader
-        m_voxelShader->setInt("mipmapLevel", m_state);
+        // Always voxelize at full resolution (level 0).
+        // m_state is the debug *visualization* mipmap level and must not
+        // affect the actual voxelization quality.
+        m_voxelShader->setInt("mipmapLevel", 0);
 
         // CRITICAL: Pass the actual grid size and center to the shader
         m_voxelShader->setFloat("gridSize", m_voxelGridSize);

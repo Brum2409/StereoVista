@@ -3445,6 +3445,20 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   glBindTexture(GL_TEXTURE_2D, 0);
   glBindTexture(GL_TEXTURE_3D, 0);
 
+  // Detect scene changes (model transforms) and mark voxelizer dirty.
+  // This must happen before voxelizer->update() and independently of
+  // lighting mode / BVH, so that voxelization refreshes whenever any
+  // object is moved, rotated, or scaled -- matching BVH behavior.
+  {
+    static SceneState lastVoxelSceneState;
+    if (lastVoxelSceneState.hasChanged(currentScene)) {
+      if (voxelizer) {
+        voxelizer->markDirty();
+      }
+      lastVoxelSceneState.update(currentScene);
+    }
+  }
+
   // 1. Update the voxel grid if voxel visualization is enabled or we're using
   // voxel cone tracing or shadow mapping with indirect lighting
   bool needsVoxelization =
@@ -3708,11 +3722,13 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
 
     // Add VCT uniforms if indirect lighting is enabled
     if (preferences.shadowSettings.enableIndirectLighting) {
-      // Set voxel grid parameters
+      // Set voxel grid parameters -- must account for gridCenter so that
+      // cone tracing samples match the voxelization coordinate mapping.
       float halfSize = voxelizer->getVoxelGridSize() * 0.5f;
-      shader->setVec3("gridMin", glm::vec3(-halfSize));
-      shader->setVec3("gridMax", glm::vec3(halfSize));
-      shader->setFloat("voxelSize", vctSettings.voxelSize);
+      glm::vec3 gc = voxelizer->getGridCenter();
+      shader->setVec3("gridMin", gc - glm::vec3(halfSize));
+      shader->setVec3("gridMax", gc + glm::vec3(halfSize));
+      shader->setFloat("voxelSize", voxelizer->getVoxelGridSize() / static_cast<float>(voxelizer->getResolution()));
 
       // Set VCT settings
       shader->setBool("vctSettings.indirectSpecularLight",
@@ -3742,11 +3758,13 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   }
   // Voxel cone tracing specific setup
   else if (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
-    // Set voxel grid parameters - only when in VCT mode
+    // Set voxel grid parameters -- must account for gridCenter so that
+    // cone tracing samples match the voxelization coordinate mapping.
     float halfSize = voxelizer->getVoxelGridSize() * 0.5f;
-    shader->setVec3("gridMin", glm::vec3(-halfSize));
-    shader->setVec3("gridMax", glm::vec3(halfSize));
-    shader->setFloat("voxelSize", vctSettings.voxelSize);
+    glm::vec3 gc = voxelizer->getGridCenter();
+    shader->setVec3("gridMin", gc - glm::vec3(halfSize));
+    shader->setVec3("gridMax", gc + glm::vec3(halfSize));
+    shader->setFloat("voxelSize", voxelizer->getVoxelGridSize() / static_cast<float>(voxelizer->getResolution()));
 
     // Set VCT settings - only when in VCT mode
     shader->setBool("vctSettings.indirectSpecularLight",
@@ -4759,11 +4777,12 @@ void renderModels(Engine::Shader *shader) {
       shader->setBool("vctSettings.directLight", vctSettings.directLight);
       shader->setBool("vctSettings.shadows", vctSettings.shadows);
 
-      // Set voxel grid parameters
+      // Set voxel grid parameters -- must account for gridCenter
       float halfSize = voxelizer->getVoxelGridSize() * 0.5f;
-      shader->setVec3("gridMin", glm::vec3(-halfSize));
-      shader->setVec3("gridMax", glm::vec3(halfSize));
-      shader->setFloat("voxelSize", vctSettings.voxelSize);
+      glm::vec3 gc = voxelizer->getGridCenter();
+      shader->setVec3("gridMin", gc - glm::vec3(halfSize));
+      shader->setVec3("gridMax", gc + glm::vec3(halfSize));
+      shader->setFloat("voxelSize", voxelizer->getVoxelGridSize() / static_cast<float>(voxelizer->getResolution()));
 
       // Set visualization flag (for debugging)
       shader->setBool("enableVoxelVisualization",
