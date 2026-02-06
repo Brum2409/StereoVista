@@ -2661,6 +2661,13 @@ int main() {
       camera.Orientation = glm::normalize(glm::quat_cast(rotationMatrix));
       std::cout << "SpaceMouse navigation ended" << std::endl;
     };
+    spaceMouseInput.OnCommandExecuted = [](const std::string &commandId) {
+      if (commandId == "Fit") {
+        camera.SetState(currentScene.cameraState);
+        std::cout << "SpaceMouse Fit: Camera reset to scene default"
+                  << std::endl;
+      }
+    };
   } else {
     std::cout
         << "Failed to initialize SpaceMouse - continuing without 3D navigation"
@@ -6777,6 +6784,11 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
     case StereoVista::ShortcutAction::LoadScene:
       std::cout << "Load scene shortcut triggered" << std::endl;
       // File dialog will be opened via GUI system
+      break;
+
+    case StereoVista::ShortcutAction::ResetCamera:
+      camera.SetState(currentScene.cameraState);
+      std::cout << "Camera reset to scene default" << std::endl;
       break;
 
     // Object Manipulation

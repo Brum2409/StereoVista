@@ -8,6 +8,8 @@
 // Include 3DConnexion headers
 #include <navlib/navlib.h>
 #include <navlib/navlib_error.h>
+#include <siappcmd_types.h>
+#include <cstring>
 
 // Navigation model implementation using direct navlib C interface
 class SpaceMouseInput::NavigationModel {
@@ -69,6 +71,16 @@ public:
         {navlib::hit_selectionOnly_k, nullptr, SetHitSelectionOnly,
          reinterpret_cast<navlib::param_t>(this)},
         {navlib::hit_lookat_k, GetHitLookAt, nullptr,
+         reinterpret_cast<navlib::param_t>(this)},
+
+        // Command button handling
+        {navlib::commands_activeCommand_k, nullptr, SetActiveCommand,
+         reinterpret_cast<navlib::param_t>(this)},
+
+        // V3DK virtual key events (for buttons not mapped to app commands)
+        {navlib::events_keyPress_k, nullptr, SetKeyPress,
+         reinterpret_cast<navlib::param_t>(this)},
+        {navlib::events_keyRelease_k, nullptr, SetKeyRelease,
          reinterpret_cast<navlib::param_t>(this)}};
 
     // Create navlib instance
@@ -91,6 +103,28 @@ public:
       m_navlibHandle = 0;
       return false;
     }
+
+    // Register command tree so the SpaceMouse driver can map buttons to our
+    // commands (e.g. the FIT button)
+    static SiActionNodeEx_t fitAction = {
+        sizeof(SiActionNodeEx_t), SI_ACTION_NODE,
+        nullptr,  // next
+        nullptr,  // children
+        "Fit",    // id - this is what SetActiveCommand receives
+        "Fit View",
+        "Reset camera to the scene default position"};
+
+    static SiActionNodeEx_t commandSet = {
+        sizeof(SiActionNodeEx_t), SI_ACTIONSET_NODE,
+        nullptr,     // next
+        &fitAction,  // children
+        "StereoVista_Commands", "StereoVista", nullptr};
+
+    navlib::value_t cmdTreeValue;
+    cmdTreeValue.type = navlib::actionnodeexptr_type;
+    cmdTreeValue.pnode = &commandSet;
+    navlib::NlWriteValue(m_navlibHandle, navlib::commands_tree_k,
+                         &cmdTreeValue);
 
     return true;
   }
@@ -227,6 +261,28 @@ public:
                                   navlib::value_t *value) {
     NavigationModel *self = reinterpret_cast<NavigationModel *>(param);
     return self->IsUserPivotImpl(value);
+  }
+
+  // Command button handler
+  static long __cdecl SetActiveCommand(navlib::param_t param,
+                                       navlib::property_t name,
+                                       const navlib::value_t *value) {
+    NavigationModel *self = reinterpret_cast<NavigationModel *>(param);
+    return self->SetActiveCommandImpl(value);
+  }
+
+  // V3DK virtual key handlers
+  static long __cdecl SetKeyPress(navlib::param_t param,
+                                  navlib::property_t name,
+                                  const navlib::value_t *value) {
+    NavigationModel *self = reinterpret_cast<NavigationModel *>(param);
+    return self->SetKeyPressImpl(value);
+  }
+
+  static long __cdecl SetKeyRelease(navlib::param_t param,
+                                    navlib::property_t name,
+                                    const navlib::value_t *value) {
+    return 0; // Accept but ignore release events
   }
 
   // Dummy hit testing functions
@@ -490,6 +546,42 @@ private:
   long IsUserPivotImpl(navlib::value_t *value) {
     value->type = navlib::bool_type;
     value->b = 0; // Use automatic pivot
+    return 0;
+  }
+
+  // V3DK virtual key codes from the 3DConnexion SDK
+  static constexpr long V3DK_FIT = 2;
+
+  long SetKeyPressImpl(const navlib::value_t *value) {
+    if (value->type != navlib::long_type) {
+      return navlib::make_result_code(navlib::navlib_errc::invalid_argument);
+    }
+
+    long vkey = value->l;
+    std::cout << "SpaceMouse V3DK key press: " << vkey << std::endl;
+
+    if (vkey == V3DK_FIT) {
+      if (m_parent->OnCommandExecuted) {
+        m_parent->OnCommandExecuted("Fit");
+      }
+    }
+    return 0;
+  }
+
+  long SetActiveCommandImpl(const navlib::value_t *value) {
+    const char *commandId = nullptr;
+    if (value->type == navlib::cstr_type) {
+      commandId = value->cstr_.p;
+    } else if (value->type == navlib::string_type) {
+      commandId = value->string.p;
+    }
+
+    if (commandId && std::strlen(commandId) > 0) {
+      std::string cmd(commandId);
+      if (m_parent->OnCommandExecuted) {
+        m_parent->OnCommandExecuted(cmd);
+      }
+    }
     return 0;
   }
 };

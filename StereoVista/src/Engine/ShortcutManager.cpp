@@ -431,6 +431,7 @@ ShortcutProfile ShortcutManager::createDefaultProfile() {
   profile.setBinding(ShortcutAction::ClearIrradianceCache,
                      KeyBinding(GLFW_KEY_I, true, false, true),
                      0); // Ctrl+Shift+I
+  profile.setBinding(ShortcutAction::ResetCamera, KeyBinding(GLFW_KEY_HOME), 0);
 
   // New actions start unbound - users can assign keys as needed
 
@@ -551,6 +552,8 @@ std::string ShortcutManager::getActionName(ShortcutAction action) {
     return "ToggleZoomToCursor";
   case ShortcutAction::ToggleOrbitAroundCursor:
     return "ToggleOrbitAroundCursor";
+  case ShortcutAction::ResetCamera:
+    return "ResetCamera";
 
   // Lighting
   case ShortcutAction::CycleLighting:
@@ -652,6 +655,8 @@ std::string ShortcutManager::getActionDescription(ShortcutAction action) {
     return "Toggle Orbit Around Cursor";
   case ShortcutAction::ToggleSpaceMouseMode:
     return "Toggle SpaceMouse Mode (CAD/Drone)";
+  case ShortcutAction::ResetCamera:
+    return "Reset Camera to Scene Default";
 
   // Lighting
   case ShortcutAction::CycleLighting:

@@ -23,6 +23,7 @@ enum class ShortcutAction {
   ToggleZoomToCursor,      // Toggle zoom to cursor behavior
   ToggleOrbitAroundCursor, // Toggle orbit around cursor
   ToggleSpaceMouseMode,    // Toggle SpaceMouse navigation mode (CAD/Drone)
+  ResetCamera,             // Home - Reset camera to scene default position
 
   // Lighting
   CycleLighting,  // L - Cycle lighting modes

@@ -3523,6 +3523,7 @@ void renderSettingsWindow() {
           ImGui::SetColumnWidth(2, 200);
 
           renderAction(StereoVista::ShortcutAction::CenterView);
+          renderAction(StereoVista::ShortcutAction::ResetCamera);
           renderAction(StereoVista::ShortcutAction::ToggleZoomToCursor);
           renderAction(StereoVista::ShortcutAction::ToggleOrbitAroundCursor);
         }

@@ -39,6 +39,15 @@
                         "shift": false
                     }
                 ],
+                "ResetCamera": [
+                    {
+                        "alt": false,
+                        "ctrl": false,
+                        "keyCode": 84,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
+                ],
                 "ToggleCircleCursor": [
                     {
                         "alt": false,

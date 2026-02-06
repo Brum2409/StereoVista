@@ -1,7 +1,8 @@
 {
     "camera": {
+        "alwaysShowOrbitCenter": false,
         "autoConvergence": true,
-        "convergence": 6.54204797744751,
+        "convergence": 10.36419677734375,
         "convergenceCapMax": 41.900001525878906,
         "convergenceCapMin": 0.5,
         "convergenceDistanceFactor": 1.2999999523162842,
@@ -15,10 +16,18 @@
         "mouseSmoothingFactor": 1.0,
         "nearPlane": 0.009999999776482582,
         "orbitAroundCursor": true,
+        "orbitCenterColor": [
+            0.0,
+            1.0,
+            0.0,
+            0.699999988079071
+        ],
+        "orbitCenterSphereRadius": 1.0,
         "orbitFollowsCursor": false,
         "scrollDeceleration": 2.0,
         "scrollMomentum": 0.12999999523162842,
         "separation": 0.09000000357627869,
+        "showOrbitCenter": false,
         "speedFactor": 0.9869999885559082,
         "useNewStereoMethod": true,
         "useSmoothScrolling": true,
@@ -78,7 +87,7 @@
         "enableBVH": true,
         "enableEmissiveLighting": true,
         "enableIndirectLighting": true,
-        "enableIrradianceCache": false,
+        "enableIrradianceCache": true,
         "enableRaytracing": true,
         "indirectIntensity": 0.30000001192092896,
         "irradianceCacheDivisor": 2,
@@ -126,7 +135,7 @@
     "spacemouse": {
         "anchorMode": 1,
         "centerCursor": false,
-        "deadzone": 0.12999999523162842,
+        "deadzone": 0.0,
         "enabled": true,
         "navigationMode": 0,
         "rotationSensitivity": 1.0,
