@@ -2,6 +2,7 @@
 #include "Engine/Core.h"
 #include "Engine/Shader.h"
 #include "Engine/BVH.h"
+#include "Engine/Data.h"
 #include "Loaders/ModelLoader.h"
 
 namespace Engine {
@@ -17,8 +18,9 @@ namespace Engine {
 
         bool showDebugVisualization = false;
         float debugVoxelSize = 0.02f;  // Fixed size for debug voxel display (independent of grid size)
-        float voxelOpacity = 0.5f;   // Controls transparency of visualized voxels
+        float voxelOpacity = 1.0f;   // Controls transparency of visualized voxels
         float voxelColorIntensity = 1.0f; // Controls brightness of voxel colors
+        bool debugWireframe = false;  // Render voxel cubes as wireframe
         VisualizationMode visualizationMode = VISUALIZATION_NORMAL;
 
         Voxelizer(int resolution = 128);
@@ -29,6 +31,7 @@ namespace Engine {
 
         GLuint getVoxelTexture() const { return m_voxelTexture; }
         float getVoxelGridSize() const { return m_voxelGridSize; }
+        int getResolution() const { return m_resolution; }
         void setVoxelGridSize(float size) {
             if (m_voxelGridSize != size) {
                 m_voxelGridSize = size;
@@ -47,8 +50,47 @@ namespace Engine {
         void markDirty() { m_needsRevoxelization = true; }
         bool isDirty() const { return m_needsRevoxelization; }
 
+        // Sync scene lights into the voxelizer so that voxelized lighting
+        // matches the actual scene.  Intensity is baked into color.
+        // Only marks dirty when the light list actually changed.
+        void setLights(const std::vector<Engine::PointLight>& sceneLights) {
+            // Build the new list and compare
+            std::vector<VoxelLight> newLights;
+            newLights.reserve(sceneLights.size());
+            for (const auto& sl : sceneLights) {
+                newLights.push_back({ sl.position, sl.color * sl.intensity });
+            }
+            if (newLights.size() != m_lights.size()) {
+                m_lights = std::move(newLights);
+                m_needsRevoxelization = true;
+                return;
+            }
+            for (size_t i = 0; i < newLights.size(); ++i) {
+                if (newLights[i].position != m_lights[i].position ||
+                    newLights[i].color != m_lights[i].color) {
+                    m_lights = std::move(newLights);
+                    m_needsRevoxelization = true;
+                    return;
+                }
+            }
+        }
+
         // Auto-fit grid to scene bounds with optional padding factor (1.1 = 10% padding)
         void autoFitGridToScene(const std::vector<Model>& models, float paddingFactor = 1.1f);
+
+        // Mipmap level for debug visualization
+        int getDebugMipLevel() const { return m_state; }
+        void setDebugMipLevel(int level) {
+            int maxLevels = getMaxMipLevels();
+            int clamped = std::clamp(level, 0, maxLevels - 1);
+            if (m_state != clamped) {
+                m_state = clamped;
+                m_voxelDataNeedsUpdate = true;
+            }
+        }
+        int getMaxMipLevels() const {
+            return static_cast<int>(std::floor(std::log2(m_resolution))) + 1;
+        }
 
         // Change visualization state (mipmap level)
         void increaseState();
@@ -125,13 +167,13 @@ namespace Engine {
         GLuint m_voxelInstanceVBO;
         bool m_voxelDataNeedsUpdate = true;
 
-        // Lights for voxelization
-        struct PointLight {
+        // Lights for voxelization (renamed to avoid collision with Engine::PointLight)
+        struct VoxelLight {
             glm::vec3 position;
             glm::vec3 color;
         };
 
-        std::vector<PointLight> m_lights;
+        std::vector<VoxelLight> m_lights;
 
         void initializeVoxelTexture();
         void initializeVisualization();

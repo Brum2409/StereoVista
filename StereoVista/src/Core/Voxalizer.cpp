@@ -20,11 +20,7 @@ namespace Engine {
         initializeVoxelTexture();
         initializeVisualization();
 
-        // Setup default light
-        m_lights.push_back({
-            glm::vec3(0.0f, 5.0f, 0.0f),
-            glm::vec3(1.0f, 1.0f, 1.0f)
-            });
+        // Lights are synced from the scene via setLights() before each update.
 
         try {
             // Load voxelization shader
@@ -162,8 +158,11 @@ namespace Engine {
             return;
         }
 
-        // Clear voxel texture
-        glClearTexImage(m_voxelTexture, 0, GL_RGBA, GL_FLOAT, nullptr);
+        // Clear all mipmap levels of the voxel texture to avoid stale data
+        int numLevels = static_cast<int>(std::floor(std::log2(m_resolution))) + 1;
+        for (int level = 0; level < numLevels; level++) {
+            glClearTexImage(m_voxelTexture, level, GL_RGBA, GL_FLOAT, nullptr);
+        }
 
         // Bind voxel texture for writing
         glBindImageTexture(0, m_voxelTexture, 0, GL_TRUE, 0, GL_READ_WRITE, GL_RGBA16F);
@@ -197,9 +196,6 @@ namespace Engine {
             m_voxelShader->setVec3(lightName + ".color", m_lights[i].color);
         }
 
-        // Pass the current mipmap level to the shader
-        m_voxelShader->setInt("mipmapLevel", m_state);
-
         // CRITICAL: Pass the actual grid size and center to the shader
         m_voxelShader->setFloat("gridSize", m_voxelGridSize);
         m_voxelShader->setVec3("gridCenter", m_gridCenter);
@@ -220,12 +216,8 @@ namespace Engine {
             modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.z), glm::vec3(0, 0, 1));
             modelMatrix = glm::scale(modelMatrix, model.scale);
 
-            // CRITICAL: Always use a fixed scaling factor
-            // This ensures objects are voxelized at the correct scale regardless of grid size
-            glm::mat4 scaledModel = glm::scale(modelMatrix, glm::vec3(1.0f));
-
             // Set transformation matrices
-            m_voxelShader->setMat4("M", scaledModel);
+            m_voxelShader->setMat4("M", modelMatrix);
             m_voxelShader->setMat4("V", glm::mat4(1.0f)); // Identity for voxelization
             m_voxelShader->setMat4("P", glm::mat4(1.0f)); // Identity for voxelization
 
@@ -275,8 +267,15 @@ namespace Engine {
             }
         }
 
+        // Ensure all imageStore writes from the voxelization pass are visible
+        // before the compute shader reads them for mipmap generation.
+        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+
         // Generate mipmaps using compute shader for alpha-weighted averaging
         generateMipmaps();
+
+        // Ensure mipmaps are visible for subsequent texture sampling (cone tracing).
+        glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
 
         // Mark voxel data as needing update for visualization
         m_voxelDataNeedsUpdate = true;
@@ -461,13 +460,28 @@ namespace Engine {
             return;
         }
 
-        // Setup rendering state for solid voxel cubes
-        glDisable(GL_BLEND);
+        // Save polygon mode so we can restore it after wireframe
+        GLint prevPolygonMode[2];
+        glGetIntegerv(GL_POLYGON_MODE, prevPolygonMode);
+
+        // Setup rendering state
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LESS);
-        
-        // Disable face culling to show all cube faces for debugging
         glDisable(GL_CULL_FACE);
+
+        // Enable alpha blending when opacity < 1 for see-through voxels
+        if (voxelOpacity < 1.0f) {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glDepthMask(GL_FALSE); // Don't write depth for transparent voxels
+        } else {
+            glDisable(GL_BLEND);
+        }
+
+        if (debugWireframe) {
+            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+            glLineWidth(1.0f);
+        }
 
         // Use voxel cube shader
         m_voxelCubeShader->use();
@@ -483,7 +497,7 @@ namespace Engine {
         // Set visualization mode uniform
         m_voxelCubeShader->setInt("visualizationMode", static_cast<int>(visualizationMode));
 
-        // Set base voxel size (level 0) - independent of grid size as per NVIDIA paper
+        // Set base voxel size (level 0)
         m_voxelCubeShader->setFloat("baseVoxelSize", debugVoxelSize);
         m_voxelCubeShader->setInt("resolution", m_resolution);
 
@@ -498,6 +512,13 @@ namespace Engine {
 
         // Reset state
         glBindVertexArray(0);
+        if (debugWireframe) {
+            glPolygonMode(GL_FRONT_AND_BACK, prevPolygonMode[0]);
+        }
+        if (voxelOpacity < 1.0f) {
+            glDepthMask(GL_TRUE);
+            glDisable(GL_BLEND);
+        }
     }
 
     void Voxelizer::increaseState() {
