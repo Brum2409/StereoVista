@@ -100,6 +100,7 @@ struct PlaneCursor {
 
 struct ApplicationPreferences {
   bool isDarkTheme = true;
+  float guiScaleFactor = 1.0f;  // User-controlled GUI scale multiplier (0.5x - 2.0x)
   float separation = 0.5f;
   float convergence = 2.6f;
   float nearPlane = 0.1f;

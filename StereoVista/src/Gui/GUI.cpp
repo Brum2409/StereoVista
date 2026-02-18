@@ -2691,6 +2691,44 @@ void renderSettingsWindow() {
       ImGui::SameLine();
       DrawHelpMarker("Toggle the entire GUI interface on/off (also 'G' key)");
 
+      ImGui::Spacing();
+      DrawSectionHeader("GUI Scale");
+
+      float userFactor = g_GuiScale.userScaleFactor;
+      if (ImGui::SliderFloat("Scale Factor", &userFactor,
+                             GuiScaleSettings::MIN_USER_FACTOR,
+                             GuiScaleSettings::MAX_USER_FACTOR, "%.2fx")) {
+        g_GuiScale.userScaleFactor = userFactor;
+        if (g_GuiScale.lastWindowWidth > 0 && g_GuiScale.lastWindowHeight > 0) {
+          float baseScale = CalculateGuiScale(g_GuiScale.lastWindowWidth,
+                                             g_GuiScale.lastWindowHeight);
+          float newScale = std::max(0.5f, std::min(2.0f, baseScale * userFactor));
+          g_GuiScale.currentScale = newScale;
+        }
+        g_GuiScale.needsRescale = true;
+        g_GuiScale.needsFontRebuild = true;
+        preferences.guiScaleFactor = userFactor;
+        settingsChanged = true;
+      }
+      ImGui::SameLine();
+      DrawHelpMarker("Multiplier applied on top of the automatic window-size "
+                     "scaling. 1.0x = default, 0.5x = smaller, 2.0x = larger");
+
+      if (ImGui::Button("Reset Scale")) {
+        g_GuiScale.userScaleFactor = 1.0f;
+        if (g_GuiScale.lastWindowWidth > 0 && g_GuiScale.lastWindowHeight > 0) {
+          float baseScale = CalculateGuiScale(g_GuiScale.lastWindowWidth,
+                                             g_GuiScale.lastWindowHeight);
+          g_GuiScale.currentScale = std::max(0.5f, std::min(2.0f, baseScale));
+        }
+        g_GuiScale.needsRescale = true;
+        g_GuiScale.needsFontRebuild = true;
+        preferences.guiScaleFactor = 1.0f;
+        settingsChanged = true;
+      }
+      ImGui::SameLine();
+      DrawHelpMarker("Reset GUI scale factor to default (1.0x)");
+
       DrawSectionHeader("Radar Overlay");
 
       if (ImGui::Checkbox("Show Radar", &preferences.radarEnabled)) {

@@ -1461,6 +1461,7 @@ void savePreferences() {
   j["ui"]["showFPS"] = preferences.showFPS;
   j["ui"]["show3DCursor"] = preferences.show3DCursor;
   j["ui"]["enableSpawnAnimation"] = preferences.enableSpawnAnimation;
+  j["ui"]["guiScaleFactor"] = preferences.guiScaleFactor;
 
   // Radar settings
   j["radar"]["enabled"] = preferences.radarEnabled;
@@ -1669,6 +1670,7 @@ void applyPreferencesToProgram() {
   SetupImGuiStyle(isDarkTheme, 1.0f);
   showFPS = preferences.showFPS;
   show3DCursor = preferences.show3DCursor;
+  g_GuiScale.userScaleFactor = preferences.guiScaleFactor;
 
   // Apply camera preferences
   convergenceSmoothingSpeed = preferences.convergenceSmoothingSpeed;
@@ -1825,6 +1827,7 @@ void loadPreferences() {
       preferences.show3DCursor = j["ui"].value("show3DCursor", true);
       preferences.enableSpawnAnimation =
           j["ui"].value("enableSpawnAnimation", true);
+      preferences.guiScaleFactor = j["ui"].value("guiScaleFactor", 1.0f);
     }
 
     // Radar settings
