@@ -4676,9 +4676,10 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   // shader)
   cursorManager.updateShaderUniforms(shader);
 
-  // Render orbit center if needed
+  // Render orbit center if needed (during mouse orbit or SpaceMouse navigation)
   if (!orbitFollowsCursor && cursorManager.isShowOrbitCenter() &&
-      (camera.IsOrbiting || cursorManager.isAlwaysShowOrbitCenter())) {
+      (camera.IsOrbiting || spaceMouseInput.IsNavigating() ||
+       cursorManager.isAlwaysShowOrbitCenter())) {
     cursorManager.renderOrbitCenter(projection, view, camera.OrbitPoint);
   }
 
