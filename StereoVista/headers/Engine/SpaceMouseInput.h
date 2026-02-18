@@ -71,6 +71,9 @@ public:
     
     // Force refresh of pivot position in NavLib
     void RefreshPivotPosition();
+
+    // Get the current pivot point used by the SpaceMouse for navigation
+    glm::vec3 GetCurrentPivotPoint() const;
     
     // Set anchor mode and cursor centering options
     void SetAnchorMode(GUI::SpaceMouseAnchorMode mode);

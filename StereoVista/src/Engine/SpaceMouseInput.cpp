@@ -408,6 +408,13 @@ private:
 
       m_parent->m_camera->Pitch = glm::degrees(asin(newForward.y));
       m_parent->m_camera->Yaw = glm::degrees(atan2(newForward.z, newForward.x));
+
+      // Sync camera OrbitPoint with SpaceMouse pivot so the orbit center
+      // visualization stays correct during and after SpaceMouse navigation
+      glm::vec3 pivotPoint = GetCurrentPivotPoint();
+      m_parent->m_camera->OrbitPoint = pivotPoint;
+      m_parent->m_camera->OrbitDistance =
+          glm::length(m_parent->m_camera->Position - pivotPoint);
     }
 
     return 0;
@@ -499,7 +506,26 @@ private:
       if (m_parent->OnNavigationStarted) {
         m_parent->OnNavigationStarted();
       }
+
+      // Sync OrbitPoint with SpaceMouse pivot AFTER the callback, because
+      // OnNavigationStarted copies the main camera to the SpaceMouse camera
+      // and would overwrite a pre-callback sync
+      if (m_parent->m_camera) {
+        glm::vec3 pivotPoint = GetCurrentPivotPoint();
+        m_parent->m_camera->OrbitPoint = pivotPoint;
+        m_parent->m_camera->OrbitDistance =
+            glm::length(m_parent->m_camera->Position - pivotPoint);
+      }
     } else if (!motion && wasNavigating) {
+      // Sync OrbitPoint with final SpaceMouse pivot BEFORE the callback,
+      // so the copy in OnNavigationEnded picks up the correct orbit center
+      if (m_parent->m_camera) {
+        glm::vec3 pivotPoint = GetCurrentPivotPoint();
+        m_parent->m_camera->OrbitPoint = pivotPoint;
+        m_parent->m_camera->OrbitDistance =
+            glm::length(m_parent->m_camera->Position - pivotPoint);
+      }
+
       if (m_parent->OnNavigationEnded) {
         m_parent->OnNavigationEnded();
       }
@@ -701,6 +727,13 @@ void SpaceMouseInput::RefreshPivotPosition() {
   if (m_navigationModel) {
     m_navigationModel->RefreshPivotPosition();
   }
+}
+
+glm::vec3 SpaceMouseInput::GetCurrentPivotPoint() const {
+  if (m_navigationModel) {
+    return m_navigationModel->GetCurrentPivotPoint();
+  }
+  return (m_modelMin + m_modelMax) * 0.5f;
 }
 
 // Helper functions for coordinate system conversion
