@@ -275,7 +275,8 @@ void UpdateGuiScale(int windowWidth, int windowHeight) {
   if (windowWidth <= 0 || windowHeight <= 0)
     return;
 
-  float newScale = CalculateGuiScale(windowWidth, windowHeight);
+  float baseScale = CalculateGuiScale(windowWidth, windowHeight);
+  float newScale = std::max(0.5f, std::min(2.0f, baseScale * g_GuiScale.userScaleFactor));
   bool isFirstCall =
       (g_GuiScale.lastWindowWidth == 0 && g_GuiScale.lastWindowHeight == 0);
 
