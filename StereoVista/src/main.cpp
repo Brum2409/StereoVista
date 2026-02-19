@@ -9,6 +9,7 @@
 #include "../headers/Engine/BVH.h"
 #include "../headers/Engine/BVHDebug.h"
 #include "../headers/Engine/BloomRenderer.h"
+#include "../headers/Engine/SSAORenderer.h"
 #include "../headers/Engine/IrradianceCache.h"
 #include "Core/Camera.h"
 #include "Core/CursorSyncState.h"
@@ -296,6 +297,9 @@ Engine::Shader *instancedShader = nullptr;
 
 // Bloom rendering system
 Engine::BloomRenderer *bloomRenderer = nullptr;
+
+// SSAO rendering system
+Engine::SSAORenderer *ssaoRenderer = nullptr;
 
 GUI::LightingMode currentLightingMode = GUI::LIGHTING_SHADOW_MAPPING;
 bool enableShadows = true;
@@ -1557,6 +1561,13 @@ void savePreferences() {
   j["hdr"]["toneMapOperator"] = preferences.hdrSettings.toneMapOperator;
   j["hdr"]["enableBloom"] = preferences.hdrSettings.enableBloom;
 
+  // Save SSAO settings
+  j["ssao"]["enabled"] = preferences.ssaoSettings.enabled;
+  j["ssao"]["kernelSize"] = preferences.ssaoSettings.kernelSize;
+  j["ssao"]["radius"] = preferences.ssaoSettings.radius;
+  j["ssao"]["bias"] = preferences.ssaoSettings.bias;
+  j["ssao"]["power"] = preferences.ssaoSettings.power;
+
   // Save shadow settings
   j["shadows"]["pcfKernelSize"] = preferences.shadowSettings.pcfKernelSize;
   j["shadows"]["enablePCSS"] = preferences.shadowSettings.enablePCSS;
@@ -1995,6 +2006,15 @@ void loadPreferences() {
           j["hdr"].value("toneMapOperator", 0);
       preferences.hdrSettings.enableBloom =
           j["hdr"].value("enableBloom", false);
+    }
+
+    // SSAO settings
+    if (j.contains("ssao")) {
+      preferences.ssaoSettings.enabled = j["ssao"].value("enabled", false);
+      preferences.ssaoSettings.kernelSize = j["ssao"].value("kernelSize", 64);
+      preferences.ssaoSettings.radius = j["ssao"].value("radius", 0.5f);
+      preferences.ssaoSettings.bias = j["ssao"].value("bias", 0.025f);
+      preferences.ssaoSettings.power = j["ssao"].value("power", 1.0f);
     }
 
     // Shadow settings
@@ -2473,6 +2493,16 @@ int main() {
       delete bloomRenderer;
       bloomRenderer = nullptr;
     }
+  }
+
+  // ---- Initialize SSAO Renderer ----
+  ssaoRenderer = new Engine::SSAORenderer();
+  if (!ssaoRenderer->initialize(windowWidth, windowHeight)) {
+    std::cerr << "Warning: Failed to initialize SSAO renderer - SSAO "
+                 "effects will be disabled"
+              << std::endl;
+    delete ssaoRenderer;
+    ssaoRenderer = nullptr;
   }
 
   // ---- Load Initial Scene ----
@@ -3192,6 +3222,14 @@ int main() {
       bloomSettings.exposure = preferences.hdrSettings.exposure;
       bloomSettings.toneMapOperator = preferences.hdrSettings.toneMapOperator;
 
+      // Set SSAO texture for final composition
+      if (ssaoRenderer && ssaoRenderer->isInitialized() &&
+          preferences.ssaoSettings.enabled) {
+        bloomRenderer->setSSAOTexture(ssaoRenderer->getSSAOTexture(), true);
+      } else {
+        bloomRenderer->setSSAOTexture(0, false);
+      }
+
       if (isStereoWindow) {
         // Render and apply HDR/bloom separately for each eye
         // Swap eyes if flipEyes is enabled
@@ -3344,6 +3382,12 @@ void cleanup() {
   if (bloomRenderer) {
     delete bloomRenderer;
     bloomRenderer = nullptr;
+  }
+
+  // Cleanup SSAO renderer
+  if (ssaoRenderer) {
+    delete ssaoRenderer;
+    ssaoRenderer = nullptr;
   }
 
   // Delete zero plane resources
@@ -3586,6 +3630,71 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
 
       glDisable(GL_POLYGON_OFFSET_FILL);
     }
+
+    // Restore wireframe mode if it was enabled
+    glPolygonMode(GL_FRONT_AND_BACK, camera.wireframe ? GL_LINE : GL_FILL);
+  }
+
+  // 2.7. SSAO geometry pass - render view-space positions and normals
+  if (ssaoRenderer && ssaoRenderer->isInitialized() &&
+      preferences.ssaoSettings.enabled && preferences.hdrSettings.enabled &&
+      bloomRenderer != nullptr) {
+    // Temporarily disable wireframe mode for geometry pass
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+    ssaoRenderer->beginGeometryPass();
+
+    Engine::Shader *geoShader = ssaoRenderer->getGeometryShader();
+    if (geoShader) {
+      geoShader->use();
+      geoShader->setMat4("projection", projection);
+      geoShader->setMat4("view", view);
+
+      // Render all models with the geometry shader
+      for (int i = 0; i < currentScene.models.size(); i++) {
+        auto &model = currentScene.models[i];
+        if (!model.visible)
+          continue;
+
+        glm::mat4 modelMatrix = glm::mat4(1.0f);
+        modelMatrix = glm::translate(modelMatrix, model.position);
+        modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.x),
+                                  glm::vec3(1, 0, 0));
+        modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.y),
+                                  glm::vec3(0, 1, 0));
+        modelMatrix = glm::rotate(modelMatrix, glm::radians(model.rotation.z),
+                                  glm::vec3(0, 0, 1));
+        modelMatrix = glm::scale(modelMatrix, model.scale);
+
+        geoShader->setMat4("model", modelMatrix);
+
+        glm::mat3 normalMatrix =
+            glm::transpose(glm::inverse(glm::mat3(modelMatrix)));
+        geoShader->setMat3("normalMatrix", normalMatrix);
+
+        for (int j = 0; j < model.getMeshes().size(); j++) {
+          model.getMeshes()[j].Draw(*geoShader);
+        }
+      }
+    }
+
+    ssaoRenderer->endGeometryPass();
+
+    // Update SSAO settings from preferences
+    Engine::SSAOSettings &ssaoSettings = ssaoRenderer->getSettings();
+    ssaoSettings.enabled = preferences.ssaoSettings.enabled;
+    ssaoSettings.kernelSize = preferences.ssaoSettings.kernelSize;
+    ssaoSettings.radius = preferences.ssaoSettings.radius;
+    ssaoSettings.bias = preferences.ssaoSettings.bias;
+    ssaoSettings.power = preferences.ssaoSettings.power;
+
+    // Compute SSAO
+    glDisable(GL_DEPTH_TEST);
+    ssaoRenderer->computeSSAO(projection);
+
+    // Blur SSAO result
+    ssaoRenderer->blurSSAO();
+    glEnable(GL_DEPTH_TEST);
 
     // Restore wireframe mode if it was enabled
     glPolygonMode(GL_FRONT_AND_BACK, camera.wireframe ? GL_LINE : GL_FILL);
@@ -5735,6 +5844,11 @@ void framebuffer_size_callback(GLFWwindow *window, int width, int height) {
   // Resize bloom renderer if it exists
   if (bloomRenderer) {
     bloomRenderer->resize(width, height);
+  }
+
+  // Resize SSAO renderer if it exists
+  if (ssaoRenderer) {
+    ssaoRenderer->resize(width, height);
   }
 }
 

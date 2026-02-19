@@ -5,7 +5,9 @@ in vec2 TexCoords;
 
 uniform sampler2D hdrBuffer;
 uniform sampler2D bloomBlur;
+uniform sampler2D ssaoTexture;
 uniform bool enableBloom;
+uniform bool enableSSAO;
 uniform float bloomIntensity;
 uniform float exposure;
 uniform int toneMapOperator; // 0=Reinhard, 1=ACES, 2=Uncharted2, 3=AgX, 4=Khronos PBR Neutral, 5=Tony McMapface
@@ -152,7 +154,13 @@ vec3 tonyMcMapfaceToneMapping(vec3 hdrColor, float exposure) {
 void main()
 {             
     vec3 hdrColor = texture(hdrBuffer, TexCoords).rgb;
-    
+
+    // Apply SSAO - darken occluded areas before tone mapping
+    if(enableSSAO) {
+        float ao = texture(ssaoTexture, TexCoords).r;
+        hdrColor *= ao;
+    }
+
     // Add bloom if enabled
     if(enableBloom) {
         vec3 bloomColor = texture(bloomBlur, TexCoords).rgb;

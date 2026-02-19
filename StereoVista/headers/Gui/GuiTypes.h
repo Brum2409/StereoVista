@@ -138,6 +138,15 @@ struct ApplicationPreferences {
     bool enableBloom = false;
   } hdrSettings;
 
+  // SSAO settings
+  struct SSAOSettings {
+    bool enabled = false;
+    int kernelSize = 64;  // Number of samples (16-64)
+    float radius = 0.5f;  // Sample radius in view space
+    float bias = 0.025f;  // Depth comparison bias
+    float power = 1.0f;   // Occlusion intensity curve
+  } ssaoSettings;
+
   // Shadow quality settings
   struct ShadowSettings {
     int pcfKernelSize = 3; // 3, 5, 7, or 9
