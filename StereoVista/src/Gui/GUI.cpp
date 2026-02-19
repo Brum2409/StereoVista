@@ -1731,6 +1731,61 @@ void renderSettingsWindow() {
         }
 
         ImGui::Spacing();
+        DrawSectionHeader("Screen Space Ambient Occlusion");
+
+        if (ImGui::Checkbox("Enable SSAO", &preferences.ssaoSettings.enabled)) {
+          settingsChanged = true;
+        }
+        ImGui::SameLine();
+        DrawHelpMarker(
+            "Screen-Space Ambient Occlusion darkens creases and corners "
+            "for more realistic lighting. Requires HDR to be enabled.");
+
+        if (preferences.ssaoSettings.enabled) {
+          const char *ssaoSampleCounts[] = {"16 (Fast)", "32 (Balanced)",
+                                            "64 (Quality)"};
+          int ssaoKernelIndex = 2;
+          if (preferences.ssaoSettings.kernelSize <= 16)
+            ssaoKernelIndex = 0;
+          else if (preferences.ssaoSettings.kernelSize <= 32)
+            ssaoKernelIndex = 1;
+          if (ImGui::Combo("SSAO Samples", &ssaoKernelIndex, ssaoSampleCounts,
+                           IM_ARRAYSIZE(ssaoSampleCounts))) {
+            const int kernelSizes[] = {16, 32, 64};
+            preferences.ssaoSettings.kernelSize = kernelSizes[ssaoKernelIndex];
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker(
+              "Number of samples per pixel. More samples = better quality "
+              "but slower");
+
+          if (ImGui::SliderFloat("SSAO Radius",
+                                 &preferences.ssaoSettings.radius, 0.1f, 2.0f,
+                                 "%.2f")) {
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker(
+              "Radius of the hemisphere sample kernel in view space");
+
+          if (ImGui::SliderFloat("SSAO Bias", &preferences.ssaoSettings.bias,
+                                 0.001f, 0.1f, "%.3f")) {
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker("Depth bias to prevent self-occlusion artifacts");
+
+          if (ImGui::SliderFloat("SSAO Power", &preferences.ssaoSettings.power,
+                                 0.5f, 5.0f, "%.1f")) {
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker("Power curve to control occlusion intensity. Higher "
+                         "values = stronger darkening");
+        }
+
+        ImGui::Spacing();
         DrawSectionHeader("Shadow Quality");
 
         const char *pcfKernelSizes[] = {"3x3 (Fast)", "5x5 (Balanced)",

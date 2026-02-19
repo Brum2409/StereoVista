@@ -52,6 +52,10 @@ public:
   void applyBloom(GLuint sceneTexture, const BloomSettings &settings,
                   GLenum drawBuffer = GL_BACK);
 
+  // Set SSAO texture to be applied during final composition
+  void setSSAOTexture(GLuint ssaoTexture, bool ssaoEnabled);
+
+
   // Get bloom settings
   BloomSettings &getSettings() { return m_settings; }
 
@@ -65,6 +69,10 @@ private:
   BloomSettings m_settings;
   int m_width, m_height;
   bool m_initialized = false;
+
+  // SSAO integration
+  GLuint m_ssaoTexture = 0;
+  bool m_ssaoEnabled = false;
 
   // Setup framebuffers
   bool setupFramebuffers();

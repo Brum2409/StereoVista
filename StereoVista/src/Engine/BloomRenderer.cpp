@@ -457,6 +457,14 @@ void BloomRenderer::applyBloom(GLuint sceneTexture,
 
     m_settings.finalShader->setInt("bloomBlur", 1);
 
+    // Bind SSAO texture if available
+    m_settings.finalShader->setBool("enableSSAO", m_ssaoEnabled);
+    if (m_ssaoEnabled && m_ssaoTexture != 0) {
+      glActiveTexture(GL_TEXTURE2);
+      glBindTexture(GL_TEXTURE_2D, m_ssaoTexture);
+      m_settings.finalShader->setInt("ssaoTexture", 2);
+    }
+
     // Set all uniforms - always enable bloom but use effective intensity (0 if
     // disabled)
     m_settings.finalShader->setBool(
@@ -468,6 +476,8 @@ void BloomRenderer::applyBloom(GLuint sceneTexture,
     renderQuad();
 
     // Unbind textures to avoid state issues
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE0);
@@ -485,6 +495,11 @@ void BloomRenderer::renderQuad() {
   glBindVertexArray(m_settings.quadVAO);
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
   glBindVertexArray(0);
+}
+
+void BloomRenderer::setSSAOTexture(GLuint ssaoTexture, bool ssaoEnabled) {
+  m_ssaoTexture = ssaoTexture;
+  m_ssaoEnabled = ssaoEnabled;
 }
 
 bool BloomRenderer::validateBloomSystem() const {
