@@ -312,6 +312,10 @@ bool BloomRenderer::loadShaders() {
       m_settings.finalShader->setInt("bloomBlur", 1);
     }
 
+    // Initialize SSAO sampler to texture unit 2 (bound later if SSAO enabled)
+    m_settings.finalShader->setInt("ssaoTexture", 2);
+    m_settings.finalShader->setBool("enableSSAO", false);
+
     return true;
   } catch (const std::exception &e) {
     std::cerr << "Failed to load bloom shaders: " << e.what() << std::endl;

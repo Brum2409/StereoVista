@@ -341,9 +341,14 @@ void SSAORenderer::beginGeometryPass() {
   glBindFramebuffer(GL_FRAMEBUFFER, m_gBufferFBO);
   glViewport(0, 0, m_width, m_height);
 
-  // Clear the G-buffer (position w=0 means no geometry)
+  // Save current clear color, then clear G-buffer with zeros
+  // (position w=0 marks empty/background pixels)
+  GLfloat prevClearColor[4];
+  glGetFloatv(GL_COLOR_CLEAR_VALUE, prevClearColor);
   glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  glClearColor(prevClearColor[0], prevClearColor[1], prevClearColor[2],
+               prevClearColor[3]);
 }
 
 void SSAORenderer::endGeometryPass() {
