@@ -123,6 +123,9 @@
     <ClCompile Include="src\Engine\IrradianceCache.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\Engine\SSAORenderer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="headers\core.h">
@@ -471,6 +474,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\Engine\IrradianceCache.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Engine\SSAORenderer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

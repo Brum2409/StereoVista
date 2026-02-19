@@ -2,7 +2,7 @@
     "camera": {
         "alwaysShowOrbitCenter": false,
         "autoConvergence": true,
-        "convergence": 10.36419677734375,
+        "convergence": 6.2810492515563965,
         "convergenceCapMax": 41.900001525878906,
         "convergenceCapMin": 0.5,
         "convergenceDistanceFactor": 1.2999999523162842,
@@ -105,11 +105,11 @@
         "cascadeSplitLambda": 0.5,
         "enableCascades": false,
         "enableIndirectLighting": false,
-        "enablePCSS": false,
-        "lightSize": 0.009999999776482582,
+        "enablePCSS": true,
+        "lightSize": 0.14100000262260437,
         "numCascades": 4,
         "pcfKernelSize": 9,
-        "shadowSoftness": 1.9900000095367432
+        "shadowSoftness": 0.9100000262260437
     },
     "skybox": {
         "exposure": 0.05999999865889549,
@@ -141,6 +141,13 @@
         "rotationSensitivity": 1.0,
         "translationSensitivity": 1.0
     },
+    "ssao": {
+        "bias": 0.041999999433755875,
+        "enabled": false,
+        "kernelSize": 64,
+        "power": 1.899999976158142,
+        "radius": 0.6499999761581421
+    },
     "startup": {
         "loadScene": false,
         "sceneLoadingBehavior": 0,
@@ -149,6 +156,7 @@
     "ui": {
         "darkTheme": true,
         "enableSpawnAnimation": true,
+        "guiScaleFactor": 1.0,
         "show3DCursor": true,
         "showFPS": true
     }

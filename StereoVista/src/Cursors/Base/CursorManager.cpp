@@ -322,10 +322,25 @@ void CursorManager::renderOrbitCenter(const glm::mat4 &projection,
   sphereShader->setFloat("edgeSoftness", 0.0f);
   sphereShader->setFloat("centerTransparencyFactor", 0.0f);
 
-  // Render orbit center sphere
+  // Render orbit center sphere using two-pass approach for correct face ordering
   glBindVertexArray(m_sphereCursor->getVAO());
+  glEnable(GL_CULL_FACE);
+
+  // First pass: Render back faces with depth write enabled
+  glDepthMask(GL_TRUE);
+  glCullFace(GL_FRONT);
   glDrawElements(GL_TRIANGLES, m_sphereCursor->getIndices().size(),
                  GL_UNSIGNED_INT, 0);
+
+  // Second pass: Render front faces with depth write disabled
+  glDepthMask(GL_FALSE);
+  glCullFace(GL_BACK);
+  glDrawElements(GL_TRIANGLES, m_sphereCursor->getIndices().size(),
+                 GL_UNSIGNED_INT, 0);
+
+  // Reset OpenGL state
+  glDepthMask(GL_TRUE);
+  glCullFace(GL_BACK);
   glBindVertexArray(0);
 
   glDisable(GL_BLEND);
