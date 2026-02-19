@@ -2,7 +2,7 @@
     "camera": {
         "alwaysShowOrbitCenter": false,
         "autoConvergence": true,
-        "convergence": 6.2810492515563965,
+        "convergence": 7.026186466217041,
         "convergenceCapMax": 41.900001525878906,
         "convergenceCapMin": 0.5,
         "convergenceDistanceFactor": 1.2999999523162842,
@@ -139,6 +139,19 @@
         "enabled": true,
         "navigationMode": 0,
         "rotationSensitivity": 1.0,
+        "tdx": {
+            "autoPivot": false,
+            "autokeyAnimation": false,
+            "firstPersonEaseOut": 600,
+            "floorQueryRate": 1,
+            "lockHorizon": false,
+            "lockSketchPlane": false,
+            "lockTo3dViews": false,
+            "motionModel": "Orbit",
+            "moveObjects": false,
+            "selectionFollower": true,
+            "suspendInput": false
+        },
         "translationSensitivity": 1.0
     },
     "ssao": {

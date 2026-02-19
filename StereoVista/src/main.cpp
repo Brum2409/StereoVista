@@ -21,6 +21,7 @@
 #include "Engine/OctreePointCloudManager.h"
 #include "Engine/ShortcutManager.h"
 #include "Engine/SpaceMouseInput.h"
+#include "Engine/ThreeDConnexionSync.h"
 #include "Gui/CursorPreview3D.h"
 #include "Gui/Gui.h"
 #include "Gui/GuiTypes.h"
@@ -144,6 +145,8 @@ Camera spaceMouseCamera(glm::vec3(0.0f, 0.0f, 3.0f));
 std::shared_ptr<Camera> spaceMouseCameraPtr =
     std::make_shared<Camera>(spaceMouseCamera);
 SpaceMouseInput spaceMouseInput;
+ThreeDConnexionSync tdxSync;
+int tdxPollCounter = 0;
 bool spaceMouseInitialized = false;
 bool spaceMouseActive = false;
 float lastX = 1920.0f / 2.0;
@@ -1525,6 +1528,19 @@ void savePreferences() {
       static_cast<int>(preferences.spaceMouseAnchorMode);
   j["spacemouse"]["centerCursor"] = preferences.spaceMouseCenterCursor;
 
+  // 3DConnexion app sync settings
+  j["spacemouse"]["tdx"]["motionModel"]        = preferences.tdxSettings.motionModel;
+  j["spacemouse"]["tdx"]["autoPivot"]          = preferences.tdxSettings.autoPivot;
+  j["spacemouse"]["tdx"]["lockHorizon"]        = preferences.tdxSettings.lockHorizon;
+  j["spacemouse"]["tdx"]["suspendInput"]       = preferences.tdxSettings.suspendInput;
+  j["spacemouse"]["tdx"]["lockTo3dViews"]      = preferences.tdxSettings.lockTo3dViews;
+  j["spacemouse"]["tdx"]["moveObjects"]        = preferences.tdxSettings.moveObjects;
+  j["spacemouse"]["tdx"]["autokeyAnimation"]   = preferences.tdxSettings.autokeyAnimation;
+  j["spacemouse"]["tdx"]["selectionFollower"]  = preferences.tdxSettings.selectionFollower;
+  j["spacemouse"]["tdx"]["firstPersonEaseOut"] = preferences.tdxSettings.firstPersonEaseOut;
+  j["spacemouse"]["tdx"]["floorQueryRate"]     = preferences.tdxSettings.floorQueryRate;
+  j["spacemouse"]["tdx"]["lockSketchPlane"]    = preferences.tdxSettings.lockSketchPlane;
+
   // Cursor settings
   j["cursor"]["currentPreset"] = preferences.currentPresetName;
 
@@ -1936,6 +1952,22 @@ void loadPreferences() {
 
       preferences.spaceMouseCenterCursor =
           j["spacemouse"].value("centerCursor", false);
+
+      // 3DConnexion app sync settings
+      if (j["spacemouse"].contains("tdx")) {
+        auto& tdx = j["spacemouse"]["tdx"];
+        preferences.tdxSettings.motionModel       = tdx.value("motionModel",       "Helicopter");
+        preferences.tdxSettings.autoPivot         = tdx.value("autoPivot",         false);
+        preferences.tdxSettings.lockHorizon       = tdx.value("lockHorizon",       false);
+        preferences.tdxSettings.suspendInput      = tdx.value("suspendInput",      false);
+        preferences.tdxSettings.lockTo3dViews     = tdx.value("lockTo3dViews",     false);
+        preferences.tdxSettings.moveObjects       = tdx.value("moveObjects",       false);
+        preferences.tdxSettings.autokeyAnimation  = tdx.value("autokeyAnimation",  false);
+        preferences.tdxSettings.selectionFollower = tdx.value("selectionFollower", true);
+        preferences.tdxSettings.firstPersonEaseOut= tdx.value("firstPersonEaseOut",600);
+        preferences.tdxSettings.floorQueryRate    = tdx.value("floorQueryRate",    1);
+        preferences.tdxSettings.lockSketchPlane   = tdx.value("lockSketchPlane",   true);
+      }
     }
 
     if (j.contains("skybox")) {
@@ -2701,6 +2733,58 @@ int main() {
                   << std::endl;
       }
     };
+
+    // ---- 3DConnexion settings file sync ----
+    DWORD pid = GetCurrentProcessId();
+    if (tdxSync.TryFindFile(pid)) {
+      std::cout << "3DConnexion settings file found and loaded" << std::endl;
+      // Seed preferences from what we read
+      const auto& ts = tdxSync.GetSettings();
+      preferences.tdxSettings.motionModel       = ts.motionModel;
+      preferences.tdxSettings.autoPivot         = ts.autoPivot;
+      preferences.tdxSettings.lockHorizon       = ts.lockHorizon;
+      preferences.tdxSettings.suspendInput      = ts.suspendInput;
+      preferences.tdxSettings.lockTo3dViews     = ts.lockTo3dViews;
+      preferences.tdxSettings.moveObjects       = ts.moveObjects;
+      preferences.tdxSettings.autokeyAnimation  = ts.autokeyAnimation;
+      preferences.tdxSettings.selectionFollower = ts.selectionFollower;
+      preferences.tdxSettings.firstPersonEaseOut= ts.firstPersonEaseOut;
+      preferences.tdxSettings.floorQueryRate    = ts.floorQueryRate;
+      preferences.tdxSettings.lockSketchPlane   = ts.lockSketchPlane;
+    } else {
+      std::cout << "3DConnexion settings file not yet found (will retry)" << std::endl;
+    }
+
+    tdxSync.OnSettingsChanged = [](const ThreeDConnexionSync::TdxSettings& s) {
+      // Apply inbound pivot visibility change
+      if (s.pivotVisibility == "ShowPivot") {
+        preferences.showOrbitCenter      = true;
+        preferences.alwaysShowOrbitCenter = true;
+      } else if (s.pivotVisibility == "ShowMovingPivot") {
+        preferences.showOrbitCenter      = true;
+        preferences.alwaysShowOrbitCenter = false;
+      } else {
+        preferences.showOrbitCenter      = false;
+        preferences.alwaysShowOrbitCenter = false;
+      }
+      cursorManager.setShowOrbitCenter(preferences.showOrbitCenter);
+      cursorManager.setAlwaysShowOrbitCenter(preferences.alwaysShowOrbitCenter);
+
+      // Copy remaining settings into preferences
+      preferences.tdxSettings.motionModel       = s.motionModel;
+      preferences.tdxSettings.autoPivot         = s.autoPivot;
+      preferences.tdxSettings.lockHorizon       = s.lockHorizon;
+      preferences.tdxSettings.suspendInput      = s.suspendInput;
+      preferences.tdxSettings.lockTo3dViews     = s.lockTo3dViews;
+      preferences.tdxSettings.moveObjects       = s.moveObjects;
+      preferences.tdxSettings.autokeyAnimation  = s.autokeyAnimation;
+      preferences.tdxSettings.selectionFollower = s.selectionFollower;
+      preferences.tdxSettings.firstPersonEaseOut= s.firstPersonEaseOut;
+      preferences.tdxSettings.floorQueryRate    = s.floorQueryRate;
+      preferences.tdxSettings.lockSketchPlane   = s.lockSketchPlane;
+
+      savePreferences();
+    };
   } else {
     std::cout
         << "Failed to initialize SpaceMouse - continuing without 3D navigation"
@@ -2740,6 +2824,12 @@ int main() {
     if (spaceMouseInitialized) {
       bool wasSpaceMouseActive = spaceMouseActive;
       spaceMouseInput.Update(deltaTime);
+
+      // Poll for external 3DConnexion settings changes (~once per 60 frames)
+      if (++tdxPollCounter >= 60) {
+        tdxPollCounter = 0;
+        tdxSync.PollForChanges();
+      }
 
       // Handle camera synchronization for mode transitions
       if (spaceMouseActive) {

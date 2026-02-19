@@ -6,6 +6,7 @@
 #include "Engine/Core.h"
 #include "Engine/ShortcutManager.h"
 #include "Engine/SpaceMouseInput.h"
+#include "Engine/ThreeDConnexionSync.h"
 #include "Gui/GUITypes.h"
 #include "Tools/BrushTool.h"
 #include "imgui/IconsFontAwesome5.h"
@@ -51,6 +52,7 @@ extern float convergenceSmoothingSpeed;
 // SpaceMouse variables
 extern SpaceMouseInput spaceMouseInput;
 extern bool spaceMouseInitialized;
+extern ThreeDConnexionSync tdxSync;
 
 // Cursor variables
 extern Cursor::CursorManager cursorManager;
@@ -3109,6 +3111,130 @@ void renderSettingsWindow() {
                            "while using SpaceMouse");
           }
         }
+
+        // ---- 3DConnexion App Settings (synced to/from 3DxWare XML) ----
+        if (tdxSync.IsConnected()) {
+          DrawSectionHeader("3DConnexion App Settings");
+
+          // Helper lambda: assemble TdxSettings from preferences + pivot state
+          auto buildTdxSettings = [&]() -> ThreeDConnexionSync::TdxSettings {
+            ThreeDConnexionSync::TdxSettings s;
+            s.motionModel       = preferences.tdxSettings.motionModel;
+            s.autoPivot         = preferences.tdxSettings.autoPivot;
+            s.lockHorizon       = preferences.tdxSettings.lockHorizon;
+            s.suspendInput      = preferences.tdxSettings.suspendInput;
+            s.lockTo3dViews     = preferences.tdxSettings.lockTo3dViews;
+            s.moveObjects       = preferences.tdxSettings.moveObjects;
+            s.autokeyAnimation  = preferences.tdxSettings.autokeyAnimation;
+            s.selectionFollower = preferences.tdxSettings.selectionFollower;
+            s.firstPersonEaseOut= preferences.tdxSettings.firstPersonEaseOut;
+            s.floorQueryRate    = preferences.tdxSettings.floorQueryRate;
+            s.lockSketchPlane   = preferences.tdxSettings.lockSketchPlane;
+            // Derive pivotVisibility from orbit center prefs
+            if (preferences.showOrbitCenter && preferences.alwaysShowOrbitCenter)
+              s.pivotVisibility = "ShowPivot";
+            else if (preferences.showOrbitCenter)
+              s.pivotVisibility = "ShowMovingPivot";
+            else
+              s.pivotVisibility = "HidePivot";
+            return s;
+          };
+
+          // Motion Model combo
+          {
+            const char* motionModels[] = {
+              "Helicopter", "Object", "Fly", "Walk", "Orbit", "Target", "Drive"
+            };
+            int currentModel = 0;
+            for (int i = 0; i < 7; ++i) {
+              if (preferences.tdxSettings.motionModel == motionModels[i]) {
+                currentModel = i;
+                break;
+              }
+            }
+            if (ImGui::Combo("Motion Model", &currentModel, motionModels, 7)) {
+              preferences.tdxSettings.motionModel = motionModels[currentModel];
+              tdxSync.WriteSettings(buildTdxSettings());
+              settingsChanged = true;
+            }
+            ImGui::SameLine();
+            DrawHelpMarker("Navigation style used by the SpaceMouse driver");
+          }
+
+          if (ImGui::Checkbox("Auto Pivot", &preferences.tdxSettings.autoPivot)) {
+            tdxSync.WriteSettings(buildTdxSettings());
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker("Automatically choose the pivot point based on geometry");
+
+          if (ImGui::Checkbox("Lock Horizon", &preferences.tdxSettings.lockHorizon)) {
+            tdxSync.WriteSettings(buildTdxSettings());
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker("Keep the horizon level while navigating");
+
+          if (ImGui::Checkbox("Suspend Input", &preferences.tdxSettings.suspendInput)) {
+            tdxSync.WriteSettings(buildTdxSettings());
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker("Temporarily disable all SpaceMouse motion input");
+
+          if (ImGui::Checkbox("Lock to 3D Views", &preferences.tdxSettings.lockTo3dViews)) {
+            tdxSync.WriteSettings(buildTdxSettings());
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker("Restrict SpaceMouse input to 3D viewports only");
+
+          if (ImGui::Checkbox("Move Objects", &preferences.tdxSettings.moveObjects)) {
+            tdxSync.WriteSettings(buildTdxSettings());
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker("Move selected objects instead of the camera");
+
+          if (ImGui::Checkbox("Autokey Animation", &preferences.tdxSettings.autokeyAnimation)) {
+            tdxSync.WriteSettings(buildTdxSettings());
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker("Automatically create keyframes during animation");
+
+          if (ImGui::Checkbox("Selection Follower", &preferences.tdxSettings.selectionFollower)) {
+            tdxSync.WriteSettings(buildTdxSettings());
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker("Keep the selection centered in the view");
+
+          if (ImGui::SliderInt("First Person Ease Out",
+                               &preferences.tdxSettings.firstPersonEaseOut,
+                               0, 1000)) {
+            tdxSync.WriteSettings(buildTdxSettings());
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker("Deceleration ramp length in first-person mode (0-1000)");
+
+          if (ImGui::SliderInt("Floor Query Rate",
+                               &preferences.tdxSettings.floorQueryRate,
+                               1, 100)) {
+            tdxSync.WriteSettings(buildTdxSettings());
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker("How often (per second) the floor height is queried (1-100)");
+
+          if (ImGui::Checkbox("Lock Sketch Plane", &preferences.tdxSettings.lockSketchPlane)) {
+            tdxSync.WriteSettings(buildTdxSettings());
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker("Lock navigation to the active sketch plane");
+        }
       } else {
         ImGui::TextDisabled("SpaceMouse not detected");
         ImGui::TextWrapped(
@@ -4225,6 +4351,26 @@ void renderCursorSettingsWindow() {
         cursorManager.setShowOrbitCenter(showOrbitCenter);
         preferences.showOrbitCenter = showOrbitCenter;
         savePreferences();
+        // Sync pivot visibility to 3DConnexion XML
+        if (tdxSync.IsConnected()) {
+          auto s = tdxSync.GetSettings();
+          ThreeDConnexionSync::TdxSettings ws = s;
+          ws.motionModel       = preferences.tdxSettings.motionModel;
+          ws.autoPivot         = preferences.tdxSettings.autoPivot;
+          ws.lockHorizon       = preferences.tdxSettings.lockHorizon;
+          ws.suspendInput      = preferences.tdxSettings.suspendInput;
+          ws.lockTo3dViews     = preferences.tdxSettings.lockTo3dViews;
+          ws.moveObjects       = preferences.tdxSettings.moveObjects;
+          ws.autokeyAnimation  = preferences.tdxSettings.autokeyAnimation;
+          ws.selectionFollower = preferences.tdxSettings.selectionFollower;
+          ws.firstPersonEaseOut= preferences.tdxSettings.firstPersonEaseOut;
+          ws.floorQueryRate    = preferences.tdxSettings.floorQueryRate;
+          ws.lockSketchPlane   = preferences.tdxSettings.lockSketchPlane;
+          ws.pivotVisibility   = showOrbitCenter
+            ? (preferences.alwaysShowOrbitCenter ? "ShowPivot" : "ShowMovingPivot")
+            : "HidePivot";
+          tdxSync.WriteSettings(ws);
+        }
       }
       ImGui::SameLine();
       DrawHelpMarker("Display a marker at the camera's orbit pivot point");
@@ -4235,6 +4381,23 @@ void renderCursorSettingsWindow() {
           cursorManager.setAlwaysShowOrbitCenter(alwaysShowOrbitCenter);
           preferences.alwaysShowOrbitCenter = alwaysShowOrbitCenter;
           savePreferences();
+          // Sync pivot visibility to 3DConnexion XML
+          if (tdxSync.IsConnected()) {
+            ThreeDConnexionSync::TdxSettings ws = tdxSync.GetSettings();
+            ws.motionModel       = preferences.tdxSettings.motionModel;
+            ws.autoPivot         = preferences.tdxSettings.autoPivot;
+            ws.lockHorizon       = preferences.tdxSettings.lockHorizon;
+            ws.suspendInput      = preferences.tdxSettings.suspendInput;
+            ws.lockTo3dViews     = preferences.tdxSettings.lockTo3dViews;
+            ws.moveObjects       = preferences.tdxSettings.moveObjects;
+            ws.autokeyAnimation  = preferences.tdxSettings.autokeyAnimation;
+            ws.selectionFollower = preferences.tdxSettings.selectionFollower;
+            ws.firstPersonEaseOut= preferences.tdxSettings.firstPersonEaseOut;
+            ws.floorQueryRate    = preferences.tdxSettings.floorQueryRate;
+            ws.lockSketchPlane   = preferences.tdxSettings.lockSketchPlane;
+            ws.pivotVisibility   = alwaysShowOrbitCenter ? "ShowPivot" : "ShowMovingPivot";
+            tdxSync.WriteSettings(ws);
+          }
         }
         ImGui::SameLine();
         DrawHelpMarker("Keep the orbit center visible even when not orbiting");

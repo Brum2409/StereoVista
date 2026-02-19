@@ -237,6 +237,22 @@ struct ApplicationPreferences {
   SpaceMouseAnchorMode spaceMouseAnchorMode = SPACEMOUSE_ANCHOR_DISABLED;
   bool spaceMouseCenterCursor = false;
 
+  // 3DConnexion App Sync Settings (synced to/from the 3DxWare cfg XML)
+  struct TdxAppSettings {
+    std::string motionModel    = "Helicopter";
+    bool autoPivot             = false;
+    bool lockHorizon           = false;
+    bool suspendInput          = false;
+    bool lockTo3dViews         = false;
+    bool moveObjects           = false;
+    bool autokeyAnimation      = false;
+    bool selectionFollower     = true;
+    int  firstPersonEaseOut    = 600;
+    int  floorQueryRate        = 1;
+    bool lockSketchPlane       = true;
+  } tdxSettings;
+  // Note: pivotVisibility is derived from showOrbitCenter / alwaysShowOrbitCenter at write time.
+
   int skyboxType = SKYBOX_HDR;
   glm::vec3 skyboxSolidColor = glm::vec3(0.2f, 0.3f, 0.4f);
   glm::vec3 skyboxGradientTop = glm::vec3(0.1f, 0.1f, 0.3f);
