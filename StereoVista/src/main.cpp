@@ -1584,6 +1584,12 @@ void savePreferences() {
   j["ssao"]["bias"] = preferences.ssaoSettings.bias;
   j["ssao"]["power"] = preferences.ssaoSettings.power;
 
+  // Schütz Phase 1 – save EDL and point cloud size settings
+  j["edl"]["enabled"]          = preferences.edlSettings.enabled;
+  j["edl"]["strength"]         = preferences.edlSettings.strength;
+  j["edl"]["radius"]           = preferences.edlSettings.radius;
+  j["pointcloud"]["baseSize"]  = preferences.pointCloudBaseSize;
+
   // Save shadow settings
   j["shadows"]["pcfKernelSize"] = preferences.shadowSettings.pcfKernelSize;
   j["shadows"]["enablePCSS"] = preferences.shadowSettings.enablePCSS;
@@ -2049,6 +2055,16 @@ void loadPreferences() {
       preferences.ssaoSettings.power = j["ssao"].value("power", 1.0f);
     }
 
+    // Schütz Phase 1 – load EDL and point cloud size settings
+    if (j.contains("edl")) {
+      preferences.edlSettings.enabled  = j["edl"].value("enabled",  false);
+      preferences.edlSettings.strength  = j["edl"].value("strength", 1.0f);
+      preferences.edlSettings.radius    = j["edl"].value("radius",   1.5f);
+    }
+    if (j.contains("pointcloud")) {
+      preferences.pointCloudBaseSize = j["pointcloud"].value("baseSize", 0.02f);
+    }
+
     // Shadow settings
     if (j.contains("shadows")) {
       preferences.shadowSettings.pcfKernelSize =
@@ -2425,6 +2441,9 @@ int main() {
   }
 
   glEnable(GL_MULTISAMPLE);
+
+  // Schütz Phase 1: let the vertex shader control gl_PointSize
+  glEnable(GL_PROGRAM_POINT_SIZE);
 
   // ---- Set GLFW Callbacks ----
   glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
@@ -3324,35 +3343,56 @@ int main() {
         // Render and apply HDR/bloom separately for each eye
         // Swap eyes if flipEyes is enabled
 
+        // Schütz Phase 1: build Engine::EDLSettings from preferences
+        Engine::EDLSettings frameEDL;
+        frameEDL.enabled  = preferences.edlSettings.enabled;
+        frameEDL.strength = preferences.edlSettings.strength;
+        frameEDL.radius   = preferences.edlSettings.radius;
+        const Engine::EDLSettings *edlPtr =
+            frameEDL.enabled ? &frameEDL : nullptr;
+
         if (preferences.flipEyes) {
           // Flipped: render left projection to right buffer, right projection
           // to left buffer
           renderEye(GL_BACK_LEFT, leftProjection, leftView, activeShader,
                     viewport, windowFlags, window, false, true, &leftProjection,
                     &leftView, &rightProjection, &rightView);
-          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_RIGHT);
+          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_RIGHT,
+                                    edlPtr, preferences.nearPlane, preferences.farPlane);
 
           renderEye(GL_BACK_RIGHT, rightProjection, rightView, activeShader,
                     viewport, windowFlags, window, false, true, &leftProjection,
                     &leftView, &rightProjection, &rightView);
-          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_LEFT);
+          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_LEFT,
+                                    edlPtr, preferences.nearPlane, preferences.farPlane);
         } else {
           // Normal: render left to left, right to right
           renderEye(GL_BACK_LEFT, leftProjection, leftView, activeShader,
                     viewport, windowFlags, window, false, true, &leftProjection,
                     &leftView, &rightProjection, &rightView);
-          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_LEFT);
+          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_LEFT,
+                                    edlPtr, preferences.nearPlane, preferences.farPlane);
 
           renderEye(GL_BACK_RIGHT, rightProjection, rightView, activeShader,
                     viewport, windowFlags, window, false, true, &leftProjection,
                     &leftView, &rightProjection, &rightView);
-          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_RIGHT);
+          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_RIGHT,
+                                    edlPtr, preferences.nearPlane, preferences.farPlane);
         }
       } else {
         // Mono view
         renderEye(GL_BACK_LEFT, projection, view, activeShader, viewport,
                   windowFlags, window, false);
-        bloomRenderer->applyBloom(0, bloomSettings, GL_BACK);
+        {
+          Engine::EDLSettings frameEDL;
+          frameEDL.enabled  = preferences.edlSettings.enabled;
+          frameEDL.strength = preferences.edlSettings.strength;
+          frameEDL.radius   = preferences.edlSettings.radius;
+          const Engine::EDLSettings *edlPtr =
+              frameEDL.enabled ? &frameEDL : nullptr;
+          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK,
+                                    edlPtr, preferences.nearPlane, preferences.farPlane);
+        }
       }
 
       // Now render GUI on top of the composed HDR result
@@ -3826,6 +3866,11 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   shader->setMat4("projection", projection);
   shader->setMat4("view", view);
   shader->setVec3("viewPos", camera.Position);
+
+  // Schütz Phase 1: point cloud per-frame uniforms for screen-space point size
+  shader->setFloat("pointCloudBaseSize", preferences.pointCloudBaseSize);
+  shader->setFloat("screenHeight", static_cast<float>(windowHeight));
+  shader->setFloat("fieldOfView",  glm::radians(preferences.fov));
 
   // Set lighting mode uniforms - this is always needed
   shader->setInt("lightingMode", static_cast<int>(currentLightingMode));

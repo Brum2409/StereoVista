@@ -33,12 +33,17 @@ uniform bool isPointCloud;
 uniform int lightingMode;
 uniform int currentMeshIndex;
 
+// Schütz Phase 1: point size scaling uniforms
+uniform float pointCloudBaseSize;  // world-space base point radius (meters)
+uniform float screenHeight;         // viewport height in pixels
+uniform float fieldOfView;          // vertical FOV in radians
+
 void main() {
     // Normal matrix is provided via uniform
-    
+
     // World-space position
     vs_out.FragPos = vec3(model * vec4(aPos, 1.0));
-    
+
     if (isPointCloud) {
         // Point cloud: pack color/intensity in attributes
         vs_out.VertexColor = aNormal;         // pack normal as color
@@ -46,6 +51,16 @@ void main() {
         vs_out.Normal = vec3(0.0);            // not used
         vs_out.TexCoords = vec2(0.0);         // not used
         vs_out.TBN = mat3(1.0);               // not used
+
+        // Schütz Phase 1: compute screen-space point size from world-space radius.
+        // Projects a sphere of radius pointCloudBaseSize at the vertex's view-space
+        // depth to pixels, matching the perspective projection math used by Potree.
+        vec4 viewPos = view * model * vec4(aPos, 1.0);
+        float viewDepth = -viewPos.z; // positive distance from camera
+        // fov term: half-height at depth 1 in view space = tan(fov/2)
+        // projected pixel size = (worldRadius / viewDepth) * (screenHeight / (2*tan(fov/2)))
+        float fovFactor = screenHeight / (2.0 * tan(fieldOfView * 0.5));
+        gl_PointSize = max(1.0, (pointCloudBaseSize / max(viewDepth, 0.001)) * fovFactor);
     } else {
         // Mesh attributes
         vs_out.Normal = normalMatrix * aNormal;

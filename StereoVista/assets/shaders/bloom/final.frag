@@ -12,6 +12,15 @@ uniform float bloomIntensity;
 uniform float exposure;
 uniform int toneMapOperator; // 0=Reinhard, 1=ACES, 2=Uncharted2, 3=AgX, 4=Khronos PBR Neutral, 5=Tony McMapface
 
+// ---- Schütz Phase 1: Eye-Dome Lighting uniforms ----
+uniform sampler2D depthTexture;
+uniform bool  enableEDL;
+uniform float edlStrength;   // darkness at depth edges (default 1.0)
+uniform float edlRadius;     // neighbourhood radius in pixels (default 1.5)
+uniform float edlNear;       // near-plane distance
+uniform float edlFar;        // far-plane distance
+uniform vec2  edlTexelSize;  // 1 / viewport_size
+
 // KEY FIXES:
 // - AgX: Simplified to avoid excessive brightness from complex matrix operations
 // - Tony McMapface: Reverted to luminance-based approach to prevent gray appearance 
@@ -151,9 +160,52 @@ vec3 tonyMcMapfaceToneMapping(vec3 hdrColor, float exposure) {
     return clamp(result, 0.0, 1.0);
 }
 
+// ---- Schütz Phase 1: Eye-Dome Lighting helper ----
+// Returns a shade factor in [0,1] based on the depth-edge response at TexCoords.
+// Implementation follows the original EDL algorithm:
+//   Boucheny et al. (2008) "A multiscale interactive focus+context technique
+//   based on an eye-dome lighting model"
+// and Schütz's Potree adaptation.
+// Linearize an OpenGL depth-buffer value d ∈ [0,1] → positive view-space depth.
+// Standard formula: linear = near*far / (far - d*(far-near))
+float edlLinearize(float d) {
+    return edlNear * edlFar / (edlFar - d * (edlFar - edlNear));
+}
+
+float computeEDL() {
+    float d = texture(depthTexture, TexCoords).r;
+    if (d >= 1.0) return 1.0; // background – no shading
+
+    float linearD = edlLinearize(d);
+    float logD = log(max(linearD, 1e-6));
+
+    // 8-neighbourhood sampling at radius edlRadius pixels
+    const vec2 dirs[8] = vec2[8](
+        vec2( 1.0,  0.0), vec2(-1.0,  0.0),
+        vec2( 0.0,  1.0), vec2( 0.0, -1.0),
+        vec2( 0.707,  0.707), vec2(-0.707,  0.707),
+        vec2( 0.707, -0.707), vec2(-0.707, -0.707)
+    );
+    float response = 0.0;
+    for (int i = 0; i < 8; ++i) {
+        float nd = texture(depthTexture,
+                           TexCoords + dirs[i] * edlTexelSize * edlRadius).r;
+        if (nd >= 1.0) nd = d; // treat background as same depth → no response
+        float logNd = log(max(edlLinearize(nd), 1e-6));
+        response += max(0.0, logD - logNd);
+    }
+    response /= 8.0;
+    return exp(-edlStrength * response);
+}
+
 void main()
-{             
+{
     vec3 hdrColor = texture(hdrBuffer, TexCoords).rgb;
+
+    // Schütz Phase 1: Eye-Dome Lighting – applied before any other post-process
+    if (enableEDL) {
+        hdrColor *= computeEDL();
+    }
 
     // Apply SSAO - darken occluded areas before tone mapping
     if(enableSSAO) {

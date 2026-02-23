@@ -57,9 +57,10 @@ void BloomRenderer::cleanup() {
     m_settings.bloomColorBuffers[0] = m_settings.bloomColorBuffers[1] = 0;
   }
 
-  if (m_settings.rboDepth != 0) {
-    glDeleteRenderbuffers(1, &m_settings.rboDepth);
-    m_settings.rboDepth = 0;
+  // Schütz Phase 1: depth texture replaced the old renderbuffer
+  if (m_settings.depthTexture != 0) {
+    glDeleteTextures(1, &m_settings.depthTexture);
+    m_settings.depthTexture = 0;
   }
 
   if (m_settings.quadVAO != 0) {
@@ -96,7 +97,10 @@ void BloomRenderer::resize(int width, int height) {
       glDeleteTextures(1, &m_settings.hdrColorBuffer);
       glDeleteTextures(1, &m_settings.hdrBrightBuffer);
       glDeleteTextures(2, m_settings.bloomColorBuffers);
-      glDeleteRenderbuffers(1, &m_settings.rboDepth);
+      if (m_settings.depthTexture != 0) {
+        glDeleteTextures(1, &m_settings.depthTexture);
+        m_settings.depthTexture = 0;
+      }
     }
 
     // Recreate framebuffers with new size
@@ -155,12 +159,18 @@ bool BloomRenderer::setupFramebuffers() {
   GLuint attachments[2] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
   glDrawBuffers(2, attachments);
 
-  // Create depth renderbuffer
-  glGenRenderbuffers(1, &m_settings.rboDepth);
-  glBindRenderbuffer(GL_RENDERBUFFER, m_settings.rboDepth);
-  glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, m_width, m_height);
-  glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
-                            GL_RENDERBUFFER, m_settings.rboDepth);
+  // Schütz Phase 1: depth as a TEXTURE so the EDL pass can sample it
+  glGenTextures(1, &m_settings.depthTexture);
+  glBindTexture(GL_TEXTURE_2D, m_settings.depthTexture);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F, m_width, m_height, 0,
+               GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glBindTexture(GL_TEXTURE_2D, 0);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,
+                         m_settings.depthTexture, 0);
 
   // Check framebuffer completeness
   GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
@@ -316,6 +326,10 @@ bool BloomRenderer::loadShaders() {
     m_settings.finalShader->setInt("ssaoTexture", 2);
     m_settings.finalShader->setBool("enableSSAO", false);
 
+    // Schütz Phase 1: EDL uniforms – texture unit 3 for depth, off by default
+    m_settings.finalShader->setInt("depthTexture", 3);
+    m_settings.finalShader->setBool("enableEDL", false);
+
     return true;
   } catch (const std::exception &e) {
     std::cerr << "Failed to load bloom shaders: " << e.what() << std::endl;
@@ -356,7 +370,9 @@ void BloomRenderer::beginBloomPass() {
 
 void BloomRenderer::applyBloom(GLuint sceneTexture,
                                const BloomSettings &settings,
-                               GLenum drawBuffer) {
+                               GLenum drawBuffer,
+                               const EDLSettings *edlSettings,
+                               float nearPlane, float farPlane) {
   if (!m_initialized)
     return;
 
@@ -469,6 +485,24 @@ void BloomRenderer::applyBloom(GLuint sceneTexture,
       m_settings.finalShader->setInt("ssaoTexture", 2);
     }
 
+    // Schütz Phase 1: bind depth texture + EDL uniforms (texture unit 3)
+    bool edlActive = edlSettings && edlSettings->enabled &&
+                     m_settings.depthTexture != 0;
+    m_settings.finalShader->setBool("enableEDL", edlActive);
+    if (edlActive) {
+      glActiveTexture(GL_TEXTURE3);
+      glBindTexture(GL_TEXTURE_2D, m_settings.depthTexture);
+      m_settings.finalShader->setInt("depthTexture", 3);
+      m_settings.finalShader->setFloat("edlStrength", edlSettings->strength);
+      m_settings.finalShader->setFloat("edlRadius",   edlSettings->radius);
+      m_settings.finalShader->setFloat("edlNear", nearPlane);
+      m_settings.finalShader->setFloat("edlFar",  farPlane);
+      m_settings.finalShader->setVec2(
+          "edlTexelSize",
+          glm::vec2(1.0f / static_cast<float>(m_width),
+                    1.0f / static_cast<float>(m_height)));
+    }
+
     // Set all uniforms - always enable bloom but use effective intensity (0 if
     // disabled)
     m_settings.finalShader->setBool(
@@ -480,6 +514,8 @@ void BloomRenderer::applyBloom(GLuint sceneTexture,
     renderQuad();
 
     // Unbind textures to avoid state issues
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE1);

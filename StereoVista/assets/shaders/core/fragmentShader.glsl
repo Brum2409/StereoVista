@@ -1825,6 +1825,11 @@ void main() {
     // --- EARLY EXITS for special rendering modes ---
     // Point cloud rendering
     if (isPointCloud) {
+        // Schütz Phase 1: Circular point splatting
+        // Discard fragment corners to render smooth circular discs
+        vec2 pc = gl_PointCoord - vec2(0.5);
+        if (dot(pc, pc) > 0.25) discard;
+
         vec3 pointColor = fs_in.VertexColor * fs_in.Intensity;
         
         // For HDR rendering, output raw color without gamma correction
