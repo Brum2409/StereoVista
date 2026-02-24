@@ -1787,6 +1787,55 @@ void renderSettingsWindow() {
                          "values = stronger darkening");
         }
 
+        // ---- Schütz Phase 1: Eye-Dome Lighting ----
+        ImGui::Spacing();
+        DrawSectionHeader("Eye-Dome Lighting (Schütz Phase 1)");
+
+        if (ImGui::Checkbox("Enable EDL", &preferences.edlSettings.enabled)) {
+          settingsChanged = true;
+        }
+        ImGui::SameLine();
+        DrawHelpMarker(
+            "Eye-Dome Lighting adds depth cues to point clouds by darkening "
+            "depth discontinuities. Based on Schütz (Potree) Phase 1 rendering. "
+            "Requires HDR to be enabled.");
+
+        if (preferences.edlSettings.enabled) {
+          if (ImGui::SliderFloat("EDL Strength",
+                                 &preferences.edlSettings.strength,
+                                 0.1f, 5.0f, "%.2f")) {
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker(
+              "Controls how strongly depth edges are darkened. "
+              "1.0 = default Potree strength.");
+
+          if (ImGui::SliderFloat("EDL Radius",
+                                 &preferences.edlSettings.radius,
+                                 0.5f, 5.0f, "%.1f")) {
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker(
+              "Neighbourhood sampling radius in pixels. "
+              "Larger values detect wider depth transitions.");
+        }
+
+        ImGui::Spacing();
+        DrawSectionHeader("Point Cloud Rendering (Schütz Phase 1)");
+
+        if (ImGui::SliderFloat("Point Base Size",
+                               &preferences.pointCloudBaseSize,
+                               0.001f, 0.2f, "%.4f")) {
+          settingsChanged = true;
+        }
+        ImGui::SameLine();
+        DrawHelpMarker(
+            "World-space radius of each point splat in metres. "
+            "Smaller values = sharper, more detailed point clouds; "
+            "larger values = gaps filled in at the cost of over-filling.");
+
         ImGui::Spacing();
         DrawSectionHeader("Shadow Quality");
 

@@ -9,6 +9,7 @@
 #include "../headers/Engine/BVH.h"
 #include "../headers/Engine/BVHDebug.h"
 #include "../headers/Engine/BloomRenderer.h"
+#include "../headers/Engine/ComputePointCloudRenderer.h"
 #include "../headers/Engine/SSAORenderer.h"
 #include "../headers/Engine/IrradianceCache.h"
 #include "Core/Camera.h"
@@ -82,7 +83,9 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
                const glm::mat4 *rightProjection = nullptr,
                const glm::mat4 *rightView = nullptr);
 void renderModels(Engine::Shader *shader);
-void renderPointClouds(Engine::Shader *shader);
+void renderPointClouds(Engine::Shader *shader,
+                       const glm::mat4 &view,
+                       const glm::mat4 &projection);
 void renderLightVisualizations(Engine::Shader *shader);
 void renderZeroPlane(Engine::Shader *shader, const glm::mat4 &projection,
                      const glm::mat4 &view, float convergence);
@@ -300,6 +303,9 @@ Engine::Shader *instancedShader = nullptr;
 
 // Bloom rendering system
 Engine::BloomRenderer *bloomRenderer = nullptr;
+
+// Schütz Phase 2: compute shader point-cloud rasterizer
+Engine::ComputePointCloudRenderer *computePointCloudRenderer = nullptr;
 
 // SSAO rendering system
 Engine::SSAORenderer *ssaoRenderer = nullptr;
@@ -1584,6 +1590,12 @@ void savePreferences() {
   j["ssao"]["bias"] = preferences.ssaoSettings.bias;
   j["ssao"]["power"] = preferences.ssaoSettings.power;
 
+  // Schütz Phase 1 – save EDL and point cloud size settings
+  j["edl"]["enabled"]          = preferences.edlSettings.enabled;
+  j["edl"]["strength"]         = preferences.edlSettings.strength;
+  j["edl"]["radius"]           = preferences.edlSettings.radius;
+  j["pointcloud"]["baseSize"]  = preferences.pointCloudBaseSize;
+
   // Save shadow settings
   j["shadows"]["pcfKernelSize"] = preferences.shadowSettings.pcfKernelSize;
   j["shadows"]["enablePCSS"] = preferences.shadowSettings.enablePCSS;
@@ -2049,6 +2061,16 @@ void loadPreferences() {
       preferences.ssaoSettings.power = j["ssao"].value("power", 1.0f);
     }
 
+    // Schütz Phase 1 – load EDL and point cloud size settings
+    if (j.contains("edl")) {
+      preferences.edlSettings.enabled  = j["edl"].value("enabled",  false);
+      preferences.edlSettings.strength  = j["edl"].value("strength", 1.0f);
+      preferences.edlSettings.radius    = j["edl"].value("radius",   1.5f);
+    }
+    if (j.contains("pointcloud")) {
+      preferences.pointCloudBaseSize = j["pointcloud"].value("baseSize", 0.02f);
+    }
+
     // Shadow settings
     if (j.contains("shadows")) {
       preferences.shadowSettings.pcfKernelSize =
@@ -2426,6 +2448,9 @@ int main() {
 
   glEnable(GL_MULTISAMPLE);
 
+  // Schütz Phase 1: let the vertex shader control gl_PointSize
+  glEnable(GL_PROGRAM_POINT_SIZE);
+
   // ---- Set GLFW Callbacks ----
   glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
   glfwSetCursorPosCallback(window, mouse_callback);
@@ -2525,6 +2550,16 @@ int main() {
       delete bloomRenderer;
       bloomRenderer = nullptr;
     }
+  }
+
+  // ---- Initialize Compute Point-Cloud Renderer (Schütz Phase 2) ----
+  computePointCloudRenderer = new Engine::ComputePointCloudRenderer();
+  computePointCloudRenderer->init(windowWidth, windowHeight);
+  if (!computePointCloudRenderer->isInitialized()) {
+    std::cerr << "Warning: Compute point-cloud renderer failed to initialise "
+                 "- falling back to GL_POINTS\n";
+    delete computePointCloudRenderer;
+    computePointCloudRenderer = nullptr;
   }
 
   // ---- Initialize SSAO Renderer ----
@@ -3324,35 +3359,56 @@ int main() {
         // Render and apply HDR/bloom separately for each eye
         // Swap eyes if flipEyes is enabled
 
+        // Schütz Phase 1: build Engine::EDLSettings from preferences
+        Engine::EDLSettings frameEDL;
+        frameEDL.enabled  = preferences.edlSettings.enabled;
+        frameEDL.strength = preferences.edlSettings.strength;
+        frameEDL.radius   = preferences.edlSettings.radius;
+        const Engine::EDLSettings *edlPtr =
+            frameEDL.enabled ? &frameEDL : nullptr;
+
         if (preferences.flipEyes) {
           // Flipped: render left projection to right buffer, right projection
           // to left buffer
           renderEye(GL_BACK_LEFT, leftProjection, leftView, activeShader,
                     viewport, windowFlags, window, false, true, &leftProjection,
                     &leftView, &rightProjection, &rightView);
-          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_RIGHT);
+          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_RIGHT,
+                                    edlPtr, preferences.nearPlane, preferences.farPlane);
 
           renderEye(GL_BACK_RIGHT, rightProjection, rightView, activeShader,
                     viewport, windowFlags, window, false, true, &leftProjection,
                     &leftView, &rightProjection, &rightView);
-          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_LEFT);
+          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_LEFT,
+                                    edlPtr, preferences.nearPlane, preferences.farPlane);
         } else {
           // Normal: render left to left, right to right
           renderEye(GL_BACK_LEFT, leftProjection, leftView, activeShader,
                     viewport, windowFlags, window, false, true, &leftProjection,
                     &leftView, &rightProjection, &rightView);
-          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_LEFT);
+          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_LEFT,
+                                    edlPtr, preferences.nearPlane, preferences.farPlane);
 
           renderEye(GL_BACK_RIGHT, rightProjection, rightView, activeShader,
                     viewport, windowFlags, window, false, true, &leftProjection,
                     &leftView, &rightProjection, &rightView);
-          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_RIGHT);
+          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_RIGHT,
+                                    edlPtr, preferences.nearPlane, preferences.farPlane);
         }
       } else {
         // Mono view
         renderEye(GL_BACK_LEFT, projection, view, activeShader, viewport,
                   windowFlags, window, false);
-        bloomRenderer->applyBloom(0, bloomSettings, GL_BACK);
+        {
+          Engine::EDLSettings frameEDL;
+          frameEDL.enabled  = preferences.edlSettings.enabled;
+          frameEDL.strength = preferences.edlSettings.strength;
+          frameEDL.radius   = preferences.edlSettings.radius;
+          const Engine::EDLSettings *edlPtr =
+              frameEDL.enabled ? &frameEDL : nullptr;
+          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK,
+                                    edlPtr, preferences.nearPlane, preferences.farPlane);
+        }
       }
 
       // Now render GUI on top of the composed HDR result
@@ -3472,6 +3528,12 @@ void cleanup() {
   if (bloomRenderer) {
     delete bloomRenderer;
     bloomRenderer = nullptr;
+  }
+
+  // Cleanup compute point-cloud renderer (Schütz Phase 2)
+  if (computePointCloudRenderer) {
+    delete computePointCloudRenderer;
+    computePointCloudRenderer = nullptr;
   }
 
   // Cleanup SSAO renderer
@@ -3826,6 +3888,11 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   shader->setMat4("projection", projection);
   shader->setMat4("view", view);
   shader->setVec3("viewPos", camera.Position);
+
+  // Schütz Phase 1: point cloud per-frame uniforms for screen-space point size
+  shader->setFloat("pointCloudBaseSize", preferences.pointCloudBaseSize);
+  shader->setFloat("screenHeight", static_cast<float>(windowHeight));
+  shader->setFloat("fieldOfView",  glm::radians(preferences.fov));
 
   // Set lighting mode uniforms - this is always needed
   shader->setInt("lightingMode", static_cast<int>(currentLightingMode));
@@ -4776,7 +4843,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     */
   // Render scene - cache buffers still bound, fragment shader can read them
   renderModels(shader);
-  renderPointClouds(shader);
+  renderPointClouds(shader, view, projection);
 
   // Render light visualizations when Ctrl is pressed
   if (ctrlPressed) {
@@ -5126,11 +5193,21 @@ void renderModels(Engine::Shader *shader) {
   }
 }
 
-void renderPointClouds(Engine::Shader *shader) {
+void renderPointClouds(Engine::Shader *shader,
+                       const glm::mat4 &view,
+                       const glm::mat4 &projection) {
   // Skip point cloud rendering for depth pass as points don't cast good
   // shadows
   if (shader == simpleDepthShader)
     return;
+
+  // Schütz Phase 2: activate compute rasterizer if available
+  bool useCompute = computePointCloudRenderer &&
+                    computePointCloudRenderer->isInitialized();
+  if (useCompute) {
+    OctreePointCloudManager::s_computeRenderer = computePointCloudRenderer;
+    computePointCloudRenderer->beginFrame();
+  }
 
   for (auto &pointCloud : currentScene.pointClouds) {
 
@@ -5157,13 +5234,12 @@ void renderPointClouds(Engine::Shader *shader) {
 
     shader->setBool("isPointCloud", true);
 
-    // DIAGNOSTIC: Verify isPointCloud uniform is set
-    GLint isPointCloudValue;
-    glGetUniformiv(shader->getID(),
-                   glGetUniformLocation(shader->getID(), "isPointCloud"),
-                   &isPointCloudValue);
-    std::cout << "  isPointCloud uniform value: " << isPointCloudValue
-              << std::endl;
+    // Schütz Phase 2: pre-compute MVP and splat uniforms for the compute rasterizer
+    if (useCompute) {
+      OctreePointCloudManager::s_currentMVP    = projection * view * modelMatrix;
+      OctreePointCloudManager::s_pointBaseSize = preferences.pointCloudBaseSize;
+      OctreePointCloudManager::s_fieldOfView   = glm::radians(preferences.fov);
+    }
 
     // Always use octree-based rendering (legacy system removed)
     if (pointCloud.octreeRoot) {
@@ -5171,14 +5247,18 @@ void renderPointClouds(Engine::Shader *shader) {
       glm::vec3 cameraPosition = camera.Position;
       OctreePointCloudManager::updateLOD(pointCloud, cameraPosition);
 
-      // Bind VAO for octree rendering (octree nodes use their own VBOs but
-      // need the VAO for attributes)
-      glBindVertexArray(pointCloud.vao);
+      if (!useCompute) {
+        // Bind VAO for traditional GL_POINTS rendering
+        glBindVertexArray(pointCloud.vao);
+      }
 
       // Render visible octree nodes
+      // (uses compute rasterizer internally when s_computeRenderer is set)
       OctreePointCloudManager::renderVisible(pointCloud, cameraPosition);
 
-      glBindVertexArray(0);
+      if (!useCompute) {
+        glBindVertexArray(0);
+      }
     }
 
     // Visualize octree structure if enabled
@@ -5203,6 +5283,12 @@ void renderPointClouds(Engine::Shader *shader) {
   }
 
   shader->setBool("isPointCloud", false);
+
+  // Schütz Phase 2: composite compute result into HDR framebuffer, then reset
+  if (useCompute) {
+    computePointCloudRenderer->endFrame();
+    OctreePointCloudManager::s_computeRenderer = nullptr;
+  }
 }
 
 void renderZeroPlane(Engine::Shader *shader, const glm::mat4 &projection,
@@ -5934,6 +6020,11 @@ void framebuffer_size_callback(GLFWwindow *window, int width, int height) {
   // Resize bloom renderer if it exists
   if (bloomRenderer) {
     bloomRenderer->resize(width, height);
+  }
+
+  // Resize compute point-cloud renderer if it exists (Schütz Phase 2)
+  if (computePointCloudRenderer) {
+    computePointCloudRenderer->resize(width, height);
   }
 
   // Resize SSAO renderer if it exists

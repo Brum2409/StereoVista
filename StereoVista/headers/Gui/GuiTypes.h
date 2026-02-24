@@ -147,6 +147,17 @@ struct ApplicationPreferences {
     float power = 1.0f;   // Occlusion intensity curve
   } ssaoSettings;
 
+  // Schütz Phase 1 – Eye-Dome Lighting
+  struct EDLSettings {
+    bool  enabled  = false;
+    float strength = 1.0f;  // edge-shading intensity (0 = off, 5 = very strong)
+    float radius   = 1.5f;  // neighbourhood-sampling radius in pixels
+  } edlSettings;
+
+  // Schütz Phase 1 – point cloud base size (world-space radius in metres).
+  // The vertex shader projects this to screen-space pixels via perspective.
+  float pointCloudBaseSize = 0.02f;
+
   // Shadow quality settings
   struct ShadowSettings {
     int pcfKernelSize = 3; // 3, 5, 7, or 9
