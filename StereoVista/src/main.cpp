@@ -5234,9 +5234,11 @@ void renderPointClouds(Engine::Shader *shader,
 
     shader->setBool("isPointCloud", true);
 
-    // Schütz Phase 2: pre-compute MVP for the compute rasterizer
+    // Schütz Phase 2: pre-compute MVP and splat uniforms for the compute rasterizer
     if (useCompute) {
-      OctreePointCloudManager::s_currentMVP = projection * view * modelMatrix;
+      OctreePointCloudManager::s_currentMVP    = projection * view * modelMatrix;
+      OctreePointCloudManager::s_pointBaseSize = preferences.pointCloudBaseSize;
+      OctreePointCloudManager::s_fieldOfView   = glm::radians(preferences.fov);
     }
 
     // Always use octree-based rendering (legacy system removed)

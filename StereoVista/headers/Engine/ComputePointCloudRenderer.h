@@ -39,11 +39,14 @@ public:
     void beginFrame();
 
     // Rasterize one octree node.
-    //   vbo       – GL buffer holding PointCloudPoint data (7 floats / 28 bytes per point)
-    //   numPoints – number of points in that buffer
-    //   mvp       – combined model-view-projection matrix for this point cloud
+    //   vbo           – GL buffer holding PointCloudPoint data (7 floats / 28 bytes per point)
+    //   numPoints     – number of points in that buffer
+    //   mvp           – combined model-view-projection matrix for this point cloud
+    //   pointBaseSize – world-space splat radius in metres (matches Phase 1 uniform)
+    //   fieldOfView   – vertical FOV in radians (matches Phase 1 uniform)
     // Can be called many times per frame (once per visible node).
-    void renderNode(GLuint vbo, uint32_t numPoints, const glm::mat4& mvp);
+    void renderNode(GLuint vbo, uint32_t numPoints, const glm::mat4& mvp,
+                    float pointBaseSize, float fieldOfView);
 
     // Wait for all compute work to finish, then composite the point cloud colour
     // image over the currently-bound framebuffer with a fullscreen quad.

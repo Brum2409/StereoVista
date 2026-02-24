@@ -22,7 +22,10 @@ namespace Engine {
         // Set before calling renderVisible(); nullptr → fall back to GL_POINTS.
         static ComputePointCloudRenderer* s_computeRenderer;
         // Per-point-cloud MVP (projection × view × model); set alongside renderer.
-        static glm::mat4 s_currentMVP;
+        static glm::mat4  s_currentMVP;
+        // Phase 1 splat uniforms forwarded into the compute rasterizer.
+        static float      s_pointBaseSize;
+        static float      s_fieldOfView;
 
         static void buildOctree(PointCloud& pointCloud);
         static void updateLOD(PointCloud& pointCloud, const glm::vec3& cameraPosition);

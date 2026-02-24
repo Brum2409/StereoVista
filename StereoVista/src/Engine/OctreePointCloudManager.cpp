@@ -17,7 +17,9 @@ namespace Engine {
 
     // Schütz Phase 2: compute renderer statics
     ComputePointCloudRenderer* OctreePointCloudManager::s_computeRenderer = nullptr;
-    glm::mat4 OctreePointCloudManager::s_currentMVP = glm::mat4(1.0f);
+    glm::mat4 OctreePointCloudManager::s_currentMVP    = glm::mat4(1.0f);
+    float     OctreePointCloudManager::s_pointBaseSize = 0.02f;
+    float     OctreePointCloudManager::s_fieldOfView   = glm::radians(45.0f);
 
     void OctreePointCloudManager::initializeAsyncSystem() {
         s_shutdownRequested = false;
@@ -591,7 +593,9 @@ namespace Engine {
         if (s_computeRenderer && s_computeRenderer->isInitialized()) {
             s_computeRenderer->renderNode(vbo,
                                           static_cast<uint32_t>(numPoints),
-                                          s_currentMVP);
+                                          s_currentMVP,
+                                          s_pointBaseSize,
+                                          s_fieldOfView);
             return;
         }
 

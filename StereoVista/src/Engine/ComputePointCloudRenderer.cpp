@@ -134,11 +134,15 @@ void ComputePointCloudRenderer::beginFrame() {
 
 void ComputePointCloudRenderer::renderNode(GLuint vbo,
                                            uint32_t numPoints,
-                                           const glm::mat4& mvp) {
+                                           const glm::mat4& mvp,
+                                           float pointBaseSize,
+                                           float fieldOfView) {
     if (!m_initialized || numPoints == 0 || vbo == 0) return;
 
     m_rasterShader->use();
     m_rasterShader->setMat4("uMVP", mvp);
+    m_rasterShader->setFloat("uPointBaseSize", pointBaseSize);
+    m_rasterShader->setFloat("uFieldOfView",   fieldOfView);
 
     // setInt/setVec2 helpers expect int/vec2; use raw GL calls for ivec2/uint
     glUniform2i(glGetUniformLocation(m_rasterShader->getID(), "uImageSize"),
