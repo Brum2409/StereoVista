@@ -38,6 +38,11 @@ void ComputePointCloudRenderer::init(int width, int height) {
 
     allocateBuffers();
 
+    // Cache rasterize shader uniform locations (avoids per-frame string lookup)
+    m_rasterShader->use();
+    m_locImageSize = glGetUniformLocation(m_rasterShader->getID(), "uImageSize");
+    m_locNumPoints = glGetUniformLocation(m_rasterShader->getID(), "uNumPoints");
+
     // Build fullscreen quad VAO
     glGenVertexArrays(1, &m_quadVAO);
     glGenBuffers(1, &m_quadVBO);
@@ -128,6 +133,11 @@ void ComputePointCloudRenderer::beginFrame() {
     // Ensure the clear is visible to subsequent compute dispatches
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT |
                     GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+
+    // Bind rasterize shader once for the whole frame; set the per-frame
+    // uImageSize uniform here so renderNode() only needs per-node uniforms.
+    m_rasterShader->use();
+    glUniform2i(m_locImageSize, m_width, m_height);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -139,16 +149,13 @@ void ComputePointCloudRenderer::renderNode(GLuint vbo,
                                            float fieldOfView) {
     if (!m_initialized || numPoints == 0 || vbo == 0) return;
 
-    m_rasterShader->use();
+    // Shader is already bound by beginFrame(); just update per-node uniforms.
     m_rasterShader->setMat4("uMVP", mvp);
     m_rasterShader->setFloat("uPointBaseSize", pointBaseSize);
     m_rasterShader->setFloat("uFieldOfView",   fieldOfView);
 
-    // setInt/setVec2 helpers expect int/vec2; use raw GL calls for ivec2/uint
-    glUniform2i(glGetUniformLocation(m_rasterShader->getID(), "uImageSize"),
-                m_width, m_height);
-    glUniform1ui(glGetUniformLocation(m_rasterShader->getID(), "uNumPoints"),
-                 numPoints);
+    // Use cached location – avoids per-call glGetUniformLocation string lookup.
+    glUniform1ui(m_locNumPoints, numPoints);
 
     // Bind point data as SSBO slot 0 (VBOs can also be used as SSBOs)
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, vbo);

@@ -76,6 +76,10 @@ private:
     // Fullscreen quad for the resolve pass
     GLuint m_quadVAO = 0;
     GLuint m_quadVBO = 0;
+
+    // Cached rasterize-shader uniform locations (queried once at init)
+    GLint m_locImageSize = -1;
+    GLint m_locNumPoints = -1;
 };
 
 } // namespace Engine

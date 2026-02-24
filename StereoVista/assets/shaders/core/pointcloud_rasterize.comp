@@ -90,6 +90,16 @@ void main() {
     uint b = uint(clamp(color.b, 0.0, 1.0) * 255.0 + 0.5);
     uint packed = (0xFFu << 24u) | (b << 16u) | (g << 8u) | r;
 
+    // ---- center-pixel pre-check (matches guide compute_tiles_draw.cs) -------
+    // Guide: if(depth > depthbuffer[pixelID]) return; before processing any splat
+    // position.  Avoids the entire splat loop when center is clearly behind
+    // existing depth – same logic the guide uses to skip occluded tiles early.
+    {
+        ivec2 cpx     = clamp(px, ivec2(0), uImageSize - ivec2(1));
+        int   centerID = cpx.y * uImageSize.x + cpx.x;
+        if (depth > depthbuffer[centerID]) return;
+    }
+
     // ---- screen-space splat radius (Phase 1 formula) -----------------------
     // Perspective-correct: matches gl_PointSize in vertexShader.glsl Phase 1.
     float fovFactor   = float(uImageSize.y) / (2.0 * tan(uFieldOfView * 0.5));
