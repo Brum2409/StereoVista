@@ -1,0 +1,79 @@
+// Schütz compute rasterizer – Phase 2
+// Rasterize pass: project each point to screen space, depth-test with atomicMin,
+// and write colour via imageAtomicExchange.
+//
+// Algorithm follows m-schuetz/CudaLOD compute_tiles_draw.cs:
+//   1. Transform point to clip / NDC space with the MVP matrix.
+//   2. Frustum-cull; skip points outside the view frustum.
+//   3. atomicMin on a per-pixel uint depth buffer (IEEE-754 floats compare
+//      identically to uint for positive values, so no 64-bit extension needed).
+//   4. If this thread won the depth test, write the packed colour with
+//      imageAtomicExchange (r32ui).
+#version 460 core
+
+layout(local_size_x = 256) in;
+
+// PointCloudPoint layout (must match C++ struct, 7 floats = 28 bytes):
+//   float x, y, z   (position)
+//   float intensity
+//   float r, g, b   (colour, linear [0,1])
+layout(std430, binding = 0) readonly buffer PointBuffer {
+    float pointData[];
+};
+
+// Per-pixel depth (uint). Binding 1 shared with clear shader.
+layout(std430, binding = 1) coherent buffer DepthBuffer {
+    uint depthbuffer[];
+};
+
+// Packed RGBA output image (r32ui). Binding 0 shared with clear shader.
+layout(r32ui, binding = 0) coherent uniform uimage2D colorImage;
+
+uniform mat4  uMVP;
+uniform ivec2 uImageSize;   // viewport width / height in pixels
+uniform uint  uNumPoints;
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= uNumPoints) return;
+
+    // ---- fetch point -------------------------------------------------------
+    uint base  = idx * 7u;
+    vec3 pos   = vec3(pointData[base + 0u],
+                      pointData[base + 1u],
+                      pointData[base + 2u]);
+    // base+3 is intensity; skip for now
+    vec3 color = vec3(pointData[base + 4u],
+                      pointData[base + 5u],
+                      pointData[base + 6u]);
+
+    // ---- project -----------------------------------------------------------
+    vec4 clip = uMVP * vec4(pos, 1.0);
+    if (clip.w <= 0.0) return;          // behind camera
+
+    vec3 ndc = clip.xyz / clip.w;
+    if (ndc.x < -1.0 || ndc.x > 1.0 ||
+        ndc.y < -1.0 || ndc.y > 1.0 ||
+        ndc.z < -1.0 || ndc.z > 1.0) return;   // outside frustum
+
+    // ---- viewport transform ------------------------------------------------
+    ivec2 px = ivec2((ndc.xy * 0.5 + 0.5) * vec2(uImageSize));
+    px = clamp(px, ivec2(0), uImageSize - ivec2(1));
+
+    int pixelID = px.y * uImageSize.x + px.x;
+
+    // ---- depth test (atomicMin) --------------------------------------------
+    // IEEE-754: for positive floats, uint bit-patterns sort the same way.
+    uint depth    = floatBitsToUint(ndc.z * 0.5 + 0.5);   // map [-1,1]→[0,1]
+    uint oldDepth = atomicMin(depthbuffer[pixelID], depth);
+
+    if (depth < oldDepth) {
+        // ---- write colour --------------------------------------------------
+        // Pack as ABGR in the r32ui texel (matches unpack in resolve shader).
+        uint r = uint(clamp(color.r, 0.0, 1.0) * 255.0 + 0.5);
+        uint g = uint(clamp(color.g, 0.0, 1.0) * 255.0 + 0.5);
+        uint b = uint(clamp(color.b, 0.0, 1.0) * 255.0 + 0.5);
+        uint packed = (0xFFu << 24u) | (b << 16u) | (g << 8u) | r;
+        imageAtomicExchange(colorImage, px, packed);
+    }
+}

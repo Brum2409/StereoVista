@@ -60,6 +60,9 @@
     <ClCompile Include="src\Engine\BloomRenderer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\Engine\ComputePointCloudRenderer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\Cursors\CursorPresets.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -147,6 +150,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\Engine\BloomRenderer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Engine\ComputePointCloudRenderer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\Camera.h">

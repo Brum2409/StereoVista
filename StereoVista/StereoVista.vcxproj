@@ -173,6 +173,7 @@
     <ClCompile Include="src\Engine\BVH.cpp" />
     <ClCompile Include="src\Engine\BVHDebug.cpp" />
     <ClCompile Include="src\Engine\BloomRenderer.cpp" />
+    <ClCompile Include="src\Engine\ComputePointCloudRenderer.cpp" />
     <ClCompile Include="src\Engine\Buffers.cpp" />
     <ClCompile Include="src\Engine\Input.cpp" />
     <ClCompile Include="src\Engine\IrradianceCache.cpp" />
@@ -217,6 +218,7 @@
     <ClInclude Include="headers\Engine\BVH.h" />
     <ClInclude Include="headers\Engine\BVHDebug.h" />
     <ClInclude Include="headers\Engine\BloomRenderer.h" />
+    <ClInclude Include="headers\Engine\ComputePointCloudRenderer.h" />
     <ClInclude Include="headers\engine\data.h" />
     <ClInclude Include="headers\engine\input.h" />
     <ClInclude Include="headers\Engine\IrradianceCache.h" />

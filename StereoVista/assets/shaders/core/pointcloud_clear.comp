@@ -1,0 +1,27 @@
+// Schütz compute rasterizer – Phase 2
+// Clear pass: reset depth buffer to max-uint and color image to transparent.
+// Follows the two-buffer approach from m-schuetz/CudaLOD compute_tiles_draw.cs
+#version 460 core
+
+layout(local_size_x = 256) in;
+
+// Binding 1: per-pixel depth (uint, initialised to 0xFFFFFFFF)
+layout(std430, binding = 1) buffer DepthBuffer {
+    uint depthbuffer[];
+};
+
+// Binding 0: packed RGBA color image (r32ui)
+layout(r32ui, binding = 0) coherent uniform uimage2D colorImage;
+
+uniform int uTotalPixels;   // width * height
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= uint(uTotalPixels)) return;
+
+    depthbuffer[idx] = 0xFFFFFFFFu;
+
+    ivec2 size  = imageSize(colorImage);
+    ivec2 coord = ivec2(idx % uint(size.x), idx / uint(size.x));
+    imageStore(colorImage, coord, uvec4(0u));
+}

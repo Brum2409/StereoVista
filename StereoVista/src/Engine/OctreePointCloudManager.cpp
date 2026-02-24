@@ -15,6 +15,10 @@ namespace Engine {
     std::mutex OctreePointCloudManager::s_completedMutex;
     std::mutex OctreePointCloudManager::s_hdf5Mutex;
 
+    // Schütz Phase 2: compute renderer statics
+    ComputePointCloudRenderer* OctreePointCloudManager::s_computeRenderer = nullptr;
+    glm::mat4 OctreePointCloudManager::s_currentMVP = glm::mat4(1.0f);
+
     void OctreePointCloudManager::initializeAsyncSystem() {
         s_shutdownRequested = false;
         size_t numThreads = std::max(2u, std::thread::hardware_concurrency() / 2); // Use half the available cores
@@ -579,47 +583,54 @@ namespace Engine {
         if (node->lodVBOs[lodLevel] == 0 || node->lodPointCounts[lodLevel] == 0) {
             return;
         }
-        
-        // Bind and render this LOD level
-        glBindBuffer(GL_ARRAY_BUFFER, node->lodVBOs[lodLevel]);
-        
+
+        GLuint  vbo       = node->lodVBOs[lodLevel];
+        GLsizei numPoints = static_cast<GLsizei>(node->lodPointCounts[lodLevel]);
+
+        // ── Schütz Phase 2: use compute rasterizer when available ─────────
+        if (s_computeRenderer && s_computeRenderer->isInitialized()) {
+            s_computeRenderer->renderNode(vbo,
+                                          static_cast<uint32_t>(numPoints),
+                                          s_currentMVP);
+            return;
+        }
+
+        // ── Fallback: traditional GL_POINTS path ──────────────────────────
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+
         // Set up vertex attributes (position, color, intensity) - matching main.cpp order
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(PointCloudPoint), (void*)0);
         glEnableVertexAttribArray(0);
-        
+
         glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(PointCloudPoint), (void*)offsetof(PointCloudPoint, color));
         glEnableVertexAttribArray(1);
-        
+
         glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(PointCloudPoint), (void*)offsetof(PointCloudPoint, intensity));
         glEnableVertexAttribArray(2);
-        
+
         // Density-aware point size scaling
         float nodeVolume = (node->bounds.x * 2.0f) * (node->bounds.y * 2.0f) * (node->bounds.z * 2.0f);
         float pointDensity = static_cast<float>(node->points.size()) / nodeVolume;
-        
+
         // Base LOD scaling
         float lodMultiplier = 1.0f + (lodLevel) * 1.2f;
-        
+
         // Density-based scaling: high density = larger points to compensate for aggressive reduction
         float densityMultiplier = 1.0f;
         if (pointDensity > 1000.0f) {
-            densityMultiplier = 1.8f; // Much larger points for very dense areas
+            densityMultiplier = 1.8f;
         } else if (pointDensity > 200.0f) {
-            densityMultiplier = 1.4f; // Larger points for dense areas
+            densityMultiplier = 1.4f;
         } else if (pointDensity < 20.0f) {
-            densityMultiplier = 0.8f; // Smaller points for sparse areas (they're already preserved)
+            densityMultiplier = 0.8f;
         }
-        
+
         float adjustedPointSize = basePointSize * lodMultiplier * densityMultiplier;
-        
-        // Reasonable limits
         adjustedPointSize = std::min(adjustedPointSize, 25.0f);
         adjustedPointSize = std::max(adjustedPointSize, 1.0f);
-        
+
         glPointSize(adjustedPointSize);
-        
-        // Render points
-        glDrawArrays(GL_POINTS, 0, static_cast<GLsizei>(node->lodPointCounts[lodLevel]));
+        glDrawArrays(GL_POINTS, 0, numPoints);
     }
     
     void OctreePointCloudManager::renderLeafDescendants(

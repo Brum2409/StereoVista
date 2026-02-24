@@ -9,6 +9,7 @@
 #include "../headers/Engine/BVH.h"
 #include "../headers/Engine/BVHDebug.h"
 #include "../headers/Engine/BloomRenderer.h"
+#include "../headers/Engine/ComputePointCloudRenderer.h"
 #include "../headers/Engine/SSAORenderer.h"
 #include "../headers/Engine/IrradianceCache.h"
 #include "Core/Camera.h"
@@ -82,7 +83,9 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
                const glm::mat4 *rightProjection = nullptr,
                const glm::mat4 *rightView = nullptr);
 void renderModels(Engine::Shader *shader);
-void renderPointClouds(Engine::Shader *shader);
+void renderPointClouds(Engine::Shader *shader,
+                       const glm::mat4 &view,
+                       const glm::mat4 &projection);
 void renderLightVisualizations(Engine::Shader *shader);
 void renderZeroPlane(Engine::Shader *shader, const glm::mat4 &projection,
                      const glm::mat4 &view, float convergence);
@@ -300,6 +303,9 @@ Engine::Shader *instancedShader = nullptr;
 
 // Bloom rendering system
 Engine::BloomRenderer *bloomRenderer = nullptr;
+
+// Schütz Phase 2: compute shader point-cloud rasterizer
+Engine::ComputePointCloudRenderer *computePointCloudRenderer = nullptr;
 
 // SSAO rendering system
 Engine::SSAORenderer *ssaoRenderer = nullptr;
@@ -2546,6 +2552,16 @@ int main() {
     }
   }
 
+  // ---- Initialize Compute Point-Cloud Renderer (Schütz Phase 2) ----
+  computePointCloudRenderer = new Engine::ComputePointCloudRenderer();
+  computePointCloudRenderer->init(windowWidth, windowHeight);
+  if (!computePointCloudRenderer->isInitialized()) {
+    std::cerr << "Warning: Compute point-cloud renderer failed to initialise "
+                 "- falling back to GL_POINTS\n";
+    delete computePointCloudRenderer;
+    computePointCloudRenderer = nullptr;
+  }
+
   // ---- Initialize SSAO Renderer ----
   ssaoRenderer = new Engine::SSAORenderer();
   if (!ssaoRenderer->initialize(windowWidth, windowHeight)) {
@@ -3512,6 +3528,12 @@ void cleanup() {
   if (bloomRenderer) {
     delete bloomRenderer;
     bloomRenderer = nullptr;
+  }
+
+  // Cleanup compute point-cloud renderer (Schütz Phase 2)
+  if (computePointCloudRenderer) {
+    delete computePointCloudRenderer;
+    computePointCloudRenderer = nullptr;
   }
 
   // Cleanup SSAO renderer
@@ -4821,7 +4843,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     */
   // Render scene - cache buffers still bound, fragment shader can read them
   renderModels(shader);
-  renderPointClouds(shader);
+  renderPointClouds(shader, view, projection);
 
   // Render light visualizations when Ctrl is pressed
   if (ctrlPressed) {
@@ -5171,11 +5193,21 @@ void renderModels(Engine::Shader *shader) {
   }
 }
 
-void renderPointClouds(Engine::Shader *shader) {
+void renderPointClouds(Engine::Shader *shader,
+                       const glm::mat4 &view,
+                       const glm::mat4 &projection) {
   // Skip point cloud rendering for depth pass as points don't cast good
   // shadows
   if (shader == simpleDepthShader)
     return;
+
+  // Schütz Phase 2: activate compute rasterizer if available
+  bool useCompute = computePointCloudRenderer &&
+                    computePointCloudRenderer->isInitialized();
+  if (useCompute) {
+    OctreePointCloudManager::s_computeRenderer = computePointCloudRenderer;
+    computePointCloudRenderer->beginFrame();
+  }
 
   for (auto &pointCloud : currentScene.pointClouds) {
 
@@ -5202,13 +5234,10 @@ void renderPointClouds(Engine::Shader *shader) {
 
     shader->setBool("isPointCloud", true);
 
-    // DIAGNOSTIC: Verify isPointCloud uniform is set
-    GLint isPointCloudValue;
-    glGetUniformiv(shader->getID(),
-                   glGetUniformLocation(shader->getID(), "isPointCloud"),
-                   &isPointCloudValue);
-    std::cout << "  isPointCloud uniform value: " << isPointCloudValue
-              << std::endl;
+    // Schütz Phase 2: pre-compute MVP for the compute rasterizer
+    if (useCompute) {
+      OctreePointCloudManager::s_currentMVP = projection * view * modelMatrix;
+    }
 
     // Always use octree-based rendering (legacy system removed)
     if (pointCloud.octreeRoot) {
@@ -5216,14 +5245,18 @@ void renderPointClouds(Engine::Shader *shader) {
       glm::vec3 cameraPosition = camera.Position;
       OctreePointCloudManager::updateLOD(pointCloud, cameraPosition);
 
-      // Bind VAO for octree rendering (octree nodes use their own VBOs but
-      // need the VAO for attributes)
-      glBindVertexArray(pointCloud.vao);
+      if (!useCompute) {
+        // Bind VAO for traditional GL_POINTS rendering
+        glBindVertexArray(pointCloud.vao);
+      }
 
       // Render visible octree nodes
+      // (uses compute rasterizer internally when s_computeRenderer is set)
       OctreePointCloudManager::renderVisible(pointCloud, cameraPosition);
 
-      glBindVertexArray(0);
+      if (!useCompute) {
+        glBindVertexArray(0);
+      }
     }
 
     // Visualize octree structure if enabled
@@ -5248,6 +5281,12 @@ void renderPointClouds(Engine::Shader *shader) {
   }
 
   shader->setBool("isPointCloud", false);
+
+  // Schütz Phase 2: composite compute result into HDR framebuffer, then reset
+  if (useCompute) {
+    computePointCloudRenderer->endFrame();
+    OctreePointCloudManager::s_computeRenderer = nullptr;
+  }
 }
 
 void renderZeroPlane(Engine::Shader *shader, const glm::mat4 &projection,
@@ -5979,6 +6018,11 @@ void framebuffer_size_callback(GLFWwindow *window, int width, int height) {
   // Resize bloom renderer if it exists
   if (bloomRenderer) {
     bloomRenderer->resize(width, height);
+  }
+
+  // Resize compute point-cloud renderer if it exists (Schütz Phase 2)
+  if (computePointCloudRenderer) {
+    computePointCloudRenderer->resize(width, height);
   }
 
   // Resize SSAO renderer if it exists
