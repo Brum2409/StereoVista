@@ -2,6 +2,7 @@
 // C++ implementation of ComputePointCloudRenderer.
 // See header for design notes.
 #include "Engine/ComputePointCloudRenderer.h"
+#include <glm/gtc/type_ptr.hpp>
 #include <iostream>
 
 namespace Engine {
@@ -38,10 +39,15 @@ void ComputePointCloudRenderer::init(int width, int height) {
 
     allocateBuffers();
 
-    // Cache rasterize shader uniform locations (avoids per-frame string lookup)
+    // Cache all rasterize shader uniform locations (avoids per-node string
+    // lookups; equivalent to guide's layout(location = N) explicit locations).
     m_rasterShader->use();
-    m_locImageSize = glGetUniformLocation(m_rasterShader->getID(), "uImageSize");
-    m_locNumPoints = glGetUniformLocation(m_rasterShader->getID(), "uNumPoints");
+    GLuint pid      = m_rasterShader->getID();
+    m_locImageSize     = glGetUniformLocation(pid, "uImageSize");
+    m_locNumPoints     = glGetUniformLocation(pid, "uNumPoints");
+    m_locMVP           = glGetUniformLocation(pid, "uMVP");
+    m_locPointBaseSize = glGetUniformLocation(pid, "uPointBaseSize");
+    m_locFieldOfView   = glGetUniformLocation(pid, "uFieldOfView");
 
     // Build fullscreen quad VAO
     glGenVertexArrays(1, &m_quadVAO);
@@ -149,13 +155,12 @@ void ComputePointCloudRenderer::renderNode(GLuint vbo,
                                            float fieldOfView) {
     if (!m_initialized || numPoints == 0 || vbo == 0) return;
 
-    // Shader is already bound by beginFrame(); just update per-node uniforms.
-    m_rasterShader->setMat4("uMVP", mvp);
-    m_rasterShader->setFloat("uPointBaseSize", pointBaseSize);
-    m_rasterShader->setFloat("uFieldOfView",   fieldOfView);
-
-    // Use cached location – avoids per-call glGetUniformLocation string lookup.
-    glUniform1ui(m_locNumPoints, numPoints);
+    // Shader is already bound by beginFrame(); set per-node uniforms via
+    // cached locations – zero string lookups, matching the guide's approach.
+    glUniformMatrix4fv(m_locMVP,          1, GL_FALSE, glm::value_ptr(mvp));
+    glUniform1f(m_locPointBaseSize, pointBaseSize);
+    glUniform1f(m_locFieldOfView,   fieldOfView);
+    glUniform1ui(m_locNumPoints,    numPoints);
 
     // Bind point data as SSBO slot 0 (VBOs can also be used as SSBOs)
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, vbo);

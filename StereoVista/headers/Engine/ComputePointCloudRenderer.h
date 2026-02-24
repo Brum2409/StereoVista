@@ -77,9 +77,14 @@ private:
     GLuint m_quadVAO = 0;
     GLuint m_quadVBO = 0;
 
-    // Cached rasterize-shader uniform locations (queried once at init)
-    GLint m_locImageSize = -1;
-    GLint m_locNumPoints = -1;
+    // Cached rasterize-shader uniform locations (queried once at init).
+    // Avoids per-node glGetUniformLocation string lookups; matches the guide's
+    // layout(location = N) explicit-location approach.
+    GLint m_locImageSize    = -1;
+    GLint m_locNumPoints    = -1;
+    GLint m_locMVP          = -1;
+    GLint m_locPointBaseSize = -1;
+    GLint m_locFieldOfView  = -1;
 };
 
 } // namespace Engine
