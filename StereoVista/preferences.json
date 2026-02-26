@@ -1,8 +1,8 @@
 {
     "camera": {
-        "alwaysShowOrbitCenter": false,
+        "alwaysShowOrbitCenter": true,
         "autoConvergence": true,
-        "convergence": 7.026186466217041,
+        "convergence": 7.026186943054199,
         "convergenceCapMax": 41.900001525878906,
         "convergenceCapMin": 0.5,
         "convergenceDistanceFactor": 1.2999999523162842,
@@ -27,7 +27,7 @@
         "scrollDeceleration": 2.0,
         "scrollMomentum": 0.12999999523162842,
         "separation": 0.09000000357627869,
-        "showOrbitCenter": false,
+        "showOrbitCenter": true,
         "speedFactor": 0.9869999885559082,
         "useNewStereoMethod": true,
         "useSmoothScrolling": true,
@@ -35,6 +35,11 @@
     },
     "cursor": {
         "currentPreset": "Sphere"
+    },
+    "edl": {
+        "enabled": false,
+        "radius": 1.5,
+        "strength": 1.0
     },
     "hdr": {
         "bloomIntensity": 0.1770000010728836,
@@ -72,6 +77,9 @@
         "pretransformVertices": false,
         "removeRedundantMaterials": false,
         "sortByPrimitiveType": false
+    },
+    "pointcloud": {
+        "baseSize": 0.019999999552965164
     },
     "radar": {
         "enabled": false,
@@ -145,9 +153,9 @@
             "firstPersonEaseOut": 600,
             "floorQueryRate": 1,
             "lockHorizon": false,
-            "lockSketchPlane": false,
+            "lockSketchPlane": true,
             "lockTo3dViews": false,
-            "motionModel": "Orbit",
+            "motionModel": "Examine",
             "moveObjects": false,
             "selectionFollower": true,
             "suspendInput": false

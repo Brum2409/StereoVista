@@ -69,8 +69,11 @@ bool ThreeDConnexionSync::TryFindFile(DWORD processId)
 bool ThreeDConnexionSync::PollForChanges()
 {
     if (!m_connected) {
-        if (m_processId != 0)
-            TryFindFile(m_processId);
+        if (m_processId != 0 && TryFindFile(m_processId)) {
+            // File found for the first time via polling — seed preferences
+            if (OnSettingsChanged)
+                OnSettingsChanged(m_settings);
+        }
         return false;
     }
 
@@ -209,24 +212,22 @@ std::string ThreeDConnexionSync::BuildXml(const TdxSettings& s,
                                            DWORD pid,
                                            const std::string& appInfoBlock)
 {
-    auto b2s = [](bool v) -> const char* { return v ? "1" : "0"; };
+    auto b2s = [](bool v) -> const char* { return v ? "true" : "false"; };
 
     std::ostringstream xml;
     xml << "<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n";
-    xml << "<SpaceMouse>\r\n";
+    xml << "<AppSettingsExt Default=\"false\" ExtFormatVersion=\"1.0\" ThisFileVersion=\"1.0\">";
 
     if (!appInfoBlock.empty()) {
-        xml << "  " << appInfoBlock << "\r\n";
+        xml << appInfoBlock;
     } else {
-        xml << "  <AppInfo>\r\n";
-        xml << "    <ProcessID>" << pid << "</ProcessID>\r\n";
-        xml << "  </AppInfo>\r\n";
+        xml << "<AppInfo><ProcessID>" << pid << "</ProcessID></AppInfo>";
     }
 
-    xml << "  <Settings>\r\n";
+    xml << "<AppSettings>";
 
     auto setting = [&](const char* id, const std::string& val) {
-        xml << "    <Setting ID=\"" << id << "\"><Value>" << val << "</Value></Setting>\r\n";
+        xml << "<Setting ID=\"" << id << "\"><Value>" << val << "</Value></Setting>";
     };
 
     setting("MotionModel",       s.motionModel);
@@ -242,8 +243,8 @@ std::string ThreeDConnexionSync::BuildXml(const TdxSettings& s,
     setting("FloorQueryRate",    std::to_string(s.floorQueryRate));
     setting("LockSketchPlane",   b2s(s.lockSketchPlane));
 
-    xml << "  </Settings>\r\n";
-    xml << "</SpaceMouse>\r\n";
+    xml << "</AppSettings>";
+    xml << "</AppSettingsExt>";
 
     return xml.str();
 }

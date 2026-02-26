@@ -1,9 +1,9 @@
-// Schütz compute rasterizer – Phase 2
-// Clear pass: reset depth buffer to max-uint and color image to transparent.
-// Follows the two-buffer approach from m-schuetz/CudaLOD compute_tiles_draw.cs
 #version 460 core
 
-layout(local_size_x = 256) in;
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+// Schütz Phase 2 clear pass: reset depth SSBO to 0xFFFFFFFF and colour image to 0.
+// Follows the two-buffer approach from m-schuetz/CudaLOD compute_tiles_draw.cs
 
 // Binding 1: per-pixel depth (uint, initialised to 0xFFFFFFFF)
 layout(std430, binding = 1) buffer DepthBuffer {

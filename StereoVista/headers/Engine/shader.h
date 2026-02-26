@@ -9,10 +9,15 @@ namespace Engine {
         unsigned int shaderID;
 
     public:
+        // Tag type used to select the compute-shader constructor.
+        // Prevents accidental overload-resolution ambiguity when two string
+        // literals are passed (const char* → bool ranks above const char* → string).
+        struct ComputeShaderTag {};
+
         // Modified constructor to optionally include geometry shader
         Shader(const std::string& vertexPath, const std::string& fragmentPath, const std::string& geometryPath = "");
         // Compute shader only constructor
-        Shader(const std::string& computePath, bool isComputeShader);
+        Shader(const std::string& computePath, ComputeShaderTag);
         ~Shader() {
             if (shaderID != 0) {
                 glDeleteProgram(shaderID);

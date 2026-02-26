@@ -105,7 +105,7 @@ namespace Engine {
             glDeleteShader(geometry);
     }
 
-    Shader::Shader(const std::string& computePath, bool isComputeShader) {
+    Shader::Shader(const std::string& computePath, ComputeShaderTag) {
         std::string computeCode;
         std::ifstream cShaderFile;
 
@@ -123,19 +123,28 @@ namespace Engine {
             throw std::runtime_error("Compute shader file reading failed");
         }
 
+        // Normalise line endings: strip \r so CRLF files don't double-count
+        // lines on drivers that treat \r and \n as separate line separators.
+        computeCode.erase(std::remove(computeCode.begin(), computeCode.end(), '\r'),
+                          computeCode.end());
+
         const char* cShaderCode = computeCode.c_str();
 
         // Compile compute shader
         GLuint compute;
         int success;
-        char infoLog[512];
+        char infoLog[4096];
 
         compute = glCreateShader(GL_COMPUTE_SHADER);
+        if (compute == 0) {
+            std::cout << "ERROR::SHADER::COMPUTE::GL_COMPUTE_SHADER not supported by this driver/context" << std::endl;
+            throw std::runtime_error("GL_COMPUTE_SHADER not supported");
+        }
         glShaderSource(compute, 1, &cShaderCode, NULL);
         glCompileShader(compute);
         glGetShaderiv(compute, GL_COMPILE_STATUS, &success);
         if (!success) {
-            glGetShaderInfoLog(compute, 512, NULL, infoLog);
+            glGetShaderInfoLog(compute, sizeof(infoLog), NULL, infoLog);
             std::cout << "ERROR::SHADER::COMPUTE::COMPILATION_FAILED\n" << infoLog << std::endl;
             throw std::runtime_error("Compute shader compilation failed");
         }
@@ -147,7 +156,7 @@ namespace Engine {
 
         glGetProgramiv(shaderID, GL_LINK_STATUS, &success);
         if (!success) {
-            glGetProgramInfoLog(shaderID, 512, NULL, infoLog);
+            glGetProgramInfoLog(shaderID, sizeof(infoLog), NULL, infoLog);
             std::cout << "ERROR::SHADER::COMPUTE::PROGRAM::LINKING_FAILED\n" << infoLog << std::endl;
             throw std::runtime_error("Compute shader program linking failed");
         }
@@ -203,7 +212,7 @@ namespace Engine {
             // Check if file exists
             if (std::ifstream(fullComputePath).good()) {
                 try {
-                    return new Shader(fullComputePath, true);
+                    return new Shader(fullComputePath, Shader::ComputeShaderTag{});
                 }
                 catch (const std::exception& e) {
                     std::cerr << "Error loading compute shader from " << fullComputePath

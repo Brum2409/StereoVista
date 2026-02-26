@@ -26,9 +26,9 @@ void ComputePointCloudRenderer::init(int width, int height) {
     // Load compute shaders
     try {
         m_clearShader  = new Shader(
-            "assets/shaders/core/pointcloud_clear.comp", true);
+            "assets/shaders/core/pointcloud_clear.comp", Shader::ComputeShaderTag{});
         m_rasterShader = new Shader(
-            "assets/shaders/core/pointcloud_rasterize.comp", true);
+            "assets/shaders/core/pointcloud_rasterize.comp", Shader::ComputeShaderTag{});
         m_resolveShader = new Shader(
             "assets/shaders/core/pointcloud_resolve.vert",
             "assets/shaders/core/pointcloud_resolve.frag");

@@ -4843,6 +4843,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     */
   // Render scene - cache buffers still bound, fragment shader can read them
   renderModels(shader);
+  renderSkybox(projection, view, shader);
   renderPointClouds(shader, view, projection);
 
   // Render light visualizations when Ctrl is pressed
@@ -4926,8 +4927,6 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     renderZeroPlane(shader, projection, view, preferences.convergence);
   }
 
-  renderSkybox(projection, view, shader);
-
   // Calculate cursor position AFTER scene rendering but BEFORE cursor
   // rendering This ensures we read scene depth, not cursor depth from the
   // buffer
@@ -4946,7 +4945,14 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   if (!orbitFollowsCursor && cursorManager.isShowOrbitCenter() &&
       (camera.IsOrbiting || spaceMouseInput.IsNavigating() ||
        cursorManager.isAlwaysShowOrbitCenter())) {
-    cursorManager.renderOrbitCenter(projection, view, camera.OrbitPoint);
+    // During SpaceMouse navigation, spaceMouseCameraPtr->OrbitPoint is kept in
+    // sync with the NavLib pivot by SetCameraMatrixImpl every frame. The main
+    // camera.OrbitPoint is only written back at navigation end, so it is stale
+    // during navigation. Use the SpaceMouse camera's value while navigating.
+    const glm::vec3 &orbitPointToDisplay = spaceMouseInput.IsNavigating()
+        ? spaceMouseCameraPtr->OrbitPoint
+        : camera.OrbitPoint;
+    cursorManager.renderOrbitCenter(projection, view, orbitPointToDisplay);
   }
 
   if (camera.IsPanning == false) {
@@ -5744,6 +5750,23 @@ void updateSpaceMouseCursorAnchor() {
   // Update anchor mode
   spaceMouseInput.SetAnchorMode(preferences.spaceMouseAnchorMode);
   spaceMouseInput.SetCenterCursor(preferences.spaceMouseCenterCursor);
+
+  // When the mouse is actively orbiting, the authoritative orbit center is
+  // camera.OrbitPoint (set in mouse_button_callback). In standard orbit mode
+  // this differs from the raw cursor hit-point because it is projected along
+  // the camera front direction. Always feed it directly to the SpaceMouse so
+  // that if the user switches to the SpaceMouse mid-orbit the pivot is exact.
+  if (camera.IsOrbiting &&
+      preferences.spaceMouseAnchorMode != GUI::SPACEMOUSE_ANCHOR_DISABLED) {
+    if (glm::distance(lastCursorPosition, camera.OrbitPoint) > 0.001f ||
+        settingChanged) {
+      lastCursorPosition = camera.OrbitPoint;
+      spaceMouseInput.SetCursorAnchor(camera.OrbitPoint,
+                                      preferences.spaceMouseAnchorMode);
+      spaceMouseInput.RefreshPivotPosition();
+    }
+    return;
+  }
 
   if (cursorManager.isCursorPositionValid()) {
     glm::vec3 currentCursorPosition = cursorManager.getCursorPosition();
