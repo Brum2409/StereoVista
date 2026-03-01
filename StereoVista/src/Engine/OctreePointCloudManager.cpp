@@ -15,12 +15,6 @@ namespace Engine {
     std::mutex OctreePointCloudManager::s_completedMutex;
     std::mutex OctreePointCloudManager::s_hdf5Mutex;
 
-    // Schütz Phase 2: compute renderer statics
-    ComputePointCloudRenderer* OctreePointCloudManager::s_computeRenderer = nullptr;
-    glm::mat4 OctreePointCloudManager::s_currentMVP    = glm::mat4(1.0f);
-    float     OctreePointCloudManager::s_pointBaseSize = 0.02f;
-    float     OctreePointCloudManager::s_fieldOfView   = glm::radians(45.0f);
-
     void OctreePointCloudManager::initializeAsyncSystem() {
         s_shutdownRequested = false;
         size_t numThreads = std::max(2u, std::thread::hardware_concurrency() / 2); // Use half the available cores
@@ -589,17 +583,7 @@ namespace Engine {
         GLuint  vbo       = node->lodVBOs[lodLevel];
         GLsizei numPoints = static_cast<GLsizei>(node->lodPointCounts[lodLevel]);
 
-        // ── Schütz Phase 2: use compute rasterizer when available ─────────
-        if (s_computeRenderer && s_computeRenderer->isInitialized()) {
-            s_computeRenderer->renderNode(vbo,
-                                          static_cast<uint32_t>(numPoints),
-                                          s_currentMVP,
-                                          s_pointBaseSize,
-                                          s_fieldOfView);
-            return;
-        }
-
-        // ── Fallback: traditional GL_POINTS path ──────────────────────────
+        // GL_POINTS fallback path
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
 
         // Set up vertex attributes (position, color, intensity) - matching main.cpp order

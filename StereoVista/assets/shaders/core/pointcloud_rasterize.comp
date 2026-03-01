@@ -1,55 +1,56 @@
 #version 460 core
+#extension GL_ARB_gpu_shader_int64 : require
 
-layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
 
-// Schütz compute rasterizer – Phase 2
-// Rasterize pass: project each point to screen space, depth-test with atomicMin,
-// and write colour via imageAtomicExchange.
+// Schütz compute rasterizer – Phase 2 (faithful to m-schuetz/compute_rasterizer)
 //
-// Follows m-schuetz/CudaLOD compute_tiles_draw.cs exactly:
-//   depth = floatBitsToUint(clip.w)          <- view-space distance, always positive,
-//                                               sorts correctly as uint for atomicMin
-//   early non-atomic depth reject             <- avoid costly atomics for occluded pts
-//   5-position splat (center + 4 offsets)    <- fills gaps, matches guide splatting
-//   atomicMin depth  +  imageAtomicExchange  <- two-buffer approach, no 64-bit ext
+// Packs depth + point-index into a single uint64_t per pixel:
+//   high 32 bits = floatBitsToUint(clip.w)   <- view-space depth, sorts as uint
+//   low  32 bits = point index               <- used in resolve to fetch colour
 //
-// Additional uniforms uPointBaseSize / uFieldOfView reproduce the Phase 1
-// perspective-correct splat radius so the compute and GL_POINTS paths look the same.
-
+// A single atomicMin on the 64-bit value handles both depth test and colour
+// selection atomically, eliminating the race between the two separate atomics
+// of the old two-buffer approach.
+//
 // PointCloudPoint layout (must match C++ struct, 7 floats = 28 bytes):
 //   float x, y, z   (position)
 //   float intensity
 //   float r, g, b   (colour, linear [0,1])
+
+// Input: flat SSBO of all points (entire cloud, not per-node)
 layout(std430, binding = 0) readonly buffer PointBuffer {
     float pointData[];
 };
 
-// Per-pixel depth (uint). Initialised to 0xFFFFFFFF by clear pass.
-layout(std430, binding = 1) coherent buffer DepthBuffer {
-    uint depthbuffer[];
+// Per-pixel framebuffer: packed (depth:32 | index:32).
+// Initialised to 0xFFFFFFFFFFFFFFFFUL by the host before each frame
+// (via glClearNamedBufferSubData).
+layout(std430, binding = 1) coherent buffer ssFramebuffer {
+    uint64_t framebuffer[];
 };
 
-// Packed RGBA output image (r32ui).
-layout(r32ui, binding = 0) coherent uniform uimage2D colorImage;
+// Per-point packed RGBA colour (written at rasterise time, read at resolve time).
+// Binding 44 matches Schütz's ssColors binding.
+layout(std430, binding = 44) coherent buffer ssColors {
+    uint packedColor[];
+};
 
 uniform mat4  uMVP;
 uniform ivec2 uImageSize;
 uniform uint  uNumPoints;
-uniform float uPointBaseSize;   // world-space radius in metres (Phase 1 uniform)
-uniform float uFieldOfView;     // vertical FOV in radians (Phase 1 uniform)
+uniform float uPointBaseSize;   // world-space splat radius in metres
+uniform float uFieldOfView;     // vertical FOV in radians
 
-// Write one pixel: early non-atomic reject, then atomicMin + imageAtomicExchange.
-void writePixel(ivec2 px, uint depth, uint packed) {
+void writePixel(ivec2 px, uint64_t newEntry) {
     px = clamp(px, ivec2(0), uImageSize - ivec2(1));
     int pixelID = px.y * uImageSize.x + px.x;
 
-    // Fast pre-check (non-atomic) – skip points clearly behind existing depth
-    if (depth >= depthbuffer[pixelID]) return;
+    // Fast non-atomic pre-check: skip if clearly behind existing depth
+    uint64_t old = framebuffer[pixelID];
+    if (newEntry >= old) return;
 
-    uint old = atomicMin(depthbuffer[pixelID], depth);
-    if (depth < old) {
-        imageAtomicExchange(colorImage, px, packed);
-    }
+    atomicMin(framebuffer[pixelID], newEntry);
 }
 
 void main() {
@@ -61,7 +62,6 @@ void main() {
     vec3 pos   = vec3(pointData[base + 0u],
                       pointData[base + 1u],
                       pointData[base + 2u]);
-    // base+3 is intensity; skip for point colour rendering
     vec3 color = vec3(pointData[base + 4u],
                       pointData[base + 5u],
                       pointData[base + 6u]);
@@ -78,24 +78,19 @@ void main() {
     // ---- centre pixel ------------------------------------------------------
     ivec2 px = ivec2((ndc.xy * 0.5 + 0.5) * vec2(uImageSize));
 
-    // ---- depth (floatBitsToUint(clip.w)) -----------------------------------
-    // clip.w = view-space distance; IEEE-754 positive floats sort as uint.
+    // ---- depth in high 32 bits (floatBitsToUint sorts IEEE-754 correctly) --
     uint depth = floatBitsToUint(clip.w);
 
-    // ---- pack colour -------------------------------------------------------
+    // ---- store packed colour for this point (resolve reads it by index) ----
     uint r = uint(clamp(color.r, 0.0, 1.0) * 255.0 + 0.5);
     uint g = uint(clamp(color.g, 0.0, 1.0) * 255.0 + 0.5);
     uint b = uint(clamp(color.b, 0.0, 1.0) * 255.0 + 0.5);
-    uint packed = (0xFFu << 24u) | (b << 16u) | (g << 8u) | r;
+    packedColor[idx] = (0xFFu << 24u) | (b << 16u) | (g << 8u) | r;
 
-    // ---- center-pixel pre-check --------------------------------------------
-    {
-        ivec2 cpx      = clamp(px, ivec2(0), uImageSize - ivec2(1));
-        int   centerID = cpx.y * uImageSize.x + cpx.x;
-        if (depth > depthbuffer[centerID]) return;
-    }
+    // ---- pack 64-bit entry (depth:32 | index:32) ---------------------------
+    uint64_t entry = (uint64_t(depth) << 32UL) | uint64_t(idx);
 
-    // ---- screen-space splat radius (Phase 1 formula) -----------------------
+    // ---- screen-space splat radius (same formula as GL_POINTS path) --------
     float fovFactor    = float(uImageSize.y) / (2.0 * tan(uFieldOfView * 0.5));
     float screenRadius = max(0.5, (uPointBaseSize / max(clip.w, 0.001)) * fovFactor);
     int   splatR       = clamp(int(screenRadius), 0, 4);
@@ -105,7 +100,7 @@ void main() {
     for (int dy = -splatR; dy <= splatR; dy++) {
         for (int dx = -splatR; dx <= splatR; dx++) {
             if (float(dx * dx + dy * dy) <= r2) {
-                writePixel(px + ivec2(dx, dy), depth, packed);
+                writePixel(px + ivec2(dx, dy), entry);
             }
         }
     }

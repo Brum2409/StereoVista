@@ -198,8 +198,6 @@ enum class SelectedType {
   BrushCluster
 };
 
-std::atomic<bool> isRecalculatingChunks(false);
-
 struct SelectionState {
   SelectedType type = SelectedType::None;
   int modelIndex = -1;
@@ -5207,11 +5205,10 @@ void renderPointClouds(Engine::Shader *shader,
   if (shader == simpleDepthShader)
     return;
 
-  // Schütz Phase 2: activate compute rasterizer if available
+  // Schütz compute rasterizer: one clear + one dispatch per cloud + one resolve
   bool useCompute = computePointCloudRenderer &&
                     computePointCloudRenderer->isInitialized();
   if (useCompute) {
-    OctreePointCloudManager::s_computeRenderer = computePointCloudRenderer;
     computePointCloudRenderer->beginFrame();
   }
 
@@ -5240,31 +5237,26 @@ void renderPointClouds(Engine::Shader *shader,
 
     shader->setBool("isPointCloud", true);
 
-    // Schütz Phase 2: pre-compute MVP and splat uniforms for the compute rasterizer
     if (useCompute) {
-      OctreePointCloudManager::s_currentMVP    = projection * view * modelMatrix;
-      OctreePointCloudManager::s_pointBaseSize = preferences.pointCloudBaseSize;
-      OctreePointCloudManager::s_fieldOfView   = glm::radians(preferences.fov);
-    }
-
-    // Always use octree-based rendering (legacy system removed)
-    if (pointCloud.octreeRoot) {
-      // Update LOD system for current camera position
+      // Schütz compute path: single dispatch over the entire flat VBO.
+      // No octree traversal, no LOD selection, no per-node API calls.
+      // pointCloud.vbo was fully uploaded by setupPointCloudGLBuffers() before
+      // buildOctree() cleared pointCloud.points.
+      if (pointCloud.vbo != 0 && pointCloud.totalPointCount > 0) {
+        computePointCloudRenderer->renderNode(
+            pointCloud.vbo,
+            pointCloud.totalPointCount,
+            projection * view * modelMatrix,
+            preferences.pointCloudBaseSize,
+            glm::radians(preferences.fov));
+      }
+    } else if (pointCloud.octreeRoot) {
+      // GL_POINTS fallback: octree-based rendering unchanged
       glm::vec3 cameraPosition = camera.Position;
       OctreePointCloudManager::updateLOD(pointCloud, cameraPosition);
-
-      if (!useCompute) {
-        // Bind VAO for traditional GL_POINTS rendering
-        glBindVertexArray(pointCloud.vao);
-      }
-
-      // Render visible octree nodes
-      // (uses compute rasterizer internally when s_computeRenderer is set)
+      glBindVertexArray(pointCloud.vao);
       OctreePointCloudManager::renderVisible(pointCloud, cameraPosition);
-
-      if (!useCompute) {
-        glBindVertexArray(0);
-      }
+      glBindVertexArray(0);
     }
 
     // Visualize octree structure if enabled
@@ -5290,10 +5282,9 @@ void renderPointClouds(Engine::Shader *shader,
 
   shader->setBool("isPointCloud", false);
 
-  // Schütz Phase 2: composite compute result into HDR framebuffer, then reset
+  // Composite compute result into the HDR framebuffer
   if (useCompute) {
     computePointCloudRenderer->endFrame();
-    OctreePointCloudManager::s_computeRenderer = nullptr;
   }
 }
 
