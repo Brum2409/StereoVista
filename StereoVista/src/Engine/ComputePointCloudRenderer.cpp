@@ -4,6 +4,7 @@
 #include "Engine/ComputePointCloudRenderer.h"
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
+#include <cstring>
 
 namespace Engine {
 
@@ -23,10 +24,8 @@ void ComputePointCloudRenderer::init(int width, int height) {
     m_width  = width;
     m_height = height;
 
-    // Load compute shaders
+    // Load shaders (clear.comp is no longer needed – we use glClearNamedBufferSubData)
     try {
-        m_clearShader  = new Shader(
-            "assets/shaders/core/pointcloud_clear.comp", Shader::ComputeShaderTag{});
         m_rasterShader = new Shader(
             "assets/shaders/core/pointcloud_rasterize.comp", Shader::ComputeShaderTag{});
         m_resolveShader = new Shader(
@@ -39,8 +38,7 @@ void ComputePointCloudRenderer::init(int width, int height) {
 
     allocateBuffers();
 
-    // Cache all rasterize shader uniform locations (avoids per-node string
-    // lookups; equivalent to guide's layout(location = N) explicit locations).
+    // Cache rasterize shader uniform locations
     m_rasterShader->use();
     GLuint pid      = m_rasterShader->getID();
     m_locImageSize     = glGetUniformLocation(pid, "uImageSize");
@@ -48,6 +46,10 @@ void ComputePointCloudRenderer::init(int width, int height) {
     m_locMVP           = glGetUniformLocation(pid, "uMVP");
     m_locPointBaseSize = glGetUniformLocation(pid, "uPointBaseSize");
     m_locFieldOfView   = glGetUniformLocation(pid, "uFieldOfView");
+
+    // Cache resolve shader uniform locations
+    m_resolveShader->use();
+    m_locResolveImageSize = glGetUniformLocation(m_resolveShader->getID(), "uImageSize");
 
     // Build fullscreen quad VAO
     glGenVertexArrays(1, &m_quadVAO);
@@ -76,26 +78,19 @@ void ComputePointCloudRenderer::allocateBuffers() {
 
     int totalPixels = m_width * m_height;
 
-    // Depth SSBO: one uint per pixel
-    glGenBuffers(1, &m_depthSSBO);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_depthSSBO);
+    // Framebuffer SSBO: one uint64_t per pixel (depth:32 | point_index:32).
+    // Matches Schütz's ssFramebuffer exactly.
+    glGenBuffers(1, &m_framebufferSSBO);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_framebufferSSBO);
     glBufferData(GL_SHADER_STORAGE_BUFFER,
-                 totalPixels * static_cast<GLsizeiptr>(sizeof(GLuint)),
+                 totalPixels * static_cast<GLsizeiptr>(sizeof(uint64_t)),
                  nullptr, GL_DYNAMIC_COPY);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-
-    // Colour image: r32ui GL_TEXTURE_2D
-    glGenTextures(1, &m_colorTexture);
-    glBindTexture(GL_TEXTURE_2D, m_colorTexture);
-    glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32UI, m_width, m_height);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 void ComputePointCloudRenderer::freeBuffers() {
-    if (m_depthSSBO)    { glDeleteBuffers(1,  &m_depthSSBO);    m_depthSSBO    = 0; }
-    if (m_colorTexture) { glDeleteTextures(1, &m_colorTexture); m_colorTexture = 0; }
+    if (m_framebufferSSBO) { glDeleteBuffers(1, &m_framebufferSSBO); m_framebufferSSBO = 0; }
+    if (m_colorsSSBO)      { glDeleteBuffers(1, &m_colorsSSBO);      m_colorsSSBO      = 0; }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -109,7 +104,6 @@ void ComputePointCloudRenderer::resize(int width, int height) {
 void ComputePointCloudRenderer::cleanup() {
     freeBuffers();
 
-    delete m_clearShader;   m_clearShader   = nullptr;
     delete m_rasterShader;  m_rasterShader  = nullptr;
     delete m_resolveShader; m_resolveShader = nullptr;
 
@@ -124,24 +118,24 @@ void ComputePointCloudRenderer::cleanup() {
 void ComputePointCloudRenderer::beginFrame() {
     if (!m_initialized) return;
 
-    // Bind depth SSBO to slot 1 and colour image to image unit 0
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, m_depthSSBO);
-    glBindImageTexture(0, m_colorTexture, 0, GL_FALSE, 0,
-                       GL_READ_WRITE, GL_R32UI);
+    // Clear the framebuffer SSBO to 0xFFFFFFFFFFFFFFFF (sentinel: no point).
+    // glClearNamedBufferSubData is faster than a compute clear shader
+    // (single driver call, no shader dispatch overhead).
+    // We clear as GL_R32UI in two passes (high and low 32-bit halves) since
+    // OpenGL has no 64-bit clear format. Using 0xFFFFFFFF for both halves.
+    GLuint clearVal = 0xFFFFFFFFu;
+    glClearNamedBufferSubData(m_framebufferSSBO, GL_R32UI,
+                              0,
+                              m_width * m_height * static_cast<GLsizeiptr>(sizeof(uint64_t)),
+                              GL_RED_INTEGER, GL_UNSIGNED_INT,
+                              &clearVal);
 
-    // Dispatch clear compute shader
-    m_clearShader->use();
-    m_clearShader->setInt("uTotalPixels", m_width * m_height);
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
-    int groups = (m_width * m_height + 255) / 256;
-    glDispatchCompute(static_cast<GLuint>(groups), 1, 1);
+    // Bind framebuffer SSBO to slot 1 (matches shader binding)
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, m_framebufferSSBO);
 
-    // Ensure the clear is visible to subsequent compute dispatches
-    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT |
-                    GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-
-    // Bind rasterize shader once for the whole frame; set the per-frame
-    // uImageSize uniform here so renderNode() only needs per-node uniforms.
+    // Bind rasterize shader once for the whole frame
     m_rasterShader->use();
     glUniform2i(m_locImageSize, m_width, m_height);
 }
@@ -155,20 +149,36 @@ void ComputePointCloudRenderer::renderNode(GLuint vbo,
                                            float fieldOfView) {
     if (!m_initialized || numPoints == 0 || vbo == 0) return;
 
-    // Shader is already bound by beginFrame(); set per-node uniforms via
-    // cached locations – zero string lookups, matching the guide's approach.
+    // Allocate (or reallocate) the per-point colour SSBO if needed.
+    // The colour SSBO is sized to the current cloud; reuse it if large enough.
+    if (m_colorsSSBO == 0 || m_colorsSSBOCapacity < numPoints) {
+        if (m_colorsSSBO) glDeleteBuffers(1, &m_colorsSSBO);
+        glGenBuffers(1, &m_colorsSSBO);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_colorsSSBO);
+        glBufferData(GL_SHADER_STORAGE_BUFFER,
+                     numPoints * static_cast<GLsizeiptr>(sizeof(GLuint)),
+                     nullptr, GL_DYNAMIC_COPY);
+        m_colorsSSBOCapacity = numPoints;
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+
+    // Bind point data as SSBO slot 0 (VBOs can be used as SSBOs in OpenGL 4.6)
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, vbo);
+    // Bind per-point colour output buffer at slot 44 (matches Schütz's ssColors)
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 44, m_colorsSSBO);
+
+    // Set per-cloud uniforms via cached locations (zero string lookups)
     glUniformMatrix4fv(m_locMVP,          1, GL_FALSE, glm::value_ptr(mvp));
     glUniform1f(m_locPointBaseSize, pointBaseSize);
     glUniform1f(m_locFieldOfView,   fieldOfView);
     glUniform1ui(m_locNumPoints,    numPoints);
 
-    // Bind point data as SSBO slot 0 (VBOs can also be used as SSBOs)
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, vbo);
-
-    int groups = (static_cast<int>(numPoints) + 255) / 256;
+    // ONE dispatch covers the entire point cloud – matching Schütz's
+    // glDispatchCompute(numBatches, 1, 1) where numBatches = ceil(N / groupSize).
+    int groups = (static_cast<int>(numPoints) + 127) / 128;
     glDispatchCompute(static_cast<GLuint>(groups), 1, 1);
 
-    // No per-node barrier – accumulate across nodes; endFrame() barriers once.
+    // No per-cloud barrier – endFrame() issues a single barrier after all clouds.
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -177,15 +187,13 @@ void ComputePointCloudRenderer::endFrame() {
     if (!m_initialized) return;
 
     // Single barrier after all rasterize dispatches
-    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT |
-                    GL_SHADER_STORAGE_BARRIER_BIT);
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
     // ── Resolve / composite pass ────────────────────────────────────────────
-    // Bind the colour image read-only for the fragment shader
-    glBindImageTexture(0, m_colorTexture, 0, GL_FALSE, 0,
-                       GL_READ_ONLY, GL_R32UI);
+    // Framebuffer SSBO (binding 1) and colours SSBO (binding 44) remain bound
+    // from the rasterize pass; the fragment shader reads both.
 
-    // Save and disable depth test so we draw over the existing scene content
+    // Save and disable depth test so we composite over the existing scene
     GLboolean depthWasEnabled = glIsEnabled(GL_DEPTH_TEST);
     GLboolean depthWriteWasOn;
     glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWriteWasOn);
@@ -193,6 +201,7 @@ void ComputePointCloudRenderer::endFrame() {
     glDepthMask(GL_FALSE);
 
     m_resolveShader->use();
+    glUniform2i(m_locResolveImageSize, m_width, m_height);
 
     glBindVertexArray(m_quadVAO);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -202,10 +211,10 @@ void ComputePointCloudRenderer::endFrame() {
     if (depthWasEnabled) glEnable(GL_DEPTH_TEST);
     if (depthWriteWasOn) glDepthMask(GL_TRUE);
 
-    // Unbind image to avoid hazards
-    glBindImageTexture(0, 0, 0, GL_FALSE, 0, GL_READ_ONLY, GL_R32UI);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, 0);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, 0);
+    // Unbind SSBOs to avoid hazards in subsequent render passes
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0,  0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1,  0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 44, 0);
 }
 
 } // namespace Engine

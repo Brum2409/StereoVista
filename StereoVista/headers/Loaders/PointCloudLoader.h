@@ -24,14 +24,4 @@ namespace Engine {
         }
     };
 
-    void generateChunks(PointCloud& pointCloud, float chunkSize);
-
-    void generateLODLevels(PointCloudChunk& chunk);
-
-
-
-    void generateChunkOutlineVertices(PointCloud& pointCloud);
-
-    glm::vec3 calculateTransformedChunkPosition(const glm::vec3& chunkPos, const glm::mat4& modelMatrix);
-
 }

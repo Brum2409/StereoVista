@@ -131,12 +131,7 @@ namespace Engine {
         setupPointCloudGLBuffers(pointCloud);
 
 
-        if (pointCloud.useOctree) {
-            OctreePointCloudManager::buildOctree(pointCloud);
-        } else {
-            generateChunks(pointCloud, 2.0f);
-        }
-
+        OctreePointCloudManager::buildOctree(pointCloud);
 
         return std::move(pointCloud);
     }
@@ -355,265 +350,14 @@ namespace Engine {
         }
 
 
-        std::cout << "[DEBUG] useOctree flag: " << (pointCloud.useOctree ? "true" : "false") << std::endl;
-        if (pointCloud.useOctree) {
-            std::cout << "[DEBUG] Starting octree build..." << std::endl;
-            OctreePointCloudManager::buildOctree(pointCloud);
-            std::cout << "[DEBUG] Octree build completed" << std::endl;
-        } else {
-            std::cout << "[DEBUG] Using legacy chunk generation..." << std::endl;
-            generateChunks(pointCloud, 2.0f);
-            std::cout << "[DEBUG] Legacy chunk generation completed" << std::endl;
-        }
-
+        std::cout << "[DEBUG] Starting octree build..." << std::endl;
+        OctreePointCloudManager::buildOctree(pointCloud);
+        std::cout << "[DEBUG] Octree build completed" << std::endl;
 
         std::cout << "[DEBUG] loadFromBinary() returning successfully" << std::endl;
         return std::move(pointCloud);
     }
 
-
-    void generateChunkOutlineVertices(PointCloud& pointCloud) {
-        pointCloud.chunkOutlineVertices.clear();
-
-        for (const auto& chunk : pointCloud.chunks) {
-            glm::vec3 minBound = chunk.centerPosition - glm::vec3(pointCloud.chunkSize / 2.0f);
-            glm::vec3 maxBound = chunk.centerPosition + glm::vec3(pointCloud.chunkSize / 2.0f);
-
-            // Front face
-            pointCloud.chunkOutlineVertices.push_back(minBound);
-            pointCloud.chunkOutlineVertices.push_back(glm::vec3(maxBound.x, minBound.y, minBound.z));
-
-            pointCloud.chunkOutlineVertices.push_back(glm::vec3(maxBound.x, minBound.y, minBound.z));
-            pointCloud.chunkOutlineVertices.push_back(glm::vec3(maxBound.x, maxBound.y, minBound.z));
-
-            pointCloud.chunkOutlineVertices.push_back(glm::vec3(maxBound.x, maxBound.y, minBound.z));
-            pointCloud.chunkOutlineVertices.push_back(glm::vec3(minBound.x, maxBound.y, minBound.z));
-
-            pointCloud.chunkOutlineVertices.push_back(glm::vec3(minBound.x, maxBound.y, minBound.z));
-            pointCloud.chunkOutlineVertices.push_back(minBound);
-
-            // Back face
-            pointCloud.chunkOutlineVertices.push_back(glm::vec3(minBound.x, minBound.y, maxBound.z));
-            pointCloud.chunkOutlineVertices.push_back(glm::vec3(maxBound.x, minBound.y, maxBound.z));
-
-            pointCloud.chunkOutlineVertices.push_back(glm::vec3(maxBound.x, minBound.y, maxBound.z));
-            pointCloud.chunkOutlineVertices.push_back(maxBound);
-
-            pointCloud.chunkOutlineVertices.push_back(maxBound);
-            pointCloud.chunkOutlineVertices.push_back(glm::vec3(minBound.x, maxBound.y, maxBound.z));
-
-            pointCloud.chunkOutlineVertices.push_back(glm::vec3(minBound.x, maxBound.y, maxBound.z));
-            pointCloud.chunkOutlineVertices.push_back(glm::vec3(minBound.x, minBound.y, maxBound.z));
-
-            // Connecting lines
-            pointCloud.chunkOutlineVertices.push_back(minBound);
-            pointCloud.chunkOutlineVertices.push_back(glm::vec3(minBound.x, minBound.y, maxBound.z));
-
-            pointCloud.chunkOutlineVertices.push_back(glm::vec3(maxBound.x, minBound.y, minBound.z));
-            pointCloud.chunkOutlineVertices.push_back(glm::vec3(maxBound.x, minBound.y, maxBound.z));
-
-            pointCloud.chunkOutlineVertices.push_back(glm::vec3(maxBound.x, maxBound.y, minBound.z));
-            pointCloud.chunkOutlineVertices.push_back(maxBound);
-
-            pointCloud.chunkOutlineVertices.push_back(glm::vec3(minBound.x, maxBound.y, minBound.z));
-            pointCloud.chunkOutlineVertices.push_back(glm::vec3(minBound.x, maxBound.y, maxBound.z));
-        }
-
-        // Create and bind VAO and VBO for chunk outlines
-        glGenVertexArrays(1, &pointCloud.chunkOutlineVAO);
-        glGenBuffers(1, &pointCloud.chunkOutlineVBO);
-
-        glBindVertexArray(pointCloud.chunkOutlineVAO);
-        glBindBuffer(GL_ARRAY_BUFFER, pointCloud.chunkOutlineVBO);
-        glBufferData(GL_ARRAY_BUFFER, pointCloud.chunkOutlineVertices.size() * sizeof(glm::vec3), pointCloud.chunkOutlineVertices.data(), GL_STATIC_DRAW);
-
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)0);
-        glEnableVertexAttribArray(0);
-
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-        glBindVertexArray(0);
-    }
-
-    glm::vec3 calculateTransformedChunkPosition(const glm::vec3& chunkPos, const glm::mat4& modelMatrix) {
-        glm::vec4 transformedPos = modelMatrix * glm::vec4(chunkPos, 1.0f);
-        return glm::vec3(transformedPos);
-    }
-
-    void generateChunks(PointCloud& pointCloud, float chunkSize) {
-        // Clean up old chunks
-        for (auto& chunk : pointCloud.chunks) {
-            for (GLuint vbo : chunk.lodVBOs) {
-                if (vbo != 0) {
-                    glDeleteBuffers(1, &vbo);
-                }
-            }
-        }
-
-        pointCloud.chunkSize = chunkSize;
-        pointCloud.chunks.clear();
-
-        // Use an unordered_map with a custom hash function for 3D indices
-        struct ChunkIndexHash {
-            std::size_t operator()(const glm::ivec3& index) const {
-                std::size_t h1 = std::hash<int>()(index.x);
-                std::size_t h2 = std::hash<int>()(index.y);
-                std::size_t h3 = std::hash<int>()(index.z);
-                return h1 ^ (h2 << 1) ^ (h3 << 2);
-            }
-        };
-
-        std::unordered_map<glm::ivec3, std::vector<PointCloudPoint>, ChunkIndexHash> chunkMap;
-
-        // Create transformation matrix
-        glm::mat4 modelMatrix = glm::mat4(1.0f);
-        modelMatrix = glm::translate(modelMatrix, pointCloud.position);
-        modelMatrix = glm::rotate(modelMatrix, glm::radians(pointCloud.rotation.x), glm::vec3(1, 0, 0));
-        modelMatrix = glm::rotate(modelMatrix, glm::radians(pointCloud.rotation.y), glm::vec3(0, 1, 0));
-        modelMatrix = glm::rotate(modelMatrix, glm::radians(pointCloud.rotation.z), glm::vec3(0, 0, 1));
-        modelMatrix = glm::scale(modelMatrix, pointCloud.scale);
-
-        // Populate the chunk map based on point positions
-        for (const auto& point : pointCloud.points) {
-            // Transform the point position
-            glm::vec3 transformedPos = glm::vec3(modelMatrix * glm::vec4(point.position, 1.0f));
-            glm::ivec3 chunkIndex = glm::floor(transformedPos / chunkSize);
-            chunkMap[chunkIndex].push_back(point);
-        }
-
-        // Create chunks from the map
-        for (auto& [chunkIndex, points] : chunkMap) {
-            PointCloudChunk chunk;
-            chunk.points = std::move(points);
-
-            // Calculate chunk center position
-            chunk.centerPosition = glm::vec3(
-                (chunkIndex.x + 0.5f) * chunkSize,
-                (chunkIndex.y + 0.5f) * chunkSize,
-                (chunkIndex.z + 0.5f) * chunkSize
-            );
-
-            // Calculate bounding radius
-            float maxDistSq = 0.0f;
-            for (const auto& point : chunk.points) {
-                glm::vec3 diff = point.position - chunk.centerPosition;
-                float distSq = glm::dot(diff, diff);
-                maxDistSq = std::max(maxDistSq, distSq);
-            }
-            chunk.boundingRadius = std::sqrt(maxDistSq);
-
-            // Generate LOD levels for the chunk
-            generateLODLevels(chunk);
-
-            pointCloud.chunks.push_back(std::move(chunk));
-        }
-
-        generateChunkOutlineVertices(pointCloud);
-    }
-
-
-    struct OctreeNodeData {
-        // Store indices instead of full points
-        std::vector<size_t> pointIndices;
-    };
-
-    void generateLODLevels(PointCloudChunk& chunk) {
-        const int numLODLevels = 5;
-        chunk.lodVBOs.resize(numLODLevels);
-        chunk.lodPointCounts.resize(numLODLevels);
-
-        // Only points in dense areas should be reduced
-        const size_t baseThresholds[] = {
-            std::numeric_limits<size_t>::max(),
-            40000, 15000, 5000, 2500
-        };
-
-        // Calculate bounds in a single pass
-        glm::vec3 chunkMin(std::numeric_limits<float>::max());
-        glm::vec3 chunkMax(std::numeric_limits<float>::lowest());
-
-        for (const auto& point : chunk.points) {
-            chunkMin = glm::min(chunkMin, point.position);
-            chunkMax = glm::max(chunkMax, point.position);
-        }
-
-        // Process points in batches for each LOD level
-        const size_t BATCH_SIZE = 1000000; // Process 1M points at a time
-
-        // First level is always original data
-        chunk.lodPointCounts[0] = chunk.points.size();
-        glGenBuffers(1, &chunk.lodVBOs[0]);
-        glBindBuffer(GL_ARRAY_BUFFER, chunk.lodVBOs[0]);
-        glBufferData(GL_ARRAY_BUFFER, chunk.points.size() * sizeof(PointCloudPoint),
-            chunk.points.data(), GL_STATIC_DRAW);
-
-        // For remaining levels
-        for (int level = 1; level < numLODLevels; level++) {
-            if (chunk.points.size() <= baseThresholds[level]) {
-                // Just reference the original data if below threshold
-                chunk.lodVBOs[level] = chunk.lodVBOs[0];
-                chunk.lodPointCounts[level] = chunk.points.size();
-                continue;
-            }
-
-            // Calculate target size for this level
-            size_t targetCount = baseThresholds[level];
-            float selectionRatio = float(targetCount) / float(chunk.points.size());
-
-            // Process in batches to keep memory usage down
-            std::vector<PointCloudPoint> selectedPoints;
-            selectedPoints.reserve(targetCount);
-
-            for (size_t offset = 0; offset < chunk.points.size(); offset += BATCH_SIZE) {
-                size_t batchSize = std::min(BATCH_SIZE, chunk.points.size() - offset);
-                size_t batchTargetCount = std::max(size_t(1), size_t(batchSize * selectionRatio));
-
-                // Create indices for this batch
-                std::vector<size_t> indices(batchSize);
-                std::iota(indices.begin(), indices.end(), 0);
-
-                // Randomly select points from this batch
-                std::random_device rd;
-                std::mt19937 gen(rd());
-
-                if (batchTargetCount < batchSize) {
-                    // Reservoir sampling for the batch
-                    for (size_t i = 0; i < batchTargetCount; i++) {
-                        std::uniform_int_distribution<size_t> dist(i, batchSize - 1);
-                        size_t j = dist(gen);
-                        std::swap(indices[i], indices[j]);
-                    }
-                    indices.resize(batchTargetCount);
-                }
-
-                // Add selected points to result
-                for (size_t idx : indices) {
-                    selectedPoints.push_back(chunk.points[offset + idx]);
-                }
-
-                // If we've collected enough points, stop
-                if (selectedPoints.size() >= targetCount) {
-                    selectedPoints.resize(targetCount);
-                    break;
-                }
-            }
-
-            // Create VBO for this level
-            glGenBuffers(1, &chunk.lodVBOs[level]);
-            glBindBuffer(GL_ARRAY_BUFFER, chunk.lodVBOs[level]);
-            glBufferData(GL_ARRAY_BUFFER, selectedPoints.size() * sizeof(PointCloudPoint),
-                selectedPoints.data(), GL_STATIC_DRAW);
-            chunk.lodPointCounts[level] = selectedPoints.size();
-
-            // Clear the temporary buffer immediately
-            selectedPoints.clear();
-            selectedPoints.shrink_to_fit();
-        }
-
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-    }
-
-
-   
 
     void PointCloudLoader::setupPointCloudGLBuffers(PointCloud& pointCloud) {
         glGenVertexArrays(1, &pointCloud.vao);
@@ -622,6 +366,7 @@ namespace Engine {
         glBindVertexArray(pointCloud.vao);
         glBindBuffer(GL_ARRAY_BUFFER, pointCloud.vbo);
         glBufferData(GL_ARRAY_BUFFER, pointCloud.points.size() * sizeof(PointCloudPoint), pointCloud.points.data(), GL_STATIC_DRAW);
+        pointCloud.totalPointCount = static_cast<uint32_t>(pointCloud.points.size());
 
         // Position attribute
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(PointCloudPoint), (void*)0);
@@ -1316,11 +1061,7 @@ namespace Engine {
                             setupPointCloudGLBuffers(pointCloud);
                             
                             
-                            if (pointCloud.useOctree) {
-                                OctreePointCloudManager::buildOctree(pointCloud);
-                            } else {
-                                generateChunks(pointCloud, 2.0f);
-                            }
+                            OctreePointCloudManager::buildOctree(pointCloud);
 
                             
                             std::cout << "Successfully loaded " << pointCloud.points.size() << " points from f5 file" << std::endl;
@@ -1354,13 +1095,7 @@ namespace Engine {
         setupPointCloudGLBuffers(pointCloud);
         
         
-        if (pointCloud.useOctree) {
-            OctreePointCloudManager::buildOctree(pointCloud);
-        } else {
-            // Fallback to legacy chunking system
-            generateChunks(pointCloud, 2.0f);
-        }
-
+        OctreePointCloudManager::buildOctree(pointCloud);
 
         return std::move(pointCloud);
     }

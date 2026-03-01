@@ -5098,29 +5098,6 @@ void renderPointCloudManipulationPanel(Engine::PointCloud &pointCloud) {
     ImGui::SliderFloat("LOD 5", &pointCloud.lodDistances[4], 25.0f, 60.0f,
                        "%.1f");
 
-    DrawSectionHeader("Chunking");
-
-    ImGui::SliderFloat("Chunk Size", &pointCloud.newChunkSize, 1.0f, 50.0f,
-                       "%.1f");
-    ImGui::SameLine();
-    DrawHelpMarker("Size of spatial chunks for optimization");
-
-    if (ImGui::Button("Recalculate Chunks", ImVec2(-1, 0))) {
-      if (pointCloud.newChunkSize != pointCloud.chunkSize) {
-        pointCloud.chunkSize = pointCloud.newChunkSize;
-        Engine::generateChunks(pointCloud, pointCloud.chunkSize);
-      }
-    }
-
-    extern std::atomic<bool> isRecalculatingChunks;
-    if (isRecalculatingChunks.load()) {
-      ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f),
-                         "Recalculating chunks...");
-    }
-
-    ImGui::Checkbox("Visualize Chunks", &pointCloud.visualizeChunks);
-    ImGui::SameLine();
-    DrawHelpMarker("Show chunk boundaries for debugging");
   }
 
   if (ImGui::CollapsingHeader("Export")) {
