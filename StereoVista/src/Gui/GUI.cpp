@@ -497,7 +497,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
           auto selection =
               pfd::open_file("Select a point cloud to import", ".",
                              {"Point Cloud Files",
-                              "*.txt *.xyz *.ply *.pcb *.h5 *.hdf5 *.f5",
+                              "*.txt *.xyz *.ply *.pcb *.h5 *.hdf5 *.f5 *.las *.laz",
                               "All Files", "*"})
                   .result();
 
@@ -506,7 +506,15 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
             std::string extension =
                 std::filesystem::path(filePath).extension().string();
 
-            if (extension == ".txt" || extension == ".xyz" ||
+            if (extension == ".las" || extension == ".laz") {
+              Engine::PointCloud newPointCloud = std::move(
+                  Engine::PointCloudLoader::loadFromLAS(filePath));
+              if (newPointCloud.octreeRoot || !newPointCloud.points.empty()) {
+                newPointCloud.filePath = filePath;
+                currentScene.pointClouds.emplace_back(std::move(newPointCloud));
+                updateSpaceMouseBounds();
+              }
+            } else if (extension == ".txt" || extension == ".xyz" ||
                 extension == ".ply") {
               Engine::PointCloud newPointCloud = std::move(
                   Engine::PointCloudLoader::loadPointCloudFile(filePath));

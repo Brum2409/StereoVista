@@ -27,6 +27,12 @@
 #include <ctime>
 using namespace H5;
 
+// LASzip – handles both LAS and LAZ transparently
+#ifndef LASZIP_DYN_LINK
+#  define LASZIP_DYN_LINK   // required to get __declspec(dllimport) on Windows
+#endif
+#include <laszip/laszip_api.h>
+
 
 namespace Engine {
 
@@ -48,6 +54,10 @@ namespace Engine {
         else if (extension == ".pcb") {
             std::cout << "[DEBUG] Loading as binary file" << std::endl;
             return loadFromBinary(filePath);
+        }
+        else if (extension == ".las" || extension == ".laz") {
+            std::cout << "[DEBUG] Loading as LAS/LAZ file" << std::endl;
+            return loadFromLAS(filePath, downsampleFactor);
         }
 
         // Default handling for XYZ, PLY, and other text formats
@@ -1182,6 +1192,142 @@ namespace Engine {
             std::cerr << "Error exporting HDF5 point cloud: " << e.what() << std::endl;
             return false;
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // LAS / LAZ loader  (uses LASzip – handles all LAS 1.0-1.4 and LAZ)
+    // -------------------------------------------------------------------------
+    PointCloud PointCloudLoader::loadFromLAS(const std::string& filePath, size_t downsampleFactor)
+    {
+        PointCloud pointCloud;
+        pointCloud.name     = std::filesystem::path(filePath).stem().string();
+        pointCloud.position = glm::vec3(0.0f);
+        pointCloud.rotation = glm::vec3(0.0f);
+        pointCloud.scale    = glm::vec3(1.0f);
+
+        // ---- open file via LASzip (transparent for both LAS and LAZ) --------
+        laszip_POINTER reader = nullptr;
+        if (laszip_create(&reader)) {
+            std::cerr << "[LAS] laszip_create failed\n";
+            return pointCloud;
+        }
+
+        laszip_BOOL is_compressed = 0;
+        if (laszip_open_reader(reader, filePath.c_str(), &is_compressed)) {
+            laszip_CHAR* errmsg = nullptr;
+            laszip_get_error(reader, &errmsg);
+            std::cerr << "[LAS] Cannot open '" << filePath << "': "
+                      << (errmsg ? errmsg : "unknown error") << "\n";
+            laszip_destroy(reader);
+            return pointCloud;
+        }
+
+        // ---- LAS header -----------------------------------------------------
+        laszip_header_struct* hdr = nullptr;
+        laszip_get_header_pointer(reader, &hdr);
+
+        const double sx = hdr->x_scale_factor;
+        const double sy = hdr->y_scale_factor;
+        const double sz = hdr->z_scale_factor;
+        const double ox = hdr->x_offset;
+        const double oy = hdr->y_offset;
+        const double oz = hdr->z_offset;
+
+        // Point data format ID determines which extra fields are present.
+        // Formats 2, 3, 5, 7, 8, 10 carry RGB colour in point->rgb[0-2].
+        const laszip_U8 fmt = hdr->point_data_format;
+        const bool hasColor = (fmt == 2 || fmt == 3 || fmt == 5 ||
+                               fmt == 7 || fmt == 8 || fmt == 10);
+
+        // LAS 1.4 stores point count as 64-bit extended_number_of_point_records;
+        // earlier versions use the 32-bit number_of_point_records.
+        const int64_t nPoints =
+            (hdr->version_minor >= 4 && hdr->extended_number_of_point_records > 0)
+                ? static_cast<int64_t>(hdr->extended_number_of_point_records)
+                : static_cast<int64_t>(hdr->number_of_point_records);
+
+        // Compute bounding-box centre from the LAS header (double precision).
+        // LAS files often carry absolute world coordinates (UTM, state-plane, …)
+        // in the hundreds-of-thousands range.  Subtracting the centre before
+        // casting to float keeps coordinates near the origin, which is required
+        // both for the camera frustum test and for float precision.
+        const double cx = (hdr->min_x + hdr->max_x) * 0.5;
+        const double cy = (hdr->min_y + hdr->max_y) * 0.5;
+        const double cz = (hdr->min_z + hdr->max_z) * 0.5;
+
+        std::cout << "[LAS] " << (is_compressed ? "LAZ" : "LAS")
+                  << " v1." << static_cast<int>(hdr->version_minor)
+                  << "  fmt=" << static_cast<int>(fmt)
+                  << "  nPoints=" << nPoints
+                  << "  hasColor=" << hasColor << "\n"
+                  << "[LAS] Bounds  X[" << hdr->min_x << " .. " << hdr->max_x << "]"
+                  << "  Y[" << hdr->min_y << " .. " << hdr->max_y << "]"
+                  << "  Z[" << hdr->min_z << " .. " << hdr->max_z << "]\n"
+                  << "[LAS] Centre  (" << cx << ", " << cy << ", " << cz
+                  << ")  — subtracted to bring cloud to origin\n";
+
+        // ---- pre-allocate ---------------------------------------------------
+        const int64_t expectedPts = (downsampleFactor > 1)
+                                  ? (nPoints / static_cast<int64_t>(downsampleFactor) + 1)
+                                  : nPoints;
+        pointCloud.points.reserve(static_cast<size_t>(expectedPts));
+
+        // ---- read loop ------------------------------------------------------
+        laszip_point_struct* lp = nullptr;
+        laszip_get_point_pointer(reader, &lp);
+
+        // LAS RGB is nominally 16-bit (0-65535), but many writers store 8-bit
+        // values (0-255) in the low byte.  We track the maximum channel value
+        // and apply the correct scale after reading all points.
+        laszip_U16 maxChan = 0;
+
+        for (int64_t i = 0; i < nPoints; ++i) {
+            if (laszip_read_point(reader)) {
+                std::cerr << "[LAS] Read error at point " << i << "\n";
+                break;
+            }
+
+            if (downsampleFactor > 1 && (static_cast<size_t>(i) % downsampleFactor) != 0)
+                continue;
+
+            PointCloudPoint pt;
+            pt.position.x = static_cast<float>(lp->X * sx + ox - cx);
+            pt.position.y = static_cast<float>(lp->Y * sy + oy - cy);
+            pt.position.z = static_cast<float>(lp->Z * sz + oz - cz);
+            pt.intensity  = lp->intensity / 65535.0f;
+
+            if (hasColor) {
+                // Store raw integer value as float (exact for uint16_t);
+                // we will divide by the correct scale once we know it.
+                pt.color.r = static_cast<float>(lp->rgb[0]);
+                pt.color.g = static_cast<float>(lp->rgb[1]);
+                pt.color.b = static_cast<float>(lp->rgb[2]);
+                maxChan = std::max({ maxChan, lp->rgb[0], lp->rgb[1], lp->rgb[2] });
+            } else {
+                // No RGB channel – derive greyscale from intensity
+                pt.color = glm::vec3(pt.intensity);
+            }
+
+            pointCloud.points.push_back(pt);
+        }
+
+        laszip_close_reader(reader);
+        laszip_destroy(reader);
+
+        // ---- normalise RGB --------------------------------------------------
+        if (hasColor && !pointCloud.points.empty()) {
+            // If every channel fits in [0,255] the writer used 8-bit convention.
+            const float scale = (maxChan > 255) ? 65535.0f : 255.0f;
+#pragma omp parallel for schedule(static)
+            for (int i = 0; i < static_cast<int>(pointCloud.points.size()); ++i)
+                pointCloud.points[i].color /= scale;
+        }
+
+        std::cout << "[LAS] Loaded " << pointCloud.points.size() << " points\n";
+
+        setupPointCloudGLBuffers(pointCloud);
+        OctreePointCloudManager::buildOctree(pointCloud);
+        return pointCloud;
     }
 
 } // namespace Engine

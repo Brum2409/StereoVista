@@ -12,6 +12,7 @@ namespace Engine {
         static bool exportToBinary(const PointCloud& pointCloud, const std::string& filePath);
         static PointCloud loadFromBinary(const std::string& filePath);
         static PointCloud loadFromHDF5(const std::string& filePath, size_t downsampleFactor = 1);
+        static PointCloud loadFromLAS(const std::string& filePath, size_t downsampleFactor = 1);
         static bool exportToHDF5(const PointCloud& pointCloud, const std::string& filePath);
 
     private:

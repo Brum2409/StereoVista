@@ -127,18 +127,19 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions);_CRT_SECURE_NO_WARNINGS;_ITERATOR_DEBUG_LEVEL=0;_HAS_ITERATOR_DEBUGGING=0</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>../dependencies/include;../dependencies/include/hdf5;include;src;headers;src;headers/libs/imgui;backend;headers/libs;headers/libs/3dconnexion;headers/libs/highfive;headers/libs/highfive/bits;headers/libs/hdf5;headers/libs/highfive/h5easy_bits</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>../dependencies/include;../dependencies/include/hdf5;../dependencies/include/laszip;include;src;headers;src;headers/libs/imgui;backend;headers/libs;headers/libs/3dconnexion;headers/libs/highfive;headers/libs/highfive/bits;headers/libs/hdf5;headers/libs/highfive/h5easy_bits</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>false</GenerateDebugInformation>
-      <AdditionalDependencies>glfw3_mt.lib;opengl32.lib;assimp-vc143-mt.lib;libhdf5.lib;libhdf5_cpp.lib;libzlib.lib;libaec.lib;libszaec.lib;legacy_stdio_definitions.lib;Shlwapi.lib;TDxNavLib.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>glfw3_mt.lib;opengl32.lib;assimp-vc143-mt.lib;libhdf5.lib;libhdf5_cpp.lib;libzlib.lib;libaec.lib;libszaec.lib;legacy_stdio_definitions.lib;Shlwapi.lib;TDxNavLib.lib;laszip64.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>../dependencies/lib/release;../dependencies/lib/x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <PostBuildEvent>
-      <Command>copy "$(SolutionDir)dependencies\bin\assimp-vc143-mt.dll" "$(OutDir)"</Command>
+      <Command>copy "$(SolutionDir)dependencies\bin\assimp-vc143-mt.dll" "$(OutDir)"
+copy "$(SolutionDir)dependencies\bin\LASzip64.dll" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -149,7 +150,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>../dependencies/include;../dependencies/include/hdf5;headers;src;headers/libs/imgui;backend;headers/libs;headers/libs/3dconnexion;headers/libs/highfive;headers/libs/highfive/bits;headers/libs/hdf5;headers/libs/highfive/h5easy_bits</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>../dependencies/include;../dependencies/include/hdf5;../dependencies/include/laszip;headers;src;headers/libs/imgui;backend;headers/libs;headers/libs/3dconnexion;headers/libs/highfive;headers/libs/highfive/bits;headers/libs/hdf5;headers/libs/highfive/h5easy_bits</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
     </ClCompile>
@@ -159,12 +160,13 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>../dependencies/lib/release;../dependencies/lib/x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>glfw3_mt.lib;opengl32.lib;assimp-vc143-mt.lib;libhdf5.lib;libhdf5_cpp.lib;libzlib.lib;libaec.lib;libszaec.lib;legacy_stdio_definitions.lib;Shlwapi.lib;TDxNavLib.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>glfw3_mt.lib;opengl32.lib;assimp-vc143-mt.lib;libhdf5.lib;libhdf5_cpp.lib;libzlib.lib;libaec.lib;libszaec.lib;legacy_stdio_definitions.lib;Shlwapi.lib;TDxNavLib.lib;laszip64.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <IgnoreAllDefaultLibraries>
       </IgnoreAllDefaultLibraries>
     </Link>
     <PostBuildEvent>
-      <Command>copy "$(SolutionDir)dependencies\bin\assimp-vc143-mt.dll" "$(OutDir)"</Command>
+      <Command>copy "$(SolutionDir)dependencies\bin\assimp-vc143-mt.dll" "$(OutDir)"
+copy "$(SolutionDir)dependencies\bin\LASzip64.dll" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>

@@ -2757,6 +2757,24 @@ int main() {
       glm::mat4 lookMatrix = glm::lookAt(glm::vec3(0), camera.Front, camera.Up);
       glm::mat4 rotationMatrix = glm::inverse(lookMatrix);
       camera.Orientation = glm::normalize(glm::quat_cast(rotationMatrix));
+
+      // Auto-set the orbit anchor the moment SpaceMouse movement stops so
+      // the user does not have to click to establish a new pivot.
+      // Prefer the live 3D cursor hit; fall back to a point along the
+      // camera look direction at the current orbit distance (same fallback
+      // used by mouse_button_callback when cursor is not over geometry).
+      if (preferences.spaceMouseAnchorMode != GUI::SPACEMOUSE_ANCHOR_DISABLED) {
+        glm::vec3 newAnchor;
+        if (cursorManager.isCursorPositionValid()) {
+          newAnchor = cursorManager.getCursorPosition();
+        } else {
+          newAnchor = camera.Position + camera.Front * camera.OrbitDistance;
+        }
+        spaceMouseInput.SetCursorAnchor(newAnchor, preferences.spaceMouseAnchorMode);
+        camera.OrbitPoint    = newAnchor;
+        camera.OrbitDistance = glm::length(camera.Position - newAnchor);
+      }
+
       std::cout << "SpaceMouse navigation ended" << std::endl;
     };
     spaceMouseInput.OnCommandExecuted = [](const std::string &commandId) {
@@ -5790,8 +5808,13 @@ void updateSpaceMouseCursorAnchor() {
       spaceMouseInput.SetCursorAnchor(currentCursorPosition,
                                       preferences.spaceMouseAnchorMode);
 
-      // Force NavLib to refresh the pivot position
+      // Keep camera.OrbitPoint in sync with m_cursorAnchor so the idle
+      // orbit center visualization always shows the real SpaceMouse pivot.
+      // Without this, camera.OrbitPoint lags and the displayed sphere jumps
+      // when SpaceMouse navigation begins (pivot switches to m_cursorAnchor).
       if (preferences.spaceMouseAnchorMode != GUI::SPACEMOUSE_ANCHOR_DISABLED) {
+        camera.OrbitPoint    = currentCursorPosition;
+        camera.OrbitDistance = glm::length(camera.Position - currentCursorPosition);
         spaceMouseInput.RefreshPivotPosition();
       }
     }

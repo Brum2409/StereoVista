@@ -24,6 +24,26 @@ void ComputePointCloudRenderer::init(int width, int height) {
     m_width  = width;
     m_height = height;
 
+    // Verify 64-bit atomic support (needed by pointcloud_rasterize.comp)
+    {
+        auto hasExtension = [](const char* name) {
+            GLint n = 0;
+            glGetIntegerv(GL_NUM_EXTENSIONS, &n);
+            for (GLint i = 0; i < n; i++)
+                if (strcmp(reinterpret_cast<const char*>(glGetStringi(GL_EXTENSIONS, i)), name) == 0)
+                    return true;
+            return false;
+        };
+        bool hasEXT = hasExtension("GL_EXT_shader_atomic_int64");
+        bool hasNV  = hasExtension("GL_NV_shader_atomic_int64");
+        if (!hasEXT && !hasNV) {
+            std::cerr << "[ComputePC] ERROR: Neither GL_EXT_shader_atomic_int64 nor "
+                         "GL_NV_shader_atomic_int64 is supported on this GPU/driver. "
+                         "Compute point-cloud renderer cannot be used.\n";
+            return;
+        }
+    }
+
     // Load shaders (clear.comp is no longer needed – we use glClearNamedBufferSubData)
     try {
         m_rasterShader = new Shader(
