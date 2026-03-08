@@ -444,16 +444,25 @@ namespace Engine {
             for (int i = first; i < last; i++) {
                 const glm::vec3& p = pts[i].position;
 
-                // Normalise to [0,1] within batch bounds, then scale to 30 bits
-                uint32_t Xbits = static_cast<uint32_t>(
-                    glm::clamp((p.x - bMin.x) / boxSize.x, 0.0f, 1.0f)
-                    * static_cast<float>(STEPS_30BIT - 1));
-                uint32_t Ybits = static_cast<uint32_t>(
-                    glm::clamp((p.y - bMin.y) / boxSize.y, 0.0f, 1.0f)
-                    * static_cast<float>(STEPS_30BIT - 1));
-                uint32_t Zbits = static_cast<uint32_t>(
-                    glm::clamp((p.z - bMin.z) / boxSize.z, 0.0f, 1.0f)
-                    * static_cast<float>(STEPS_30BIT - 1));
+                // Normalise to [0,1] within batch bounds, then scale to 30 bits.
+                //
+                // Important: STEPS_30BIT = 2^30 = 1073741824 is exactly representable
+                // as a float (it is a power of 2).  We multiply by that, then clamp
+                // the result to STEPS_30BIT-1 (= 0x3FFFFFFF, the maximum 30-bit value).
+                // This avoids the float-rounding trap: float(STEPS_30BIT - 1) rounds UP
+                // to STEPS_30BIT itself (since 1073741823 needs more than 24 mantissa
+                // bits), which would produce Xbits = 0x40000000 → X4 masked to 0 after
+                // & 0x3FF, making the maximum-coordinate point decode to wgMin.
+                auto quantise = [&](float v, float lo, float sz) -> uint32_t {
+                    float n = glm::clamp((v - lo) / sz, 0.0f, 1.0f);
+                    // Scale by exactly 2^30 (representable as float), then cap at 2^30-1
+                    uint32_t bits = static_cast<uint32_t>(n * static_cast<float>(STEPS_30BIT));
+                    return std::min(bits, static_cast<uint32_t>(STEPS_30BIT - 1));
+                };
+
+                uint32_t Xbits = quantise(p.x, bMin.x, boxSize.x);
+                uint32_t Ybits = quantise(p.y, bMin.y, boxSize.y);
+                uint32_t Zbits = quantise(p.z, bMin.z, boxSize.z);
 
                 // Split into three 10-bit tiers
                 // _4b  = high bits [29:20] → coarsest, always loaded

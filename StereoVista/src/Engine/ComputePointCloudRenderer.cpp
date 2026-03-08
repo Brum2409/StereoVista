@@ -146,10 +146,6 @@ void ComputePointCloudRenderer::beginFrame() {
 
     // Bind framebuffer SSBO to slot 1 (matches shader binding)
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, m_framebufferSSBO);
-
-    // Bind rasterize shader once for the whole frame
-    m_rasterShader->use();
-    glUniform2i(m_locImageSize, m_width, m_height);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -170,6 +166,16 @@ void ComputePointCloudRenderer::renderNode(
 {
     if (!m_initialized || numBatches == 0) return;
     if (!batchSSBO || !xyz4bSSBO || !rgbaSSBO) return;
+
+    // Always re-bind the rasterize shader before setting uniforms.
+    // main.cpp calls shader->set*(…) on the *scene* shader between beginFrame()
+    // and renderNode().  Those methods use glGetUniformLocation on the scene
+    // shader's program ID, but issue glUniform* against the *currently-bound*
+    // program (our rasterize shader after beginFrame()).  A colliding location
+    // number would silently overwrite one of our uniforms, including uImageSize
+    // which is only set here and not anywhere else per-cloud.
+    m_rasterShader->use();
+    glUniform2i(m_locImageSize, m_width, m_height);
 
     // Bind packed-coordinate and batch SSBOs (matching shader bindings)
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 40, batchSSBO);
