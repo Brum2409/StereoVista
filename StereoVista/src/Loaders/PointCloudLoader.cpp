@@ -369,6 +369,151 @@ namespace Engine {
     }
 
 
+    // ── buildComputeBatches ──────────────────────────────────────────────────
+    // Partitions the flat points vector into batches of kComputeBatchSize and
+    // builds four SSBOs that the Schütz compute rasterizer reads:
+    //
+    //   binding 40 – ComputeBatch descriptors (bounding box + range)
+    //   binding 41 – ssXyz_12b: lowest 10 bits of each 30-bit quantised axis
+    //   binding 42 – ssXyz_8b:  middle 10 bits
+    //   binding 43 – ssXyz_4b:  highest 10 bits (always read; coarsest alone
+    //                           gives 10-bit / 1024-step resolution per axis)
+    //   binding 44 – ssRGBA:    pre-packed uint RGBA (written once on CPU,
+    //                           read by the resolve fragment shader)
+    //
+    // Coordinate quantisation (matches Schütz exactly):
+    //   normalised = (pos - batchMin) / batchSize   ∈ [0,1]
+    //   bits30     = uint32( normalised * STEPS_30BIT )   (30-bit integer)
+    //   ssXyz_4b   packs  bits30[29:20]  for X,Y,Z into one uint
+    //   ssXyz_8b   packs  bits30[19:10]
+    //   ssXyz_12b  packs  bits30[ 9: 0]
+    //
+    // The shader decodes with the inverse of this transform using the batch
+    // bounding box stored in ssBatches.
+    static void buildComputeBatches(PointCloud& pc) {
+        const auto& pts      = pc.points;
+        const int   N        = static_cast<int>(pts.size());
+        const int   batchSz  = PointCloud::kComputeBatchSize;
+
+        if (N == 0) return;
+
+        // Delete old SSBOs if this cloud is being re-uploaded
+        auto deleteIfNonZero = [](GLuint& id) {
+            if (id) { glDeleteBuffers(1, &id); id = 0; }
+        };
+        deleteIfNonZero(pc.computeBatchSSBO);
+        deleteIfNonZero(pc.computeXyz12bSSBO);
+        deleteIfNonZero(pc.computeXyz8bSSBO);
+        deleteIfNonZero(pc.computeXyz4bSSBO);
+        deleteIfNonZero(pc.computeRGBASSBO);
+
+        pc.numBatches = static_cast<uint32_t>((N + batchSz - 1) / batchSz);
+        // Each thread handles ceil(batchSz / 128) points
+        pc.computePointsPerThread = (batchSz + 127) / 128;
+
+        std::vector<ComputeBatch> batches(pc.numBatches);
+        std::vector<uint32_t> xyz4b(N), xyz8b(N), xyz12b(N), rgba(N);
+
+        constexpr int   STEPS_30BIT = 1073741824; // 2^30
+        constexpr uint32_t MASK_10BIT = 1023u;
+
+        for (uint32_t b = 0; b < pc.numBatches; b++) {
+            const int first = b * batchSz;
+            const int last  = std::min(first + batchSz, N);
+            const int count = last - first;
+
+            // Per-batch bounding box
+            glm::vec3 bMin = pts[first].position;
+            glm::vec3 bMax = pts[first].position;
+            for (int i = first + 1; i < last; i++) {
+                bMin = glm::min(bMin, pts[i].position);
+                bMax = glm::max(bMax, pts[i].position);
+            }
+
+            // Guard against degenerate (zero-size) batches
+            glm::vec3 boxSize = bMax - bMin;
+            if (boxSize.x < 1e-6f) boxSize.x = 1e-6f;
+            if (boxSize.y < 1e-6f) boxSize.y = 1e-6f;
+            if (boxSize.z < 1e-6f) boxSize.z = 1e-6f;
+
+            batches[b] = { bMin.x, bMin.y, bMin.z,
+                           bMax.x, bMax.y, bMax.z,
+                           count, first };
+
+            // Quantise each point and pack per-axis 10-bit groups
+            for (int i = first; i < last; i++) {
+                const glm::vec3& p = pts[i].position;
+
+                // Normalise to [0,1] within batch bounds, then scale to 30 bits
+                uint32_t Xbits = static_cast<uint32_t>(
+                    glm::clamp((p.x - bMin.x) / boxSize.x, 0.0f, 1.0f)
+                    * static_cast<float>(STEPS_30BIT - 1));
+                uint32_t Ybits = static_cast<uint32_t>(
+                    glm::clamp((p.y - bMin.y) / boxSize.y, 0.0f, 1.0f)
+                    * static_cast<float>(STEPS_30BIT - 1));
+                uint32_t Zbits = static_cast<uint32_t>(
+                    glm::clamp((p.z - bMin.z) / boxSize.z, 0.0f, 1.0f)
+                    * static_cast<float>(STEPS_30BIT - 1));
+
+                // Split into three 10-bit tiers
+                // _4b  = high bits [29:20] → coarsest, always loaded
+                // _8b  = mid  bits [19:10]
+                // _12b = low  bits [ 9: 0] → finest, level-0 only
+                uint32_t X4 = (Xbits >> 20) & MASK_10BIT;
+                uint32_t Y4 = (Ybits >> 20) & MASK_10BIT;
+                uint32_t Z4 = (Zbits >> 20) & MASK_10BIT;
+
+                uint32_t X8 = (Xbits >> 10) & MASK_10BIT;
+                uint32_t Y8 = (Ybits >> 10) & MASK_10BIT;
+                uint32_t Z8 = (Zbits >> 10) & MASK_10BIT;
+
+                uint32_t X12 = Xbits & MASK_10BIT;
+                uint32_t Y12 = Ybits & MASK_10BIT;
+                uint32_t Z12 = Zbits & MASK_10BIT;
+
+                // Pack three 10-bit values into one uint (same layout as Schütz)
+                xyz4b [i] = X4  | (Y4  << 10) | (Z4  << 20);
+                xyz8b [i] = X8  | (Y8  << 10) | (Z8  << 20);
+                xyz12b[i] = X12 | (Y12 << 10) | (Z12 << 20);
+
+                // Pre-pack colour to uint ABGR (alpha=FF, then B, G, R)
+                const auto& c = pts[i].color;
+                uint32_t r8 = static_cast<uint32_t>(glm::clamp(c.r, 0.0f, 1.0f) * 255.0f + 0.5f);
+                uint32_t g8 = static_cast<uint32_t>(glm::clamp(c.g, 0.0f, 1.0f) * 255.0f + 0.5f);
+                uint32_t b8 = static_cast<uint32_t>(glm::clamp(c.b, 0.0f, 1.0f) * 255.0f + 0.5f);
+                rgba[i] = (0xFFu << 24) | (b8 << 16) | (g8 << 8) | r8;
+            }
+        }
+
+        // Upload all four SSBOs
+        auto uploadSSBO = [](GLuint& id, const void* data, GLsizeiptr bytes) {
+            glGenBuffers(1, &id);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, id);
+            glBufferData(GL_SHADER_STORAGE_BUFFER, bytes, data, GL_STATIC_DRAW);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        };
+
+        uploadSSBO(pc.computeBatchSSBO,
+                   batches.data(),
+                   static_cast<GLsizeiptr>(batches.size() * sizeof(ComputeBatch)));
+        uploadSSBO(pc.computeXyz4bSSBO,
+                   xyz4b.data(),
+                   static_cast<GLsizeiptr>(N * sizeof(uint32_t)));
+        uploadSSBO(pc.computeXyz8bSSBO,
+                   xyz8b.data(),
+                   static_cast<GLsizeiptr>(N * sizeof(uint32_t)));
+        uploadSSBO(pc.computeXyz12bSSBO,
+                   xyz12b.data(),
+                   static_cast<GLsizeiptr>(N * sizeof(uint32_t)));
+        uploadSSBO(pc.computeRGBASSBO,
+                   rgba.data(),
+                   static_cast<GLsizeiptr>(N * sizeof(uint32_t)));
+
+        std::cout << "[ComputePC] Built " << pc.numBatches << " batches ("
+                  << N << " points, " << pc.computePointsPerThread
+                  << " pts/thread, batch size " << batchSz << ")\n";
+    }
+
     void PointCloudLoader::setupPointCloudGLBuffers(PointCloud& pointCloud) {
         glGenVertexArrays(1, &pointCloud.vao);
         glGenBuffers(1, &pointCloud.vbo);
@@ -391,6 +536,9 @@ namespace Engine {
         glEnableVertexAttribArray(2);
 
         glBindVertexArray(0);
+
+        // Build Schütz-style packed SSBOs for the compute rasterizer path
+        buildComputeBatches(pointCloud);
     }
 
     PointCloud PointCloudLoader::loadFromHDF5(const std::string& filePath, size_t downsampleFactor) {

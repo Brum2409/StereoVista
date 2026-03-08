@@ -30,6 +30,23 @@ namespace Engine {
         glm::vec3 color;
     };
 
+    // GPU-side batch descriptor for the Schütz compute rasterizer.
+    // Each batch covers up to kComputeBatchSize contiguous points in the flat
+    // packed-coordinate SSBOs.  The bounding box (local space) lets the shader
+    // cull the whole batch with a single frustum test and decode quantised
+    // coordinates back to float.
+    //
+    // Layout must match the GLSL Batch struct in pointcloud_rasterize.comp
+    // (std430, 8 × 4 = 32 bytes, no padding required).
+    struct ComputeBatch {
+        float min_x, min_y, min_z;
+        float max_x, max_y, max_z;
+        int   numPoints;
+        int   firstPoint;
+    };
+    static_assert(sizeof(ComputeBatch) == 32,
+                  "ComputeBatch size mismatch – GLSL struct alignment will break");
+
     // Octree-based point cloud node
     struct PointCloudOctreeNode {
         // Node identification
@@ -110,6 +127,19 @@ namespace Engine {
         // buildOctree() clears the cpu-side points vector.
         uint32_t totalPointCount = 0;
 
+        // ── Schütz batch system (compute rasterizer) ─────────────────────────
+        // Points are partitioned into batches of kComputeBatchSize.  Per-batch
+        // bounding boxes enable a single frustum-cull test per workgroup, and
+        // coordinates are quantised to 10/20/30-bit integers to cut bandwidth.
+        static constexpr int kComputeBatchSize = 10240; // multiple of 128
+        GLuint computeBatchSSBO  = 0; // binding 40 – ComputeBatch descriptors
+        GLuint computeXyz12bSSBO = 0; // binding 41 – finest 10 bits per axis
+        GLuint computeXyz8bSSBO  = 0; // binding 42 – middle 10 bits per axis
+        GLuint computeXyz4bSSBO  = 0; // binding 43 – coarsest 10 bits per axis
+        GLuint computeRGBASSBO   = 0; // binding 44 – pre-packed uint RGBA
+        uint32_t numBatches           = 0;
+        int      computePointsPerThread = 0; // ceil(kComputeBatchSize / 128)
+
         float basePointSize = 2.0f;
 
         // Octree-based system
@@ -156,7 +186,14 @@ namespace Engine {
               useOctree(other.useOctree), useDiskCache(other.useDiskCache),
               totalLoadedNodes(other.totalLoadedNodes), chunkOutlineVAO(other.chunkOutlineVAO),
               chunkOutlineVBO(other.chunkOutlineVBO), chunkOutlineVertices(std::move(other.chunkOutlineVertices)),
-              visualizeOctree(other.visualizeOctree), visualizeDepth(other.visualizeDepth) {
+              visualizeOctree(other.visualizeOctree), visualizeDepth(other.visualizeDepth),
+              computeBatchSSBO(other.computeBatchSSBO),
+              computeXyz12bSSBO(other.computeXyz12bSSBO),
+              computeXyz8bSSBO(other.computeXyz8bSSBO),
+              computeXyz4bSSBO(other.computeXyz4bSSBO),
+              computeRGBASSBO(other.computeRGBASSBO),
+              numBatches(other.numBatches),
+              computePointsPerThread(other.computePointsPerThread) {
 
             // Copy lodDistances array
             for (int i = 0; i < 5; i++) {
@@ -169,6 +206,13 @@ namespace Engine {
             other.totalPointCount = 0;
             other.chunkOutlineVAO = 0;
             other.chunkOutlineVBO = 0;
+            other.computeBatchSSBO   = 0;
+            other.computeXyz12bSSBO  = 0;
+            other.computeXyz8bSSBO   = 0;
+            other.computeXyz4bSSBO   = 0;
+            other.computeRGBASSBO    = 0;
+            other.numBatches         = 0;
+            other.computePointsPerThread = 0;
         }
 
         // Move assignment operator
@@ -212,12 +256,27 @@ namespace Engine {
                 visualizeOctree = other.visualizeOctree;
                 visualizeDepth = other.visualizeDepth;
 
+                computeBatchSSBO        = other.computeBatchSSBO;
+                computeXyz12bSSBO       = other.computeXyz12bSSBO;
+                computeXyz8bSSBO        = other.computeXyz8bSSBO;
+                computeXyz4bSSBO        = other.computeXyz4bSSBO;
+                computeRGBASSBO         = other.computeRGBASSBO;
+                numBatches              = other.numBatches;
+                computePointsPerThread  = other.computePointsPerThread;
+
                 // Reset other object
                 other.vao = 0;
                 other.vbo = 0;
                 other.totalPointCount = 0;
                 other.chunkOutlineVAO = 0;
                 other.chunkOutlineVBO = 0;
+                other.computeBatchSSBO   = 0;
+                other.computeXyz12bSSBO  = 0;
+                other.computeXyz8bSSBO   = 0;
+                other.computeXyz4bSSBO   = 0;
+                other.computeRGBASSBO    = 0;
+                other.numBatches         = 0;
+                other.computePointsPerThread = 0;
             }
             return *this;
         }

@@ -3519,6 +3519,12 @@ void cleanup() {
   for (auto &pointCloud : currentScene.pointClouds) {
     glDeleteVertexArrays(1, &pointCloud.vao);
     glDeleteBuffers(1, &pointCloud.vbo);
+    // Schütz batch SSBOs (compute rasterizer path)
+    if (pointCloud.computeBatchSSBO)  glDeleteBuffers(1, &pointCloud.computeBatchSSBO);
+    if (pointCloud.computeXyz4bSSBO)  glDeleteBuffers(1, &pointCloud.computeXyz4bSSBO);
+    if (pointCloud.computeXyz8bSSBO)  glDeleteBuffers(1, &pointCloud.computeXyz8bSSBO);
+    if (pointCloud.computeXyz12bSSBO) glDeleteBuffers(1, &pointCloud.computeXyz12bSSBO);
+    if (pointCloud.computeRGBASSBO)   glDeleteBuffers(1, &pointCloud.computeRGBASSBO);
   }
 
   // Delete triangle buffer resources
@@ -5256,15 +5262,20 @@ void renderPointClouds(Engine::Shader *shader,
     shader->setBool("isPointCloud", true);
 
     if (useCompute) {
-      // Schütz compute path: single dispatch over the entire flat VBO.
-      // No octree traversal, no LOD selection, no per-node API calls.
-      // pointCloud.vbo was fully uploaded by setupPointCloudGLBuffers() before
-      // buildOctree() cleared pointCloud.points.
-      if (pointCloud.vbo != 0 && pointCloud.totalPointCount > 0) {
+      // Schütz compute path: one workgroup per batch, with per-batch frustum
+      // culling and packed 10/20/30-bit coordinate decoding.
+      if (pointCloud.computeBatchSSBO != 0 && pointCloud.numBatches > 0) {
         computePointCloudRenderer->renderNode(
-            pointCloud.vbo,
-            pointCloud.totalPointCount,
-            projection * view * modelMatrix,
+            pointCloud.computeBatchSSBO,
+            pointCloud.computeXyz12bSSBO,
+            pointCloud.computeXyz8bSSBO,
+            pointCloud.computeXyz4bSSBO,
+            pointCloud.computeRGBASSBO,
+            pointCloud.numBatches,
+            pointCloud.computePointsPerThread,
+            projection * view * modelMatrix,    // uMVP
+            view * modelMatrix,                  // uModelView (for precision level)
+            projection,                          // uProj      (for precision level)
             preferences.pointCloudBaseSize,
             glm::radians(preferences.fov));
       }
