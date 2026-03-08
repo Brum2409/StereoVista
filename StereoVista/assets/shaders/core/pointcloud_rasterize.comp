@@ -1,108 +1,281 @@
+// pointcloud_rasterize.comp
+// Schütz compute rasterizer – Phase 2 (m-schuetz/compute_rasterizer, standard method)
+//
+// Two improvements over the naive per-point dispatch:
+//
+//  1. PER-BATCH FRUSTUM CULLING
+//     Each workgroup processes one batch of kComputeBatchSize contiguous points.
+//     Thread 0's first act is to test the batch bounding box against the 6 clip
+//     planes extracted from the MVP matrix (Gribb/Hartmann method, adapted from
+//     Schütz who adapted it from three.js).  If the whole batch is outside any
+//     plane the workgroup returns immediately – no projection, no atomic writes.
+//
+//  2. PACKED 10/20/30-BIT COORDINATES
+//     Coordinates are quantised per-batch and stored as three uint arrays:
+//       ssXyz_4b  (binding 43) – high  10 bits per axis  [29:20]  (coarsest)
+//       ssXyz_8b  (binding 42) – mid   10 bits per axis  [19:10]
+//       ssXyz_12b (binding 41) – low   10 bits per axis  [ 9: 0]  (finest)
+//     The precision level selected per batch determines which buffers are read:
+//       level 0 → all three  (30-bit, ~1 mm over 1000 km)
+//       level 1 → _4b + _8b (20-bit, ~1 mm over 1 km)
+//       level 2+ → _4b only (10-bit, ~1/1024 of batch size per axis)
+//     This matches Schütz's getPrecisionLevel() thresholds exactly.
+//
+// Frustum culling code is adapted from Schütz / three.js (MIT licence).
+// Coordinate decoding follows Schütz compute_rasterizer/modules/compute_loop_las.
+
 #version 460 core
 #extension GL_ARB_gpu_shader_int64      : require
 #extension GL_EXT_shader_atomic_int64   : enable
 #extension GL_NV_shader_atomic_int64    : enable
+#extension GL_NV_gpu_shader5            : enable
+
+// ── Constants ────────────────────────────────────────────────────────────────
+#define STEPS_30BIT 1073741824  // 2^30
+#define STEPS_10BIT 1024        // 2^10
+#define MASK_10BIT  1023u       // 0x3FF
 
 layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
 
-// Schütz compute rasterizer – Phase 2 (faithful to m-schuetz/compute_rasterizer)
-//
-// Packs depth + point-index into a single uint64_t per pixel:
-//   high 32 bits = floatBitsToUint(clip.w)   <- view-space depth, sorts as uint
-//   low  32 bits = point index               <- used in resolve to fetch colour
-//
-// A single atomicMin on the 64-bit value handles both depth test and colour
-// selection atomically, eliminating the race between the two separate atomics
-// of the old two-buffer approach.
-//
-// PointCloudPoint layout (must match C++ struct, 7 floats = 28 bytes):
-//   float x, y, z   (position)
-//   float intensity
-//   float r, g, b   (colour, linear [0,1])
-
-// Input: flat SSBO of all points (entire cloud, not per-node)
-layout(std430, binding = 0) readonly buffer PointBuffer {
-    float pointData[];
+// ── Batch descriptor (must match C++ ComputeBatch, 32 bytes, std430) ─────────
+struct Batch {
+    float min_x, min_y, min_z;
+    float max_x, max_y, max_z;
+    int   numPoints;
+    int   firstPoint;
 };
 
-// Per-pixel framebuffer: packed (depth:32 | index:32).
-// Initialised to 0xFFFFFFFFFFFFFFFFUL by the host before each frame
-// (via glClearNamedBufferSubData).
-layout(std430, binding = 1) coherent buffer ssFramebuffer {
-    uint64_t framebuffer[];
-};
+// ── SSBOs ────────────────────────────────────────────────────────────────────
+layout(std430, binding =  1) coherent buffer ssFramebufferBlock { uint64_t framebuffer[]; };
+layout(std430, binding = 40) readonly buffer ssBatchesBlock     { Batch    ssBatches[];   };
+layout(std430, binding = 41) readonly buffer ssXyz12bBlock      { uint     ssXyz_12b[];   };
+layout(std430, binding = 42) readonly buffer ssXyz8bBlock       { uint     ssXyz_8b[];    };
+layout(std430, binding = 43) readonly buffer ssXyz4bBlock       { uint     ssXyz_4b[];    };
+layout(std430, binding = 44) readonly buffer ssRGBABlock        { uint     ssRGBA[];      };
 
-// Per-point packed RGBA colour (written at rasterise time, read at resolve time).
-// Binding 44 matches Schütz's ssColors binding.
-layout(std430, binding = 44) coherent buffer ssColors {
-    uint packedColor[];
-};
-
-uniform mat4  uMVP;
+// ── Uniforms ─────────────────────────────────────────────────────────────────
+uniform mat4  uMVP;             // proj * view * model – point projection + frustum planes
+uniform mat4  uModelView;       // view * model        – precision level (view-space radius)
+uniform mat4  uProj;            // projection matrix   – precision level
 uniform ivec2 uImageSize;
-uniform uint  uNumPoints;
+uniform int   uPointsPerThread; // ceil(kComputeBatchSize / 128)
 uniform float uPointBaseSize;   // world-space splat radius in metres
 uniform float uFieldOfView;     // vertical FOV in radians
 
+// ── Frustum culling ───────────────────────────────────────────────────────────
+// Adapted from Schütz compute_rasterizer / three.js (MIT).
+// Extracts 6 clip planes directly from the MVP matrix (Gribb/Hartmann method).
+// The bounding box coordinates are in the point cloud's local space, and the
+// MVP matrix transforms local → clip, so the extracted planes are also in
+// local space – no explicit world transform needed.
+
+struct Plane { vec3 normal; float constant; };
+
+float distanceToPoint(vec3 pt, Plane pl) {
+    return dot(pl.normal, pt) + pl.constant;
+}
+
+Plane createPlane(float x, float y, float z, float w) {
+    float len = length(vec3(x, y, z));
+    return Plane(vec3(x, y, z) / len, w / len);
+}
+
+bool intersectsFrustum(mat4 m, vec3 wgMin, vec3 wgMax) {
+    // GLSL mat4 is column-major: m[col][row]
+    // Row i of the matrix = vec4(m[0][i], m[1][i], m[2][i], m[3][i])
+    float r0x = m[0][0], r0y = m[1][0], r0z = m[2][0], r0w = m[3][0]; // row 0
+    float r1x = m[0][1], r1y = m[1][1], r1z = m[2][1], r1w = m[3][1]; // row 1
+    float r2x = m[0][2], r2y = m[1][2], r2z = m[2][2], r2w = m[3][2]; // row 2
+    float r3x = m[0][3], r3y = m[1][3], r3z = m[2][3], r3w = m[3][3]; // row 3
+
+    Plane planes[6];
+    planes[0] = createPlane(r3x - r0x, r3y - r0y, r3z - r0z, r3w - r0w); // right
+    planes[1] = createPlane(r3x + r0x, r3y + r0y, r3z + r0z, r3w + r0w); // left
+    planes[2] = createPlane(r3x + r1x, r3y + r1y, r3z + r1z, r3w + r1w); // bottom
+    planes[3] = createPlane(r3x - r1x, r3y - r1y, r3z - r1z, r3w - r1w); // top
+    planes[4] = createPlane(r3x - r2x, r3y - r2y, r3z - r2z, r3w - r2w); // near
+    planes[5] = createPlane(r3x + r2x, r3y + r2y, r3z + r2z, r3w + r2w); // far
+
+    for (int i = 0; i < 6; i++) {
+        // Test the "positive vertex" – the corner of the AABB closest to the
+        // plane normal.  If even that is behind the plane, the whole box is out.
+        vec3 pv;
+        pv.x = planes[i].normal.x > 0.0 ? wgMax.x : wgMin.x;
+        pv.y = planes[i].normal.y > 0.0 ? wgMax.y : wgMin.y;
+        pv.z = planes[i].normal.z > 0.0 ? wgMax.z : wgMin.z;
+        if (distanceToPoint(pv, planes[i]) < 0.0) return false;
+    }
+    return true;
+}
+
+// ── Precision level selection ─────────────────────────────────────────────────
+// Projects the batch bounding sphere into screen space and returns a LOD level
+// that determines how many packed-coordinate buffers are read per point.
+// Matches Schütz's getPrecisionLevel() thresholds exactly.
+int getPrecisionLevel(vec3 wgMin, vec3 wgMax) {
+    vec3  wgCenter = (wgMin + wgMax) * 0.5;
+    float wgRadius = distance(wgMin, wgMax);          // bounding sphere radius
+
+    // Project center and a tangent point into view space, then to clip
+    vec4 viewCenter = uModelView * vec4(wgCenter, 1.0);
+    vec4 viewEdge   = viewCenter + vec4(wgRadius, 0.0, 0.0, 0.0);
+
+    vec4 projCenter = uProj * viewCenter;
+    vec4 projEdge   = uProj * viewEdge;
+
+    // Guard against behind-camera
+    if (projCenter.w <= 0.0) return 0;
+
+    projCenter.xy /= projCenter.w;
+    projEdge.xy   /= projEdge.w;
+
+    vec2 screenCenter = vec2(uImageSize) * (projCenter.xy * 0.5 + 0.5);
+    vec2 screenEdge   = vec2(uImageSize) * (projEdge.xy   * 0.5 + 0.5);
+    float pixelSize   = distance(screenEdge, screenCenter);
+
+    // Schütz thresholds (verbatim)
+    if      (pixelSize <    100.0) return 4;
+    else if (pixelSize <    200.0) return 3;
+    else if (pixelSize <    500.0) return 2;
+    else if (pixelSize < 10000.0)  return 1;
+    else                           return 0;
+}
+
+// ── Pixel write (circle splat, depth-test via atomicMin) ──────────────────────
 void writePixel(ivec2 px, uint64_t newEntry) {
     px = clamp(px, ivec2(0), uImageSize - ivec2(1));
     int pixelID = px.y * uImageSize.x + px.x;
 
-    // Fast non-atomic pre-check: skip if clearly behind existing depth
+    // Non-atomic fast-reject; real race resolved by atomicMin below
     uint64_t old = framebuffer[pixelID];
     if (newEntry >= old) return;
 
     atomicMin(framebuffer[pixelID], newEntry);
 }
 
+// ── Main ──────────────────────────────────────────────────────────────────────
 void main() {
-    uint idx = gl_GlobalInvocationID.x;
-    if (idx >= uNumPoints) return;
+    // One workgroup = one batch
+    uint  batchIndex = gl_WorkGroupID.x;
+    Batch batch      = ssBatches[batchIndex];
 
-    // ---- fetch point -------------------------------------------------------
-    uint base  = idx * 7u;
-    vec3 pos   = vec3(pointData[base + 0u],
-                      pointData[base + 1u],
-                      pointData[base + 2u]);
-    vec3 color = vec3(pointData[base + 4u],
-                      pointData[base + 5u],
-                      pointData[base + 6u]);
+    vec3 wgMin  = vec3(batch.min_x, batch.min_y, batch.min_z);
+    vec3 wgMax  = vec3(batch.max_x, batch.max_y, batch.max_z);
+    vec3 boxSize = wgMax - wgMin;
 
-    // ---- project -----------------------------------------------------------
-    vec4 clip = uMVP * vec4(pos, 1.0);
-    if (clip.w <= 0.0) return;     // behind camera
+    // ── Per-batch frustum cull ────────────────────────────────────────────────
+    // All 128 threads share this early-out: one AABB test replaces up to
+    // kComputeBatchSize individual per-point clip-space tests.
+    if (!intersectsFrustum(uMVP, wgMin, wgMax)) return;
 
-    vec3 ndc = clip.xyz / clip.w;
-    if (ndc.x < -1.0 || ndc.x > 1.0 ||
-        ndc.y < -1.0 || ndc.y > 1.0 ||
-        ndc.z < -1.0 || ndc.z > 1.0) return;   // outside frustum
+    // ── Precision level ───────────────────────────────────────────────────────
+    int level = getPrecisionLevel(wgMin, wgMax);
 
-    // ---- centre pixel ------------------------------------------------------
-    ivec2 px = ivec2((ndc.xy * 0.5 + 0.5) * vec2(uImageSize));
+    // ── Splat-radius factor (per-batch constant, amortised) ───────────────────
+    float fovFactor = float(uImageSize.y) / (2.0 * tan(uFieldOfView * 0.5));
 
-    // ---- depth in high 32 bits (floatBitsToUint sorts IEEE-754 correctly) --
-    uint depth = floatBitsToUint(clip.w);
+    // ── Point loop ────────────────────────────────────────────────────────────
+    // Strided access: thread T processes points T, T+128, T+256, …
+    // This gives coalesced memory reads across the warp.
+    for (int i = 0; i < uPointsPerThread; i++) {
+        uint localIndex = uint(i) * gl_WorkGroupSize.x + gl_LocalInvocationID.x;
+        if (int(localIndex) >= batch.numPoints) return;
 
-    // ---- store packed colour for this point (resolve reads it by index) ----
-    uint r = uint(clamp(color.r, 0.0, 1.0) * 255.0 + 0.5);
-    uint g = uint(clamp(color.g, 0.0, 1.0) * 255.0 + 0.5);
-    uint b = uint(clamp(color.b, 0.0, 1.0) * 255.0 + 0.5);
-    packedColor[idx] = (0xFFu << 24u) | (b << 16u) | (g << 8u) | r;
+        uint index = uint(batch.firstPoint) + localIndex;
 
-    // ---- pack 64-bit entry (depth:32 | index:32) ---------------------------
-    uint64_t entry = (uint64_t(depth) << 32UL) | uint64_t(idx);
+        // ── Decode position from packed coordinates ───────────────────────────
+        // Schütz's 10/20/30-bit quantisation scheme:
+        //   _4b  holds the highest 10 bits of each 30-bit axis value
+        //   _8b  holds the middle 10 bits
+        //   _12b holds the lowest  10 bits
+        // Recombine them, then scale back to [wgMin, wgMax].
+        vec3 point;
 
-    // ---- screen-space splat radius (same formula as GL_POINTS path) --------
-    float fovFactor    = float(uImageSize.y) / (2.0 * tan(uFieldOfView * 0.5));
-    float screenRadius = max(0.5, (uPointBaseSize / max(clip.w, 0.001)) * fovFactor);
-    int   splatR       = clamp(int(screenRadius), 0, 4);
+        if (level == 0) {
+            // 30-bit precision – read all three buffers
+            uint b4  = ssXyz_4b [index];
+            uint b8  = ssXyz_8b [index];
+            uint b12 = ssXyz_12b[index];
 
-    // ---- circle splat ------------------------------------------------------
-    float r2 = screenRadius * screenRadius;
-    for (int dy = -splatR; dy <= splatR; dy++) {
-        for (int dx = -splatR; dx <= splatR; dx++) {
-            if (float(dx * dx + dy * dy) <= r2) {
-                writePixel(px + ivec2(dx, dy), entry);
+            uint X4  = (b4  >>  0) & MASK_10BIT;
+            uint Y4  = (b4  >> 10) & MASK_10BIT;
+            uint Z4  = (b4  >> 20) & MASK_10BIT;
+
+            uint X8  = (b8  >>  0) & MASK_10BIT;
+            uint Y8  = (b8  >> 10) & MASK_10BIT;
+            uint Z8  = (b8  >> 20) & MASK_10BIT;
+
+            uint X12 = (b12 >>  0) & MASK_10BIT;
+            uint Y12 = (b12 >> 10) & MASK_10BIT;
+            uint Z12 = (b12 >> 20) & MASK_10BIT;
+
+            uint X = (X4 << 20) | (X8 << 10) | X12;
+            uint Y = (Y4 << 20) | (Y8 << 10) | Y12;
+            uint Z = (Z4 << 20) | (Z8 << 10) | Z12;
+
+            point = vec3(float(X), float(Y), float(Z))
+                  * (boxSize / float(STEPS_30BIT)) + wgMin;
+
+        } else if (level == 1) {
+            // 20-bit precision – skip ssXyz_12b
+            uint b4 = ssXyz_4b[index];
+            uint b8 = ssXyz_8b[index];
+
+            uint X4 = (b4 >>  0) & MASK_10BIT;
+            uint Y4 = (b4 >> 10) & MASK_10BIT;
+            uint Z4 = (b4 >> 20) & MASK_10BIT;
+
+            uint X8 = (b8 >>  0) & MASK_10BIT;
+            uint Y8 = (b8 >> 10) & MASK_10BIT;
+            uint Z8 = (b8 >> 20) & MASK_10BIT;
+
+            // High 20 bits of the 30-bit value; low 10 bits stay zero
+            uint X = (X4 << 20) | (X8 << 10);
+            uint Y = (Y4 << 20) | (Y8 << 10);
+            uint Z = (Z4 << 20) | (Z8 << 10);
+
+            point = vec3(float(X), float(Y), float(Z))
+                  * (boxSize / float(STEPS_30BIT)) + wgMin;
+
+        } else {
+            // 10-bit precision – only ssXyz_4b (levels 2, 3, 4)
+            uint b4 = ssXyz_4b[index];
+
+            uint X = (b4 >>  0) & MASK_10BIT;
+            uint Y = (b4 >> 10) & MASK_10BIT;
+            uint Z = (b4 >> 20) & MASK_10BIT;
+
+            point = vec3(float(X), float(Y), float(Z))
+                  * (boxSize / float(STEPS_10BIT)) + wgMin;
+        }
+
+        // ── Project to clip space ─────────────────────────────────────────────
+        vec4 clip = uMVP * vec4(point, 1.0);
+        if (clip.w <= 0.0) continue;
+
+        vec3 ndc = clip.xyz / clip.w;
+        if (ndc.x < -1.0 || ndc.x > 1.0 ||
+            ndc.y < -1.0 || ndc.y > 1.0 ||
+            ndc.z < -1.0 || ndc.z > 1.0) continue;
+
+        // ── Screen-space splat radius (perspective-correct) ───────────────────
+        ivec2 px = ivec2((ndc.xy * 0.5 + 0.5) * vec2(uImageSize));
+
+        float screenRadius = max(0.5, (uPointBaseSize / max(clip.w, 0.001)) * fovFactor);
+        int   splatR       = clamp(int(screenRadius), 0, 4);
+
+        // ── Depth + index packed into 64 bits ─────────────────────────────────
+        // floatBitsToUint preserves IEEE-754 sort order → atomicMin works as depth test
+        uint     depth = floatBitsToUint(clip.w);
+        uint64_t entry = (uint64_t(depth) << 32UL) | uint64_t(index);
+
+        // ── Filled-circle splat ───────────────────────────────────────────────
+        float r2 = screenRadius * screenRadius;
+        for (int dy = -splatR; dy <= splatR; dy++) {
+            for (int dx = -splatR; dx <= splatR; dx++) {
+                if (float(dx * dx + dy * dy) <= r2) {
+                    writePixel(px + ivec2(dx, dy), entry);
+                }
             }
         }
     }

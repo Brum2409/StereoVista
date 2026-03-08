@@ -6,11 +6,13 @@
 // Per-frame pipeline:
 //   1. beginFrame() – clear the uint64_t framebuffer SSBO via
 //      glClearNamedBufferSubData (one driver call, no shader dispatch).
-//   2. renderNode() – for each point cloud, one glDispatchCompute covers ALL
-//      points.  The rasterize shader packs (depth:32 | point_index:32) into
-//      each pixel via atomicMin, and writes per-point packed RGBA into ssColors.
+//   2. renderNode() – for each point cloud, dispatch one workgroup per batch.
+//      Each workgroup tests its batch bounding box against the 6 frustum planes
+//      (Schütz / Gribb-Hartmann) and returns early if fully outside.
+//      Inside batches are decoded from packed 10/20/30-bit coordinates and
+//      rasterised into the uint64_t framebuffer via atomicMin.
 //   3. endFrame() – single glMemoryBarrier, then a fullscreen-quad resolve pass
-//      reads the framebuffer SSBO + ssColors to composite the result into the
+//      reads the framebuffer SSBO + ssRGBA to composite the result into the
 //      currently-bound HDR FBO.
 #include "shader.h"
 #include <glm/glm.hpp>
@@ -39,14 +41,32 @@ public:
     // Must be called before any renderNode() calls for this frame.
     void beginFrame();
 
-    // Rasterize one point cloud with a single compute dispatch.
-    //   vbo           – GL buffer holding PointCloudPoint data (7 floats / 28 bytes per point)
-    //   numPoints     – total number of points in that buffer
-    //   mvp           – combined model-view-projection matrix for this point cloud
-    //   pointBaseSize – world-space splat radius in metres
-    //   fieldOfView   – vertical FOV in radians
-    void renderNode(GLuint vbo, uint32_t numPoints, const glm::mat4& mvp,
-                    float pointBaseSize, float fieldOfView);
+    // Rasterize one point cloud using the Schütz batch-based compute path.
+    //
+    //   batchSSBO        – binding 40: ComputeBatch descriptor array
+    //   xyz12bSSBO       – binding 41: finest packed coord tier  (10 bits/axis)
+    //   xyz8bSSBO        – binding 42: middle packed coord tier
+    //   xyz4bSSBO        – binding 43: coarsest packed coord tier (always read)
+    //   rgbaSSBO         – binding 44: pre-packed uint RGBA per point
+    //   numBatches       – number of workgroups to dispatch (one per batch)
+    //   pointsPerThread  – ceil(kComputeBatchSize / 128)
+    //   mvp              – proj * view * model  (projection + frustum culling)
+    //   modelView        – view * model         (precision-level sphere projection)
+    //   proj             – projection matrix    (precision-level sphere projection)
+    //   pointBaseSize    – world-space splat radius in metres
+    //   fieldOfView      – vertical FOV in radians
+    void renderNode(GLuint batchSSBO,
+                    GLuint xyz12bSSBO,
+                    GLuint xyz8bSSBO,
+                    GLuint xyz4bSSBO,
+                    GLuint rgbaSSBO,
+                    uint32_t numBatches,
+                    int      pointsPerThread,
+                    const glm::mat4& mvp,
+                    const glm::mat4& modelView,
+                    const glm::mat4& proj,
+                    float pointBaseSize,
+                    float fieldOfView);
 
     // Wait for all compute work to finish, then composite the point cloud result
     // over the currently-bound HDR framebuffer with a fullscreen quad.
@@ -64,16 +84,9 @@ private:
     int  m_width  = 0;
     int  m_height = 0;
 
-    // GPU resources
     // Framebuffer SSBO: uint64_t[width*height] – packed (depth:32 | index:32).
     // Matches Schütz's ssFramebuffer (binding 1).
     GLuint m_framebufferSSBO = 0;
-
-    // Per-point colour SSBO: uint[numPoints] – packed ABGR.
-    // Matches Schütz's ssColors (binding 44).
-    // Allocated lazily in renderNode(); grown as needed.
-    GLuint   m_colorsSSBO         = 0;
-    uint32_t m_colorsSSBOCapacity = 0;
 
     // Shaders (no clear shader – cleared via glClearNamedBufferSubData)
     Shader* m_rasterShader  = nullptr;   // pointcloud_rasterize.comp
@@ -84,11 +97,13 @@ private:
     GLuint m_quadVBO = 0;
 
     // Cached rasterize-shader uniform locations (queried once at init)
-    GLint m_locImageSize      = -1;
-    GLint m_locNumPoints      = -1;
-    GLint m_locMVP            = -1;
-    GLint m_locPointBaseSize  = -1;
-    GLint m_locFieldOfView    = -1;
+    GLint m_locImageSize         = -1;
+    GLint m_locMVP               = -1;
+    GLint m_locModelView         = -1;
+    GLint m_locProj              = -1;
+    GLint m_locPointsPerThread   = -1;
+    GLint m_locPointBaseSize     = -1;
+    GLint m_locFieldOfView       = -1;
 
     // Cached resolve-shader uniform location
     GLint m_locResolveImageSize = -1;
