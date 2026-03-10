@@ -1,6 +1,6 @@
 {
     "camera": {
-        "alwaysShowOrbitCenter": true,
+        "alwaysShowOrbitCenter": false,
         "autoConvergence": true,
         "convergence": 7.026186943054199,
         "convergenceCapMax": 41.900001525878906,
@@ -27,7 +27,7 @@
         "scrollDeceleration": 2.0,
         "scrollMomentum": 0.12999999523162842,
         "separation": 0.09000000357627869,
-        "showOrbitCenter": true,
+        "showOrbitCenter": false,
         "speedFactor": 0.9869999885559082,
         "useNewStereoMethod": true,
         "useSmoothScrolling": true,
@@ -38,8 +38,8 @@
     },
     "edl": {
         "enabled": false,
-        "radius": 1.5,
-        "strength": 1.0
+        "radius": 1.399999976158142,
+        "strength": 2.640000104904175
     },
     "hdr": {
         "bloomIntensity": 0.1770000010728836,
@@ -131,7 +131,7 @@
             0.10000000149011612,
             0.30000001192092896
         ],
-        "hdrPath": "C:\\Users\\Benbrem\\Downloads\\table_mountain_2_puresky_4k.hdr",
+        "hdrPath": "C:\\Users\\Benbrem\\Downloads\\Arbeit\\Stereo-Demo-main\\Stereo-Viewer-Project\\bin\\x64\\Release\\skybox\\HDR\\table_mountain_2_puresky_4k.hdr",
         "selectedCubemap": 0,
         "solidColor": [
             0.20000000298023224,
@@ -164,7 +164,7 @@
     },
     "ssao": {
         "bias": 0.041999999433755875,
-        "enabled": false,
+        "enabled": true,
         "kernelSize": 64,
         "power": 1.899999976158142,
         "radius": 0.6499999761581421
