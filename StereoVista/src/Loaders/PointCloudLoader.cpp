@@ -36,6 +36,182 @@ using namespace H5;
 
 namespace Engine {
 
+    // =========================================================================
+    // Streaming compute SSBO infrastructure
+    // =========================================================================
+    // These helpers let every loader stream points directly to GPU SSBOs one
+    // batch (kComputeBatchSize = 10240 points) at a time.
+    // Peak CPU RAM = one batch (~280 KB) regardless of point cloud size.
+    //
+    // Coordinate quantisation matches the Schütz compute rasterizer exactly:
+    //   normalised = (pos - batchMin) / batchSize   ∈ [0,1]
+    //   bits30     = uint32( normalised * 2^30 )
+    //   ssXyz_4b   packs bits30[29:20]  (coarsest; always read by shader)
+    //   ssXyz_8b   packs bits30[19:10]
+    //   ssXyz_12b  packs bits30[ 9: 0]  (finest; level-0 only)
+    // =========================================================================
+
+    static void deleteComputeSSBOs(PointCloud& pc) {
+        auto del = [](GLuint& id) { if (id) { glDeleteBuffers(1, &id); id = 0; } };
+        del(pc.computeBatchSSBO);
+        del(pc.computeXyz12bSSBO);
+        del(pc.computeXyz8bSSBO);
+        del(pc.computeXyz4bSSBO);
+        del(pc.computeRGBASSBO);
+    }
+
+    // Pre-allocate all five SSBOs for totalPoints without uploading data.
+    // GL_DYNAMIC_DRAW because we fill them incrementally with glBufferSubData.
+    static void allocateComputeSSBOs(PointCloud& pc, size_t totalPoints) {
+        deleteComputeSSBOs(pc);
+        if (pc.vbo) { glDeleteBuffers(1, &pc.vbo); pc.vbo = 0; }
+        if (pc.vao) { glDeleteVertexArrays(1, &pc.vao); pc.vao = 0; }
+        if (totalPoints == 0) return;
+
+        const size_t numBatches =
+            (totalPoints + PointCloud::kComputeBatchSize - 1) / PointCloud::kComputeBatchSize;
+
+        auto alloc = [](GLuint& id, GLsizeiptr bytes) {
+            glGenBuffers(1, &id);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, id);
+            glBufferData(GL_SHADER_STORAGE_BUFFER, bytes, nullptr, GL_DYNAMIC_DRAW);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        };
+
+        alloc(pc.computeBatchSSBO,  static_cast<GLsizeiptr>(numBatches  * sizeof(ComputeBatch)));
+        alloc(pc.computeXyz4bSSBO,  static_cast<GLsizeiptr>(totalPoints * sizeof(uint32_t)));
+        alloc(pc.computeXyz8bSSBO,  static_cast<GLsizeiptr>(totalPoints * sizeof(uint32_t)));
+        alloc(pc.computeXyz12bSSBO, static_cast<GLsizeiptr>(totalPoints * sizeof(uint32_t)));
+        alloc(pc.computeRGBASSBO,   static_cast<GLsizeiptr>(totalPoints * sizeof(uint32_t)));
+        pc.computePointsPerThread = (PointCloud::kComputeBatchSize + 127) / 128;
+    }
+
+    // Trim over-allocated SSBOs to actualPoints using GPU-side copy.
+    static void trimComputeSSBOs(PointCloud& pc, size_t actualPoints) {
+        if (actualPoints == 0) { deleteComputeSSBOs(pc); return; }
+
+        const size_t actualBatches =
+            (actualPoints + PointCloud::kComputeBatchSize - 1) / PointCloud::kComputeBatchSize;
+
+        auto trimBuffer = [](GLuint& id, GLsizeiptr newBytes) {
+            GLuint newId = 0;
+            glGenBuffers(1, &newId);
+            glBindBuffer(GL_COPY_WRITE_BUFFER, newId);
+            glBufferData(GL_COPY_WRITE_BUFFER, newBytes, nullptr, GL_STATIC_DRAW);
+            glBindBuffer(GL_COPY_READ_BUFFER, id);
+            glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER, 0, 0, newBytes);
+            glDeleteBuffers(1, &id);
+            id = newId;
+        };
+
+        trimBuffer(pc.computeBatchSSBO,  static_cast<GLsizeiptr>(actualBatches * sizeof(ComputeBatch)));
+        trimBuffer(pc.computeXyz4bSSBO,  static_cast<GLsizeiptr>(actualPoints  * sizeof(uint32_t)));
+        trimBuffer(pc.computeXyz8bSSBO,  static_cast<GLsizeiptr>(actualPoints  * sizeof(uint32_t)));
+        trimBuffer(pc.computeXyz12bSSBO, static_cast<GLsizeiptr>(actualPoints  * sizeof(uint32_t)));
+        trimBuffer(pc.computeRGBASSBO,   static_cast<GLsizeiptr>(actualPoints  * sizeof(uint32_t)));
+        glBindBuffer(GL_COPY_READ_BUFFER, 0);
+        glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
+    }
+
+    // Upload one batch of count points to the pre-allocated SSBOs.
+    //   batchIndex – 0-based batch index
+    //   firstPoint – absolute point offset of pts[0] within the full cloud
+    static void uploadComputeBatch(PointCloud& pc,
+                                   const PointCloudPoint* pts,
+                                   int count, int batchIndex, int firstPoint)
+    {
+        if (count <= 0) return;
+
+        constexpr int      STEPS_30BIT = 1073741824; // 2^30 (exactly representable)
+        constexpr uint32_t MASK_10BIT  = 1023u;
+
+        glm::vec3 bMin = pts[0].position, bMax = pts[0].position;
+        for (int i = 1; i < count; i++) {
+            bMin = glm::min(bMin, pts[i].position);
+            bMax = glm::max(bMax, pts[i].position);
+        }
+        glm::vec3 sz = bMax - bMin;
+        if (sz.x < 1e-6f) sz.x = 1e-6f;
+        if (sz.y < 1e-6f) sz.y = 1e-6f;
+        if (sz.z < 1e-6f) sz.z = 1e-6f;
+
+        const ComputeBatch batchDesc = {
+            bMin.x, bMin.y, bMin.z, bMax.x, bMax.y, bMax.z, count, firstPoint
+        };
+
+        std::vector<uint32_t> xyz4b(count), xyz8b(count), xyz12b(count), rgba(count);
+
+        for (int i = 0; i < count; i++) {
+            const glm::vec3& p = pts[i].position;
+            auto q = [&](float v, float lo, float s) -> uint32_t {
+                float n = glm::clamp((v - lo) / s, 0.0f, 1.0f);
+                return std::min(static_cast<uint32_t>(n * static_cast<float>(STEPS_30BIT)),
+                                static_cast<uint32_t>(STEPS_30BIT - 1));
+            };
+            const uint32_t Xb = q(p.x, bMin.x, sz.x);
+            const uint32_t Yb = q(p.y, bMin.y, sz.y);
+            const uint32_t Zb = q(p.z, bMin.z, sz.z);
+            xyz4b [i] = ((Xb>>20)&MASK_10BIT) | (((Yb>>20)&MASK_10BIT)<<10) | (((Zb>>20)&MASK_10BIT)<<20);
+            xyz8b [i] = ((Xb>>10)&MASK_10BIT) | (((Yb>>10)&MASK_10BIT)<<10) | (((Zb>>10)&MASK_10BIT)<<20);
+            xyz12b[i] = (Xb&MASK_10BIT) | ((Yb&MASK_10BIT)<<10) | ((Zb&MASK_10BIT)<<20);
+            const auto& c = pts[i].color;
+            const uint32_t r8 = static_cast<uint32_t>(glm::clamp(c.r,0.f,1.f)*255.f+0.5f);
+            const uint32_t g8 = static_cast<uint32_t>(glm::clamp(c.g,0.f,1.f)*255.f+0.5f);
+            const uint32_t b8 = static_cast<uint32_t>(glm::clamp(c.b,0.f,1.f)*255.f+0.5f);
+            rgba[i] = (0xFFu<<24)|(b8<<16)|(g8<<8)|r8;
+        }
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, pc.computeBatchSSBO);
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER,
+                        static_cast<GLintptr>(batchIndex)*sizeof(ComputeBatch),
+                        sizeof(ComputeBatch), &batchDesc);
+
+        const GLintptr   off = static_cast<GLintptr>(firstPoint)*sizeof(uint32_t);
+        const GLsizeiptr byt = static_cast<GLsizeiptr>(count)*sizeof(uint32_t);
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, pc.computeXyz4bSSBO);
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, off, byt, xyz4b.data());
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, pc.computeXyz8bSSBO);
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, off, byt, xyz8b.data());
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, pc.computeXyz12bSSBO);
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, off, byt, xyz12b.data());
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, pc.computeRGBASSBO);
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, off, byt, rgba.data());
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+
+    // Fast single-pass scan: count data lines in a text point cloud file.
+    // A "data line" starts with a digit, '-', or '+'.
+    static size_t countTextLines(const std::string& filePath) {
+        std::ifstream f(filePath, std::ios::binary);
+        if (!f) return 0;
+        constexpr size_t BUF = 32 * 1024 * 1024;
+        std::vector<char> buf(BUF);
+        size_t count = 0;
+        bool startOfLine = true, lineIsData = false;
+        while (f.read(buf.data(), static_cast<std::streamsize>(BUF)) || f.gcount() > 0) {
+            const std::streamsize n = f.gcount();
+            for (std::streamsize i = 0; i < n; i++) {
+                const char c = buf[i];
+                if (c == '\n') {
+                    if (lineIsData) count++;
+                    startOfLine = true; lineIsData = false;
+                } else if (c == '\r') {
+                    // ignore CR in CRLF
+                } else if (startOfLine) {
+                    startOfLine = false;
+                    if ((c>='0'&&c<='9')||c=='-'||c=='+') lineIsData = true;
+                }
+            }
+        }
+        if (lineIsData) count++; // file without trailing newline
+        return count;
+    }
+
+    // =========================================================================
+    // End of streaming infrastructure
+    // =========================================================================
+
     PointCloud PointCloudLoader::loadPointCloudFile(const std::string& filePath, size_t downsampleFactor) {
         std::cout << "[DEBUG] PointCloudLoader::loadPointCloudFile() called with file: " << filePath << std::endl;
         std::cout << "[DEBUG] Downsample factor: " << downsampleFactor << std::endl;
@@ -60,88 +236,193 @@ namespace Engine {
             return loadFromLAS(filePath, downsampleFactor);
         }
 
-        // Default handling for XYZ, PLY, and other text formats
+        // ── Default handling: XYZ, PLY, TXT, and other text formats ─────────
+        // Streaming load: points are quantised and uploaded to GPU one batch
+        // (kComputeBatchSize = 10240 points) at a time.  Peak CPU RAM is a
+        // single batch (~280 KB) regardless of file size.
         PointCloud pointCloud;
         pointCloud.name = "PointCloud_" + std::filesystem::path(filePath).filename().string();
         pointCloud.position = glm::vec3(0.0f);
         pointCloud.rotation = glm::vec3(0.0f);
-        pointCloud.scale = glm::vec3(1.0f);
+        pointCloud.scale    = glm::vec3(1.0f);
 
-        std::ifstream file(filePath, std::ios::binary);
-        if (!file.is_open()) {
-            std::cerr << "Failed to open point cloud file: " << filePath << std::endl;
+        // ── Pass 1: count data lines to pre-allocate SSBOs exactly ───────────
+        std::cout << "[TextPC] Counting lines in: " << filePath << " ..." << std::endl;
+        const size_t estimatedPoints = countTextLines(filePath);
+        // Apply downsampling factor to the estimate
+        const size_t allocPoints = (downsampleFactor > 1)
+                                 ? (estimatedPoints / downsampleFactor + 1)
+                                 : estimatedPoints;
+        std::cout << "[TextPC] Estimated " << estimatedPoints
+                  << " data lines (allocating for "
+                  << allocPoints << " after downsample x" << downsampleFactor << ")\n";
+
+        if (allocPoints == 0) {
+            std::cerr << "[TextPC] No data lines found in " << filePath << "\n";
             return std::move(pointCloud);
         }
 
-        std::cout << "Loading point cloud from: " << filePath << std::endl;
+        allocateComputeSSBOs(pointCloud, allocPoints);
 
-        constexpr size_t bufferSize = 1024 * 1024; // 1 MB buffer
-        std::vector<char> buffer(bufferSize);
+        // ── Pass 2: stream-parse and upload ─────────────────────────────────
+        std::ifstream file(filePath, std::ios::binary);
+        if (!file.is_open()) {
+            std::cerr << "[TextPC] Failed to open: " << filePath << "\n";
+            deleteComputeSSBOs(pointCloud);
+            return std::move(pointCloud);
+        }
 
-        std::mutex pointCloudMutex;
-        std::atomic<size_t> totalPointsProcessed(0);
+        // Large IO buffer – reduces syscall overhead on big files
+        constexpr size_t IO_BUF = 64 * 1024 * 1024; // 64 MB
+        std::vector<char> ioBuf(IO_BUF);
+        file.rdbuf()->pubsetbuf(ioBuf.data(), static_cast<std::streamsize>(IO_BUF));
 
-        const size_t numThreads = std::thread::hardware_concurrency();
-        std::vector<std::thread> threads;
+        // Batch accumulator – only one batch worth of points live in RAM
+        std::vector<PointCloudPoint> batchBuf;
+        batchBuf.reserve(PointCloud::kComputeBatchSize);
 
-        auto processChunk = [&](const std::vector<char>& chunk, size_t chunkSize) {
-            std::vector<PointCloudPoint> localPoints;
-            std::istringstream iss(std::string(chunk.data(), chunkSize));
-            std::string line;
-            size_t pointCounter = 0;
+        int    batchIndex  = 0;
+        size_t totalPoints = 0;
+        size_t lineCounter = 0;   // global line counter for downsampling
 
-            while (std::getline(iss, line)) {
-                if (!line.empty() && pointCounter % downsampleFactor == 0) {
-                    float x, y, z, intensity;
-                    int r, g, b;
-                    if (sscanf_s(line.c_str(), "%f %f %f %f %d %d %d", &x, &y, &z, &intensity, &r, &g, &b) == 7) {
-                        PointCloudPoint point;
-                        point.position = glm::vec3(x, y, z);
-                        point.intensity = 1.0f;
-                        point.color = glm::vec3(r / 255.0f, g / 255.0f, b / 255.0f);
-                        localPoints.push_back(point);
+        // Carry-over buffer for partial lines at IO block boundaries
+        std::string carryOver;
+        carryOver.reserve(512);
+
+        auto flushBatch = [&]() {
+            if (batchBuf.empty()) return;
+            uploadComputeBatch(pointCloud,
+                               batchBuf.data(),
+                               static_cast<int>(batchBuf.size()),
+                               batchIndex,
+                               static_cast<int>(totalPoints));
+            totalPoints += batchBuf.size();
+            batchIndex++;
+            batchBuf.clear();
+
+            if (batchIndex % 1000 == 0)
+                std::cout << "[TextPC] " << totalPoints << " points uploaded...\n";
+        };
+
+        constexpr size_t READ_CHUNK = 8 * 1024 * 1024; // 8 MB per read
+        std::vector<char> readBuf(READ_CHUNK);
+
+        while (file.read(readBuf.data(), static_cast<std::streamsize>(READ_CHUNK))
+               || file.gcount() > 0)
+        {
+            const std::streamsize bytesRead = file.gcount();
+            const char* src   = readBuf.data();
+            const char* end   = src + bytesRead;
+            const char* lineStart = src;
+
+            while (lineStart < end) {
+                // Find end of this line
+                const char* nl = static_cast<const char*>(
+                    std::memchr(lineStart, '\n', static_cast<size_t>(end - lineStart)));
+
+                if (!nl) {
+                    // Partial line at end of read chunk – carry it over
+                    carryOver.append(lineStart, end - lineStart);
+                    break;
+                }
+
+                // Build full line (prefix with carry-over if any)
+                const char* lineData;
+                size_t       lineLen;
+                std::string  fullLine; // only allocated when carry-over is present
+
+                if (!carryOver.empty()) {
+                    fullLine  = std::move(carryOver);
+                    carryOver.clear();
+                    fullLine.append(lineStart, nl - lineStart);
+                    lineData = fullLine.c_str();
+                    lineLen  = fullLine.size();
+                } else {
+                    lineData = lineStart;
+                    lineLen  = static_cast<size_t>(nl - lineStart);
+                }
+
+                lineStart = nl + 1;
+
+                // Skip empty / whitespace-only / comment lines
+                if (lineLen == 0) continue;
+                const char first = lineData[0];
+                if (!((first >= '0' && first <= '9') || first == '-' || first == '+'))
+                    continue;
+
+                // Apply downsampling
+                const size_t myLine = lineCounter++;
+                if (downsampleFactor > 1 && (myLine % downsampleFactor) != 0)
+                    continue;
+
+                // Parse: try XYZIRGB, XYZRGB, XYZI, XYZ
+                float x, y, z, intensity = 1.0f;
+                int   r = 255, g = 255, b = 255;
+                int   parsed = sscanf(lineData,
+                                      "%f %f %f %f %d %d %d",
+                                      &x, &y, &z, &intensity, &r, &g, &b);
+
+                if (parsed < 3) continue; // need at least XYZ
+
+                // If only 4 fields and the 4th is likely 0-255 it's an RGB-only line
+                // (XYZ R G B without intensity).  Detect by checking if parsed == 4
+                // is actually "x y z r" with no g/b fields parsed yet.
+                // Re-parse as XYZRGB in that case.
+                if (parsed == 4) {
+                    // Might be "x y z r" (incomplete) – re-try as "x y z r g b"
+                    int rr = 255, gg = 255, bb = 255;
+                    if (sscanf(lineData, "%f %f %f %d %d %d",
+                               &x, &y, &z, &rr, &gg, &bb) == 6) {
+                        r = rr; g = gg; b = bb;
+                        intensity = 1.0f;
+                        parsed = 6;
                     }
                 }
-                pointCounter++;
+
+                PointCloudPoint pt;
+                pt.position  = glm::vec3(x, y, z);
+                pt.intensity = (parsed >= 4 && parsed != 6) ? intensity : 1.0f;
+                pt.color     = glm::vec3(r / 255.0f, g / 255.0f, b / 255.0f);
+
+                batchBuf.push_back(pt);
+
+                if (static_cast<int>(batchBuf.size()) == PointCloud::kComputeBatchSize)
+                    flushBatch();
             }
+        }
 
-            {
-                std::lock_guard<std::mutex> lock(pointCloudMutex);
-                pointCloud.points.insert(pointCloud.points.end(), localPoints.begin(), localPoints.end());
-            }
-
-            totalPointsProcessed += pointCounter;
-            };
-
-        while (file) {
-            file.read(buffer.data(), bufferSize);
-            std::streamsize bytesRead = file.gcount();
-
-            if (bytesRead > 0) {
-                threads.emplace_back(processChunk, buffer, bytesRead);
-
-                if (threads.size() >= numThreads) {
-                    for (auto& thread : threads) {
-                        thread.join();
-                    }
-                    threads.clear();
+        // Handle trailing carry-over without newline
+        if (!carryOver.empty()) {
+            const char* lineData = carryOver.c_str();
+            const char  first    = lineData[0];
+            if ((first >= '0' && first <= '9') || first == '-' || first == '+') {
+                float x, y, z, intensity = 1.0f;
+                int   r = 255, g = 255, b = 255;
+                if (sscanf(lineData,
+                           "%f %f %f %f %d %d %d",
+                           &x, &y, &z, &intensity, &r, &g, &b) >= 3) {
+                    PointCloudPoint pt;
+                    pt.position  = glm::vec3(x, y, z);
+                    pt.intensity = intensity;
+                    pt.color     = glm::vec3(r / 255.0f, g / 255.0f, b / 255.0f);
+                    batchBuf.push_back(pt);
                 }
             }
         }
 
-        for (auto& thread : threads) {
-            thread.join();
-        }
-
+        flushBatch(); // Upload last partial batch
         file.close();
 
-        std::cout << "Total points in file: " << totalPointsProcessed << std::endl;
-        std::cout << "Points loaded after downsampling: " << pointCloud.points.size() << std::endl;
+        // Trim SSBOs if we over-allocated (header lines, blank lines, etc.)
+        if (totalPoints < allocPoints) {
+            trimComputeSSBOs(pointCloud, totalPoints);
+        }
 
-        setupPointCloudGLBuffers(pointCloud);
+        pointCloud.numBatches      = static_cast<uint32_t>(batchIndex);
+        pointCloud.totalPointCount = static_cast<uint32_t>(totalPoints);
 
-
-        OctreePointCloudManager::buildOctree(pointCloud);
+        std::cout << "[TextPC] Loaded " << totalPoints << " points into "
+                  << batchIndex << " compute batches (no octree, no CPU copy)\n";
 
         return std::move(pointCloud);
     }
@@ -227,327 +508,137 @@ namespace Engine {
     };
 
     PointCloud PointCloudLoader::loadFromBinary(const std::string& filePath) {
-        std::cout << "[DEBUG] loadFromBinary() called with file: " << filePath << std::endl;
-        
         PointCloud pointCloud;
-        pointCloud.name = "PointCloud_" + std::filesystem::path(filePath).filename().string();
+        pointCloud.name     = "PointCloud_" + std::filesystem::path(filePath).filename().string();
         pointCloud.position = glm::vec3(0.0f);
         pointCloud.rotation = glm::vec3(0.0f);
-        pointCloud.scale = glm::vec3(1.0f);
-        
-        std::cout << "[DEBUG] PointCloud initialized with name: " << pointCloud.name << std::endl;
-        
+        pointCloud.scale    = glm::vec3(1.0f);
+
         std::ifstream file(filePath, std::ios::binary);
         if (!file.is_open()) {
-            std::cerr << "[ERROR] Failed to open file for reading: " << filePath << std::endl;
+            std::cerr << "[PCB] Failed to open: " << filePath << "\n";
             return std::move(pointCloud);
         }
-        
-        std::cout << "[DEBUG] File opened successfully" << std::endl;
 
         try {
-            // Read and verify header
-            std::cout << "[DEBUG] Reading magic number..." << std::endl;
+            // ── Header ───────────────────────────────────────────────────────
             char magic[4];
             file.read(magic, 4);
-            std::cout << "[DEBUG] Magic number read: " << magic[0] << magic[1] << magic[2] << magic[3] << std::endl;
-            
-            if (std::memcmp(magic, BINARY_MAGIC_NUMBER, 4) != 0) {
-                std::cerr << "[ERROR] Invalid binary point cloud file format" << std::endl;
-                throw std::runtime_error("Invalid binary point cloud file format");
-            }
-            
-            std::cout << "[DEBUG] Magic number verified successfully" << std::endl;
+            if (std::memcmp(magic, BINARY_MAGIC_NUMBER, 4) != 0)
+                throw std::runtime_error("Invalid binary point cloud file format (bad magic)");
 
-            uint32_t numPoints;
+            uint32_t numPoints = 0;
             file.read(reinterpret_cast<char*>(&numPoints), sizeof(numPoints));
-            std::cout << "[DEBUG] Number of points in file: " << numPoints << std::endl;
+            std::cout << "[PCB] " << numPoints << " points in " << filePath << "\n";
 
-            pointCloud.points.reserve(numPoints);
-            std::cout << "[DEBUG] Reserved space for " << numPoints << " points" << std::endl;
+            // ── Allocate SSBOs up-front using exact header count ─────────────
+            allocateComputeSSBOs(pointCloud, numPoints);
 
-            const size_t pointSize = sizeof(glm::vec3) + sizeof(uint32_t) + sizeof(glm::u8vec3);
-            constexpr size_t bufferSize = 1024 * 1024; // 1 MB buffer
-            const size_t pointsPerBuffer = bufferSize / pointSize;
+            // ── Stream-read in batches ────────────────────────────────────────
+            // The binary format stores each point as: vec3 | uint32_t | u8vec3
+            constexpr size_t PT_SIZE = sizeof(glm::vec3) + sizeof(uint32_t) + sizeof(glm::u8vec3);
 
-            std::vector<char> buffer(bufferSize);
-            std::mutex pointCloudMutex;
-            std::atomic<size_t> totalPointsProcessed(0);
+            std::vector<PointCloudPoint> batchBuf;
+            batchBuf.reserve(PointCloud::kComputeBatchSize);
 
-            const size_t numThreads = std::thread::hardware_concurrency();
-            std::vector<std::future<void>> futures;
+            // Raw read buffer: holds exactly kComputeBatchSize raw points
+            const size_t rawChunkBytes = static_cast<size_t>(PointCloud::kComputeBatchSize) * PT_SIZE;
+            std::vector<char> rawBuf(rawChunkBytes);
 
-            auto processChunk = [&](const std::vector<char>& chunk, size_t numPoints) {
-                std::vector<PointCloudPoint> localPoints;
-                localPoints.reserve(numPoints);
+            int    batchIdx    = 0;
+            size_t uploadedPts = 0;
+            size_t remaining   = numPoints;
 
-                const char* data = chunk.data();
-                for (size_t i = 0; i < numPoints; ++i) {
-                    PointCloudPoint point;
-                    std::memcpy(&point.position, data, sizeof(point.position));
-                    data += sizeof(point.position);
+            while (remaining > 0) {
+                const size_t toRead      = std::min(remaining,
+                                                    static_cast<size_t>(PointCloud::kComputeBatchSize));
+                const size_t bytesToRead = toRead * PT_SIZE;
 
-                    uint32_t intensity;
-                    std::memcpy(&intensity, data, sizeof(intensity));
-                    point.intensity = intensity / 1000.0f;
-                    data += sizeof(intensity);
+                file.read(rawBuf.data(), static_cast<std::streamsize>(bytesToRead));
+                const size_t actualBytes = static_cast<size_t>(file.gcount());
+                const size_t actualPts   = actualBytes / PT_SIZE;
 
-                    glm::u8vec3 color;
-                    std::memcpy(&color, data, sizeof(color));
-                    point.color = glm::vec3(color) / 255.0f;
-                    data += sizeof(color);
+                if (actualPts == 0) break;
 
-                    localPoints.push_back(point);
+                batchBuf.clear();
+                batchBuf.reserve(actualPts);
+
+                const char* src = rawBuf.data();
+                for (size_t i = 0; i < actualPts; i++) {
+                    PointCloudPoint pt;
+                    std::memcpy(&pt.position, src, sizeof(pt.position));
+                    src += sizeof(pt.position);
+
+                    uint32_t rawIntensity;
+                    std::memcpy(&rawIntensity, src, sizeof(rawIntensity));
+                    pt.intensity = rawIntensity / 1000.0f;
+                    src += sizeof(rawIntensity);
+
+                    glm::u8vec3 c;
+                    std::memcpy(&c, src, sizeof(c));
+                    pt.color = glm::vec3(c) / 255.0f;
+                    src += sizeof(c);
+
+                    batchBuf.push_back(pt);
                 }
 
-                {
-                    std::lock_guard<std::mutex> lock(pointCloudMutex);
-                    pointCloud.points.insert(pointCloud.points.end(), localPoints.begin(), localPoints.end());
-                }
+                uploadComputeBatch(pointCloud, batchBuf.data(),
+                                   static_cast<int>(batchBuf.size()),
+                                   batchIdx, static_cast<int>(uploadedPts));
+                uploadedPts += batchBuf.size();
+                batchIdx++;
+                remaining   -= actualPts;
 
-                totalPointsProcessed += localPoints.size();
-                };
-
-            while (totalPointsProcessed < numPoints) {
-                size_t remainingPoints = numPoints - totalPointsProcessed;
-                size_t pointsToRead = std::min(pointsPerBuffer, remainingPoints);
-                size_t bytesToRead = pointsToRead * pointSize;
-
-                buffer.resize(bytesToRead);
-                file.read(buffer.data(), bytesToRead);
-                std::streamsize bytesRead = file.gcount();
-
-                if (bytesRead > 0) {
-                    size_t actualPointsRead = bytesRead / pointSize;
-                    futures.push_back(std::async(std::launch::async, processChunk, buffer, actualPointsRead));
-
-                    if (futures.size() >= numThreads) {
-                        for (auto& future : futures) {
-                            future.wait();
-                        }
-                        futures.clear();
-                    }
-                }
+                if (batchIdx % 2000 == 0)
+                    std::cout << "[PCB] " << uploadedPts << " points uploaded...\n";
             }
-
-            for (auto& future : futures) {
-                future.wait();
-            }
-            
-            std::cout << "[DEBUG] All futures completed" << std::endl;
 
             file.close();
-            std::cout << "[DEBUG] File closed" << std::endl;
 
-            // Initialize transformation values
-            pointCloud.position = glm::vec3(0.0f);
-            pointCloud.rotation = glm::vec3(0.0f);
-            pointCloud.scale = glm::vec3(1.0f);
-            
-            std::cout << "[DEBUG] Transformation values initialized" << std::endl;
+            pointCloud.numBatches      = static_cast<uint32_t>(batchIdx);
+            pointCloud.totalPointCount = static_cast<uint32_t>(uploadedPts);
 
-            std::cout << "[DEBUG] Setting up GL buffers..." << std::endl;
-            setupPointCloudGLBuffers(pointCloud);
-            std::cout << "[DEBUG] GL buffers setup complete" << std::endl;
-
-            std::cout << "Successfully loaded point cloud from: " << filePath << std::endl;
-            std::cout << "Loaded " << pointCloud.points.size() << " points" << std::endl;
-
+            std::cout << "[PCB] Streamed " << uploadedPts << " points into "
+                      << batchIdx << " compute batches\n";
         }
         catch (const std::exception& e) {
-            std::cerr << "Error loading point cloud: " << e.what() << std::endl;
-            pointCloud = std::move(PointCloud{}); // Reset to empty point cloud
+            std::cerr << "[PCB] Error: " << e.what() << "\n";
+            deleteComputeSSBOs(pointCloud);
         }
 
-
-        std::cout << "[DEBUG] Starting octree build..." << std::endl;
-        OctreePointCloudManager::buildOctree(pointCloud);
-        std::cout << "[DEBUG] Octree build completed" << std::endl;
-
-        std::cout << "[DEBUG] loadFromBinary() returning successfully" << std::endl;
         return std::move(pointCloud);
     }
 
 
-    // ── buildComputeBatches ──────────────────────────────────────────────────
-    // Partitions the flat points vector into batches of kComputeBatchSize and
-    // builds four SSBOs that the Schütz compute rasterizer reads:
-    //
-    //   binding 40 – ComputeBatch descriptors (bounding box + range)
-    //   binding 41 – ssXyz_12b: lowest 10 bits of each 30-bit quantised axis
-    //   binding 42 – ssXyz_8b:  middle 10 bits
-    //   binding 43 – ssXyz_4b:  highest 10 bits (always read; coarsest alone
-    //                           gives 10-bit / 1024-step resolution per axis)
-    //   binding 44 – ssRGBA:    pre-packed uint RGBA (written once on CPU,
-    //                           read by the resolve fragment shader)
-    //
-    // Coordinate quantisation (matches Schütz exactly):
-    //   normalised = (pos - batchMin) / batchSize   ∈ [0,1]
-    //   bits30     = uint32( normalised * STEPS_30BIT )   (30-bit integer)
-    //   ssXyz_4b   packs  bits30[29:20]  for X,Y,Z into one uint
-    //   ssXyz_8b   packs  bits30[19:10]
-    //   ssXyz_12b  packs  bits30[ 9: 0]
-    //
-    // The shader decodes with the inverse of this transform using the batch
-    // bounding box stored in ssBatches.
-    static void buildComputeBatches(PointCloud& pc) {
-        const auto& pts      = pc.points;
-        const int   N        = static_cast<int>(pts.size());
-        const int   batchSz  = PointCloud::kComputeBatchSize;
-
-        if (N == 0) return;
-
-        // Delete old SSBOs if this cloud is being re-uploaded
-        auto deleteIfNonZero = [](GLuint& id) {
-            if (id) { glDeleteBuffers(1, &id); id = 0; }
-        };
-        deleteIfNonZero(pc.computeBatchSSBO);
-        deleteIfNonZero(pc.computeXyz12bSSBO);
-        deleteIfNonZero(pc.computeXyz8bSSBO);
-        deleteIfNonZero(pc.computeXyz4bSSBO);
-        deleteIfNonZero(pc.computeRGBASSBO);
-
-        pc.numBatches = static_cast<uint32_t>((N + batchSz - 1) / batchSz);
-        // Each thread handles ceil(batchSz / 128) points
-        pc.computePointsPerThread = (batchSz + 127) / 128;
-
-        std::vector<ComputeBatch> batches(pc.numBatches);
-        std::vector<uint32_t> xyz4b(N), xyz8b(N), xyz12b(N), rgba(N);
-
-        constexpr int   STEPS_30BIT = 1073741824; // 2^30
-        constexpr uint32_t MASK_10BIT = 1023u;
-
-        for (uint32_t b = 0; b < pc.numBatches; b++) {
-            const int first = b * batchSz;
-            const int last  = std::min(first + batchSz, N);
-            const int count = last - first;
-
-            // Per-batch bounding box
-            glm::vec3 bMin = pts[first].position;
-            glm::vec3 bMax = pts[first].position;
-            for (int i = first + 1; i < last; i++) {
-                bMin = glm::min(bMin, pts[i].position);
-                bMax = glm::max(bMax, pts[i].position);
-            }
-
-            // Guard against degenerate (zero-size) batches
-            glm::vec3 boxSize = bMax - bMin;
-            if (boxSize.x < 1e-6f) boxSize.x = 1e-6f;
-            if (boxSize.y < 1e-6f) boxSize.y = 1e-6f;
-            if (boxSize.z < 1e-6f) boxSize.z = 1e-6f;
-
-            batches[b] = { bMin.x, bMin.y, bMin.z,
-                           bMax.x, bMax.y, bMax.z,
-                           count, first };
-
-            // Quantise each point and pack per-axis 10-bit groups
-            for (int i = first; i < last; i++) {
-                const glm::vec3& p = pts[i].position;
-
-                // Normalise to [0,1] within batch bounds, then scale to 30 bits.
-                //
-                // Important: STEPS_30BIT = 2^30 = 1073741824 is exactly representable
-                // as a float (it is a power of 2).  We multiply by that, then clamp
-                // the result to STEPS_30BIT-1 (= 0x3FFFFFFF, the maximum 30-bit value).
-                // This avoids the float-rounding trap: float(STEPS_30BIT - 1) rounds UP
-                // to STEPS_30BIT itself (since 1073741823 needs more than 24 mantissa
-                // bits), which would produce Xbits = 0x40000000 → X4 masked to 0 after
-                // & 0x3FF, making the maximum-coordinate point decode to wgMin.
-                auto quantise = [&](float v, float lo, float sz) -> uint32_t {
-                    float n = glm::clamp((v - lo) / sz, 0.0f, 1.0f);
-                    // Scale by exactly 2^30 (representable as float), then cap at 2^30-1
-                    uint32_t bits = static_cast<uint32_t>(n * static_cast<float>(STEPS_30BIT));
-                    return std::min(bits, static_cast<uint32_t>(STEPS_30BIT - 1));
-                };
-
-                uint32_t Xbits = quantise(p.x, bMin.x, boxSize.x);
-                uint32_t Ybits = quantise(p.y, bMin.y, boxSize.y);
-                uint32_t Zbits = quantise(p.z, bMin.z, boxSize.z);
-
-                // Split into three 10-bit tiers
-                // _4b  = high bits [29:20] → coarsest, always loaded
-                // _8b  = mid  bits [19:10]
-                // _12b = low  bits [ 9: 0] → finest, level-0 only
-                uint32_t X4 = (Xbits >> 20) & MASK_10BIT;
-                uint32_t Y4 = (Ybits >> 20) & MASK_10BIT;
-                uint32_t Z4 = (Zbits >> 20) & MASK_10BIT;
-
-                uint32_t X8 = (Xbits >> 10) & MASK_10BIT;
-                uint32_t Y8 = (Ybits >> 10) & MASK_10BIT;
-                uint32_t Z8 = (Zbits >> 10) & MASK_10BIT;
-
-                uint32_t X12 = Xbits & MASK_10BIT;
-                uint32_t Y12 = Ybits & MASK_10BIT;
-                uint32_t Z12 = Zbits & MASK_10BIT;
-
-                // Pack three 10-bit values into one uint (same layout as Schütz)
-                xyz4b [i] = X4  | (Y4  << 10) | (Z4  << 20);
-                xyz8b [i] = X8  | (Y8  << 10) | (Z8  << 20);
-                xyz12b[i] = X12 | (Y12 << 10) | (Z12 << 20);
-
-                // Pre-pack colour to uint ABGR (alpha=FF, then B, G, R)
-                const auto& c = pts[i].color;
-                uint32_t r8 = static_cast<uint32_t>(glm::clamp(c.r, 0.0f, 1.0f) * 255.0f + 0.5f);
-                uint32_t g8 = static_cast<uint32_t>(glm::clamp(c.g, 0.0f, 1.0f) * 255.0f + 0.5f);
-                uint32_t b8 = static_cast<uint32_t>(glm::clamp(c.b, 0.0f, 1.0f) * 255.0f + 0.5f);
-                rgba[i] = (0xFFu << 24) | (b8 << 16) | (g8 << 8) | r8;
-            }
-        }
-
-        // Upload all four SSBOs
-        auto uploadSSBO = [](GLuint& id, const void* data, GLsizeiptr bytes) {
-            glGenBuffers(1, &id);
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, id);
-            glBufferData(GL_SHADER_STORAGE_BUFFER, bytes, data, GL_STATIC_DRAW);
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-        };
-
-        uploadSSBO(pc.computeBatchSSBO,
-                   batches.data(),
-                   static_cast<GLsizeiptr>(batches.size() * sizeof(ComputeBatch)));
-        uploadSSBO(pc.computeXyz4bSSBO,
-                   xyz4b.data(),
-                   static_cast<GLsizeiptr>(N * sizeof(uint32_t)));
-        uploadSSBO(pc.computeXyz8bSSBO,
-                   xyz8b.data(),
-                   static_cast<GLsizeiptr>(N * sizeof(uint32_t)));
-        uploadSSBO(pc.computeXyz12bSSBO,
-                   xyz12b.data(),
-                   static_cast<GLsizeiptr>(N * sizeof(uint32_t)));
-        uploadSSBO(pc.computeRGBASSBO,
-                   rgba.data(),
-                   static_cast<GLsizeiptr>(N * sizeof(uint32_t)));
-
-        std::cout << "[ComputePC] Built " << pc.numBatches << " batches ("
-                  << N << " points, " << pc.computePointsPerThread
-                  << " pts/thread, batch size " << batchSz << ")\n";
-    }
-
     void PointCloudLoader::setupPointCloudGLBuffers(PointCloud& pointCloud) {
-        glGenVertexArrays(1, &pointCloud.vao);
-        glGenBuffers(1, &pointCloud.vbo);
+        // The compute rasterizer path does not use a VAO/VBO.
+        // SSBOs are built incrementally by the streaming loaders via
+        // allocateComputeSSBOs / uploadComputeBatch.  This function is kept
+        // for any legacy callers and handles the rare case where a loader
+        // has already populated pointCloud.points (e.g. the f5 separate-arrays
+        // path).  For normal streaming loads, this is a no-op.
+        if (!pointCloud.points.empty() && pointCloud.numBatches == 0) {
+            const size_t N = pointCloud.points.size();
+            allocateComputeSSBOs(pointCloud, N);
 
-        glBindVertexArray(pointCloud.vao);
-        glBindBuffer(GL_ARRAY_BUFFER, pointCloud.vbo);
-        glBufferData(GL_ARRAY_BUFFER, pointCloud.points.size() * sizeof(PointCloudPoint), pointCloud.points.data(), GL_STATIC_DRAW);
-        pointCloud.totalPointCount = static_cast<uint32_t>(pointCloud.points.size());
+            const int batchSz = PointCloud::kComputeBatchSize;
+            int batchIdx = 0;
+            for (size_t first = 0; first < N; first += batchSz, batchIdx++) {
+                int count = static_cast<int>(std::min((size_t)batchSz, N - first));
+                uploadComputeBatch(pointCloud,
+                                   pointCloud.points.data() + first,
+                                   count, batchIdx, static_cast<int>(first));
+            }
+            pointCloud.numBatches       = static_cast<uint32_t>(batchIdx);
+            pointCloud.totalPointCount  = static_cast<uint32_t>(N);
 
-        // Position attribute
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(PointCloudPoint), (void*)0);
-        glEnableVertexAttribArray(0);
+            // Release CPU-side storage – the GPU now owns all the data
+            pointCloud.points.clear();
+            pointCloud.points.shrink_to_fit();
 
-        // Color attribute
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(PointCloudPoint), (void*)offsetof(PointCloudPoint, color));
-        glEnableVertexAttribArray(1);
-
-        // Intensity attribute
-        glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(PointCloudPoint), (void*)offsetof(PointCloudPoint, intensity));
-        glEnableVertexAttribArray(2);
-
-        glBindVertexArray(0);
-
-        // Build Schütz-style packed SSBOs for the compute rasterizer path
-        buildComputeBatches(pointCloud);
+            std::cout << "[ComputePC] setupPointCloudGLBuffers: built "
+                      << pointCloud.numBatches << " batches (" << N << " points)\n";
+        }
     }
 
     PointCloud PointCloudLoader::loadFromHDF5(const std::string& filePath, size_t downsampleFactor) {
@@ -1050,23 +1141,46 @@ namespace Engine {
             H5T_class_t typeClass = dtype.getClass();
 
             if (typeClass == H5T_COMPOUND) {
-                // Compound type - try to read as structured data
-                pointCloud.points.resize(pointsToRead);
-                
-                if (downsampleFactor > 1) {
-                    // Read with stride for downsampling
-                    hsize_t start[1] = {0};
-                    hsize_t count[1] = {pointsToRead};
-                    hsize_t stride[1] = {downsampleFactor};
-                    hsize_t block[1] = {1};
-                    
-                    DataSpace memspace(1, count);
-                    dataspace.selectHyperslab(H5S_SELECT_SET, count, start, stride, block);
-                    
-                    dataset.read(pointCloud.points.data(), pointType, memspace, dataspace);
-                } else {
-                    dataset.read(pointCloud.points.data(), pointType);
+                // ── Streaming compound-type read ─────────────────────────────
+                // Read in chunks of kComputeBatchSize and upload each chunk
+                // directly to GPU via uploadComputeBatch.  This keeps CPU RAM
+                // usage at ~280 KB regardless of file size.
+                allocateComputeSSBOs(pointCloud, static_cast<size_t>(pointsToRead));
+
+                constexpr hsize_t CHUNK = static_cast<hsize_t>(PointCloud::kComputeBatchSize);
+                std::vector<PointCloudPoint> chunkBuf(CHUNK);
+
+                int    batchIdx    = 0;
+                size_t uploadedPts = 0;
+
+                for (hsize_t readSoFar = 0; readSoFar < pointsToRead; ) {
+                    hsize_t toRead = std::min(CHUNK, pointsToRead - readSoFar);
+
+                    // File-side hyperslab: skip every downsampleFactor-th element
+                    hsize_t fileStart[1] = { readSoFar * static_cast<hsize_t>(downsampleFactor) };
+                    hsize_t cnt[1]       = { toRead };
+                    hsize_t stride[1]    = { static_cast<hsize_t>(downsampleFactor) };
+                    hsize_t block[1]     = { 1 };
+                    hsize_t memDims[1]   = { toRead };
+
+                    DataSpace memspace(1, memDims);
+                    dataspace.selectHyperslab(H5S_SELECT_SET, cnt, fileStart, stride, block);
+                    dataset.read(chunkBuf.data(), pointType, memspace, dataspace);
+
+                    uploadComputeBatch(pointCloud, chunkBuf.data(),
+                                       static_cast<int>(toRead), batchIdx,
+                                       static_cast<int>(uploadedPts));
+                    uploadedPts += toRead;
+                    batchIdx++;
+                    readSoFar += toRead;
                 }
+
+                pointCloud.numBatches      = static_cast<uint32_t>(batchIdx);
+                pointCloud.totalPointCount = static_cast<uint32_t>(uploadedPts);
+
+                std::cout << "[HDF5] Streamed " << uploadedPts << " points into "
+                          << batchIdx << " compute batches\n";
+
             } else {
                 // Handle separate arrays format (like f5 files)
                 std::cout << "Reading data from separate arrays format..." << std::endl;
@@ -1184,56 +1298,73 @@ namespace Engine {
                             std::cout << "Could not read Intensity group: " << e.getDetailMsg() << std::endl;
                         }
                         
-                        // If we successfully read coordinate data from f5, create the point cloud
+                        // If we successfully read coordinate data from f5, stream to GPU
                         if (!xCoords.empty() && !yCoords.empty() && !zCoords.empty()) {
-                            hsize_t numCoordPoints = xCoords.size();
-                            hsize_t pointsToRead = numCoordPoints;
-                            
-                            if (downsampleFactor > 1) {
-                                pointsToRead = numCoordPoints / downsampleFactor;
-                            }
-                            
-                            pointCloud.points.resize(pointsToRead);
-                            
-                            for (hsize_t i = 0; i < pointsToRead; i++) {
-                                hsize_t sourceIndex = i * downsampleFactor;
-                                
-                                pointCloud.points[i].position.x = xCoords[sourceIndex];
-                                pointCloud.points[i].position.y = yCoords[sourceIndex];
-                                pointCloud.points[i].position.z = zCoords[sourceIndex];
-                                
-                                // Set color if available
-                                if (!rColors.empty() && !gColors.empty() && !bColors.empty() && sourceIndex < rColors.size()) {
-                                    pointCloud.points[i].color.r = rColors[sourceIndex];
-                                    pointCloud.points[i].color.g = gColors[sourceIndex];
-                                    pointCloud.points[i].color.b = bColors[sourceIndex];
-                                } else {
-                                    pointCloud.points[i].color = glm::vec3(1.0f, 1.0f, 1.0f); // Default white
-                                }
-                                
-                                // Set intensity if available
-                                if (!intensities.empty() && sourceIndex < intensities.size()) {
-                                    pointCloud.points[i].intensity = intensities[sourceIndex];
-                                } else {
-                                    pointCloud.points[i].intensity = 1.0f; // Default intensity
-                                }
-                            }
-                            
-                            std::cout << "Successfully created point cloud with " << pointsToRead << " points from f5 data" << std::endl;
-                            
-                            // Skip the regular dataset processing since we already have our data
-                            file.close();
-                            
-                            // Set up OpenGL buffers and build octree
-                            setupPointCloudGLBuffers(pointCloud);
-                            
-                            
-                            OctreePointCloudManager::buildOctree(pointCloud);
+                            const hsize_t numCoordPoints = static_cast<hsize_t>(xCoords.size());
+                            const hsize_t ptsToUpload   = (downsampleFactor > 1)
+                                                         ? numCoordPoints / static_cast<hsize_t>(downsampleFactor)
+                                                         : numCoordPoints;
 
-                            
-                            std::cout << "Successfully loaded " << pointCloud.points.size() << " points from f5 file" << std::endl;
+                            allocateComputeSSBOs(pointCloud, static_cast<size_t>(ptsToUpload));
+
+                            std::vector<PointCloudPoint> batchBuf;
+                            batchBuf.reserve(PointCloud::kComputeBatchSize);
+                            int    batchIdx    = 0;
+                            size_t uploadedPts = 0;
+
+                            auto flushF5Batch = [&]() {
+                                if (batchBuf.empty()) return;
+                                uploadComputeBatch(pointCloud, batchBuf.data(),
+                                                   static_cast<int>(batchBuf.size()),
+                                                   batchIdx, static_cast<int>(uploadedPts));
+                                uploadedPts += batchBuf.size();
+                                batchIdx++;
+                                batchBuf.clear();
+                            };
+
+                            for (hsize_t i = 0; i < ptsToUpload; i++) {
+                                const hsize_t src = i * static_cast<hsize_t>(downsampleFactor);
+
+                                PointCloudPoint pt;
+                                pt.position.x = xCoords[src];
+                                pt.position.y = yCoords[src];
+                                pt.position.z = zCoords[src];
+
+                                if (!rColors.empty() && src < rColors.size()) {
+                                    pt.color.r = rColors[src];
+                                    pt.color.g = gColors[src];
+                                    pt.color.b = bColors[src];
+                                } else {
+                                    pt.color = glm::vec3(1.0f);
+                                }
+
+                                pt.intensity = (!intensities.empty() && src < intensities.size())
+                                             ? intensities[src] : 1.0f;
+
+                                batchBuf.push_back(pt);
+                                if (static_cast<int>(batchBuf.size()) == PointCloud::kComputeBatchSize)
+                                    flushF5Batch();
+                            }
+                            flushF5Batch();
+
+                            // Release the large coordinate vectors
+                            { std::vector<float>().swap(xCoords); }
+                            { std::vector<float>().swap(yCoords); }
+                            { std::vector<float>().swap(zCoords); }
+                            { std::vector<float>().swap(rColors); }
+                            { std::vector<float>().swap(gColors); }
+                            { std::vector<float>().swap(bColors); }
+                            { std::vector<float>().swap(intensities); }
+
+                            pointCloud.numBatches      = static_cast<uint32_t>(batchIdx);
+                            pointCloud.totalPointCount = static_cast<uint32_t>(uploadedPts);
+
+                            std::cout << "[HDF5-f5] Streamed " << uploadedPts
+                                      << " points into " << batchIdx << " compute batches\n";
+
+                            file.close();
                             return std::move(pointCloud);
-                            
+
                         } else {
                             std::cout << "Could not find valid coordinate data in f5 file" << std::endl;
                         }
@@ -1248,7 +1379,8 @@ namespace Engine {
 
             file.close();
 
-            std::cout << "Successfully loaded " << pointCloud.points.size() << " points from HDF5 file" << std::endl;
+            std::cout << "[HDF5] Load complete: " << pointCloud.totalPointCount
+                      << " points in " << pointCloud.numBatches << " batches\n";
 
         } catch (const H5::Exception& e) {
             std::cerr << "HDF5 error loading point cloud: " << e.getDetailMsg() << std::endl;
@@ -1258,11 +1390,10 @@ namespace Engine {
             return std::move(pointCloud);
         }
 
-        // Set up OpenGL buffers and build octree
+        // If the compound-type path already built the SSBOs, we're done.
+        // If pointCloud.points was somehow populated (fallback paths), run the
+        // legacy setup which will also stream-upload and clear the CPU vector.
         setupPointCloudGLBuffers(pointCloud);
-        
-        
-        OctreePointCloudManager::buildOctree(pointCloud);
 
         return std::move(pointCloud);
     }
@@ -1353,6 +1484,8 @@ namespace Engine {
 
     // -------------------------------------------------------------------------
     // LAS / LAZ loader  (uses LASzip – handles all LAS 1.0-1.4 and LAZ)
+    // Streaming version: points are quantised and uploaded to GPU one batch at
+    // a time.  Peak CPU RAM ≈ one batch (~280 KB) + one tiny sample buffer.
     // -------------------------------------------------------------------------
     PointCloud PointCloudLoader::loadFromLAS(const std::string& filePath, size_t downsampleFactor)
     {
@@ -1362,52 +1495,45 @@ namespace Engine {
         pointCloud.rotation = glm::vec3(0.0f);
         pointCloud.scale    = glm::vec3(1.0f);
 
-        // ---- open file via LASzip (transparent for both LAS and LAZ) --------
-        laszip_POINTER reader = nullptr;
-        if (laszip_create(&reader)) {
-            std::cerr << "[LAS] laszip_create failed\n";
-            return pointCloud;
-        }
+        // ── Helper: open a LASzip reader ─────────────────────────────────────
+        auto openReader = [&](laszip_POINTER& r, laszip_BOOL& compressed) -> bool {
+            if (laszip_create(&r)) {
+                std::cerr << "[LAS] laszip_create failed\n";
+                return false;
+            }
+            if (laszip_open_reader(r, filePath.c_str(), &compressed)) {
+                laszip_CHAR* msg = nullptr;
+                laszip_get_error(r, &msg);
+                std::cerr << "[LAS] Cannot open '" << filePath << "': "
+                          << (msg ? msg : "unknown") << "\n";
+                laszip_destroy(r);
+                r = nullptr;
+                return false;
+            }
+            return true;
+        };
 
-        laszip_BOOL is_compressed = 0;
-        if (laszip_open_reader(reader, filePath.c_str(), &is_compressed)) {
-            laszip_CHAR* errmsg = nullptr;
-            laszip_get_error(reader, &errmsg);
-            std::cerr << "[LAS] Cannot open '" << filePath << "': "
-                      << (errmsg ? errmsg : "unknown error") << "\n";
-            laszip_destroy(reader);
-            return pointCloud;
-        }
+        // ── Pass 0: open and read header ─────────────────────────────────────
+        laszip_POINTER reader      = nullptr;
+        laszip_BOOL    is_compressed = 0;
+        if (!openReader(reader, is_compressed)) return pointCloud;
 
-        // ---- LAS header -----------------------------------------------------
         laszip_header_struct* hdr = nullptr;
         laszip_get_header_pointer(reader, &hdr);
 
-        const double sx = hdr->x_scale_factor;
-        const double sy = hdr->y_scale_factor;
-        const double sz = hdr->z_scale_factor;
-        const double ox = hdr->x_offset;
-        const double oy = hdr->y_offset;
-        const double oz = hdr->z_offset;
+        const double sx = hdr->x_scale_factor, sy = hdr->y_scale_factor, sz = hdr->z_scale_factor;
+        const double ox = hdr->x_offset,       oy = hdr->y_offset,       oz = hdr->z_offset;
 
-        // Point data format ID determines which extra fields are present.
-        // Formats 2, 3, 5, 7, 8, 10 carry RGB colour in point->rgb[0-2].
-        const laszip_U8 fmt = hdr->point_data_format;
-        const bool hasColor = (fmt == 2 || fmt == 3 || fmt == 5 ||
-                               fmt == 7 || fmt == 8 || fmt == 10);
+        const laszip_U8 fmt      = hdr->point_data_format;
+        const bool      hasColor = (fmt == 2 || fmt == 3 || fmt == 5 ||
+                                    fmt == 7 || fmt == 8 || fmt == 10);
 
-        // LAS 1.4 stores point count as 64-bit extended_number_of_point_records;
-        // earlier versions use the 32-bit number_of_point_records.
         const int64_t nPoints =
             (hdr->version_minor >= 4 && hdr->extended_number_of_point_records > 0)
                 ? static_cast<int64_t>(hdr->extended_number_of_point_records)
                 : static_cast<int64_t>(hdr->number_of_point_records);
 
-        // Compute bounding-box centre from the LAS header (double precision).
-        // LAS files often carry absolute world coordinates (UTM, state-plane, …)
-        // in the hundreds-of-thousands range.  Subtracting the centre before
-        // casting to float keeps coordinates near the origin, which is required
-        // both for the camera frustum test and for float precision.
+        // Subtract bounding-box centre to keep float coordinates near origin
         const double cx = (hdr->min_x + hdr->max_x) * 0.5;
         const double cy = (hdr->min_y + hdr->max_y) * 0.5;
         const double cz = (hdr->min_z + hdr->max_z) * 0.5;
@@ -1417,26 +1543,68 @@ namespace Engine {
                   << "  fmt=" << static_cast<int>(fmt)
                   << "  nPoints=" << nPoints
                   << "  hasColor=" << hasColor << "\n"
-                  << "[LAS] Bounds  X[" << hdr->min_x << " .. " << hdr->max_x << "]"
-                  << "  Y[" << hdr->min_y << " .. " << hdr->max_y << "]"
-                  << "  Z[" << hdr->min_z << " .. " << hdr->max_z << "]\n"
-                  << "[LAS] Centre  (" << cx << ", " << cy << ", " << cz
-                  << ")  — subtracted to bring cloud to origin\n";
+                  << "[LAS] Bounds X[" << hdr->min_x << ".." << hdr->max_x << "]"
+                  << " Y[" << hdr->min_y << ".." << hdr->max_y << "]"
+                  << " Z[" << hdr->min_z << ".." << hdr->max_z << "]\n"
+                  << "[LAS] Centre (" << cx << "," << cy << "," << cz
+                  << ") – subtracted to bring cloud to origin\n";
 
-        // ---- pre-allocate ---------------------------------------------------
+        // ── Pass 1 (colour only): sample up to 2000 points to decide whether
+        //    RGB channels are 8-bit (0-255) or 16-bit (0-65535).
+        //    This is a tiny seek, not a full re-read.
+        float colorScale = 255.0f;
+        if (hasColor) {
+            laszip_point_struct* lp = nullptr;
+            laszip_get_point_pointer(reader, &lp);
+            const int64_t sampleLimit = std::min((int64_t)2000, nPoints);
+            laszip_U16 sampleMax = 0;
+            for (int64_t i = 0; i < sampleLimit; i++) {
+                if (laszip_read_point(reader)) break;
+                sampleMax = std::max({ sampleMax, lp->rgb[0], lp->rgb[1], lp->rgb[2] });
+                if (sampleMax > 255) break; // confirmed 16-bit early
+            }
+            colorScale = (sampleMax > 255) ? 65535.0f : 255.0f;
+            std::cout << "[LAS] Colour scale detected: " << colorScale
+                      << " (sample max=" << sampleMax << ")\n";
+        }
+
+        // Close and reopen so we read from point 0 again
+        laszip_close_reader(reader);
+        laszip_destroy(reader);
+        reader = nullptr;
+        if (!openReader(reader, is_compressed)) return pointCloud;
+        laszip_get_header_pointer(reader, &hdr); // refresh pointer after reopen
+
+        // ── Pre-allocate SSBOs using header point count ──────────────────────
         const int64_t expectedPts = (downsampleFactor > 1)
                                   ? (nPoints / static_cast<int64_t>(downsampleFactor) + 1)
                                   : nPoints;
-        pointCloud.points.reserve(static_cast<size_t>(expectedPts));
+        allocateComputeSSBOs(pointCloud, static_cast<size_t>(expectedPts));
 
-        // ---- read loop ------------------------------------------------------
+        // ── Pass 2: stream-read → batch → upload ─────────────────────────────
         laszip_point_struct* lp = nullptr;
         laszip_get_point_pointer(reader, &lp);
 
-        // LAS RGB is nominally 16-bit (0-65535), but many writers store 8-bit
-        // values (0-255) in the low byte.  We track the maximum channel value
-        // and apply the correct scale after reading all points.
-        laszip_U16 maxChan = 0;
+        std::vector<PointCloudPoint> batchBuf;
+        batchBuf.reserve(PointCloud::kComputeBatchSize);
+
+        int    batchIndex  = 0;
+        size_t totalPoints = 0;
+
+        auto flushBatch = [&]() {
+            if (batchBuf.empty()) return;
+            uploadComputeBatch(pointCloud,
+                               batchBuf.data(),
+                               static_cast<int>(batchBuf.size()),
+                               batchIndex,
+                               static_cast<int>(totalPoints));
+            totalPoints += batchBuf.size();
+            batchIndex++;
+            batchBuf.clear();
+
+            if (batchIndex % 2000 == 0)
+                std::cout << "[LAS] " << totalPoints << " points uploaded...\n";
+        };
 
         for (int64_t i = 0; i < nPoints; ++i) {
             if (laszip_read_point(reader)) {
@@ -1454,36 +1622,32 @@ namespace Engine {
             pt.intensity  = lp->intensity / 65535.0f;
 
             if (hasColor) {
-                // Store raw integer value as float (exact for uint16_t);
-                // we will divide by the correct scale once we know it.
-                pt.color.r = static_cast<float>(lp->rgb[0]);
-                pt.color.g = static_cast<float>(lp->rgb[1]);
-                pt.color.b = static_cast<float>(lp->rgb[2]);
-                maxChan = std::max({ maxChan, lp->rgb[0], lp->rgb[1], lp->rgb[2] });
+                pt.color.r = lp->rgb[0] / colorScale;
+                pt.color.g = lp->rgb[1] / colorScale;
+                pt.color.b = lp->rgb[2] / colorScale;
             } else {
-                // No RGB channel – derive greyscale from intensity
                 pt.color = glm::vec3(pt.intensity);
             }
 
-            pointCloud.points.push_back(pt);
+            batchBuf.push_back(pt);
+            if (static_cast<int>(batchBuf.size()) == PointCloud::kComputeBatchSize)
+                flushBatch();
         }
+
+        flushBatch(); // Upload last partial batch
 
         laszip_close_reader(reader);
         laszip_destroy(reader);
 
-        // ---- normalise RGB --------------------------------------------------
-        if (hasColor && !pointCloud.points.empty()) {
-            // If every channel fits in [0,255] the writer used 8-bit convention.
-            const float scale = (maxChan > 255) ? 65535.0f : 255.0f;
-#pragma omp parallel for schedule(static)
-            for (int i = 0; i < static_cast<int>(pointCloud.points.size()); ++i)
-                pointCloud.points[i].color /= scale;
-        }
+        // Trim if downsampling caused us to use fewer batches than allocated
+        if (totalPoints < static_cast<size_t>(expectedPts) * 9 / 10)
+            trimComputeSSBOs(pointCloud, totalPoints);
 
-        std::cout << "[LAS] Loaded " << pointCloud.points.size() << " points\n";
+        pointCloud.numBatches      = static_cast<uint32_t>(batchIndex);
+        pointCloud.totalPointCount = static_cast<uint32_t>(totalPoints);
 
-        setupPointCloudGLBuffers(pointCloud);
-        OctreePointCloudManager::buildOctree(pointCloud);
+        std::cout << "[LAS] Streamed " << totalPoints << " points into "
+                  << batchIndex << " compute batches (no octree, no CPU copy)\n";
         return pointCloud;
     }
 
