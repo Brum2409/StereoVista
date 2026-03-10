@@ -4,16 +4,14 @@
 //   m-schuetz/compute_rasterizer  modules/compute_loop_las/
 //
 // Per-frame pipeline:
-//   1. beginFrame() – clear the uint64_t framebuffer SSBO via
-//      glClearNamedBufferSubData (one driver call, no shader dispatch).
+//   1. beginFrame() – bind the pre-cleared framebuffer SSBO (no stall).
 //   2. renderNode() – for each point cloud, dispatch one workgroup per batch.
 //      Each workgroup tests its batch bounding box against the 6 frustum planes
 //      (Schütz / Gribb-Hartmann) and returns early if fully outside.
 //      Inside batches are decoded from packed 10/20/30-bit coordinates and
 //      rasterised into the uint64_t framebuffer via atomicMin.
-//   3. endFrame() – single glMemoryBarrier, then a fullscreen-quad resolve pass
-//      reads the framebuffer SSBO + ssRGBA to composite the result into the
-//      currently-bound HDR FBO.
+//   3. endFrame() – GL_ALL_BARRIER_BITS, fullscreen-quad resolve pass, then
+//      clears the framebuffer for the next frame while the GPU is idle.
 #include "shader.h"
 #include <glm/glm.hpp>
 #include <glad/glad.h>
@@ -53,8 +51,6 @@ public:
     //   mvp              – proj * view * model  (projection + frustum culling)
     //   modelView        – view * model         (precision-level sphere projection)
     //   proj             – projection matrix    (precision-level sphere projection)
-    //   pointBaseSize    – world-space splat radius in metres
-    //   fieldOfView      – vertical FOV in radians
     void renderNode(GLuint batchSSBO,
                     GLuint xyz12bSSBO,
                     GLuint xyz8bSSBO,
@@ -64,9 +60,7 @@ public:
                     int      pointsPerThread,
                     const glm::mat4& mvp,
                     const glm::mat4& modelView,
-                    const glm::mat4& proj,
-                    float pointBaseSize,
-                    float fieldOfView);
+                    const glm::mat4& proj);
 
     // Wait for all compute work to finish, then composite the point cloud result
     // over the currently-bound HDR framebuffer with a fullscreen quad.
@@ -102,8 +96,6 @@ private:
     GLint m_locModelView         = -1;
     GLint m_locProj              = -1;
     GLint m_locPointsPerThread   = -1;
-    GLint m_locPointBaseSize     = -1;
-    GLint m_locFieldOfView       = -1;
 
     // Cached resolve-shader uniform location
     GLint m_locResolveImageSize = -1;

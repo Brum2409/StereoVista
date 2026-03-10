@@ -5275,9 +5275,7 @@ void renderPointClouds(Engine::Shader *shader,
             pointCloud.computePointsPerThread,
             projection * view * modelMatrix,    // uMVP
             view * modelMatrix,                  // uModelView (for precision level)
-            projection,                          // uProj      (for precision level)
-            preferences.pointCloudBaseSize,
-            glm::radians(preferences.fov));
+            projection);                         // uProj      (for precision level)
       }
     } else if (pointCloud.octreeRoot) {
       // GL_POINTS fallback: octree-based rendering unchanged

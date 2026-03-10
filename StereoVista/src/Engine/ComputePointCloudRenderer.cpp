@@ -66,8 +66,6 @@ void ComputePointCloudRenderer::init(int width, int height) {
     m_locModelView        = glGetUniformLocation(pid, "uModelView");
     m_locProj             = glGetUniformLocation(pid, "uProj");
     m_locPointsPerThread  = glGetUniformLocation(pid, "uPointsPerThread");
-    m_locPointBaseSize    = glGetUniformLocation(pid, "uPointBaseSize");
-    m_locFieldOfView      = glGetUniformLocation(pid, "uFieldOfView");
 
     // Cache resolve shader uniform location
     m_resolveShader->use();
@@ -103,6 +101,14 @@ void ComputePointCloudRenderer::allocateBuffers() {
                  totalPixels * static_cast<GLsizeiptr>(sizeof(uint64_t)),
                  nullptr, GL_DYNAMIC_COPY);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    // Pre-clear so the first beginFrame() can dispatch without stalling.
+    GLuint clearVal = 0xFFFFFFFFu;
+    glClearNamedBufferSubData(m_framebufferSSBO, GL_R32UI,
+                              0,
+                              totalPixels * static_cast<GLsizeiptr>(sizeof(uint64_t)),
+                              GL_RED_INTEGER, GL_UNSIGNED_INT,
+                              &clearVal);
 }
 
 void ComputePointCloudRenderer::freeBuffers() {
@@ -134,17 +140,8 @@ void ComputePointCloudRenderer::cleanup() {
 void ComputePointCloudRenderer::beginFrame() {
     if (!m_initialized) return;
 
-    // Clear the framebuffer SSBO to 0xFFFFFFFFFFFFFFFF (sentinel: no point).
-    GLuint clearVal = 0xFFFFFFFFu;
-    glClearNamedBufferSubData(m_framebufferSSBO, GL_R32UI,
-                              0,
-                              m_width * m_height * static_cast<GLsizeiptr>(sizeof(uint64_t)),
-                              GL_RED_INTEGER, GL_UNSIGNED_INT,
-                              &clearVal);
-
-    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-
-    // Bind framebuffer SSBO to slot 1 (matches shader binding)
+    // Framebuffer was already cleared at the end of the previous endFrame().
+    // Just bind it – no stall, the compute dispatch can start immediately.
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, m_framebufferSSBO);
 }
 
@@ -160,9 +157,7 @@ void ComputePointCloudRenderer::renderNode(
         int      pointsPerThread,
         const glm::mat4& mvp,
         const glm::mat4& modelView,
-        const glm::mat4& proj,
-        float pointBaseSize,
-        float fieldOfView)
+        const glm::mat4& proj)
 {
     if (!m_initialized || numBatches == 0) return;
     if (!batchSSBO || !xyz4bSSBO || !rgbaSSBO) return;
@@ -189,8 +184,6 @@ void ComputePointCloudRenderer::renderNode(
     glUniformMatrix4fv(m_locModelView, 1, GL_FALSE, glm::value_ptr(modelView));
     glUniformMatrix4fv(m_locProj,      1, GL_FALSE, glm::value_ptr(proj));
     glUniform1i(m_locPointsPerThread, pointsPerThread);
-    glUniform1f(m_locPointBaseSize,   pointBaseSize);
-    glUniform1f(m_locFieldOfView,     fieldOfView);
 
     // One workgroup per batch (matches Schütz's glDispatchCompute(numBatches,1,1))
     glDispatchCompute(numBatches, 1, 1);
@@ -202,7 +195,7 @@ void ComputePointCloudRenderer::endFrame() {
     if (!m_initialized) return;
 
     // Single barrier after all rasterize dispatches
-    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    glMemoryBarrier(GL_ALL_BARRIER_BITS);
 
     // ── Resolve / composite pass ────────────────────────────────────────────
     // Framebuffer SSBO (binding 1) and RGBA SSBO (binding 44) remain bound
@@ -232,6 +225,15 @@ void ComputePointCloudRenderer::endFrame() {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 42, 0);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 43, 0);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 44, 0);
+
+    // Clear the framebuffer now, while the GPU heads into vsync idle.
+    // The next beginFrame() can bind and dispatch without stalling.
+    GLuint clearVal = 0xFFFFFFFFu;
+    glClearNamedBufferSubData(m_framebufferSSBO, GL_R32UI,
+                              0,
+                              m_width * m_height * static_cast<GLsizeiptr>(sizeof(uint64_t)),
+                              GL_RED_INTEGER, GL_UNSIGNED_INT,
+                              &clearVal);
 }
 
 } // namespace Engine

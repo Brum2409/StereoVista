@@ -59,8 +59,6 @@ uniform mat4  uModelView;       // view * model        – precision level (view
 uniform mat4  uProj;            // projection matrix   – precision level
 uniform ivec2 uImageSize;
 uniform int   uPointsPerThread; // ceil(kComputeBatchSize / 128)
-uniform float uPointBaseSize;   // world-space splat radius in metres
-uniform float uFieldOfView;     // vertical FOV in radians
 
 // ── Frustum culling ───────────────────────────────────────────────────────────
 // Adapted from Schütz compute_rasterizer / three.js (MIT).
@@ -171,9 +169,6 @@ void main() {
     // ── Precision level ───────────────────────────────────────────────────────
     int level = getPrecisionLevel(wgMin, wgMax);
 
-    // ── Splat-radius factor (per-batch constant, amortised) ───────────────────
-    float fovFactor = float(uImageSize.y) / (2.0 * tan(uFieldOfView * 0.5));
-
     // ── Point loop ────────────────────────────────────────────────────────────
     // Strided access: thread T processes points T, T+128, T+256, …
     // This gives coalesced memory reads across the warp.
@@ -258,25 +253,15 @@ void main() {
             ndc.y < -1.0 || ndc.y > 1.0 ||
             ndc.z < -1.0 || ndc.z > 1.0) continue;
 
-        // ── Screen-space splat radius (perspective-correct) ───────────────────
+        // ── Screen-space pixel coordinate ─────────────────────────────────────
         ivec2 px = ivec2((ndc.xy * 0.5 + 0.5) * vec2(uImageSize));
-
-        float screenRadius = max(0.5, (uPointBaseSize / max(clip.w, 0.001)) * fovFactor);
-        int   splatR       = clamp(int(screenRadius), 0, 4);
 
         // ── Depth + index packed into 64 bits ─────────────────────────────────
         // floatBitsToUint preserves IEEE-754 sort order → atomicMin works as depth test
         uint     depth = floatBitsToUint(clip.w);
         uint64_t entry = (uint64_t(depth) << 32UL) | uint64_t(index);
 
-        // ── Filled-circle splat ───────────────────────────────────────────────
-        float r2 = screenRadius * screenRadius;
-        for (int dy = -splatR; dy <= splatR; dy++) {
-            for (int dx = -splatR; dx <= splatR; dx++) {
-                if (float(dx * dx + dy * dy) <= r2) {
-                    writePixel(px + ivec2(dx, dy), entry);
-                }
-            }
-        }
+        // ── Single-pixel write (matches Schütz's basic compute_loop_las) ──────
+        writePixel(px, entry);
     }
 }

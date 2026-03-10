@@ -1,8 +1,8 @@
 {
     "camera": {
-        "alwaysShowOrbitCenter": false,
+        "alwaysShowOrbitCenter": true,
         "autoConvergence": true,
-        "convergence": 7.026186943054199,
+        "convergence": 10.540508270263672,
         "convergenceCapMax": 41.900001525878906,
         "convergenceCapMin": 0.5,
         "convergenceDistanceFactor": 1.2999999523162842,
@@ -27,7 +27,7 @@
         "scrollDeceleration": 2.0,
         "scrollMomentum": 0.12999999523162842,
         "separation": 0.09000000357627869,
-        "showOrbitCenter": false,
+        "showOrbitCenter": true,
         "speedFactor": 0.9869999885559082,
         "useNewStereoMethod": true,
         "useSmoothScrolling": true,
@@ -79,7 +79,7 @@
         "sortByPrimitiveType": false
     },
     "pointcloud": {
-        "baseSize": 0.019999999552965164
+        "baseSize": 0.0010000000474974513
     },
     "radar": {
         "enabled": false,
@@ -164,7 +164,7 @@
     },
     "ssao": {
         "bias": 0.041999999433755875,
-        "enabled": true,
+        "enabled": false,
         "kernelSize": 64,
         "power": 1.899999976158142,
         "radius": 0.6499999761581421

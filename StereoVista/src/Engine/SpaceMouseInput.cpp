@@ -346,7 +346,12 @@ public:
     // Use anchor mode settings
     switch (m_parent->m_anchorMode) {
     case GUI::SPACEMOUSE_ANCHOR_ON_START:
-      return m_parent->m_navigationStartAnchor;
+      // Before navigation begins, return the live cursor anchor so NavLib
+      // and RefreshPivotPosition() always have the correct current pivot
+      // ready at the moment the device starts moving. Once navigation is
+      // active, freeze to the anchor captured at start.
+      return m_parent->m_isNavigating ? m_parent->m_navigationStartAnchor
+                                      : m_parent->m_cursorAnchor;
     case GUI::SPACEMOUSE_ANCHOR_CONTINUOUS:
       return m_parent->m_cursorAnchor;
     case GUI::SPACEMOUSE_ANCHOR_DISABLED:
