@@ -4180,8 +4180,8 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       // shaders
       shader->setVec3("gridMin", sharedGridMin);
       shader->setVec3("gridMax", sharedGridMax);
-      glUniform3i(glGetUniformLocation(shader->getID(), "gridResolution"),
-                  sharedGridRes.x, sharedGridRes.y, sharedGridRes.z);
+      shader->setIVec3("gridResolution",
+                       sharedGridRes.x, sharedGridRes.y, sharedGridRes.z);
 
       // DIAGNOSTIC: Log grid bounds once for debugging - should match compute shader values
       static bool gridDebugLogged = false;
@@ -5052,28 +5052,14 @@ void renderModels(Engine::Shader *shader) {
     shader->setInt("lightingMode", static_cast<int>(currentLightingMode));
     shader->setBool("enableShadows", enableShadows);
 
-    // Set lighting uniforms based on current lighting mode
-    if (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING) {
-      // Set sun properties
-      shader->setBool("sun.enabled", sun.enabled);
-      shader->setVec3("sun.direction", sun.direction);
-      shader->setVec3("sun.color", sun.color);
-      shader->setFloat("sun.intensity", sun.intensity);
-    } else if (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
-      // Set sun properties (not set in renderEye)
+    // Set sun properties (not set in renderEye for any mode)
+    if (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING ||
+        currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
       shader->setBool("sun.enabled", sun.enabled);
       shader->setVec3("sun.direction", sun.direction);
       shader->setVec3("sun.color", sun.color);
       shader->setFloat("sun.intensity", sun.intensity);
     }
-  }
-
-  // Calculate view projection matrix for frustum culling
-  glm::mat4 viewProj;
-  if (shader != simpleDepthShader) {
-    viewProj = camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane,
-                                          preferences.farPlane) *
-               camera.GetViewMatrix();
   }
 
   // Render each model

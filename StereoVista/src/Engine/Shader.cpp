@@ -269,4 +269,8 @@ namespace Engine {
     void Shader::setVec4(const std::string& name, glm::vec4 vec) {
         glUniform4fv(getUniformLocation(name), 1, &vec[0]);
     }
+
+    void Shader::setIVec3(const std::string& name, int x, int y, int z) {
+        glUniform3i(getUniformLocation(name), x, y, z);
+    }
 }

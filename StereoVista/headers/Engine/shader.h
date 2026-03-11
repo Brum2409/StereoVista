@@ -37,6 +37,7 @@ namespace Engine {
         void setVec2(const std::string& name, glm::vec2 vec);
         void setVec3(const std::string& name, glm::vec3 vec);
         void setVec4(const std::string& name, glm::vec4 vec);
+        void setIVec3(const std::string& name, int x, int y, int z);
         GLuint getID() const { return shaderID; }
 
         // Helper method to check if shader is valid
