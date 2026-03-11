@@ -5061,8 +5061,9 @@ void renderMeshManipulationPanel(Engine::Model &model, int meshIndex,
 void renderPointCloudManipulationPanel(Engine::PointCloud &pointCloud) {
   ImGui::Text("☁ %s", pointCloud.name.c_str());
 
-  bool hasData = !pointCloud.points.empty() || pointCloud.octreeRoot;
-  if (!hasData) {
+  // isLoaded() returns true when compute SSBOs are ready (numBatches > 0)
+  // or when a legacy CPU-side points vector is still populated.
+  if (!pointCloud.isLoaded()) {
     ImGui::TextDisabled("Point cloud is empty");
     return;
   }
@@ -5092,20 +5093,18 @@ void renderPointCloudManipulationPanel(Engine::PointCloud &pointCloud) {
     DrawHelpMarker("Base size of points in the cloud");
   }
 
-  if (ImGui::CollapsingHeader("Level of Detail")) {
-    DrawSectionHeader("LOD Distances");
-
-    ImGui::SliderFloat("LOD 1", &pointCloud.lodDistances[0], 1.0f, 15.0f,
-                       "%.1f");
-    ImGui::SliderFloat("LOD 2", &pointCloud.lodDistances[1], 10.0f, 30.0f,
-                       "%.1f");
-    ImGui::SliderFloat("LOD 3", &pointCloud.lodDistances[2], 15.0f, 40.0f,
-                       "%.1f");
-    ImGui::SliderFloat("LOD 4", &pointCloud.lodDistances[3], 20.0f, 50.0f,
-                       "%.1f");
-    ImGui::SliderFloat("LOD 5", &pointCloud.lodDistances[4], 25.0f, 60.0f,
-                       "%.1f");
-
+  if (ImGui::CollapsingHeader("Info")) {
+    ImGui::Text("Points: %s", [&]() -> std::string {
+        uint32_t n = pointCloud.totalPointCount;
+        if (n >= 1'000'000) return std::to_string(n / 1'000'000) + "M";
+        if (n >= 1'000)     return std::to_string(n / 1'000)     + "K";
+        return std::to_string(n);
+    }().c_str());
+    ImGui::Text("Batches: %u", pointCloud.numBatches);
+    if (pointCloud.hasBounds()) {
+        const glm::vec3 sz = pointCloud.boundsMax - pointCloud.boundsMin;
+        ImGui::Text("Extent: %.2f x %.2f x %.2f m", sz.x, sz.y, sz.z);
+    }
   }
 
   if (ImGui::CollapsingHeader("Export")) {
