@@ -301,6 +301,7 @@ Engine::Shader *instancedShader = nullptr;
 
 // Bloom rendering system
 Engine::BloomRenderer *bloomRenderer = nullptr;
+bool hdrFboValid = false; // set true after successful FBO init/resize, reset on resize
 
 // Schütz Phase 2: compute shader point-cloud rasterizer
 Engine::ComputePointCloudRenderer *computePointCloudRenderer = nullptr;
@@ -2547,6 +2548,8 @@ int main() {
                 << std::endl;
       delete bloomRenderer;
       bloomRenderer = nullptr;
+    } else {
+      hdrFboValid = true;
     }
   }
 
@@ -3345,12 +3348,16 @@ int main() {
       // Begin HDR rendering (render to HDR framebuffer)
       bloomRenderer->beginBloomPass();
 
-      // Validate that HDR framebuffer is properly bound
-      if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-        std::cerr << "ERROR: HDR framebuffer not complete in main loop!"
-                  << std::endl;
-        hdrEnabled = false; // Fall back to non-HDR rendering
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+      // Validate HDR framebuffer on first use after init/resize
+      if (!hdrFboValid) {
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+          std::cerr << "ERROR: HDR framebuffer not complete after resize!"
+                    << std::endl;
+          hdrEnabled = false; // Fall back to non-HDR rendering
+          glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        } else {
+          hdrFboValid = true;
+        }
       }
     }
 
@@ -3993,31 +4000,31 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       shader->setFloat("far_plane", far_plane);
     }
 
-    // Update point lights (for shadow mapping mode)
-    updatePointLights();
-
     // Set point light uniforms
-    for (int i = 0; i < pointLights.size() && i < MAX_LIGHTS; i++) {
-      std::string lightName = "lights[" + std::to_string(i) + "]";
-      shader->setVec3(lightName + ".position", pointLights[i].position);
-      shader->setVec3(lightName + ".color", pointLights[i].color);
-      shader->setFloat(lightName + ".intensity", pointLights[i].intensity);
-      shader->setFloat(lightName + ".linear", pointLights[i].linear);
-      shader->setFloat(lightName + ".quadratic", pointLights[i].quadratic);
-      shader->setBool("lightsCastShadows[" + std::to_string(i) + "]",
-                      pointLights[i].castShadows);
+    {
+      char buf[64];
+      for (int i = 0; i < (int)pointLights.size() && i < MAX_LIGHTS; i++) {
+        snprintf(buf, sizeof(buf), "lights[%d].position", i);   shader->setVec3(buf, pointLights[i].position);
+        snprintf(buf, sizeof(buf), "lights[%d].color", i);      shader->setVec3(buf, pointLights[i].color);
+        snprintf(buf, sizeof(buf), "lights[%d].intensity", i);  shader->setFloat(buf, pointLights[i].intensity);
+        snprintf(buf, sizeof(buf), "lights[%d].linear", i);     shader->setFloat(buf, pointLights[i].linear);
+        snprintf(buf, sizeof(buf), "lights[%d].quadratic", i);  shader->setFloat(buf, pointLights[i].quadratic);
+        snprintf(buf, sizeof(buf), "lightsCastShadows[%d]", i); shader->setBool(buf, pointLights[i].castShadows);
+      }
     }
     shader->setInt("numLights", std::min((int)pointLights.size(), MAX_LIGHTS));
 
     // Set spot light uniforms
-    for (int i = 0; i < spotLights.size() && i < MAX_LIGHTS; i++) {
-      std::string lightName = "spotLights[" + std::to_string(i) + "]";
-      shader->setVec3(lightName + ".position", spotLights[i].position);
-      shader->setVec3(lightName + ".direction", spotLights[i].direction);
-      shader->setVec3(lightName + ".color", spotLights[i].color);
-      shader->setFloat(lightName + ".intensity", spotLights[i].intensity);
-      shader->setFloat(lightName + ".innerCutOff", spotLights[i].innerCutOff);
-      shader->setFloat(lightName + ".outerCutOff", spotLights[i].outerCutOff);
+    {
+      char buf[64];
+      for (int i = 0; i < (int)spotLights.size() && i < MAX_LIGHTS; i++) {
+        snprintf(buf, sizeof(buf), "spotLights[%d].position", i);    shader->setVec3(buf, spotLights[i].position);
+        snprintf(buf, sizeof(buf), "spotLights[%d].direction", i);   shader->setVec3(buf, spotLights[i].direction);
+        snprintf(buf, sizeof(buf), "spotLights[%d].color", i);       shader->setVec3(buf, spotLights[i].color);
+        snprintf(buf, sizeof(buf), "spotLights[%d].intensity", i);   shader->setFloat(buf, spotLights[i].intensity);
+        snprintf(buf, sizeof(buf), "spotLights[%d].innerCutOff", i); shader->setFloat(buf, spotLights[i].innerCutOff);
+        snprintf(buf, sizeof(buf), "spotLights[%d].outerCutOff", i); shader->setFloat(buf, spotLights[i].outerCutOff);
+      }
     }
     shader->setInt("numSpotLights",
                    std::min((int)spotLights.size(), MAX_LIGHTS));
@@ -4107,31 +4114,31 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     shader->setBool("enableVoxelVisualization",
                     voxelizer->showDebugVisualization);
 
-    // Update point lights (still needed for direct lighting in VCT)
-    updatePointLights();
-
     // Set point light uniforms
-    for (int i = 0; i < pointLights.size() && i < MAX_LIGHTS; i++) {
-      std::string lightName = "lights[" + std::to_string(i) + "]";
-      shader->setVec3(lightName + ".position", pointLights[i].position);
-      shader->setVec3(lightName + ".color", pointLights[i].color);
-      shader->setFloat(lightName + ".intensity", pointLights[i].intensity);
-      shader->setFloat(lightName + ".linear", pointLights[i].linear);
-      shader->setFloat(lightName + ".quadratic", pointLights[i].quadratic);
-      shader->setBool("lightsCastShadows[" + std::to_string(i) + "]",
-                      pointLights[i].castShadows);
+    {
+      char buf[64];
+      for (int i = 0; i < (int)pointLights.size() && i < MAX_LIGHTS; i++) {
+        snprintf(buf, sizeof(buf), "lights[%d].position", i);   shader->setVec3(buf, pointLights[i].position);
+        snprintf(buf, sizeof(buf), "lights[%d].color", i);      shader->setVec3(buf, pointLights[i].color);
+        snprintf(buf, sizeof(buf), "lights[%d].intensity", i);  shader->setFloat(buf, pointLights[i].intensity);
+        snprintf(buf, sizeof(buf), "lights[%d].linear", i);     shader->setFloat(buf, pointLights[i].linear);
+        snprintf(buf, sizeof(buf), "lights[%d].quadratic", i);  shader->setFloat(buf, pointLights[i].quadratic);
+        snprintf(buf, sizeof(buf), "lightsCastShadows[%d]", i); shader->setBool(buf, pointLights[i].castShadows);
+      }
     }
     shader->setInt("numLights", std::min((int)pointLights.size(), MAX_LIGHTS));
 
     // Set spot light uniforms
-    for (int i = 0; i < spotLights.size() && i < MAX_LIGHTS; i++) {
-      std::string lightName = "spotLights[" + std::to_string(i) + "]";
-      shader->setVec3(lightName + ".position", spotLights[i].position);
-      shader->setVec3(lightName + ".direction", spotLights[i].direction);
-      shader->setVec3(lightName + ".color", spotLights[i].color);
-      shader->setFloat(lightName + ".intensity", spotLights[i].intensity);
-      shader->setFloat(lightName + ".innerCutOff", spotLights[i].innerCutOff);
-      shader->setFloat(lightName + ".outerCutOff", spotLights[i].outerCutOff);
+    {
+      char buf[64];
+      for (int i = 0; i < (int)spotLights.size() && i < MAX_LIGHTS; i++) {
+        snprintf(buf, sizeof(buf), "spotLights[%d].position", i);    shader->setVec3(buf, spotLights[i].position);
+        snprintf(buf, sizeof(buf), "spotLights[%d].direction", i);   shader->setVec3(buf, spotLights[i].direction);
+        snprintf(buf, sizeof(buf), "spotLights[%d].color", i);       shader->setVec3(buf, spotLights[i].color);
+        snprintf(buf, sizeof(buf), "spotLights[%d].intensity", i);   shader->setFloat(buf, spotLights[i].intensity);
+        snprintf(buf, sizeof(buf), "spotLights[%d].innerCutOff", i); shader->setFloat(buf, spotLights[i].innerCutOff);
+        snprintf(buf, sizeof(buf), "spotLights[%d].outerCutOff", i); shader->setFloat(buf, spotLights[i].outerCutOff);
+      }
     }
     shader->setInt("numSpotLights",
                    std::min((int)spotLights.size(), MAX_LIGHTS));
@@ -4176,20 +4183,23 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       glUniform3i(glGetUniformLocation(shader->getID(), "gridResolution"),
                   sharedGridRes.x, sharedGridRes.y, sharedGridRes.z);
 
-      // DIAGNOSTIC: Log grid bounds for debugging - should match compute shader
-      // values
-      std::cout << "=== FRAGMENT SHADER GRID BOUNDS ===" << std::endl;
-      std::cout << "Grid bounds: Min(" << sharedGridMin.x << ", "
-                << sharedGridMin.y << ", " << sharedGridMin.z << ")"
-                << std::endl;
-      std::cout << "            Max(" << sharedGridMax.x << ", "
-                << sharedGridMax.y << ", " << sharedGridMax.z << ")"
-                << std::endl;
-      std::cout << "Grid resolution: " << sharedGridRes.x << "x"
-                << sharedGridRes.y << "x" << sharedGridRes.z << std::endl;
-      std::cout << "Total grid cells: "
-                << (sharedGridRes.x * sharedGridRes.y * sharedGridRes.z)
-                << std::endl;
+      // DIAGNOSTIC: Log grid bounds once for debugging - should match compute shader values
+      static bool gridDebugLogged = false;
+      if (!gridDebugLogged) {
+        std::cout << "=== FRAGMENT SHADER GRID BOUNDS ===" << std::endl;
+        std::cout << "Grid bounds: Min(" << sharedGridMin.x << ", "
+                  << sharedGridMin.y << ", " << sharedGridMin.z << ")"
+                  << std::endl;
+        std::cout << "            Max(" << sharedGridMax.x << ", "
+                  << sharedGridMax.y << ", " << sharedGridMax.z << ")"
+                  << std::endl;
+        std::cout << "Grid resolution: " << sharedGridRes.x << "x"
+                  << sharedGridRes.y << "x" << sharedGridRes.z << std::endl;
+        std::cout << "Total grid cells: "
+                  << (sharedGridRes.x * sharedGridRes.y * sharedGridRes.z)
+                  << std::endl;
+        gridDebugLogged = true;
+      }
 
       // Check if bounds are degenerate
       if (sharedGridMin.x >= sharedGridMax.x ||
@@ -4201,30 +4211,30 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
 
     // No camera matrices needed - using rasterized fragment positions
 
-    // Set actual scene lights (same as other modes)
-    updatePointLights();
-
     // Set point light uniforms
-    for (int i = 0; i < pointLights.size() && i < MAX_LIGHTS; i++) {
-      std::string lightName = "pointLights[" + std::to_string(i) + "]";
-      shader->setVec3(lightName + ".position", pointLights[i].position);
-      shader->setVec3(lightName + ".color", pointLights[i].color);
-      shader->setFloat(lightName + ".intensity", pointLights[i].intensity);
-      shader->setFloat(lightName + ".linear", pointLights[i].linear);
-      shader->setFloat(lightName + ".quadratic", pointLights[i].quadratic);
-      shader->setBool("lightsCastShadows[" + std::to_string(i) + "]",
-                      pointLights[i].castShadows);
+    {
+      char buf[64];
+      for (int i = 0; i < (int)pointLights.size() && i < MAX_LIGHTS; i++) {
+        snprintf(buf, sizeof(buf), "pointLights[%d].position", i);  shader->setVec3(buf, pointLights[i].position);
+        snprintf(buf, sizeof(buf), "pointLights[%d].color", i);     shader->setVec3(buf, pointLights[i].color);
+        snprintf(buf, sizeof(buf), "pointLights[%d].intensity", i); shader->setFloat(buf, pointLights[i].intensity);
+        snprintf(buf, sizeof(buf), "pointLights[%d].linear", i);    shader->setFloat(buf, pointLights[i].linear);
+        snprintf(buf, sizeof(buf), "pointLights[%d].quadratic", i); shader->setFloat(buf, pointLights[i].quadratic);
+        snprintf(buf, sizeof(buf), "lightsCastShadows[%d]", i);     shader->setBool(buf, pointLights[i].castShadows);
+      }
     }
 
     // Set spot light uniforms
-    for (int i = 0; i < spotLights.size() && i < MAX_LIGHTS; i++) {
-      std::string lightName = "spotLights[" + std::to_string(i) + "]";
-      shader->setVec3(lightName + ".position", spotLights[i].position);
-      shader->setVec3(lightName + ".direction", spotLights[i].direction);
-      shader->setVec3(lightName + ".color", spotLights[i].color);
-      shader->setFloat(lightName + ".intensity", spotLights[i].intensity);
-      shader->setFloat(lightName + ".innerCutOff", spotLights[i].innerCutOff);
-      shader->setFloat(lightName + ".outerCutOff", spotLights[i].outerCutOff);
+    {
+      char buf[64];
+      for (int i = 0; i < (int)spotLights.size() && i < MAX_LIGHTS; i++) {
+        snprintf(buf, sizeof(buf), "spotLights[%d].position", i);    shader->setVec3(buf, spotLights[i].position);
+        snprintf(buf, sizeof(buf), "spotLights[%d].direction", i);   shader->setVec3(buf, spotLights[i].direction);
+        snprintf(buf, sizeof(buf), "spotLights[%d].color", i);       shader->setVec3(buf, spotLights[i].color);
+        snprintf(buf, sizeof(buf), "spotLights[%d].intensity", i);   shader->setFloat(buf, spotLights[i].intensity);
+        snprintf(buf, sizeof(buf), "spotLights[%d].innerCutOff", i); shader->setFloat(buf, spotLights[i].innerCutOff);
+        snprintf(buf, sizeof(buf), "spotLights[%d].outerCutOff", i); shader->setFloat(buf, spotLights[i].outerCutOff);
+      }
     }
     shader->setInt("numPointLights",
                    std::min((int)pointLights.size(), MAX_LIGHTS));
@@ -4235,23 +4245,27 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     shader->setVec3("sun.color", sun.color);
     shader->setFloat("sun.intensity", sun.intensity);
 
-    // DIAGNOSTIC: Verify critical uniforms are set correctly
-    std::cout << "=== SHADER UNIFORMS DEBUG ===" << std::endl;
-    std::cout << "enableRaytracing: " << radianceSettings.enableRaytracing
-              << std::endl;
-    std::cout << "enableIrradianceCache: "
-              << radianceSettings.enableIrradianceCache << std::endl;
-    std::cout << "samplesPerPixel: " << radianceSettings.samplesPerPixel
-              << std::endl;
-    std::cout << "maxBounces: " << radianceSettings.maxBounces << std::endl;
+    // DIAGNOSTIC: Verify critical uniforms once on first frame
+    static bool shaderDebugLogged = false;
+    if (!shaderDebugLogged) {
+      std::cout << "=== SHADER UNIFORMS DEBUG ===" << std::endl;
+      std::cout << "enableRaytracing: " << radianceSettings.enableRaytracing
+                << std::endl;
+      std::cout << "enableIrradianceCache: "
+                << radianceSettings.enableIrradianceCache << std::endl;
+      std::cout << "samplesPerPixel: " << radianceSettings.samplesPerPixel
+                << std::endl;
+      std::cout << "maxBounces: " << radianceSettings.maxBounces << std::endl;
 
-    // Verify the correct shader is active
-    GLint currentProgram = 0;
-    glGetIntegerv(GL_CURRENT_PROGRAM, &currentProgram);
-    std::cout << "Current shader program ID: " << currentProgram << std::endl;
-    std::cout << "Radiance shader ID: " << shader->getID() << std::endl;
-    if (currentProgram != (GLint)shader->getID()) {
-      std::cout << "ERROR: Wrong shader is active!" << std::endl;
+      // Verify the correct shader is active
+      GLint currentProgram = 0;
+      glGetIntegerv(GL_CURRENT_PROGRAM, &currentProgram);
+      std::cout << "Current shader program ID: " << currentProgram << std::endl;
+      std::cout << "Radiance shader ID: " << shader->getID() << std::endl;
+      if (currentProgram != (GLint)shader->getID()) {
+        std::cout << "ERROR: Wrong shader is active!" << std::endl;
+      }
+      shaderDebugLogged = true;
     }
 
     // Check if scene has changed to determine if we need to recalculate
@@ -5040,62 +5054,17 @@ void renderModels(Engine::Shader *shader) {
 
     // Set lighting uniforms based on current lighting mode
     if (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING) {
-      // Update point lights
-      updatePointLights();
-
-      // Set point light uniforms
-      for (int i = 0; i < pointLights.size() && i < MAX_LIGHTS; i++) {
-        std::string lightName = "lights[" + std::to_string(i) + "]";
-        shader->setVec3(lightName + ".position", pointLights[i].position);
-        shader->setVec3(lightName + ".color", pointLights[i].color);
-        shader->setFloat(lightName + ".intensity", pointLights[i].intensity);
-      }
-      shader->setInt("numLights",
-                     std::min((int)pointLights.size(), MAX_LIGHTS));
-
       // Set sun properties
       shader->setBool("sun.enabled", sun.enabled);
       shader->setVec3("sun.direction", sun.direction);
       shader->setVec3("sun.color", sun.color);
       shader->setFloat("sun.intensity", sun.intensity);
     } else if (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
-      // Update point lights (still needed for direct lighting in VCT)
-      updatePointLights();
-
-      // Set point light uniforms
-      for (int i = 0; i < pointLights.size() && i < MAX_LIGHTS; i++) {
-        std::string lightName = "lights[" + std::to_string(i) + "]";
-        shader->setVec3(lightName + ".position", pointLights[i].position);
-        shader->setVec3(lightName + ".color", pointLights[i].color);
-        shader->setFloat(lightName + ".intensity", pointLights[i].intensity);
-      }
-      shader->setInt("numLights",
-                     std::min((int)pointLights.size(), MAX_LIGHTS));
-
-      // Set sun properties
+      // Set sun properties (not set in renderEye)
       shader->setBool("sun.enabled", sun.enabled);
       shader->setVec3("sun.direction", sun.direction);
       shader->setVec3("sun.color", sun.color);
       shader->setFloat("sun.intensity", sun.intensity);
-
-      // Set VCT settings
-      shader->setBool("vctSettings.indirectSpecularLight",
-                      vctSettings.indirectSpecularLight);
-      shader->setBool("vctSettings.indirectDiffuseLight",
-                      vctSettings.indirectDiffuseLight);
-      shader->setBool("vctSettings.directLight", vctSettings.directLight);
-      shader->setBool("vctSettings.shadows", vctSettings.shadows);
-
-      // Set voxel grid parameters -- must account for gridCenter
-      float halfSize = voxelizer->getVoxelGridSize() * 0.5f;
-      glm::vec3 gc = voxelizer->getGridCenter();
-      shader->setVec3("gridMin", gc - glm::vec3(halfSize));
-      shader->setVec3("gridMax", gc + glm::vec3(halfSize));
-      shader->setFloat("voxelSize", voxelizer->getVoxelGridSize() / static_cast<float>(voxelizer->getResolution()));
-
-      // Set visualization flag (for debugging)
-      shader->setBool("enableVoxelVisualization",
-                      voxelizer->showDebugVisualization);
     }
   }
 
@@ -6071,6 +6040,7 @@ void framebuffer_size_callback(GLFWwindow *window, int width, int height) {
   // Resize bloom renderer if it exists
   if (bloomRenderer) {
     bloomRenderer->resize(width, height);
+    hdrFboValid = false; // will be re-validated on next frame
   }
 
   // Resize compute point-cloud renderer if it exists (Schütz Phase 2)

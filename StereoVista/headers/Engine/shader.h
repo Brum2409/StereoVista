@@ -2,11 +2,15 @@
 #pragma once
 #include "Core.h"
 #include <glm/gtc/type_ptr.hpp>
+#include <unordered_map>
 
 namespace Engine {
     class Shader {
     private:
         unsigned int shaderID;
+        mutable std::unordered_map<std::string, GLint> uniformLocationCache;
+
+        GLint getUniformLocation(const std::string& name) const;
 
     public:
         // Tag type used to select the compute-shader constructor.
