@@ -247,12 +247,12 @@ static void ShowIconTestWindow() {
   ImGui::Text("Try different codes:");
 
   // Test with manual UTF-8 encoding of 0xF0EB
-  char manual_lightbulb[4] = {(char)0xEF, (char)0x83, (char)0xAB,
+  char manual_lightbulb[4] = {0xEF, 0x83, 0xAB,
                               0x00}; // UTF-8 encoding of U+F0EB
   ImGui::Text("Manual UTF-8 lightbulb: %s", manual_lightbulb);
 
   // Test with other manual codes
-  char manual_star[4] = {(char)0xEF, (char)0x80, (char)0x85, 0x00}; // UTF-8 encoding of U+F005
+  char manual_star[4] = {0xEF, 0x80, 0x85, 0x00}; // UTF-8 encoding of U+F005
   ImGui::Text("Manual UTF-8 star: %s", manual_star);
 
   // Test with known working characters
