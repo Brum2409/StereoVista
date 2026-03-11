@@ -1525,11 +1525,9 @@ namespace Engine {
             auto now = std::chrono::system_clock::now();
             std::time_t time = std::chrono::system_clock::to_time_t(now);
             
-            // Use safer ctime_s function
-            char timeBuffer[26];
-            ctime_s(timeBuffer, sizeof(timeBuffer), &time);
+            char timeBuffer[26] = {};
+            std::strftime(timeBuffer, sizeof(timeBuffer), "%c", std::localtime(&time));
             std::string timeStr(timeBuffer);
-            timeStr.pop_back(); // Remove newline
             
             StrType timeStringType(PredType::C_S1, timeStr.length() + 1);
             Attribute timeAttr = dataset.createAttribute("created", timeStringType, scalarSpace);
