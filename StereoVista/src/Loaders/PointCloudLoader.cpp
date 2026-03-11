@@ -358,27 +358,47 @@ namespace Engine {
                 if (downsampleFactor > 1 && (myLine % downsampleFactor) != 0)
                     continue;
 
-                // Parse: try XYZIRGB, XYZRGB, XYZI, XYZ
+                // ── Parse line ───────────────────────────────────────────
+                // Strategy: try from most-specific to least-specific format.
+                //
+                //  7 fields → XYZIRGB  (x y z intensity r g b)
+                //  6 fields → XYZRGB   (x y z r g b, no intensity)
+                //  4 fields → XYZI     (x y z intensity)
+                //  3 fields → XYZ      (x y z)
+                //
+                // The naive single-format approach (sscanf "%f %f %f %f %d %d %d")
+                // misreads XYZRGB (6 cols) as XYZI+partial-RGB because %f happily
+                // consumes an integer (128 → 128.0) as the intensity field,
+                // shifting R/G/B one column to the right and dropping B entirely.
+                // The two-step below avoids that shift.
                 float x, y, z, intensity = 1.0f;
                 int   r = 255, g = 255, b = 255;
-                int   parsed = sscanf(lineData,
+
+                const int n7 = sscanf(lineData,
                                       "%f %f %f %f %d %d %d",
                                       &x, &y, &z, &intensity, &r, &g, &b);
-
-                if (parsed < 3) continue; // need at least XYZ
-
-                // If only 4 fields and the 4th is likely 0-255 it's an RGB-only line
-                // (XYZ R G B without intensity).  Detect by checking if parsed == 4
-                // is actually "x y z r" with no g/b fields parsed yet.
-                // Re-parse as XYZRGB in that case.
-                if (parsed == 4) {
-                    // Might be "x y z r" (incomplete) – re-try as "x y z r g b"
-                    int rr = 255, gg = 255, bb = 255;
-                    if (sscanf(lineData, "%f %f %f %d %d %d",
-                               &x, &y, &z, &rr, &gg, &bb) == 6) {
-                        r = rr; g = gg; b = bb;
+                if (n7 == 7) {
+                    // XYZIRGB – all fields present, nothing to do
+                } else {
+                    // Re-try with integer 4th field to detect XYZRGB
+                    int ri = 255;
+                    const int n6 = sscanf(lineData,
+                                         "%f %f %f %d %d %d",
+                                         &x, &y, &z, &ri, &g, &b);
+                    if (n6 == 6) {
+                        // XYZRGB (no intensity column)
+                        r = ri;
                         intensity = 1.0f;
-                        parsed = 6;
+                    } else if (n7 >= 4) {
+                        // XYZI – intensity was parsed correctly by first sscanf,
+                        // but there were no valid integer colour fields.
+                        r = g = b = 255;
+                    } else if (n7 == 3 || n6 >= 3) {
+                        // XYZ only
+                        intensity = 1.0f;
+                        r = g = b = 255;
+                    } else {
+                        continue; // unparseable line
                     }
                 }
 
@@ -396,16 +416,26 @@ namespace Engine {
             }
         }
 
-        // Handle trailing carry-over without newline
+        // Handle trailing carry-over without newline (same multi-format logic)
         if (!carryOver.empty()) {
             const char* lineData = carryOver.c_str();
             const char  first    = lineData[0];
             if ((first >= '0' && first <= '9') || first == '-' || first == '+') {
                 float x, y, z, intensity = 1.0f;
                 int   r = 255, g = 255, b = 255;
-                if (sscanf(lineData,
-                           "%f %f %f %f %d %d %d",
-                           &x, &y, &z, &intensity, &r, &g, &b) >= 3) {
+                const int n7 = sscanf(lineData, "%f %f %f %f %d %d %d",
+                                      &x, &y, &z, &intensity, &r, &g, &b);
+                bool valid = true;
+                if (n7 < 7) {
+                    int ri = 255;
+                    const int n6 = sscanf(lineData, "%f %f %f %d %d %d",
+                                         &x, &y, &z, &ri, &g, &b);
+                    if (n6 == 6)      { r = ri; intensity = 1.0f; }
+                    else if (n7 >= 4) { r = g = b = 255; }
+                    else if (n7 == 3 || n6 >= 3) { intensity = 1.0f; r = g = b = 255; }
+                    else              { valid = false; }
+                }
+                if (valid) {
                     PointCloudPoint pt;
                     pt.position  = glm::vec3(x, y, z);
                     pt.intensity = intensity;
@@ -1664,8 +1694,20 @@ namespace Engine {
 
         flushBatch(); // Upload last partial batch
 
+        // Save bounds BEFORE closing/destroying the reader – hdr is an internal
+        // pointer inside the laszip reader and becomes dangling after destroy.
+        const glm::vec3 lasMin(
+            static_cast<float>(hdr->min_x - cx),
+            static_cast<float>(hdr->min_y - cy),
+            static_cast<float>(hdr->min_z - cz));
+        const glm::vec3 lasMax(
+            static_cast<float>(hdr->max_x - cx),
+            static_cast<float>(hdr->max_y - cy),
+            static_cast<float>(hdr->max_z - cz));
+
         laszip_close_reader(reader);
         laszip_destroy(reader);
+        reader = nullptr; // prevent any accidental re-use
 
         // Trim if downsampling caused us to use fewer batches than allocated
         if (totalPoints < static_cast<size_t>(expectedPts) * 9 / 10)
@@ -1673,15 +1715,8 @@ namespace Engine {
 
         pointCloud.numBatches      = static_cast<uint32_t>(batchIndex);
         pointCloud.totalPointCount = static_cast<uint32_t>(totalPoints);
-        // Bounds come directly from the LAS header (already converted to local space)
-        pointCloud.boundsMin = glm::vec3(
-            static_cast<float>(hdr->min_x - cx),
-            static_cast<float>(hdr->min_y - cy),
-            static_cast<float>(hdr->min_z - cz));
-        pointCloud.boundsMax = glm::vec3(
-            static_cast<float>(hdr->max_x - cx),
-            static_cast<float>(hdr->max_y - cy),
-            static_cast<float>(hdr->max_z - cz));
+        pointCloud.boundsMin       = lasMin;
+        pointCloud.boundsMax       = lasMax;
 
         std::cout << "[LAS] Streamed " << totalPoints << " points into "
                   << batchIndex << " compute batches (no octree, no CPU copy)\n";
