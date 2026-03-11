@@ -404,7 +404,7 @@ namespace Engine {
 
                 PointCloudPoint pt;
                 pt.position  = glm::vec3(x, y, z);
-                pt.intensity = (parsed >= 4 && parsed != 6) ? intensity : 1.0f;
+                pt.intensity = intensity;
                 pt.color     = glm::vec3(r / 255.0f, g / 255.0f, b / 255.0f);
 
                 gMin = glm::min(gMin, pt.position);
@@ -663,6 +663,14 @@ namespace Engine {
         // path).  For normal streaming loads, this is a no-op.
         if (!pointCloud.points.empty() && pointCloud.numBatches == 0) {
             const size_t N = pointCloud.points.size();
+
+            // Compute bounds before clearing the CPU vector
+            glm::vec3 bMin(FLT_MAX), bMax(-FLT_MAX);
+            for (const auto& p : pointCloud.points) {
+                bMin = glm::min(bMin, p.position);
+                bMax = glm::max(bMax, p.position);
+            }
+
             allocateComputeSSBOs(pointCloud, N);
 
             const int batchSz = PointCloud::kComputeBatchSize;
@@ -675,6 +683,8 @@ namespace Engine {
             }
             pointCloud.numBatches       = static_cast<uint32_t>(batchIdx);
             pointCloud.totalPointCount  = static_cast<uint32_t>(N);
+            pointCloud.boundsMin        = bMin;
+            pointCloud.boundsMax        = bMax;
 
             // Release CPU-side storage – the GPU now owns all the data
             pointCloud.points.clear();
