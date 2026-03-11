@@ -127,6 +127,12 @@ namespace Engine {
         // buildOctree() clears the cpu-side points vector.
         uint32_t totalPointCount = 0;
 
+        // ── World-space bounding box (set by streaming loaders) ───────────────
+        // Used for frame-all, SpaceMouse navigation, and frustum optimisation.
+        // Stored in local object space (before position/scale transform).
+        glm::vec3 boundsMin = glm::vec3( FLT_MAX);
+        glm::vec3 boundsMax = glm::vec3(-FLT_MAX);
+
         // ── Schütz batch system (compute rasterizer) ─────────────────────────
         // Points are partitioned into batches of kComputeBatchSize.  Per-batch
         // bounding boxes enable a single frustum-cull test per workgroup, and
@@ -142,7 +148,7 @@ namespace Engine {
 
         float basePointSize = 2.0f;
 
-        // Octree-based system
+        // Octree-based system (legacy; kept for binary compatibility)
         std::unique_ptr<PointCloudOctreeNode> octreeRoot;
         glm::vec3 octreeBoundsMin;
         glm::vec3 octreeBoundsMax;
@@ -178,6 +184,7 @@ namespace Engine {
               points(std::move(other.points)), position(other.position),
               rotation(other.rotation), scale(other.scale), visible(other.visible),
               vao(other.vao), vbo(other.vbo), totalPointCount(other.totalPointCount),
+              boundsMin(other.boundsMin), boundsMax(other.boundsMax),
               basePointSize(other.basePointSize), octreeRoot(std::move(other.octreeRoot)),
               octreeBoundsMin(other.octreeBoundsMin), octreeBoundsMax(other.octreeBoundsMax),
               octreeCenter(other.octreeCenter), octreeSize(other.octreeSize),
@@ -204,6 +211,8 @@ namespace Engine {
             other.vao = 0;
             other.vbo = 0;
             other.totalPointCount = 0;
+            other.boundsMin = glm::vec3( FLT_MAX);
+            other.boundsMax = glm::vec3(-FLT_MAX);
             other.chunkOutlineVAO = 0;
             other.chunkOutlineVBO = 0;
             other.computeBatchSSBO   = 0;
@@ -230,6 +239,8 @@ namespace Engine {
                 vao = other.vao;
                 vbo = other.vbo;
                 totalPointCount = other.totalPointCount;
+                boundsMin = other.boundsMin;
+                boundsMax = other.boundsMax;
                 basePointSize = other.basePointSize;
 
                 octreeRoot = std::move(other.octreeRoot);
@@ -268,6 +279,8 @@ namespace Engine {
                 other.vao = 0;
                 other.vbo = 0;
                 other.totalPointCount = 0;
+                other.boundsMin = glm::vec3( FLT_MAX);
+                other.boundsMax = glm::vec3(-FLT_MAX);
                 other.chunkOutlineVAO = 0;
                 other.chunkOutlineVBO = 0;
                 other.computeBatchSSBO   = 0;
@@ -293,6 +306,16 @@ namespace Engine {
             if (octreeRoot) {
                 octreeRoot.reset();
             }
+        }
+
+        // Returns true if point cloud data is loaded and ready to render.
+        bool isLoaded() const {
+            return numBatches > 0 || !points.empty();
+        }
+
+        // Returns true if the bounds fields are valid (set by the loader).
+        bool hasBounds() const {
+            return boundsMin.x != FLT_MAX;
         }
     };
 

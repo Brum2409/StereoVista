@@ -285,6 +285,9 @@ namespace Engine {
         size_t totalPoints = 0;
         size_t lineCounter = 0;   // global line counter for downsampling
 
+        // Global bounds tracking (updated per-point, negligible cost)
+        glm::vec3 gMin( FLT_MAX), gMax(-FLT_MAX);
+
         // Carry-over buffer for partial lines at IO block boundaries
         std::string carryOver;
         carryOver.reserve(512);
@@ -384,6 +387,8 @@ namespace Engine {
                 pt.intensity = (parsed >= 4 && parsed != 6) ? intensity : 1.0f;
                 pt.color     = glm::vec3(r / 255.0f, g / 255.0f, b / 255.0f);
 
+                gMin = glm::min(gMin, pt.position);
+                gMax = glm::max(gMax, pt.position);
                 batchBuf.push_back(pt);
 
                 if (static_cast<int>(batchBuf.size()) == PointCloud::kComputeBatchSize)
@@ -405,6 +410,8 @@ namespace Engine {
                     pt.position  = glm::vec3(x, y, z);
                     pt.intensity = intensity;
                     pt.color     = glm::vec3(r / 255.0f, g / 255.0f, b / 255.0f);
+                    gMin = glm::min(gMin, pt.position);
+                    gMax = glm::max(gMax, pt.position);
                     batchBuf.push_back(pt);
                 }
             }
@@ -420,6 +427,8 @@ namespace Engine {
 
         pointCloud.numBatches      = static_cast<uint32_t>(batchIndex);
         pointCloud.totalPointCount = static_cast<uint32_t>(totalPoints);
+        pointCloud.boundsMin       = gMin;
+        pointCloud.boundsMax       = gMax;
 
         std::cout << "[TextPC] Loaded " << totalPoints << " points into "
                   << batchIndex << " compute batches (no octree, no CPU copy)\n";
@@ -548,6 +557,7 @@ namespace Engine {
             int    batchIdx    = 0;
             size_t uploadedPts = 0;
             size_t remaining   = numPoints;
+            glm::vec3 gMin( FLT_MAX), gMax(-FLT_MAX);
 
             while (remaining > 0) {
                 const size_t toRead      = std::min(remaining,
@@ -579,6 +589,8 @@ namespace Engine {
                     pt.color = glm::vec3(c) / 255.0f;
                     src += sizeof(c);
 
+                    gMin = glm::min(gMin, pt.position);
+                    gMax = glm::max(gMax, pt.position);
                     batchBuf.push_back(pt);
                 }
 
@@ -597,6 +609,8 @@ namespace Engine {
 
             pointCloud.numBatches      = static_cast<uint32_t>(batchIdx);
             pointCloud.totalPointCount = static_cast<uint32_t>(uploadedPts);
+            pointCloud.boundsMin       = gMin;
+            pointCloud.boundsMax       = gMax;
 
             std::cout << "[PCB] Streamed " << uploadedPts << " points into "
                       << batchIdx << " compute batches\n";
@@ -1150,8 +1164,9 @@ namespace Engine {
                 constexpr hsize_t CHUNK = static_cast<hsize_t>(PointCloud::kComputeBatchSize);
                 std::vector<PointCloudPoint> chunkBuf(CHUNK);
 
-                int    batchIdx    = 0;
-                size_t uploadedPts = 0;
+                int       batchIdx    = 0;
+                size_t    uploadedPts = 0;
+                glm::vec3 gMin( FLT_MAX), gMax(-FLT_MAX);
 
                 for (hsize_t readSoFar = 0; readSoFar < pointsToRead; ) {
                     hsize_t toRead = std::min(CHUNK, pointsToRead - readSoFar);
@@ -1167,6 +1182,12 @@ namespace Engine {
                     dataspace.selectHyperslab(H5S_SELECT_SET, cnt, fileStart, stride, block);
                     dataset.read(chunkBuf.data(), pointType, memspace, dataspace);
 
+                    // Update global bounds from this chunk
+                    for (hsize_t i = 0; i < toRead; i++) {
+                        gMin = glm::min(gMin, chunkBuf[i].position);
+                        gMax = glm::max(gMax, chunkBuf[i].position);
+                    }
+
                     uploadComputeBatch(pointCloud, chunkBuf.data(),
                                        static_cast<int>(toRead), batchIdx,
                                        static_cast<int>(uploadedPts));
@@ -1177,6 +1198,8 @@ namespace Engine {
 
                 pointCloud.numBatches      = static_cast<uint32_t>(batchIdx);
                 pointCloud.totalPointCount = static_cast<uint32_t>(uploadedPts);
+                pointCloud.boundsMin       = gMin;
+                pointCloud.boundsMax       = gMax;
 
                 std::cout << "[HDF5] Streamed " << uploadedPts << " points into "
                           << batchIdx << " compute batches\n";
@@ -1309,8 +1332,9 @@ namespace Engine {
 
                             std::vector<PointCloudPoint> batchBuf;
                             batchBuf.reserve(PointCloud::kComputeBatchSize);
-                            int    batchIdx    = 0;
-                            size_t uploadedPts = 0;
+                            int       batchIdx    = 0;
+                            size_t    uploadedPts = 0;
+                            glm::vec3 gMin( FLT_MAX), gMax(-FLT_MAX);
 
                             auto flushF5Batch = [&]() {
                                 if (batchBuf.empty()) return;
@@ -1341,6 +1365,8 @@ namespace Engine {
                                 pt.intensity = (!intensities.empty() && src < intensities.size())
                                              ? intensities[src] : 1.0f;
 
+                                gMin = glm::min(gMin, pt.position);
+                                gMax = glm::max(gMax, pt.position);
                                 batchBuf.push_back(pt);
                                 if (static_cast<int>(batchBuf.size()) == PointCloud::kComputeBatchSize)
                                     flushF5Batch();
@@ -1358,6 +1384,8 @@ namespace Engine {
 
                             pointCloud.numBatches      = static_cast<uint32_t>(batchIdx);
                             pointCloud.totalPointCount = static_cast<uint32_t>(uploadedPts);
+                            pointCloud.boundsMin       = gMin;
+                            pointCloud.boundsMax       = gMax;
 
                             std::cout << "[HDF5-f5] Streamed " << uploadedPts
                                       << " points into " << batchIdx << " compute batches\n";
@@ -1645,6 +1673,15 @@ namespace Engine {
 
         pointCloud.numBatches      = static_cast<uint32_t>(batchIndex);
         pointCloud.totalPointCount = static_cast<uint32_t>(totalPoints);
+        // Bounds come directly from the LAS header (already converted to local space)
+        pointCloud.boundsMin = glm::vec3(
+            static_cast<float>(hdr->min_x - cx),
+            static_cast<float>(hdr->min_y - cy),
+            static_cast<float>(hdr->min_z - cz));
+        pointCloud.boundsMax = glm::vec3(
+            static_cast<float>(hdr->max_x - cx),
+            static_cast<float>(hdr->max_y - cy),
+            static_cast<float>(hdr->max_z - cz));
 
         std::cout << "[LAS] Streamed " << totalPoints << " points into "
                   << batchIndex << " compute batches (no octree, no CPU copy)\n";

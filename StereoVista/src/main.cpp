@@ -5729,19 +5729,22 @@ void updateSpaceMouseBounds() {
 
   // Include point clouds in bounding box calculation
   for (const auto &pointCloud : currentScene.pointClouds) {
-    if (pointCloud.octreeRoot) {
-      // Use octree bounds if available
-      glm::vec3 pcMin =
-          pointCloud.position + (pointCloud.octreeBoundsMin * pointCloud.scale);
-      glm::vec3 pcMax =
-          pointCloud.position + (pointCloud.octreeBoundsMax * pointCloud.scale);
+    if (pointCloud.hasBounds()) {
+      // Fast path: use the pre-computed bounds stored at load time
+      const glm::vec3 pcMin = pointCloud.position + (pointCloud.boundsMin * pointCloud.scale);
+      const glm::vec3 pcMax = pointCloud.position + (pointCloud.boundsMax * pointCloud.scale);
+      modelMin = glm::min(modelMin, pcMin);
+      modelMax = glm::max(modelMax, pcMax);
+    } else if (pointCloud.octreeRoot) {
+      // Legacy: octree was built (e.g. by an older code path)
+      const glm::vec3 pcMin = pointCloud.position + (pointCloud.octreeBoundsMin * pointCloud.scale);
+      const glm::vec3 pcMax = pointCloud.position + (pointCloud.octreeBoundsMax * pointCloud.scale);
       modelMin = glm::min(modelMin, pcMin);
       modelMax = glm::max(modelMax, pcMax);
     } else if (!pointCloud.points.empty()) {
-      // Fall back to calculating bounds from points
+      // Last resort: iterate CPU-side points (only used by very old load paths)
       for (const auto &point : pointCloud.points) {
-        glm::vec3 worldPos =
-            pointCloud.position + (point.position * pointCloud.scale);
+        const glm::vec3 worldPos = pointCloud.position + (point.position * pointCloud.scale);
         modelMin = glm::min(modelMin, worldPos);
         modelMax = glm::max(modelMax, worldPos);
       }
