@@ -2,11 +2,15 @@
 #pragma once
 #include "Core.h"
 #include <glm/gtc/type_ptr.hpp>
+#include <unordered_map>
 
 namespace Engine {
     class Shader {
     private:
         unsigned int shaderID;
+        mutable std::unordered_map<std::string, GLint> uniformLocationCache;
+
+        GLint getUniformLocation(const std::string& name) const;
 
     public:
         // Tag type used to select the compute-shader constructor.
@@ -33,6 +37,7 @@ namespace Engine {
         void setVec2(const std::string& name, glm::vec2 vec);
         void setVec3(const std::string& name, glm::vec3 vec);
         void setVec4(const std::string& name, glm::vec4 vec);
+        void setIVec3(const std::string& name, int x, int y, int z);
         GLuint getID() const { return shaderID; }
 
         // Helper method to check if shader is valid
