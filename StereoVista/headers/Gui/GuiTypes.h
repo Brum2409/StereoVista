@@ -51,7 +51,8 @@ enum SpaceMouseAnchorMode {
   SPACEMOUSE_ANCHOR_DISABLED,  // Use scene center (default)
   SPACEMOUSE_ANCHOR_ON_START,  // Set anchor when navigation starts, keep it
                                // fixed
-  SPACEMOUSE_ANCHOR_CONTINUOUS // Update anchor every frame during navigation
+  SPACEMOUSE_ANCHOR_CONTINUOUS, // Update anchor every frame during navigation
+  SPACEMOUSE_ANCHOR_CLICK       // Fixed point set by left mouse click
 };
 
 enum SpaceMouseNavigationMode {

@@ -3151,6 +3151,16 @@ void renderSettingsWindow() {
             DrawHelpMarker(
                 "Continuously update anchor to follow the cursor position");
 
+            if (ImGui::RadioButton(
+                    "Click to Set", &currentMode,
+                    static_cast<int>(GUI::SPACEMOUSE_ANCHOR_CLICK))) {
+              modeChanged = true;
+            }
+            ImGui::SameLine();
+            DrawHelpMarker(
+                "Left-click in the viewport to fix the SpaceMouse pivot at "
+                "that point. Click again anywhere to move the pivot.");
+
             if (modeChanged) {
               preferences.spaceMouseAnchorMode =
                   static_cast<GUI::SpaceMouseAnchorMode>(currentMode);

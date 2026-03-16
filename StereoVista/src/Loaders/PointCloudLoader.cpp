@@ -374,17 +374,17 @@ namespace Engine {
                 float x, y, z, intensity = 1.0f;
                 int   r = 255, g = 255, b = 255;
 
-                const int n7 = sscanf(lineData,
-                                      "%f %f %f %f %d %d %d",
-                                      &x, &y, &z, &intensity, &r, &g, &b);
+                const int n7 = sscanf_s(lineData,
+                                        "%f %f %f %f %d %d %d",
+                                        &x, &y, &z, &intensity, &r, &g, &b);
                 if (n7 == 7) {
                     // XYZIRGB – all fields present, nothing to do
                 } else {
                     // Re-try with integer 4th field to detect XYZRGB
                     int ri = 255;
-                    const int n6 = sscanf(lineData,
-                                         "%f %f %f %d %d %d",
-                                         &x, &y, &z, &ri, &g, &b);
+                    const int n6 = sscanf_s(lineData,
+                                            "%f %f %f %d %d %d",
+                                            &x, &y, &z, &ri, &g, &b);
                     if (n6 == 6) {
                         // XYZRGB (no intensity column)
                         r = ri;
@@ -423,13 +423,13 @@ namespace Engine {
             if ((first >= '0' && first <= '9') || first == '-' || first == '+') {
                 float x, y, z, intensity = 1.0f;
                 int   r = 255, g = 255, b = 255;
-                const int n7 = sscanf(lineData, "%f %f %f %f %d %d %d",
-                                      &x, &y, &z, &intensity, &r, &g, &b);
+                const int n7 = sscanf_s(lineData, "%f %f %f %f %d %d %d",
+                                        &x, &y, &z, &intensity, &r, &g, &b);
                 bool valid = true;
                 if (n7 < 7) {
                     int ri = 255;
-                    const int n6 = sscanf(lineData, "%f %f %f %d %d %d",
-                                         &x, &y, &z, &ri, &g, &b);
+                    const int n6 = sscanf_s(lineData, "%f %f %f %d %d %d",
+                                            &x, &y, &z, &ri, &g, &b);
                     if (n6 == 6)      { r = ri; intensity = 1.0f; }
                     else if (n7 >= 4) { r = g = b = 255; }
                     else if (n7 == 3 || n6 >= 3) { intensity = 1.0f; r = g = b = 255; }
@@ -1526,7 +1526,9 @@ namespace Engine {
             std::time_t time = std::chrono::system_clock::to_time_t(now);
             
             char timeBuffer[26] = {};
-            std::strftime(timeBuffer, sizeof(timeBuffer), "%c", std::localtime(&time));
+            struct tm tmBuf = {};
+            localtime_s(&tmBuf, &time);
+            std::strftime(timeBuffer, sizeof(timeBuffer), "%c", &tmBuf);
             std::string timeStr(timeBuffer);
             
             StrType timeStringType(PredType::C_S1, timeStr.length() + 1);

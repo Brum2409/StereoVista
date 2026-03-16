@@ -1,12 +1,12 @@
 {
     "camera": {
-        "alwaysShowOrbitCenter": true,
+        "alwaysShowOrbitCenter": false,
         "autoConvergence": true,
-        "convergence": 10.540508270263672,
-        "convergenceCapMax": 41.900001525878906,
-        "convergenceCapMin": 0.5,
+        "convergence": 10.540897369384766,
+        "convergenceCapMax": 39.0,
+        "convergenceCapMin": 0.800000011920929,
         "convergenceDistanceFactor": 1.2999999523162842,
-        "convergenceSmoothingSpeed": 0.800000011920929,
+        "convergenceSmoothingSpeed": 1.2000000476837158,
         "enableConvergenceCap": true,
         "farPlane": 1000.0,
         "flipEyes": false,
@@ -38,8 +38,8 @@
     },
     "edl": {
         "enabled": false,
-        "radius": 1.399999976158142,
-        "strength": 2.640000104904175
+        "radius": 3.0,
+        "strength": 1.6100000143051147
     },
     "hdr": {
         "bloomIntensity": 0.1770000010728836,
@@ -131,7 +131,7 @@
             0.10000000149011612,
             0.30000001192092896
         ],
-        "hdrPath": "C:\\Users\\Benbrem\\Downloads\\Arbeit\\Stereo-Demo-main\\Stereo-Viewer-Project\\bin\\x64\\Release\\skybox\\HDR\\table_mountain_2_puresky_4k.hdr",
+        "hdrPath": "C:\\Users\\Benbrem\\Downloads\\grasslands_sunset_1k.hdr",
         "selectedCubemap": 0,
         "solidColor": [
             0.20000000298023224,
@@ -141,7 +141,7 @@
         "type": 1
     },
     "spacemouse": {
-        "anchorMode": 1,
+        "anchorMode": 3,
         "centerCursor": false,
         "deadzone": 0.0,
         "enabled": true,

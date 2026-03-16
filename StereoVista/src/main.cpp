@@ -152,6 +152,8 @@ ThreeDConnexionSync tdxSync;
 int tdxPollCounter = 0;
 bool spaceMouseInitialized = false;
 bool spaceMouseActive = false;
+glm::vec3 spaceMouseClickAnchor = glm::vec3(0.0f);
+bool spaceMouseClickAnchorSet = false;
 float lastX = 1920.0f / 2.0;
 float lastY = 1080.0f / 2.0;
 float aspectRatio = 1.0f;
@@ -2848,7 +2850,7 @@ int main() {
   // ---- OpenGL Settings ----
   glEnable(GL_DEPTH_TEST);
   glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-  glfwSwapInterval(1); // Enable vsync
+  glfwSwapInterval(0); // Enable vsync
 
   // ---- Main Loop ----
   while (!glfwWindowShouldClose(window)) {
@@ -4981,13 +4983,36 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   if (!orbitFollowsCursor && cursorManager.isShowOrbitCenter() &&
       (camera.IsOrbiting || spaceMouseInput.IsNavigating() ||
        cursorManager.isAlwaysShowOrbitCenter())) {
-    // During SpaceMouse navigation, spaceMouseCameraPtr->OrbitPoint is kept in
-    // sync with the NavLib pivot by SetCameraMatrixImpl every frame. The main
-    // camera.OrbitPoint is only written back at navigation end, so it is stale
-    // during navigation. Use the SpaceMouse camera's value while navigating.
-    const glm::vec3 &orbitPointToDisplay = spaceMouseInput.IsNavigating()
-        ? spaceMouseCameraPtr->OrbitPoint
-        : camera.OrbitPoint;
+    // Compute the authoritative display point for each mode/state:
+    // - SpaceMouse navigating : NavLib-driven camera (always up-to-date)
+    // - Left-mouse orbiting   : camera.OrbitPoint (set by orbit-start code)
+    // - CLICK idle            : spaceMouseClickAnchor (click-set, never drifts)
+    // - CONTINUOUS/ON_START   : cursor position (current / predicted pivot)
+    // - DISABLED              : camera.OrbitPoint (best available fallback)
+    glm::vec3 orbitPointToDisplay;
+    if (spaceMouseInput.IsNavigating()) {
+      orbitPointToDisplay = spaceMouseCameraPtr->OrbitPoint;
+    } else if (camera.IsOrbiting) {
+      orbitPointToDisplay = camera.OrbitPoint;
+    } else {
+      switch (preferences.spaceMouseAnchorMode) {
+      case GUI::SPACEMOUSE_ANCHOR_CLICK:
+        orbitPointToDisplay = spaceMouseClickAnchorSet
+            ? spaceMouseClickAnchor
+            : camera.OrbitPoint;
+        break;
+      case GUI::SPACEMOUSE_ANCHOR_CONTINUOUS:
+      case GUI::SPACEMOUSE_ANCHOR_ON_START:
+        orbitPointToDisplay = cursorManager.isCursorPositionValid()
+            ? cursorManager.getCursorPosition()
+            : camera.OrbitPoint;
+        break;
+      case GUI::SPACEMOUSE_ANCHOR_DISABLED:
+      default:
+        orbitPointToDisplay = camera.OrbitPoint;
+        break;
+      }
+    }
     cursorManager.renderOrbitCenter(projection, view, orbitPointToDisplay);
   }
 
@@ -5732,8 +5757,11 @@ void updateSpaceMouseCursorAnchor() {
   // this differs from the raw cursor hit-point because it is projected along
   // the camera front direction. Always feed it directly to the SpaceMouse so
   // that if the user switches to the SpaceMouse mid-orbit the pivot is exact.
+  // For CLICK mode the anchor is owned by the left-click handler; normal
+  // mouse orbit and cursor-hover logic must not overwrite it.
   if (camera.IsOrbiting &&
-      preferences.spaceMouseAnchorMode != GUI::SPACEMOUSE_ANCHOR_DISABLED) {
+      preferences.spaceMouseAnchorMode != GUI::SPACEMOUSE_ANCHOR_DISABLED &&
+      preferences.spaceMouseAnchorMode != GUI::SPACEMOUSE_ANCHOR_CLICK) {
     if (glm::distance(lastCursorPosition, camera.OrbitPoint) > 0.001f ||
         settingChanged) {
       lastCursorPosition = camera.OrbitPoint;
@@ -5750,6 +5778,7 @@ void updateSpaceMouseCursorAnchor() {
     // For CONTINUOUS mode, always update cursor position
     // For ON_START mode, only update when not navigating
     // For DISABLED mode, don't update cursor anchor
+    // For CLICK mode, anchor is managed by left-click, not cursor hover
     bool shouldUpdate = false;
 
     switch (preferences.spaceMouseAnchorMode) {
@@ -5763,6 +5792,9 @@ void updateSpaceMouseCursorAnchor() {
                      ((glm::distance(lastCursorPosition,
                                      currentCursorPosition) > 0.001f) ||
                       settingChanged);
+      break;
+    case GUI::SPACEMOUSE_ANCHOR_CLICK:
+      shouldUpdate = false;
       break;
     case GUI::SPACEMOUSE_ANCHOR_DISABLED:
     default:
@@ -5785,10 +5817,31 @@ void updateSpaceMouseCursorAnchor() {
         spaceMouseInput.RefreshPivotPosition();
       }
     }
-  } else {
-    // Always update the setting state even if cursor is not valid
+  } else if (preferences.spaceMouseAnchorMode != GUI::SPACEMOUSE_ANCHOR_CLICK) {
+    // Always update the setting state even if cursor is not valid.
+    // Skip for CLICK mode so the manually set anchor is not erased.
     spaceMouseInput.SetCursorAnchor(glm::vec3(0.0f),
                                     preferences.spaceMouseAnchorMode);
+  }
+
+  // CLICK mode: anchor is driven exclusively by left-click, not cursor hover.
+  if (preferences.spaceMouseAnchorMode == GUI::SPACEMOUSE_ANCHOR_CLICK) {
+    if (spaceMouseClickAnchorSet) {
+      if (glm::distance(lastCursorPosition, spaceMouseClickAnchor) > 0.001f ||
+          settingChanged) {
+        lastCursorPosition = spaceMouseClickAnchor;
+        spaceMouseInput.SetCursorAnchor(spaceMouseClickAnchor,
+                                        preferences.spaceMouseAnchorMode);
+        camera.OrbitPoint    = spaceMouseClickAnchor;
+        camera.OrbitDistance = glm::length(camera.Position - spaceMouseClickAnchor);
+        spaceMouseInput.RefreshPivotPosition();
+      }
+    } else if (settingChanged) {
+      // No click yet — fall back to scene center until the user clicks.
+      spaceMouseInput.SetCursorAnchor(glm::vec3(0.0f),
+                                      GUI::SPACEMOUSE_ANCHOR_DISABLED);
+      spaceMouseInput.RefreshPivotPosition();
+    }
   }
 }
 
@@ -6329,6 +6382,23 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
           // Ctrl+Clicked empty space or non-model object
           isMovingModel = false;
         }
+      }
+
+      // CLICK mode: fix the SpaceMouse pivot at the clicked 3D point.
+      if (!selectionMode && !preferences.brushToolSettings.enabled &&
+          preferences.spaceMouseAnchorMode == GUI::SPACEMOUSE_ANCHOR_CLICK) {
+        glm::vec3 anchor;
+        if (cursorManager.isCursorPositionValid()) {
+          anchor = cursorManager.getCursorPosition();
+        } else {
+          anchor = camera.Position + camera.Front * camera.OrbitDistance;
+        }
+        spaceMouseClickAnchor    = anchor;
+        spaceMouseClickAnchorSet = true;
+        spaceMouseInput.SetCursorAnchor(anchor, GUI::SPACEMOUSE_ANCHOR_CLICK);
+        camera.OrbitPoint    = anchor;
+        camera.OrbitDistance = glm::length(camera.Position - anchor);
+        spaceMouseInput.RefreshPivotPosition();
       }
 
       // Handle double-click (if not in selection mode and brush tool not

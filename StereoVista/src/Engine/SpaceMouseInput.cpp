@@ -354,6 +354,9 @@ public:
                                       : m_parent->m_cursorAnchor;
     case GUI::SPACEMOUSE_ANCHOR_CONTINUOUS:
       return m_parent->m_cursorAnchor;
+    case GUI::SPACEMOUSE_ANCHOR_CLICK:
+      // Anchor is only written on left-click; return it frozen as-is.
+      return m_parent->m_cursorAnchor;
     case GUI::SPACEMOUSE_ANCHOR_DISABLED:
     default:
       return (m_parent->m_modelMin + m_parent->m_modelMax) * 0.5f;
