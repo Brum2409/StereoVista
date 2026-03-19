@@ -2,7 +2,7 @@
     "camera": {
         "alwaysShowOrbitCenter": false,
         "autoConvergence": true,
-        "convergence": 10.540897369384766,
+        "convergence": 4.642391204833984,
         "convergenceCapMax": 39.0,
         "convergenceCapMin": 0.800000011920929,
         "convergenceDistanceFactor": 1.2999999523162842,
