@@ -648,13 +648,11 @@ public:
       return farPlane;
     }
 
-    // Check if OpenGL context is current (basic validation)
-    GLint currentFBO;
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &currentFBO);
-    GLenum error = glGetError();
-    if (error != GL_NO_ERROR) {
-      return farPlane; // OpenGL context issue
-    }
+    // Drain any pending OpenGL errors from previous operations so they don't
+    // prematurely abort the depth sampling (e.g. errors from the cursor
+    // subsystem calling glReadBuffer on a custom FBO).
+    while (glGetError() != GL_NO_ERROR) {}
+    GLenum error;
 
     const int numSamples = 9;     // 3x3 sampling grid
     const int sampleOffset = 100; // Pixel offset from center

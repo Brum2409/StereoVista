@@ -4909,6 +4909,16 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   }
 
   if (!distanceCalculatedThisFrame) {
+    // Explicitly bind the correct read framebuffer before depth sampling.
+    // The scene was rendered into the HDR FBO (when HDR is on) or the default
+    // framebuffer (non-HDR). Using GL_READ_FRAMEBUFFER leaves the draw
+    // framebuffer untouched so ongoing rendering is not disrupted.
+    if (preferences.hdrSettings.enabled && bloomRenderer != nullptr) {
+      Engine::BloomSettings &bloomSettings = bloomRenderer->getSettings();
+      glBindFramebuffer(GL_READ_FRAMEBUFFER, bloomSettings.hdrFBO);
+    } else {
+      glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    }
     float distanceToNearestObject = camera.getDistanceToNearestObject(
         camera, projection, view, preferences.farPlane, windowWidth,
         windowHeight);

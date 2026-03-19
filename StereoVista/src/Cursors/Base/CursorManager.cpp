@@ -143,6 +143,15 @@ void CursorManager::updateCursorPosition(
     float leftDepth = 0.0;
     float rightDepth = 0.0;
 
+    // GL_BACK_LEFT/RIGHT are only valid on the default framebuffer (FBO 0).
+    // If an HDR FBO is currently bound, calling glReadBuffer with a stereo
+    // back-buffer enum generates GL_INVALID_OPERATION, which then poisons
+    // subsequent glGetError() checks in other subsystems (e.g. the auto-
+    // convergence depth read). Save and restore the read FBO around these calls.
+    GLint prevReadFBO;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevReadFBO);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+
     // Read depth from left eye buffer
     glReadBuffer(GL_BACK_LEFT);
     glReadPixels(m_lastX, (float)m_windowHeight - m_lastY, 1, 1,
@@ -152,6 +161,9 @@ void CursorManager::updateCursorPosition(
     glReadBuffer(GL_BACK_RIGHT);
     glReadPixels(m_lastX, (float)m_windowHeight - m_lastY, 1, 1,
                  GL_DEPTH_COMPONENT, GL_FLOAT, &rightDepth);
+
+    // Restore the previous read framebuffer
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFBO);
 
     // Determine which eye has geometry (depth < threshold means hit on actual
     // geometry, not skybox)
