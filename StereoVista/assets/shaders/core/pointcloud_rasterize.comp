@@ -257,8 +257,13 @@ void main() {
         ivec2 px = ivec2((ndc.xy * 0.5 + 0.5) * vec2(uImageSize));
 
         // ── Depth + index packed into 64 bits ─────────────────────────────────
-        // floatBitsToUint preserves IEEE-754 sort order → atomicMin works as depth test
-        uint     depth = floatBitsToUint(clip.w);
+        // Store NDC depth in [0,1] so it can be written directly to the OpenGL
+        // depth buffer during the resolve pass, enabling correct point/mesh
+        // depth interaction.  ndc.z is already computed and guarded ∈ [-1,1]
+        // above.  floatBitsToUint on a [0,1] float preserves IEEE-754 sort
+        // order → atomicMin still works as a correct depth test.
+        float    depth01 = ndc.z * 0.5 + 0.5;   // map NDC z [-1,1] → OpenGL [0,1]
+        uint     depth   = floatBitsToUint(depth01);
         uint64_t entry = (uint64_t(depth) << 32UL) | uint64_t(index);
 
         // ── Single-pixel write (matches Schütz's basic compute_loop_las) ──────

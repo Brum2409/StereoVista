@@ -201,11 +201,18 @@ void ComputePointCloudRenderer::endFrame() {
     // Framebuffer SSBO (binding 1) and RGBA SSBO (binding 44) remain bound
     // from the rasterize pass; the fragment shader reads both.
 
+    // Enable depth testing so the resolve pass correctly handles point/mesh
+    // occlusion: points behind meshes are discarded, points in front overwrite
+    // the mesh colour and update the depth buffer.
     GLboolean depthWasEnabled = glIsEnabled(GL_DEPTH_TEST);
     GLboolean depthWriteWasOn;
     glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWriteWasOn);
-    glDisable(GL_DEPTH_TEST);
-    glDepthMask(GL_FALSE);
+    GLint prevDepthFunc;
+    glGetIntegerv(GL_DEPTH_FUNC, &prevDepthFunc);
+
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    glDepthMask(GL_TRUE);
 
     m_resolveShader->use();
     glUniform2i(m_locResolveImageSize, m_width, m_height);
@@ -215,8 +222,9 @@ void ComputePointCloudRenderer::endFrame() {
     glBindVertexArray(0);
 
     // Restore depth state
-    if (depthWasEnabled) glEnable(GL_DEPTH_TEST);
-    if (depthWriteWasOn) glDepthMask(GL_TRUE);
+    if (!depthWasEnabled) glDisable(GL_DEPTH_TEST);
+    glDepthFunc(prevDepthFunc);
+    if (!depthWriteWasOn) glDepthMask(GL_FALSE);
 
     // Unbind SSBOs
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER,  1, 0);
