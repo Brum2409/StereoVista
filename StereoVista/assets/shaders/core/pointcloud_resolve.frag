@@ -31,6 +31,12 @@ void main() {
     // Sentinel: no point was rasterised here – keep the scene pixel.
     if (entry == 0xFFFFFFFFFFFFFFFFUL) discard;
 
+    // Write the point's NDC depth [0,1] so the hardware depth test compares it
+    // against the existing depth buffer (written by mesh rendering).  Points
+    // behind meshes are discarded; points in front overwrite the mesh pixel.
+    uint depth_uint = uint(entry >> 32UL);
+    gl_FragDepth    = uintBitsToFloat(depth_uint);
+
     // Extract point index from the low 32 bits.
     uint idx    = uint(entry & 0xFFFFFFFFUL);
     uint packed = packedColor[idx];
