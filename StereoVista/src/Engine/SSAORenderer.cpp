@@ -34,6 +34,13 @@ bool SSAORenderer::initialize(int width, int height) {
   generateNoiseTexture();
   setupQuad();
 
+  // Upload kernel samples once — they never change after generation
+  m_ssaoShader->use();
+  for (unsigned int i = 0; i < 64; ++i) {
+    m_ssaoShader->setVec3("samples[" + std::to_string(i) + "]",
+                          m_ssaoKernel[i]);
+  }
+
   m_initialized = true;
   return true;
 }
@@ -365,11 +372,6 @@ void SSAORenderer::computeSSAO(const glm::mat4 &projection) {
 
   m_ssaoShader->use();
 
-  // Send kernel samples
-  for (unsigned int i = 0; i < 64; ++i) {
-    m_ssaoShader->setVec3("samples[" + std::to_string(i) + "]",
-                          m_ssaoKernel[i]);
-  }
   m_ssaoShader->setMat4("projection", projection);
   m_ssaoShader->setInt("kernelSize", m_settings.kernelSize);
   m_ssaoShader->setFloat("radius", m_settings.radius);
