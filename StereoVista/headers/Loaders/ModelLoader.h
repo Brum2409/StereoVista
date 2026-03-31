@@ -95,6 +95,7 @@ namespace Engine {
 
         bool visible = true;
         float boundingSphereRadius = 0.0f;
+        glm::vec3 localBoundsCenter = glm::vec3(0.0f);
         std::string directory;
         std::vector<bool> selectedMeshes;
 

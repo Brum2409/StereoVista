@@ -82,7 +82,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
                const glm::mat4 *leftView = nullptr,
                const glm::mat4 *rightProjection = nullptr,
                const glm::mat4 *rightView = nullptr);
-void renderModels(Engine::Shader *shader);
+void renderModels(Engine::Shader *shader, const glm::mat4 &viewProj);
 void renderPointClouds(Engine::Shader *shader,
                        const glm::mat4 &view,
                        const glm::mat4 &projection);
@@ -3736,7 +3736,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     // Render scene to depth buffer - disable culling to avoid issues with
     // complex geometry
     glDisable(GL_CULL_FACE);
-    renderModels(simpleDepthShader);
+    renderModels(simpleDepthShader, lightSpaceMatrix);
     glEnable(GL_CULL_FACE);
 
     // Disable polygon offset
@@ -3808,7 +3808,9 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
 
         // Render scene to this light's 6 faces in array layers via GS
         // gl_Layer
-        renderModels(pointShadowShader);
+        renderModels(pointShadowShader,
+                     camera.GetViewMatrix() * camera.GetProjectionMatrix(
+                         aspectRatio, preferences.nearPlane, preferences.farPlane));
       }
 
       glDisable(GL_POLYGON_OFFSET_FILL);
@@ -4880,7 +4882,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   std::endl;
     */
   // Render scene - cache buffers still bound, fragment shader can read them
-  renderModels(shader);
+  renderModels(shader, projection * view);
   renderSkybox(projection, view, shader);
   renderPointClouds(shader, view, projection);
 
@@ -5077,7 +5079,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   glBindTexture(GL_TEXTURE_3D, 0);
 }
 
-void renderModels(Engine::Shader *shader) {
+void renderModels(Engine::Shader *shader, const glm::mat4 &viewProj) {
   // Don't do lighting setup for the depth shader
   if (shader != simpleDepthShader) {
     // Bind skybox for reflections
@@ -5097,6 +5099,12 @@ void renderModels(Engine::Shader *shader) {
     }
   }
 
+  // Uniforms constant across all models — set once before the loop
+  shader->setBool("selectionMode", selectionMode);
+  shader->setInt("selectedMeshIndex", currentSelectedMeshIndex);
+  shader->setBool("isMeshSelected", currentSelectedMeshIndex >= 0);
+  shader->setFloat("emissiveIntensity", radianceSettings.emissiveIntensity);
+
   // Render each model
   for (int i = 0; i < currentScene.models.size(); i++) {
     auto &model = currentScene.models[i];
@@ -5114,12 +5122,28 @@ void renderModels(Engine::Shader *shader) {
                               glm::vec3(0, 0, 1));
     modelMatrix = glm::scale(modelMatrix, model.scale);
 
+    // Frustum culling: skip models whose bounding sphere is outside the view frustum
+    if (model.boundingSphereRadius > 0.0f) {
+      glm::vec3 worldCenter = glm::vec3(modelMatrix * glm::vec4(model.localBoundsCenter, 1.0f));
+      float maxScale = glm::max({model.scale.x, model.scale.y, model.scale.z});
+      float worldRadius = model.boundingSphereRadius * maxScale;
+      if (!camera.isInFrustum(worldCenter, worldRadius, viewProj))
+        continue;
+    }
+
     // Set model matrix in shader
     shader->setMat4("model", modelMatrix);
 
-    // Calculate and set normal matrix for proper normal transformation
-    glm::mat3 normalMatrix =
-        glm::transpose(glm::inverse(glm::mat3(modelMatrix)));
+    // Calculate and set normal matrix for proper normal transformation.
+    // For uniform-scale models (the common case) the inverse-transpose simplifies
+    // to mat3(modelMatrix), saving an expensive matrix inversion per model.
+    glm::mat3 normalMatrix;
+    if (std::abs(model.scale.x - model.scale.y) < 1e-6f &&
+        std::abs(model.scale.y - model.scale.z) < 1e-6f) {
+      normalMatrix = glm::mat3(modelMatrix);
+    } else {
+      normalMatrix = glm::transpose(glm::inverse(glm::mat3(modelMatrix)));
+    }
     shader->setMat3("normalMatrix", normalMatrix);
 
     // Set standard material properties
@@ -5142,9 +5166,6 @@ void renderModels(Engine::Shader *shader) {
     shader->setFloat("material.normalScale", model.normalScale);
     shader->setFloat("material.heightScale", model.heightScale);
 
-    // Set emissive intensity for all lighting modes
-    shader->setFloat("emissiveIntensity", radianceSettings.emissiveIntensity);
-
     // For VCT, set additional material properties
     if (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
       // Set VCT specific material properties
@@ -5158,13 +5179,10 @@ void renderModels(Engine::Shader *shader) {
       shader->setFloat("material.transparency", model.transparency);
     }
 
-    // Set selection state
-    shader->setBool("selectionMode", selectionMode);
+    // Set per-model selection state (isSelected depends on model index i)
     shader->setBool("isSelected",
                     selectionMode && (i == currentSelectedIndex) &&
                         (currentSelectedType == SelectedType::Model));
-    shader->setInt("selectedMeshIndex", currentSelectedMeshIndex);
-    shader->setBool("isMeshSelected", currentSelectedMeshIndex >= 0);
 
     // Set current mesh index for all meshes
     for (int j = 0; j < model.getMeshes().size(); j++) {
@@ -5585,12 +5603,12 @@ void DrawRadar(bool isStereoWindow, Camera camera, GLfloat focaldist,
 
     if (isStereoWindow) {
       glDrawBuffer(GL_BACK_LEFT);
-      renderModels(shader);
+      renderModels(shader, p * v);
       glDrawBuffer(GL_BACK_RIGHT);
-      renderModels(shader);
+      renderModels(shader, p * v);
     } else {
       glDrawBuffer(GL_BACK);
-      renderModels(shader);
+      renderModels(shader, p * v);
     }
   }
 

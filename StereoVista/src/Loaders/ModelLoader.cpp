@@ -1,5 +1,6 @@
 // model_loader.cpp
 #include "Loaders/ModelLoader.h"
+#include "Engine/BVH.h"
 #include <stb_image.h>
 #include <map>
 #include <filesystem>
@@ -96,14 +97,22 @@ namespace Engine {
 
         loadModel(path);
 
-        // Calculate bounding sphere radius
+        // Compute tight bounding sphere: find AABB center first, then measure radius from it.
+        // Using Engine::AABB (from BVH.h) as the intermediate computation tool.
+        Engine::AABB localAABB;
+        for (const auto& mesh : meshes)
+            for (const auto& v : mesh.vertices)
+                localAABB.expand(v.position);
+
+        if (localAABB.isValid())
+            localBoundsCenter = localAABB.getCenter();
+
         float maxDistSq = 0.0f;
-        for (const auto& mesh : meshes) {
-            for (const auto& vertex : mesh.vertices) {
-                float distSq = glm::dot(vertex.position, vertex.position);
-                maxDistSq = std::max(maxDistSq, distSq);
+        for (const auto& mesh : meshes)
+            for (const auto& v : mesh.vertices) {
+                glm::vec3 d = v.position - localBoundsCenter;
+                maxDistSq = std::max(maxDistSq, glm::dot(d, d));
             }
-        }
         boundingSphereRadius = std::sqrt(maxDistSq);
 
         // Auto-scale large models to fit in scene (if enabled in preferences)

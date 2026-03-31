@@ -53,6 +53,7 @@ namespace Tools {
         std::vector<InstanceData> instances;
         GLuint instanceVBO;
         bool needsUpdate;
+        GLsizeiptr instanceBufferCapacity = 0; // bytes currently allocated on GPU
 
         BrushCluster(const std::string& clusterName, int modelIdx)
             : name(clusterName), sourceModelIndex(modelIdx),

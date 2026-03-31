@@ -190,15 +190,20 @@ namespace Tools {
 
             // Update GPU buffer if needed
             if (cluster.needsUpdate) {
-                if (cluster.instanceVBO == 0) {
+                if (cluster.instanceVBO == 0)
                     glGenBuffers(1, &cluster.instanceVBO);
-                }
 
+                GLsizeiptr newSize = (GLsizeiptr)(cluster.instances.size() * sizeof(InstanceData));
                 glBindBuffer(GL_ARRAY_BUFFER, cluster.instanceVBO);
-                glBufferData(GL_ARRAY_BUFFER,
-                    cluster.instances.size() * sizeof(InstanceData),
-                    cluster.instances.data(),
-                    GL_DYNAMIC_DRAW);
+
+                if (cluster.instanceBufferCapacity > 0 && newSize <= cluster.instanceBufferCapacity) {
+                    // Same or smaller count: update data in-place without GPU reallocation
+                    glBufferSubData(GL_ARRAY_BUFFER, 0, newSize, cluster.instances.data());
+                } else {
+                    // Buffer needs to grow (or first allocation)
+                    glBufferData(GL_ARRAY_BUFFER, newSize, cluster.instances.data(), GL_DYNAMIC_DRAW);
+                    cluster.instanceBufferCapacity = newSize;
+                }
 
                 cluster.needsUpdate = false;
             }
