@@ -5125,7 +5125,7 @@ void renderModels(Engine::Shader *shader, const glm::mat4 &viewProj) {
     // Frustum culling: skip models whose bounding sphere is outside the view frustum
     if (model.boundingSphereRadius > 0.0f) {
       glm::vec3 worldCenter = glm::vec3(modelMatrix * glm::vec4(model.localBoundsCenter, 1.0f));
-      float maxScale = glm::max({model.scale.x, model.scale.y, model.scale.z});
+      float maxScale = glm::max(model.scale.x, glm::max(model.scale.y, model.scale.z));
       float worldRadius = model.boundingSphereRadius * maxScale;
       if (!camera.isInFrustum(worldCenter, worldRadius, viewProj))
         continue;
