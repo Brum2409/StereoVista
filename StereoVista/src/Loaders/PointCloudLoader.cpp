@@ -1560,8 +1560,8 @@ namespace Engine {
         PointCloud pointCloud;
         pointCloud.name     = std::filesystem::path(filePath).stem().string();
         pointCloud.position = glm::vec3(0.0f);
-        pointCloud.rotation = glm::vec3(0.0f);
-        pointCloud.scale    = glm::vec3(1.0f);
+        pointCloud.rotation = glm::vec3(-90.0f, 0.0f, 0.0f);
+        pointCloud.scale    = glm::vec3(0.01f);
 
         // ── Helper: open a LASzip reader ─────────────────────────────────────
         auto openReader = [&](laszip_POINTER& r, laszip_BOOL& compressed) -> bool {

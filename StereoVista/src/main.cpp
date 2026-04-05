@@ -1,6 +1,7 @@
 // ---- Core Definitions ----
 #define NOMINMAX
 #include "Engine/Core.h"
+#include <array>
 #include <atomic>
 #include <iostream>
 #include <thread>
@@ -82,7 +83,8 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
                const glm::mat4 *leftView = nullptr,
                const glm::mat4 *rightProjection = nullptr,
                const glm::mat4 *rightView = nullptr);
-void renderModels(Engine::Shader *shader, const glm::mat4 &viewProj);
+void renderModels(Engine::Shader *shader, const glm::mat4 &viewProj,
+                  bool enableFrustumCulling = true);
 void renderPointClouds(Engine::Shader *shader,
                        const glm::mat4 &view,
                        const glm::mat4 &projection);
@@ -282,7 +284,7 @@ Engine::Sun sun = {
     glm::normalize(glm::vec3(-1.0f, -2.0f, -1.0f)), // More vertical angle
     glm::vec3(1.0f, 0.95f, 0.8f),                   // Warmer color
     0.16f,                                          // Higher intensity
-    true};
+    false};
 
 unsigned int depthMapFBO;
 unsigned int depthMap;
@@ -1416,15 +1418,20 @@ glm::mat4 calculateLightSpaceMatrix() {
   sceneMin = glm::min(sceneMin, camera.Position - glm::vec3(5.0f));
   sceneMax = glm::max(sceneMax, camera.Position + glm::vec3(5.0f));
 
-  // Calculate actual scene bounds from all models
+  // Calculate actual scene bounds from all models.
+  // boundingSphereRadius is measured from localBoundsCenter (AABB center in
+  // local space), so we must account for that offset when computing world bounds.
   for (const auto &model : currentScene.models) {
-    glm::vec3 modelMin =
-        model.position - glm::vec3(model.scale * model.boundingSphereRadius);
-    glm::vec3 modelMax =
-        model.position + glm::vec3(model.scale * model.boundingSphereRadius);
+    // World-space center of the bounding sphere (model.position is the transform
+    // origin; localBoundsCenter is the offset to the AABB center in local space).
+    glm::vec3 worldSphereCenter =
+        model.position + glm::vec3(model.scale * model.localBoundsCenter);
+    float worldRadius =
+        model.boundingSphereRadius *
+        glm::max(model.scale.x, glm::max(model.scale.y, model.scale.z));
 
-    sceneMin = glm::min(sceneMin, modelMin);
-    sceneMax = glm::max(sceneMax, modelMax);
+    sceneMin = glm::min(sceneMin, worldSphereCenter - glm::vec3(worldRadius));
+    sceneMax = glm::max(sceneMax, worldSphereCenter + glm::vec3(worldRadius));
   }
 
   // If no models, use camera-centered bounds
@@ -3341,6 +3348,12 @@ int main() {
     }
 
     // ---- Rendering ----
+    // Compute lightSpaceMatrix once per frame — reused in both shadow pass and
+    // main render pass inside renderEye (which runs twice in stereo mode).
+    if (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING) {
+      lightSpaceMatrix = calculateLightSpaceMatrix();
+    }
+
     // Check if HDR/bloom is enabled
     bool hdrEnabled =
         preferences.hdrSettings.enabled && bloomRenderer != nullptr;
@@ -3722,9 +3735,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
     glClear(GL_DEPTH_BUFFER_BIT);
 
-    // Calculate light space matrix based on actual scene bounds
-    lightSpaceMatrix = calculateLightSpaceMatrix();
-
+    // lightSpaceMatrix was already computed once this frame before renderEye.
     // Use depth shader for shadow map generation
     simpleDepthShader->use();
     simpleDepthShader->setMat4("lightSpaceMatrix", lightSpaceMatrix);
@@ -3771,46 +3782,31 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
           continue;
         glm::vec3 lightPos = pointLights[li].position;
 
-        std::vector<glm::mat4> shadowMatrices;
-        shadowMatrices.push_back(
-            shadowProj * glm::lookAt(lightPos,
-                                     lightPos + glm::vec3(1.0f, 0.0f, 0.0f),
-                                     glm::vec3(0.0f, -1.0f, 0.0f)));
-        shadowMatrices.push_back(
-            shadowProj * glm::lookAt(lightPos,
-                                     lightPos + glm::vec3(-1.0f, 0.0f, 0.0f),
-                                     glm::vec3(0.0f, -1.0f, 0.0f)));
-        shadowMatrices.push_back(
-            shadowProj * glm::lookAt(lightPos,
-                                     lightPos + glm::vec3(0.0f, 1.0f, 0.0f),
-                                     glm::vec3(0.0f, 0.0f, 1.0f)));
-        shadowMatrices.push_back(
-            shadowProj * glm::lookAt(lightPos,
-                                     lightPos + glm::vec3(0.0f, -1.0f, 0.0f),
-                                     glm::vec3(0.0f, 0.0f, -1.0f)));
-        shadowMatrices.push_back(
-            shadowProj * glm::lookAt(lightPos,
-                                     lightPos + glm::vec3(0.0f, 0.0f, 1.0f),
-                                     glm::vec3(0.0f, -1.0f, 0.0f)));
-        shadowMatrices.push_back(
-            shadowProj * glm::lookAt(lightPos,
-                                     lightPos + glm::vec3(0.0f, 0.0f, -1.0f),
-                                     glm::vec3(0.0f, -1.0f, 0.0f)));
+        // Stack array — no heap allocation per light per eye.
+        std::array<glm::mat4, 6> shadowMatrices = {
+            shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3( 1, 0, 0), glm::vec3(0,-1, 0)),
+            shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(-1, 0, 0), glm::vec3(0,-1, 0)),
+            shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3( 0, 1, 0), glm::vec3(0, 0, 1)),
+            shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3( 0,-1, 0), glm::vec3(0, 0,-1)),
+            shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3( 0, 0, 1), glm::vec3(0,-1, 0)),
+            shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3( 0, 0,-1), glm::vec3(0,-1, 0)),
+        };
 
         pointShadowShader->use();
+        char smName[32];
         for (unsigned int i = 0; i < 6; ++i) {
-          pointShadowShader->setMat4(
-              "shadowMatrices[" + std::to_string(i) + "]", shadowMatrices[i]);
+          snprintf(smName, sizeof(smName), "shadowMatrices[%u]", i);
+          pointShadowShader->setMat4(smName, shadowMatrices[i]);
         }
         pointShadowShader->setVec3("lightPos", lightPos);
         pointShadowShader->setFloat("far_plane", far_plane);
         pointShadowShader->setInt("lightIndex", li);
 
         // Render scene to this light's 6 faces in array layers via GS
-        // gl_Layer
-        renderModels(pointShadowShader,
-                     camera.GetViewMatrix() * camera.GetProjectionMatrix(
-                         aspectRatio, preferences.nearPlane, preferences.farPlane));
+        // gl_Layer.
+        // Point lights are omnidirectional — no single frustum to cull against,
+        // so frustum culling is disabled for this pass (see renderModels).
+        renderModels(pointShadowShader, glm::mat4(0.0f), false);
       }
 
       glDisable(GL_POLYGON_OFFSET_FILL);
@@ -3985,10 +3981,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
 
   // Shadow mapping specific setup
   if (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING) {
-    // Calculate light space matrix based on actual scene bounds (same as
-    // depth pass)
-    lightSpaceMatrix = calculateLightSpaceMatrix();
-
+    // lightSpaceMatrix was already computed once this frame before renderEye.
     shader->setMat4("lightSpaceMatrix", lightSpaceMatrix);
 
     // Bind shadow map if shadows are enabled
@@ -4886,11 +4879,6 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   renderSkybox(projection, view, shader);
   renderPointClouds(shader, view, projection);
 
-  // Render light visualizations when Ctrl is pressed
-  if (ctrlPressed) {
-    renderLightVisualizations(shader);
-  }
-
   // Render BVH debug visualization (after main scene rendering)
   if (showBVHDebug && bvhBuilt) {
     // BVH debug lines are now rendering
@@ -5079,7 +5067,8 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   glBindTexture(GL_TEXTURE_3D, 0);
 }
 
-void renderModels(Engine::Shader *shader, const glm::mat4 &viewProj) {
+void renderModels(Engine::Shader *shader, const glm::mat4 &viewProj,
+                  bool enableFrustumCulling) {
   // Don't do lighting setup for the depth shader
   if (shader != simpleDepthShader) {
     // Bind skybox for reflections
@@ -5105,6 +5094,13 @@ void renderModels(Engine::Shader *shader, const glm::mat4 &viewProj) {
   shader->setBool("isMeshSelected", currentSelectedMeshIndex >= 0);
   shader->setFloat("emissiveIntensity", radianceSettings.emissiveIntensity);
 
+  // Extract frustum planes once — reused for every model below instead of
+  // recomputing 6 sqrt-normalizations per model per renderModels call.
+  // Only extract when culling is actually enabled.
+  std::array<glm::vec4, 6> frustumPlanes;
+  if (enableFrustumCulling)
+    frustumPlanes = Camera::extractFrustumPlanes(viewProj);
+
   // Render each model
   for (int i = 0; i < currentScene.models.size(); i++) {
     auto &model = currentScene.models[i];
@@ -5123,11 +5119,11 @@ void renderModels(Engine::Shader *shader, const glm::mat4 &viewProj) {
     modelMatrix = glm::scale(modelMatrix, model.scale);
 
     // Frustum culling: skip models whose bounding sphere is outside the view frustum
-    if (model.boundingSphereRadius > 0.0f) {
+    if (enableFrustumCulling && model.boundingSphereRadius > 0.0f) {
       glm::vec3 worldCenter = glm::vec3(modelMatrix * glm::vec4(model.localBoundsCenter, 1.0f));
       float maxScale = glm::max(model.scale.x, glm::max(model.scale.y, model.scale.z));
       float worldRadius = model.boundingSphereRadius * maxScale;
-      if (!camera.isInFrustum(worldCenter, worldRadius, viewProj))
+      if (!Camera::isInFrustumPlanes(worldCenter, worldRadius, frustumPlanes))
         continue;
     }
 
@@ -5315,9 +5311,14 @@ void renderPointClouds(Engine::Shader *shader,
     }
   }
 
+  // renderNode() calls m_rasterShader->use() internally, leaving the compute
+  // shader active.  Re-activate the scene shader so this flag lands in the
+  // right program; without this, isPointCloud stays true and meshes render
+  // normals-as-colour on every subsequent frame.
+  shader->use();
   shader->setBool("isPointCloud", false);
 
-  // Composite compute result into the HDR framebuffer
+  // Composite compute result into the HDR framebuffer.
   if (useCompute) {
     computePointCloudRenderer->endFrame();
   }

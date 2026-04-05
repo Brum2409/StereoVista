@@ -509,7 +509,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
             if (extension == ".las" || extension == ".laz") {
               Engine::PointCloud newPointCloud = std::move(
                   Engine::PointCloudLoader::loadFromLAS(filePath));
-              if (newPointCloud.octreeRoot || !newPointCloud.points.empty()) {
+              if (newPointCloud.isLoaded()) {
                 newPointCloud.filePath = filePath;
                 currentScene.pointClouds.emplace_back(std::move(newPointCloud));
                 updateSpaceMouseBounds();
@@ -524,7 +524,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
             } else if (extension == ".pcb") {
               Engine::PointCloud newPointCloud =
                   std::move(Engine::PointCloudLoader::loadFromBinary(filePath));
-              if (newPointCloud.octreeRoot || !newPointCloud.points.empty()) {
+              if (newPointCloud.isLoaded()) {
                 newPointCloud.filePath = filePath;
                 newPointCloud.name =
                     std::filesystem::path(filePath).stem().string();
@@ -535,7 +535,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
                        extension == ".f5") {
               Engine::PointCloud newPointCloud = std::move(
                   Engine::PointCloudLoader::loadPointCloudFile(filePath));
-              if (newPointCloud.octreeRoot || !newPointCloud.points.empty()) {
+              if (newPointCloud.isLoaded()) {
                 newPointCloud.filePath = filePath;
                 newPointCloud.name =
                     std::filesystem::path(filePath).stem().string();

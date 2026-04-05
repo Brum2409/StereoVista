@@ -2,6 +2,8 @@
 #include "Loaders/ModelLoader.h"
 #include "Engine/BVH.h"
 #include <stb_image.h>
+#include <array>
+#include <cstdio>
 #include <map>
 #include <filesystem>
 #include "Gui/GuiTypes.h"
@@ -55,17 +57,18 @@ namespace Engine {
         unsigned int normalNr = 0;
         unsigned int aoNr = 0;
 
+        char texName[32];
         for (unsigned int i = 0; i < textures.size(); i++) {
             glActiveTexture(GL_TEXTURE0 + i);
 
-            std::string name = textures[i].type;
+            const std::string &name = textures[i].type;
             if (name == "texture_diffuse") diffuseNr++;
             else if (name == "texture_specular") specularNr++;
             else if (name == "texture_normal") normalNr++;
             else if (name == "texture_ao") aoNr++;
 
-            // Use your existing array-based texture binding
-            shader.setInt("material.textures[" + std::to_string(i) + "]", i);
+            snprintf(texName, sizeof(texName), "material.textures[%u]", i);
+            shader.setInt(texName, i);
             glBindTexture(GL_TEXTURE_2D, textures[i].id);
         }
 

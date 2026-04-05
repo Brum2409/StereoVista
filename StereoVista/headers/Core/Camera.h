@@ -2,6 +2,7 @@
 #define CAMERA_H
 
 #include "Engine/Core.h"
+#include <array>
 #include <functional>
 
 #include <glm/glm.hpp>
@@ -185,25 +186,37 @@ public:
     return o;
   }
 
-  // Frustum culling check
-  bool isInFrustum(const glm::vec3 &point, float radius,
-                   glm::mat4 viewProj) const {
+  // Extract the 6 normalized frustum planes from a P*V matrix.
+  // Call this once per renderModels invocation, then reuse the result per model.
+  static std::array<glm::vec4, 6> extractFrustumPlanes(const glm::mat4 &vp) {
+    std::array<glm::vec4, 6> planes;
     for (int i = 0; i < 6; ++i) {
-      glm::vec4 plane(viewProj[0][3] + (i % 2 == 0 ? viewProj[0][i / 2]
-                                                   : -viewProj[0][i / 2]),
-                      viewProj[1][3] + (i % 2 == 0 ? viewProj[1][i / 2]
-                                                   : -viewProj[1][i / 2]),
-                      viewProj[2][3] + (i % 2 == 0 ? viewProj[2][i / 2]
-                                                   : -viewProj[2][i / 2]),
-                      viewProj[3][3] + (i % 2 == 0 ? viewProj[3][i / 2]
-                                                   : -viewProj[3][i / 2]));
-      plane /= glm::length(glm::vec3(plane));
+      glm::vec4 p(vp[0][3] + (i % 2 == 0 ? vp[0][i / 2] : -vp[0][i / 2]),
+                  vp[1][3] + (i % 2 == 0 ? vp[1][i / 2] : -vp[1][i / 2]),
+                  vp[2][3] + (i % 2 == 0 ? vp[2][i / 2] : -vp[2][i / 2]),
+                  vp[3][3] + (i % 2 == 0 ? vp[3][i / 2] : -vp[3][i / 2]));
+      p /= glm::length(glm::vec3(p));
+      planes[i] = p;
+    }
+    return planes;
+  }
 
-      if (glm::dot(point, glm::vec3(plane)) + plane.w <= -radius) {
+  // Test a sphere (center + radius) against pre-extracted frustum planes.
+  static bool isInFrustumPlanes(const glm::vec3 &center, float radius,
+                                 const std::array<glm::vec4, 6> &planes) {
+    for (const auto &plane : planes) {
+      if (glm::dot(center, glm::vec3(plane)) + plane.w <= -radius)
         return false;
-      }
     }
     return true;
+  }
+
+  // Frustum culling check (extracts planes every call — prefer the two-step
+  // extractFrustumPlanes / isInFrustumPlanes API when testing many objects).
+  bool isInFrustum(const glm::vec3 &point, float radius,
+                   const glm::mat4 &viewProj) const {
+    auto planes = extractFrustumPlanes(viewProj);
+    return isInFrustumPlanes(point, radius, planes);
   }
 
   // Processes keyboard input and moves the camera accordingly

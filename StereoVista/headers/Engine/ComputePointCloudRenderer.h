@@ -65,7 +65,9 @@ public:
     // Wait for all compute work to finish, then composite the point cloud result
     // over the currently-bound HDR framebuffer with a fullscreen quad.
     // Call this after all renderNode() calls for the frame, while the HDR FBO
-    // is still bound.
+    // is still bound.  The resolve shader writes gl_FragDepth so the hardware
+    // depth test (GL_LESS) discards points behind meshes and the depth buffer
+    // is updated for the EDL pass.
     void endFrame();
 
     bool isInitialized() const { return m_initialized; }
@@ -97,8 +99,8 @@ private:
     GLint m_locProj              = -1;
     GLint m_locPointsPerThread   = -1;
 
-    // Cached resolve-shader uniform location
-    GLint m_locResolveImageSize = -1;
+    // Cached resolve-shader uniform locations
+    GLint m_locResolveImageSize  = -1;
 };
 
 } // namespace Engine

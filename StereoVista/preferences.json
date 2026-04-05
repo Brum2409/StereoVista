@@ -2,7 +2,7 @@
     "camera": {
         "alwaysShowOrbitCenter": false,
         "autoConvergence": true,
-        "convergence": 4.642391204833984,
+        "convergence": 19.273231506347656,
         "convergenceCapMax": 39.0,
         "convergenceCapMin": 0.800000011920929,
         "convergenceDistanceFactor": 1.2999999523162842,
@@ -38,15 +38,15 @@
     },
     "edl": {
         "enabled": false,
-        "radius": 3.0,
-        "strength": 1.6100000143051147
+        "radius": 3.200000047683716,
+        "strength": 4.809999942779541
     },
     "hdr": {
         "bloomIntensity": 0.1770000010728836,
         "bloomThreshold": 0.33000001311302185,
-        "enableBloom": true,
+        "enableBloom": false,
         "enabled": true,
-        "exposure": 2.190000057220459,
+        "exposure": 2.059999942779541,
         "toneMapOperator": 3
     },
     "lighting": {
@@ -113,7 +113,7 @@
         "cascadeSplitLambda": 0.5,
         "enableCascades": false,
         "enableIndirectLighting": false,
-        "enablePCSS": true,
+        "enablePCSS": false,
         "lightSize": 0.14100000262260437,
         "numCascades": 4,
         "pcfKernelSize": 9,
@@ -141,7 +141,7 @@
         "type": 1
     },
     "spacemouse": {
-        "anchorMode": 3,
+        "anchorMode": 1,
         "centerCursor": false,
         "deadzone": 0.0,
         "enabled": true,

@@ -67,9 +67,10 @@ void ComputePointCloudRenderer::init(int width, int height) {
     m_locProj             = glGetUniformLocation(pid, "uProj");
     m_locPointsPerThread  = glGetUniformLocation(pid, "uPointsPerThread");
 
-    // Cache resolve shader uniform location
+    // Cache resolve shader uniform locations
     m_resolveShader->use();
-    m_locResolveImageSize = glGetUniformLocation(m_resolveShader->getID(), "uImageSize");
+    GLuint rpid = m_resolveShader->getID();
+    m_locResolveImageSize = glGetUniformLocation(rpid, "uImageSize");
 
     // Build fullscreen quad VAO
     glGenVertexArrays(1, &m_quadVAO);
@@ -194,25 +195,18 @@ void ComputePointCloudRenderer::renderNode(
 void ComputePointCloudRenderer::endFrame() {
     if (!m_initialized) return;
 
-    // Single barrier after all rasterize dispatches
-    glMemoryBarrier(GL_ALL_BARRIER_BITS);
+    // Wait only for SSBO writes from the compute rasterize passes.
+    // GL_SHADER_STORAGE_BARRIER_BIT is sufficient and much lighter than
+    // GL_ALL_BARRIER_BITS, which flushes the entire GPU pipeline.
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
     // ── Resolve / composite pass ────────────────────────────────────────────
     // Framebuffer SSBO (binding 1) and RGBA SSBO (binding 44) remain bound
     // from the rasterize pass; the fragment shader reads both.
-
-    // Enable depth testing so the resolve pass correctly handles point/mesh
-    // occlusion: points behind meshes are discarded, points in front overwrite
-    // the mesh colour and update the depth buffer.
-    GLboolean depthWasEnabled = glIsEnabled(GL_DEPTH_TEST);
-    GLboolean depthWriteWasOn;
-    glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWriteWasOn);
-    GLint prevDepthFunc;
-    glGetIntegerv(GL_DEPTH_FUNC, &prevDepthFunc);
-
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LESS);
-    glDepthMask(GL_TRUE);
+    //
+    // The resolve shader writes gl_FragDepth so the hardware depth test
+    // (GL_LESS) correctly discards points behind meshes, and the depth buffer
+    // is updated so the EDL pass sees accurate point-cloud depths.
 
     m_resolveShader->use();
     glUniform2i(m_locResolveImageSize, m_width, m_height);
@@ -220,11 +214,6 @@ void ComputePointCloudRenderer::endFrame() {
     glBindVertexArray(m_quadVAO);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     glBindVertexArray(0);
-
-    // Restore depth state
-    if (!depthWasEnabled) glDisable(GL_DEPTH_TEST);
-    glDepthFunc(prevDepthFunc);
-    if (!depthWriteWasOn) glDepthMask(GL_FALSE);
 
     // Unbind SSBOs
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER,  1, 0);

@@ -3,6 +3,11 @@
 // composite point-cloud colours into the currently-bound HDR framebuffer.
 // Pixels where the framebuffer still holds the sentinel 0xFFFFFFFFFFFFFFFF
 // are discarded, leaving the underlying scene content intact.
+//
+// Depth interaction: gl_FragDepth is written with the point's NDC depth so
+// that the hardware depth test compares it against the existing mesh depth.
+// Points behind meshes are discarded by GL_LESS; points in front overwrite
+// the mesh colour and update the depth buffer for EDL.
 #version 460 core
 #extension GL_ARB_gpu_shader_int64 : require
 
@@ -33,7 +38,8 @@ void main() {
 
     // Write the point's NDC depth [0,1] so the hardware depth test compares it
     // against the existing depth buffer (written by mesh rendering).  Points
-    // behind meshes are discarded; points in front overwrite the mesh pixel.
+    // behind meshes are discarded; points in front overwrite the mesh pixel
+    // and update the depth buffer (used by EDL in the bloom final pass).
     uint depth_uint = uint(entry >> 32UL);
     gl_FragDepth    = uintBitsToFloat(depth_uint);
 
