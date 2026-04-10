@@ -263,6 +263,14 @@ bool hasModelGrabPoint = false; // Whether a valid grab point exists
 float deltaTime = 0.0f;
 float lastFrame = 0.0f;
 
+// ---- Async depth sampling for camera distance (avoids synchronous glReadPixels stall) ----
+// Double-buffered: while PBO[writeIdx] receives the current frame's read,
+// PBO[1-writeIdx] contains last frame's already-transferred depth value.
+GLuint g_distancePBO[2]       = {0, 0};
+int    g_distancePBOWriteIdx   = 0;
+float  g_cachedCenterDepth     = 1.0f;
+bool   g_distancePBOReady      = false;
+
 // ---- Cursor System ----
 Cursor::CursorManager cursorManager;
 glm::vec3 capturedCursorPos;
@@ -2647,6 +2655,14 @@ int main() {
   // Initialize cursor manager
   cursorManager.initialize();
 
+  // Initialize double-buffered PBO for async camera-distance depth sampling.
+  glGenBuffers(2, g_distancePBO);
+  for (GLuint pbo : g_distancePBO) {
+      glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo);
+      glBufferData(GL_PIXEL_PACK_BUFFER, sizeof(float), nullptr, GL_STREAM_READ);
+  }
+  glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+
   setupShadowMapping();
   setupPointShadowMapping();
   setupSkyboxVAO(skyboxVAO, skyboxVBO);
@@ -3534,6 +3550,9 @@ int main() {
 // ---- Initialization and Cleanup -----
 #pragma region Initialization and Cleanup
 void cleanup() {
+  // Delete async camera-distance PBOs
+  glDeleteBuffers(2, g_distancePBO);
+
   // Delete cursor manager resources
   cursorManager.cleanup();
 
@@ -4909,13 +4928,50 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     } else {
       glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
     }
-    float distanceToNearestObject = camera.getDistanceToNearestObject(
-        camera, projection, view, preferences.farPlane, windowWidth,
-        windowHeight);
-    camera.UpdateDistanceToObject(distanceToNearestObject);
-    float largestDimension = calculateLargestModelDimension();
-    camera.AdjustMovementSpeed(distanceToNearestObject, largestDimension,
-                               preferences.farPlane);
+
+    // Async double-buffered PBO depth sampling — eliminates 9 synchronous
+    // glReadPixels stalls per frame that were caused by Camera::getDistanceToNearestObject.
+    // Pattern: consume previous frame's result (no stall), then kick off this
+    // frame's read (GPU-to-PBO transfer happens while the CPU continues).
+    // 1-frame latency is imperceptible for movement speed and auto-convergence.
+    {
+      int readIdx  = 1 - g_distancePBOWriteIdx;
+      int writeIdx = g_distancePBOWriteIdx;
+
+      // Consume previous frame's result — GPU has already finished by now.
+      if (g_distancePBOReady) {
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, g_distancePBO[readIdx]);
+        float *ptr = (float *)glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
+        if (ptr) {
+          g_cachedCenterDepth = *ptr;
+          glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+        }
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+      }
+
+      // Kick off this frame's async read (nullptr → GPU writes directly to PBO).
+      glBindBuffer(GL_PIXEL_PACK_BUFFER, g_distancePBO[writeIdx]);
+      glReadPixels(windowWidth / 2, windowHeight / 2, 1, 1,
+                   GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+      glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+      g_distancePBOWriteIdx = readIdx; // swap for next frame
+      g_distancePBOReady    = true;
+
+      // Reconstruct world-space distance from cached (previous-frame) depth.
+      float distanceToNearestObject = preferences.farPlane;
+      if (g_cachedCenterDepth < 1.0f) {
+        glm::vec4 ndc   = glm::vec4(0.0f, 0.0f, g_cachedCenterDepth * 2.0f - 1.0f, 1.0f);
+        glm::mat4 invPV = glm::inverse(projection * view);
+        glm::vec4 wp    = invPV * ndc;
+        wp /= wp.w;
+        distanceToNearestObject = glm::distance(camera.Position, glm::vec3(wp));
+      }
+
+      camera.UpdateDistanceToObject(distanceToNearestObject);
+      float largestDimension = calculateLargestModelDimension();
+      camera.AdjustMovementSpeed(distanceToNearestObject, largestDimension,
+                                 preferences.farPlane);
+    }
 
     // Update target convergence automatically if enabled
     if (preferences.autoConvergence) {

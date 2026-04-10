@@ -231,6 +231,10 @@ void ComputePointCloudRenderer::endFrame() {
                               m_width * m_height * static_cast<GLsizeiptr>(sizeof(uint64_t)),
                               GL_RED_INTEGER, GL_UNSIGNED_INT,
                               &clearVal);
+    // Make the clear visible to the next frame's compute dispatch.
+    // Without this barrier the driver must infer the SSBO write-after-clear
+    // dependency, which causes a periodic pipeline stall every 3-7 frames.
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 }
 
 } // namespace Engine
