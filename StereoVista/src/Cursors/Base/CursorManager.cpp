@@ -33,6 +33,12 @@ void CursorManager::initialize() {
 
   m_windowWidth = windowWidth;
   m_windowHeight = windowHeight;
+
+  // Allocate 1-float PBO for async cursor depth readback.
+  glGenBuffers(1, &m_depthPBO);
+  glBindBuffer(GL_PIXEL_PACK_BUFFER, m_depthPBO);
+  glBufferData(GL_PIXEL_PACK_BUFFER, sizeof(float), nullptr, GL_STREAM_READ);
+  glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 }
 
 // Updates 3D cursor position based on mouse position and depth buffer
@@ -127,61 +133,45 @@ void CursorManager::updateCursorPosition(
     return;
   }
 
-  // Read depth at cursor position
-  float depth = 0.0;
-
   // Depth threshold for detecting skybox/background (anything at or very close
   // to far plane)
   const float DEPTH_THRESHOLD = 0.9999f;
 
-  if (isStereo && leftProjection != nullptr && leftView != nullptr &&
-      rightProjection != nullptr && rightView != nullptr) {
-    // In stereo mode, check both eye buffers to find which has geometry under
-    // the cursor The 3D cursor should be rendered if EITHER eye has an object
-    // under the cursor The Windows cursor should only be displayed when BOTH
-    // eyes are over background
-    float leftDepth = 0.0;
-    float rightDepth = 0.0;
-
-    // Read depth from left eye buffer.
-    // glReadPixels(GL_DEPTH_COMPONENT) reads the depth attachment of
-    // GL_READ_FRAMEBUFFER regardless of glReadBuffer — glReadBuffer only
-    // affects color reads. main.cpp binds the correct read FBO (hdrFBO in HDR
-    // mode, FBO 0 otherwise) before calling updateCursorPosition, so we simply
-    // read from whatever is currently bound.
-    glReadPixels(m_lastX, (float)m_windowHeight - m_lastY, 1, 1,
-                 GL_DEPTH_COMPONENT, GL_FLOAT, &leftDepth);
-
-    // Read depth from right eye buffer (same FBO, same depth attachment)
-    glReadPixels(m_lastX, (float)m_windowHeight - m_lastY, 1, 1,
-                 GL_DEPTH_COMPONENT, GL_FLOAT, &rightDepth);
-
-    // Determine which eye has geometry (depth < threshold means hit on actual
-    // geometry, not skybox)
-    bool leftHit = leftDepth < DEPTH_THRESHOLD;
-    bool rightHit = rightDepth < DEPTH_THRESHOLD;
-
-    // 3D cursor should render if EITHER eye has a hit (OR logic)
-    // Windows cursor only if BOTH are on background (neither has hit)
-    if (leftHit || rightHit) {
-      // At least one eye has a hit - use the closer depth value
-      // Always use center projection/view for world position to avoid jumps
-      if (leftHit && rightHit) {
-        depth = (leftDepth < rightDepth) ? leftDepth : rightDepth;
-      } else if (leftHit) {
-        depth = leftDepth;
-      } else {
-        depth = rightDepth;
+  // Async PBO depth readback — eliminates the per-frame synchronous glReadPixels
+  // stall. Both stereo and mono paths read the same depth attachment on the same
+  // currently-bound FBO at the same cursor pixel, so a single read suffices.
+  //
+  // Pattern:
+  //   1. Poll the previous frame's fence (non-blocking). If done, map the PBO
+  //      and update m_cachedDepth.
+  //   2. Kick off this frame's async read into the PBO (GPU-to-PBO, no CPU wait).
+  //   3. Place a new fence so we can poll completion next frame.
+  //   4. Use m_cachedDepth (0 or 1 frame of latency — imperceptible at ≥60 FPS).
+  if (m_depthFence) {
+    GLenum res = glClientWaitSync(m_depthFence, GL_SYNC_FLUSH_COMMANDS_BIT, 0);
+    if (res != GL_TIMEOUT_EXPIRED) {
+      glBindBuffer(GL_PIXEL_PACK_BUFFER, m_depthPBO);
+      float *ptr = (float *)glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
+      if (ptr) {
+        m_cachedDepth = *ptr;
+        glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
       }
-    } else {
-      // Neither eye has a hit - show Windows cursor, hide 3D cursor
-      depth = 1.0f;
+      glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+      glDeleteSync(m_depthFence);
+      m_depthFence = nullptr;
     }
-  } else {
-    // Mono mode - read from current buffer
-    glReadPixels(m_lastX, (float)m_windowHeight - m_lastY, 1, 1,
-                 GL_DEPTH_COMPONENT, GL_FLOAT, &depth);
   }
+
+  // Kick off this frame's async read (nullptr → GPU writes directly to PBO).
+  // main.cpp already bound the correct read FBO before calling this function.
+  glBindBuffer(GL_PIXEL_PACK_BUFFER, m_depthPBO);
+  glReadPixels(m_lastX, (float)m_windowHeight - m_lastY, 1, 1,
+               GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+  glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+  if (m_depthFence) glDeleteSync(m_depthFence);
+  m_depthFence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+
+  float depth = m_cachedDepth; // use cached value (0-or-1-frame latency)
 
   // Convert cursor position to world space using center projection/view
   // Always use the center matrices to avoid jumps when eye selection changes
@@ -351,6 +341,10 @@ void CursorManager::renderOrbitCenter(const glm::mat4 &projection,
 
 // Release resources for all cursor types
 void CursorManager::cleanup() {
+  // Release async depth-readback resources before cursor cleanup.
+  if (m_depthFence) { glDeleteSync(m_depthFence); m_depthFence = nullptr; }
+  if (m_depthPBO)   { glDeleteBuffers(1, &m_depthPBO); m_depthPBO = 0; }
+
   m_sphereCursor->cleanup();
   m_fragmentCursor->cleanup();
   m_planeCursor->cleanup();
