@@ -252,7 +252,8 @@ static void ShowIconTestWindow() {
   ImGui::Text("Manual UTF-8 lightbulb: %s", manual_lightbulb);
 
   // Test with other manual codes
-  char manual_star[4] = {(char)0xEF, (char)0x80, (char)0x85, 0x00}; // UTF-8 encoding of U+F005
+  char manual_star[4] = {(char)0xEF, (char)0x80, (char)0x85,
+                         0x00}; // UTF-8 encoding of U+F005
   ImGui::Text("Manual UTF-8 star: %s", manual_star);
 
   // Test with known working characters
@@ -340,7 +341,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
   static bool showLoadSceneDialog = false;
 
   // Helper lambda to load and replace scene
-  auto loadAndReplaceScene = [&](const std::string& sceneFile) {
+  auto loadAndReplaceScene = [&](const std::string &sceneFile) {
     try {
       // Clear all existing objects
       currentScene.models.clear();
@@ -378,7 +379,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
   };
 
   // Helper lambda to load and merge scene
-  auto loadAndMergeScene = [&](const std::string& sceneFile) {
+  auto loadAndMergeScene = [&](const std::string &sceneFile) {
     try {
       // Load new scene and merge with existing
       Engine::Scene newScene = Engine::loadScene(sceneFile, camera);
@@ -420,7 +421,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
   };
 
   // Helper lambda to load scene (first load or based on preference)
-  auto loadSceneWithPreference = [&](const std::string& sceneFile) {
+  auto loadSceneWithPreference = [&](const std::string &sceneFile) {
     currentScene = Engine::loadScene(sceneFile, camera);
     pointLights = currentScene.pointLights;
     for (auto &pl : pointLights) {
@@ -495,10 +496,11 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         }
         if (ImGui::MenuItem(cloudMenuText.c_str())) {
           auto selection =
-              pfd::open_file("Select a point cloud to import", ".",
-                             {"Point Cloud Files",
-                              "*.txt *.xyz *.ply *.pcb *.h5 *.hdf5 *.f5 *.las *.laz",
-                              "All Files", "*"})
+              pfd::open_file(
+                  "Select a point cloud to import", ".",
+                  {"Point Cloud Files",
+                   "*.txt *.xyz *.ply *.pcb *.h5 *.hdf5 *.f5 *.las *.laz",
+                   "All Files", "*"})
                   .result();
 
           if (!selection.empty()) {
@@ -507,15 +509,15 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
                 std::filesystem::path(filePath).extension().string();
 
             if (extension == ".las" || extension == ".laz") {
-              Engine::PointCloud newPointCloud = std::move(
-                  Engine::PointCloudLoader::loadFromLAS(filePath));
+              Engine::PointCloud newPointCloud =
+                  std::move(Engine::PointCloudLoader::loadFromLAS(filePath));
               if (newPointCloud.isLoaded()) {
                 newPointCloud.filePath = filePath;
                 currentScene.pointClouds.emplace_back(std::move(newPointCloud));
                 updateSpaceMouseBounds();
               }
             } else if (extension == ".txt" || extension == ".xyz" ||
-                extension == ".ply") {
+                       extension == ".ply") {
               Engine::PointCloud newPointCloud = std::move(
                   Engine::PointCloudLoader::loadPointCloudFile(filePath));
               newPointCloud.filePath = filePath;
@@ -568,15 +570,16 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
           // Check if there are existing objects in the scene
           bool hasExistingObjects = !currentScene.models.empty() ||
                                     !currentScene.pointClouds.empty() ||
-                                    !pointLights.empty() ||
-                                    !spotLights.empty();
+                                    !pointLights.empty() || !spotLights.empty();
 
           if (hasExistingObjects) {
             // Check user preference for scene loading behavior
-            if (preferences.sceneLoadingBehavior == GUI::SCENE_LOAD_ALWAYS_REPLACE) {
+            if (preferences.sceneLoadingBehavior ==
+                GUI::SCENE_LOAD_ALWAYS_REPLACE) {
               // Auto-replace: clear existing and load new
               loadAndReplaceScene(selection[0]);
-            } else if (preferences.sceneLoadingBehavior == GUI::SCENE_LOAD_ALWAYS_MERGE) {
+            } else if (preferences.sceneLoadingBehavior ==
+                       GUI::SCENE_LOAD_ALWAYS_MERGE) {
               // Auto-merge: keep existing and add new
               loadAndMergeScene(selection[0]);
             } else {
@@ -620,7 +623,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       ImGui::EndMenu();
     }
 
-    // Load Scene Dialog Modal (must be outside menu scope for popup to work correctly)
+    // Load Scene Dialog Modal (must be outside menu scope for popup to work
+    // correctly)
     if (showLoadSceneDialog) {
       ImGui::OpenPopup("Load Scene");
       showLoadSceneDialog = false;
@@ -630,7 +634,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
 
-    if (ImGui::BeginPopupModal("Load Scene", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
+    if (ImGui::BeginPopupModal("Load Scene", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize |
+                                   ImGuiWindowFlags_NoMove)) {
       ImGui::Text("An existing scene is already loaded.");
       ImGui::Spacing();
       ImGui::Text("How would you like to load the new scene?");
@@ -671,7 +677,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
 
       // Hint about settings
       ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
-      ImGui::TextWrapped("Tip: You can set a default behavior in Settings > Display > Scene Loading");
+      ImGui::TextWrapped("Tip: You can set a default behavior in Settings > "
+                         "Display > Scene Loading");
       ImGui::PopStyleColor();
 
       ImGui::EndPopup();
@@ -695,7 +702,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         currentSelectedIndex = currentScene.models.size() - 1;
         currentSelectedType = SelectedType::Model;
         updateSpaceMouseBounds();
-        if (voxelizer) voxelizer->markDirty();
+        if (voxelizer)
+          voxelizer->markDirty();
       }
 
       if (ImGui::MenuItem("Sphere")) {
@@ -712,7 +720,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         currentSelectedIndex = currentScene.models.size() - 1;
         currentSelectedType = SelectedType::Model;
         updateSpaceMouseBounds();
-        if (voxelizer) voxelizer->markDirty();
+        if (voxelizer)
+          voxelizer->markDirty();
       }
 
       if (ImGui::MenuItem("Cylinder")) {
@@ -729,7 +738,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         currentSelectedIndex = currentScene.models.size() - 1;
         currentSelectedType = SelectedType::Model;
         updateSpaceMouseBounds();
-        if (voxelizer) voxelizer->markDirty();
+        if (voxelizer)
+          voxelizer->markDirty();
       }
 
       if (ImGui::MenuItem("Plane")) {
@@ -746,7 +756,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         currentSelectedIndex = currentScene.models.size() - 1;
         currentSelectedType = SelectedType::Model;
         updateSpaceMouseBounds();
-        if (voxelizer) voxelizer->markDirty();
+        if (voxelizer)
+          voxelizer->markDirty();
       }
 
       if (ImGui::MenuItem("Torus")) {
@@ -763,7 +774,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         currentSelectedIndex = currentScene.models.size() - 1;
         currentSelectedType = SelectedType::Model;
         updateSpaceMouseBounds();
-        if (voxelizer) voxelizer->markDirty();
+        if (voxelizer)
+          voxelizer->markDirty();
       }
 
       ImGui::Separator();
@@ -969,8 +981,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
   // SCENE HIERARCHY PANEL
   // ========================
   ImGui::SetNextWindowPos(ImVec2(0, ImGui::GetFrameHeight()));
-  ImGui::SetNextWindowSize(
-      ImVec2(320 * g_GuiScale.currentScale, viewport->Size.y - ImGui::GetFrameHeight()));
+  ImGui::SetNextWindowSize(ImVec2(320 * g_GuiScale.currentScale,
+                                  viewport->Size.y - ImGui::GetFrameHeight()));
   // Ensure only the Scene Hierarchy window itself has square corners (keep
   // inner elements rounded)
   ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
@@ -985,7 +997,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
                            sizeof(searchBuffer));
   ImGui::Separator();
 
-  if (ImGui::BeginChild("ObjectList", ImVec2(0, 250 * g_GuiScale.currentScale), true)) {
+  if (ImGui::BeginChild("ObjectList", ImVec2(0, 250 * g_GuiScale.currentScale),
+                        true)) {
     ImGui::Columns(2, "ObjectColumns", false);
     ImGui::SetColumnWidth(0, 60 * g_GuiScale.currentScale);
 
@@ -1027,7 +1040,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
 
     // Collect point clouds by scene
     for (int i = 0; i < currentScene.pointClouds.size(); i++) {
-      scenePointClouds[currentScene.pointClouds[i].sourceScenePath].push_back(i);
+      scenePointClouds[currentScene.pointClouds[i].sourceScenePath].push_back(
+          i);
     }
 
     // Collect point lights by scene
@@ -1042,10 +1056,14 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
 
     // Get all unique scene paths
     std::set<std::string> allScenePaths;
-    for (const auto& pair : sceneModels) allScenePaths.insert(pair.first);
-    for (const auto& pair : scenePointClouds) allScenePaths.insert(pair.first);
-    for (const auto& pair : scenePointLights) allScenePaths.insert(pair.first);
-    for (const auto& pair : sceneSpotLights) allScenePaths.insert(pair.first);
+    for (const auto &pair : sceneModels)
+      allScenePaths.insert(pair.first);
+    for (const auto &pair : scenePointClouds)
+      allScenePaths.insert(pair.first);
+    for (const auto &pair : scenePointLights)
+      allScenePaths.insert(pair.first);
+    for (const auto &pair : sceneSpotLights)
+      allScenePaths.insert(pair.first);
 
     // Helper lambda to render a model
     auto renderModel = [&](int i) {
@@ -1253,8 +1271,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
     }
 
     // Then, render grouped scenes
-    for (const auto& scenePath : allScenePaths) {
-      if (scenePath.empty()) continue; // Skip empty path (already rendered)
+    for (const auto &scenePath : allScenePaths) {
+      if (scenePath.empty())
+        continue; // Skip empty path (already rendered)
 
       // Extract scene name from path
       std::filesystem::path path(scenePath);
@@ -1262,12 +1281,17 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
 
       // Count total objects in this scene
       int totalObjects = 0;
-      if (sceneModels.count(scenePath)) totalObjects += sceneModels[scenePath].size();
-      if (scenePointClouds.count(scenePath)) totalObjects += scenePointClouds[scenePath].size();
-      if (scenePointLights.count(scenePath)) totalObjects += scenePointLights[scenePath].size();
-      if (sceneSpotLights.count(scenePath)) totalObjects += sceneSpotLights[scenePath].size();
+      if (sceneModels.count(scenePath))
+        totalObjects += sceneModels[scenePath].size();
+      if (scenePointClouds.count(scenePath))
+        totalObjects += scenePointClouds[scenePath].size();
+      if (scenePointLights.count(scenePath))
+        totalObjects += scenePointLights[scenePath].size();
+      if (sceneSpotLights.count(scenePath))
+        totalObjects += sceneSpotLights[scenePath].size();
 
-      if (totalObjects == 0) continue;
+      if (totalObjects == 0)
+        continue;
 
       ImGui::PushID(scenePath.c_str());
 
@@ -1328,8 +1352,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       ImGui::NextColumn();
 
       // Scene group header
-      ImGuiTreeNodeFlags sceneFlags = ImGuiTreeNodeFlags_OpenOnArrow |
-                                      ImGuiTreeNodeFlags_SpanAvailWidth;
+      ImGuiTreeNodeFlags sceneFlags =
+          ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
 
       if (g_Fonts.icons) {
         ImGui::PushFont(g_Fonts.icons);
@@ -1339,8 +1363,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       }
 
       bool sceneOpen = ImGui::TreeNodeEx(
-        (sceneName + " (" + std::to_string(totalObjects) + ")").c_str(),
-        sceneFlags);
+          (sceneName + " (" + std::to_string(totalObjects) + ")").c_str(),
+          sceneFlags);
 
       // Context menu for scene group
       if (ImGui::BeginPopupContextItem()) {
@@ -1375,7 +1399,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
             currentScene.models.erase(currentScene.models.begin() + idx);
           }
           for (int idx : pointCloudsToDelete) {
-            currentScene.pointClouds.erase(currentScene.pointClouds.begin() + idx);
+            currentScene.pointClouds.erase(currentScene.pointClouds.begin() +
+                                           idx);
           }
           for (int idx : pointLightsToDelete) {
             pointLights.erase(pointLights.begin() + idx);
@@ -1805,37 +1830,35 @@ void renderSettingsWindow() {
         ImGui::SameLine();
         DrawHelpMarker(
             "Eye-Dome Lighting adds depth cues to point clouds by darkening "
-            "depth discontinuities. Based on Schütz (Potree) Phase 1 rendering. "
+            "depth discontinuities. Based on Schütz (Potree) Phase 1 "
+            "rendering. "
             "Requires HDR to be enabled.");
 
         if (preferences.edlSettings.enabled) {
           if (ImGui::SliderFloat("EDL Strength",
-                                 &preferences.edlSettings.strength,
-                                 0.1f, 5.0f, "%.2f")) {
+                                 &preferences.edlSettings.strength, 0.1f, 5.0f,
+                                 "%.2f")) {
             settingsChanged = true;
           }
           ImGui::SameLine();
-          DrawHelpMarker(
-              "Controls how strongly depth edges are darkened. "
-              "1.0 = default Potree strength.");
+          DrawHelpMarker("Controls how strongly depth edges are darkened. "
+                         "1.0 = default Potree strength.");
 
-          if (ImGui::SliderFloat("EDL Radius",
-                                 &preferences.edlSettings.radius,
+          if (ImGui::SliderFloat("EDL Radius", &preferences.edlSettings.radius,
                                  0.5f, 5.0f, "%.1f")) {
             settingsChanged = true;
           }
           ImGui::SameLine();
-          DrawHelpMarker(
-              "Neighbourhood sampling radius in pixels. "
-              "Larger values detect wider depth transitions.");
+          DrawHelpMarker("Neighbourhood sampling radius in pixels. "
+                         "Larger values detect wider depth transitions.");
         }
 
         ImGui::Spacing();
         DrawSectionHeader("Point Cloud Rendering (Schütz Phase 1)");
 
         if (ImGui::SliderFloat("Point Base Size",
-                               &preferences.pointCloudBaseSize,
-                               0.001f, 0.2f, "%.4f")) {
+                               &preferences.pointCloudBaseSize, 0.001f, 0.2f,
+                               "%.4f")) {
           settingsChanged = true;
         }
         ImGui::SameLine();
@@ -2098,18 +2121,23 @@ void renderSettingsWindow() {
           }
           ImGui::SameLine();
           {
-            int res = voxelizer->getResolution() >> voxelizer->getDebugMipLevel();
+            int res =
+                voxelizer->getResolution() >> voxelizer->getDebugMipLevel();
             char buf[64];
-            snprintf(buf, sizeof(buf), "Effective resolution: %dx%dx%d", res, res, res);
+            snprintf(buf, sizeof(buf), "Effective resolution: %dx%dx%d", res,
+                     res, res);
             DrawHelpMarker(buf);
           }
 
           // Visualization mode combo
           {
-            const char* vizModes[] = { "Color", "Luminance", "Alpha", "Emissive" };
+            const char *vizModes[] = {"Color", "Luminance", "Alpha",
+                                      "Emissive"};
             int currentViz = static_cast<int>(voxelizer->visualizationMode);
-            if (ImGui::Combo("Viz Mode", &currentViz, vizModes, IM_ARRAYSIZE(vizModes))) {
-              voxelizer->visualizationMode = static_cast<Engine::Voxelizer::VisualizationMode>(currentViz);
+            if (ImGui::Combo("Viz Mode", &currentViz, vizModes,
+                             IM_ARRAYSIZE(vizModes))) {
+              voxelizer->visualizationMode =
+                  static_cast<Engine::Voxelizer::VisualizationMode>(currentViz);
             }
           }
 
@@ -2815,8 +2843,9 @@ void renderSettingsWindow() {
         g_GuiScale.userScaleFactor = userFactor;
         if (g_GuiScale.lastWindowWidth > 0 && g_GuiScale.lastWindowHeight > 0) {
           float baseScale = CalculateGuiScale(g_GuiScale.lastWindowWidth,
-                                             g_GuiScale.lastWindowHeight);
-          float newScale = std::max(0.5f, std::min(2.0f, baseScale * userFactor));
+                                              g_GuiScale.lastWindowHeight);
+          float newScale =
+              std::max(0.5f, std::min(2.0f, baseScale * userFactor));
           g_GuiScale.currentScale = newScale;
         }
         g_GuiScale.needsRescale = true;
@@ -2832,7 +2861,7 @@ void renderSettingsWindow() {
         g_GuiScale.userScaleFactor = 1.0f;
         if (g_GuiScale.lastWindowWidth > 0 && g_GuiScale.lastWindowHeight > 0) {
           float baseScale = CalculateGuiScale(g_GuiScale.lastWindowWidth,
-                                             g_GuiScale.lastWindowHeight);
+                                              g_GuiScale.lastWindowHeight);
           g_GuiScale.currentScale = std::max(0.5f, std::min(2.0f, baseScale));
         }
         g_GuiScale.needsRescale = true;
@@ -2930,14 +2959,19 @@ void renderSettingsWindow() {
       ImGui::Spacing();
       DrawSectionHeader("Scene Loading");
 
-      const char *sceneLoadingBehaviors[] = {"Always Ask", "Always Replace Existing", "Always Merge (Keep Existing)"};
+      const char *sceneLoadingBehaviors[] = {"Always Ask",
+                                             "Always Replace Existing",
+                                             "Always Merge (Keep Existing)"};
       int currentBehavior = static_cast<int>(preferences.sceneLoadingBehavior);
-      if (ImGui::Combo("When Loading Scene", &currentBehavior, sceneLoadingBehaviors, 3)) {
-        preferences.sceneLoadingBehavior = static_cast<GUI::SceneLoadingBehavior>(currentBehavior);
+      if (ImGui::Combo("When Loading Scene", &currentBehavior,
+                       sceneLoadingBehaviors, 3)) {
+        preferences.sceneLoadingBehavior =
+            static_cast<GUI::SceneLoadingBehavior>(currentBehavior);
         settingsChanged = true;
       }
       ImGui::SameLine();
-      DrawHelpMarker("Choose default behavior when loading a scene file while another scene is already loaded:\n"
+      DrawHelpMarker("Choose default behavior when loading a scene file while "
+                     "another scene is already loaded:\n"
                      "• Always Ask: Show dialog each time\n"
                      "• Always Replace: Clear existing scene\n"
                      "• Always Merge: Keep existing scene and add new objects");
@@ -3186,19 +3220,20 @@ void renderSettingsWindow() {
           // Helper lambda: assemble TdxSettings from preferences + pivot state
           auto buildTdxSettings = [&]() -> ThreeDConnexionSync::TdxSettings {
             ThreeDConnexionSync::TdxSettings s;
-            s.motionModel       = preferences.tdxSettings.motionModel;
-            s.autoPivot         = preferences.tdxSettings.autoPivot;
-            s.lockHorizon       = preferences.tdxSettings.lockHorizon;
-            s.suspendInput      = preferences.tdxSettings.suspendInput;
-            s.lockTo3dViews     = preferences.tdxSettings.lockTo3dViews;
-            s.moveObjects       = preferences.tdxSettings.moveObjects;
-            s.autokeyAnimation  = preferences.tdxSettings.autokeyAnimation;
+            s.motionModel = preferences.tdxSettings.motionModel;
+            s.autoPivot = preferences.tdxSettings.autoPivot;
+            s.lockHorizon = preferences.tdxSettings.lockHorizon;
+            s.suspendInput = preferences.tdxSettings.suspendInput;
+            s.lockTo3dViews = preferences.tdxSettings.lockTo3dViews;
+            s.moveObjects = preferences.tdxSettings.moveObjects;
+            s.autokeyAnimation = preferences.tdxSettings.autokeyAnimation;
             s.selectionFollower = preferences.tdxSettings.selectionFollower;
-            s.firstPersonEaseOut= preferences.tdxSettings.firstPersonEaseOut;
-            s.floorQueryRate    = preferences.tdxSettings.floorQueryRate;
-            s.lockSketchPlane   = preferences.tdxSettings.lockSketchPlane;
+            s.firstPersonEaseOut = preferences.tdxSettings.firstPersonEaseOut;
+            s.floorQueryRate = preferences.tdxSettings.floorQueryRate;
+            s.lockSketchPlane = preferences.tdxSettings.lockSketchPlane;
             // Derive pivotVisibility from orbit center prefs
-            if (preferences.showOrbitCenter && preferences.alwaysShowOrbitCenter)
+            if (preferences.showOrbitCenter &&
+                preferences.alwaysShowOrbitCenter)
               s.pivotVisibility = "ShowPivot";
             else if (preferences.showOrbitCenter)
               s.pivotVisibility = "ShowMovingPivot";
@@ -3209,9 +3244,9 @@ void renderSettingsWindow() {
 
           // Motion Model combo
           {
-            const char* motionModels[] = {
-              "Helicopter", "Object", "Fly", "Walk", "Orbit", "Target", "Drive"
-            };
+            const char *motionModels[] = {"Helicopter", "Object", "Fly",
+                                          "Walk",       "Orbit",  "Target",
+                                          "Drive"};
             int currentModel = 0;
             for (int i = 0; i < 7; ++i) {
               if (preferences.tdxSettings.motionModel == motionModels[i]) {
@@ -3228,49 +3263,57 @@ void renderSettingsWindow() {
             DrawHelpMarker("Navigation style used by the SpaceMouse driver");
           }
 
-          if (ImGui::Checkbox("Auto Pivot", &preferences.tdxSettings.autoPivot)) {
+          if (ImGui::Checkbox("Auto Pivot",
+                              &preferences.tdxSettings.autoPivot)) {
             tdxSync.WriteSettings(buildTdxSettings());
             settingsChanged = true;
           }
           ImGui::SameLine();
-          DrawHelpMarker("Automatically choose the pivot point based on geometry");
+          DrawHelpMarker(
+              "Automatically choose the pivot point based on geometry");
 
-          if (ImGui::Checkbox("Lock Horizon", &preferences.tdxSettings.lockHorizon)) {
+          if (ImGui::Checkbox("Lock Horizon",
+                              &preferences.tdxSettings.lockHorizon)) {
             tdxSync.WriteSettings(buildTdxSettings());
             settingsChanged = true;
           }
           ImGui::SameLine();
           DrawHelpMarker("Keep the horizon level while navigating");
 
-          if (ImGui::Checkbox("Suspend Input", &preferences.tdxSettings.suspendInput)) {
+          if (ImGui::Checkbox("Suspend Input",
+                              &preferences.tdxSettings.suspendInput)) {
             tdxSync.WriteSettings(buildTdxSettings());
             settingsChanged = true;
           }
           ImGui::SameLine();
           DrawHelpMarker("Temporarily disable all SpaceMouse motion input");
 
-          if (ImGui::Checkbox("Lock to 3D Views", &preferences.tdxSettings.lockTo3dViews)) {
+          if (ImGui::Checkbox("Lock to 3D Views",
+                              &preferences.tdxSettings.lockTo3dViews)) {
             tdxSync.WriteSettings(buildTdxSettings());
             settingsChanged = true;
           }
           ImGui::SameLine();
           DrawHelpMarker("Restrict SpaceMouse input to 3D viewports only");
 
-          if (ImGui::Checkbox("Move Objects", &preferences.tdxSettings.moveObjects)) {
+          if (ImGui::Checkbox("Move Objects",
+                              &preferences.tdxSettings.moveObjects)) {
             tdxSync.WriteSettings(buildTdxSettings());
             settingsChanged = true;
           }
           ImGui::SameLine();
           DrawHelpMarker("Move selected objects instead of the camera");
 
-          if (ImGui::Checkbox("Autokey Animation", &preferences.tdxSettings.autokeyAnimation)) {
+          if (ImGui::Checkbox("Autokey Animation",
+                              &preferences.tdxSettings.autokeyAnimation)) {
             tdxSync.WriteSettings(buildTdxSettings());
             settingsChanged = true;
           }
           ImGui::SameLine();
           DrawHelpMarker("Automatically create keyframes during animation");
 
-          if (ImGui::Checkbox("Selection Follower", &preferences.tdxSettings.selectionFollower)) {
+          if (ImGui::Checkbox("Selection Follower",
+                              &preferences.tdxSettings.selectionFollower)) {
             tdxSync.WriteSettings(buildTdxSettings());
             settingsChanged = true;
           }
@@ -3278,24 +3321,27 @@ void renderSettingsWindow() {
           DrawHelpMarker("Keep the selection centered in the view");
 
           if (ImGui::SliderInt("First Person Ease Out",
-                               &preferences.tdxSettings.firstPersonEaseOut,
-                               0, 1000)) {
+                               &preferences.tdxSettings.firstPersonEaseOut, 0,
+                               1000)) {
             tdxSync.WriteSettings(buildTdxSettings());
             settingsChanged = true;
           }
           ImGui::SameLine();
-          DrawHelpMarker("Deceleration ramp length in first-person mode (0-1000)");
+          DrawHelpMarker(
+              "Deceleration ramp length in first-person mode (0-1000)");
 
           if (ImGui::SliderInt("Floor Query Rate",
-                               &preferences.tdxSettings.floorQueryRate,
-                               1, 100)) {
+                               &preferences.tdxSettings.floorQueryRate, 1,
+                               100)) {
             tdxSync.WriteSettings(buildTdxSettings());
             settingsChanged = true;
           }
           ImGui::SameLine();
-          DrawHelpMarker("How often (per second) the floor height is queried (1-100)");
+          DrawHelpMarker(
+              "How often (per second) the floor height is queried (1-100)");
 
-          if (ImGui::Checkbox("Lock Sketch Plane", &preferences.tdxSettings.lockSketchPlane)) {
+          if (ImGui::Checkbox("Lock Sketch Plane",
+                              &preferences.tdxSettings.lockSketchPlane)) {
             tdxSync.WriteSettings(buildTdxSettings());
             settingsChanged = true;
           }
@@ -4422,20 +4468,22 @@ void renderCursorSettingsWindow() {
         if (tdxSync.IsConnected()) {
           auto s = tdxSync.GetSettings();
           ThreeDConnexionSync::TdxSettings ws = s;
-          ws.motionModel       = preferences.tdxSettings.motionModel;
-          ws.autoPivot         = preferences.tdxSettings.autoPivot;
-          ws.lockHorizon       = preferences.tdxSettings.lockHorizon;
-          ws.suspendInput      = preferences.tdxSettings.suspendInput;
-          ws.lockTo3dViews     = preferences.tdxSettings.lockTo3dViews;
-          ws.moveObjects       = preferences.tdxSettings.moveObjects;
-          ws.autokeyAnimation  = preferences.tdxSettings.autokeyAnimation;
+          ws.motionModel = preferences.tdxSettings.motionModel;
+          ws.autoPivot = preferences.tdxSettings.autoPivot;
+          ws.lockHorizon = preferences.tdxSettings.lockHorizon;
+          ws.suspendInput = preferences.tdxSettings.suspendInput;
+          ws.lockTo3dViews = preferences.tdxSettings.lockTo3dViews;
+          ws.moveObjects = preferences.tdxSettings.moveObjects;
+          ws.autokeyAnimation = preferences.tdxSettings.autokeyAnimation;
           ws.selectionFollower = preferences.tdxSettings.selectionFollower;
-          ws.firstPersonEaseOut= preferences.tdxSettings.firstPersonEaseOut;
-          ws.floorQueryRate    = preferences.tdxSettings.floorQueryRate;
-          ws.lockSketchPlane   = preferences.tdxSettings.lockSketchPlane;
-          ws.pivotVisibility   = showOrbitCenter
-            ? (preferences.alwaysShowOrbitCenter ? "ShowPivot" : "ShowMovingPivot")
-            : "HidePivot";
+          ws.firstPersonEaseOut = preferences.tdxSettings.firstPersonEaseOut;
+          ws.floorQueryRate = preferences.tdxSettings.floorQueryRate;
+          ws.lockSketchPlane = preferences.tdxSettings.lockSketchPlane;
+          ws.pivotVisibility =
+              showOrbitCenter
+                  ? (preferences.alwaysShowOrbitCenter ? "ShowPivot"
+                                                       : "ShowMovingPivot")
+                  : "HidePivot";
           tdxSync.WriteSettings(ws);
         }
       }
@@ -4444,25 +4492,27 @@ void renderCursorSettingsWindow() {
 
       if (showOrbitCenter) {
         bool alwaysShowOrbitCenter = cursorManager.isAlwaysShowOrbitCenter();
-        if (ImGui::Checkbox("Always Show Orbit Center", &alwaysShowOrbitCenter)) {
+        if (ImGui::Checkbox("Always Show Orbit Center",
+                            &alwaysShowOrbitCenter)) {
           cursorManager.setAlwaysShowOrbitCenter(alwaysShowOrbitCenter);
           preferences.alwaysShowOrbitCenter = alwaysShowOrbitCenter;
           savePreferences();
           // Sync pivot visibility to 3DConnexion XML
           if (tdxSync.IsConnected()) {
             ThreeDConnexionSync::TdxSettings ws = tdxSync.GetSettings();
-            ws.motionModel       = preferences.tdxSettings.motionModel;
-            ws.autoPivot         = preferences.tdxSettings.autoPivot;
-            ws.lockHorizon       = preferences.tdxSettings.lockHorizon;
-            ws.suspendInput      = preferences.tdxSettings.suspendInput;
-            ws.lockTo3dViews     = preferences.tdxSettings.lockTo3dViews;
-            ws.moveObjects       = preferences.tdxSettings.moveObjects;
-            ws.autokeyAnimation  = preferences.tdxSettings.autokeyAnimation;
+            ws.motionModel = preferences.tdxSettings.motionModel;
+            ws.autoPivot = preferences.tdxSettings.autoPivot;
+            ws.lockHorizon = preferences.tdxSettings.lockHorizon;
+            ws.suspendInput = preferences.tdxSettings.suspendInput;
+            ws.lockTo3dViews = preferences.tdxSettings.lockTo3dViews;
+            ws.moveObjects = preferences.tdxSettings.moveObjects;
+            ws.autokeyAnimation = preferences.tdxSettings.autokeyAnimation;
             ws.selectionFollower = preferences.tdxSettings.selectionFollower;
-            ws.firstPersonEaseOut= preferences.tdxSettings.firstPersonEaseOut;
-            ws.floorQueryRate    = preferences.tdxSettings.floorQueryRate;
-            ws.lockSketchPlane   = preferences.tdxSettings.lockSketchPlane;
-            ws.pivotVisibility   = alwaysShowOrbitCenter ? "ShowPivot" : "ShowMovingPivot";
+            ws.firstPersonEaseOut = preferences.tdxSettings.firstPersonEaseOut;
+            ws.floorQueryRate = preferences.tdxSettings.floorQueryRate;
+            ws.lockSketchPlane = preferences.tdxSettings.lockSketchPlane;
+            ws.pivotVisibility =
+                alwaysShowOrbitCenter ? "ShowPivot" : "ShowMovingPivot";
             tdxSync.WriteSettings(ws);
           }
         }
@@ -5104,16 +5154,20 @@ void renderPointCloudManipulationPanel(Engine::PointCloud &pointCloud) {
   }
 
   if (ImGui::CollapsingHeader("Info")) {
-    ImGui::Text("Points: %s", [&]() -> std::string {
-        uint32_t n = pointCloud.totalPointCount;
-        if (n >= 1'000'000) return std::to_string(n / 1'000'000) + "M";
-        if (n >= 1'000)     return std::to_string(n / 1'000)     + "K";
-        return std::to_string(n);
-    }().c_str());
+    ImGui::Text("Points: %s",
+                [&]() -> std::string {
+                  uint32_t n = pointCloud.totalPointCount;
+                  if (n >= 1'000'000)
+                    return std::to_string(n / 1'000'000) + "M";
+                  if (n >= 1'000)
+                    return std::to_string(n / 1'000) + "K";
+                  return std::to_string(n);
+                }()
+                             .c_str());
     ImGui::Text("Batches: %u", pointCloud.numBatches);
     if (pointCloud.hasBounds()) {
-        const glm::vec3 sz = pointCloud.boundsMax - pointCloud.boundsMin;
-        ImGui::Text("Extent: %.2f x %.2f x %.2f m", sz.x, sz.y, sz.z);
+      const glm::vec3 sz = pointCloud.boundsMax - pointCloud.boundsMin;
+      ImGui::Text("Extent: %.2f x %.2f x %.2f m", sz.x, sz.y, sz.z);
     }
   }
 

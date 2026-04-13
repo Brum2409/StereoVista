@@ -48,9 +48,9 @@ enum CursorScalingMode {
 };
 
 enum SpaceMouseAnchorMode {
-  SPACEMOUSE_ANCHOR_DISABLED,  // Use scene center (default)
-  SPACEMOUSE_ANCHOR_ON_START,  // Set anchor when navigation starts, keep it
-                               // fixed
+  SPACEMOUSE_ANCHOR_DISABLED,   // Use scene center (default)
+  SPACEMOUSE_ANCHOR_ON_START,   // Set anchor when navigation starts, keep it
+                                // fixed
   SPACEMOUSE_ANCHOR_CONTINUOUS, // Update anchor every frame during navigation
   SPACEMOUSE_ANCHOR_CLICK       // Fixed point set by left mouse click
 };
@@ -60,7 +60,7 @@ enum SpaceMouseNavigationMode {
 };
 
 enum SceneLoadingBehavior {
-  SCENE_LOAD_ALWAYS_ASK,    // Show dialog to ask user (default)
+  SCENE_LOAD_ALWAYS_ASK,     // Show dialog to ask user (default)
   SCENE_LOAD_ALWAYS_REPLACE, // Always clear existing scene
   SCENE_LOAD_ALWAYS_MERGE    // Always keep existing scene
 };
@@ -101,7 +101,8 @@ struct PlaneCursor {
 
 struct ApplicationPreferences {
   bool isDarkTheme = true;
-  float guiScaleFactor = 1.0f;  // User-controlled GUI scale multiplier (0.5x - 2.0x)
+  float guiScaleFactor =
+      1.0f; // User-controlled GUI scale multiplier (0.5x - 2.0x)
   float separation = 0.5f;
   float convergence = 2.6f;
   float nearPlane = 0.1f;
@@ -142,17 +143,17 @@ struct ApplicationPreferences {
   // SSAO settings
   struct SSAOSettings {
     bool enabled = false;
-    int kernelSize = 64;  // Number of samples (16-64)
-    float radius = 0.5f;  // Sample radius in view space
-    float bias = 0.025f;  // Depth comparison bias
-    float power = 1.0f;   // Occlusion intensity curve
+    int kernelSize = 64; // Number of samples (16-64)
+    float radius = 0.5f; // Sample radius in view space
+    float bias = 0.025f; // Depth comparison bias
+    float power = 1.0f;  // Occlusion intensity curve
   } ssaoSettings;
 
   // Schütz Phase 1 – Eye-Dome Lighting
   struct EDLSettings {
-    bool  enabled  = false;
-    float strength = 1.0f;  // edge-shading intensity (0 = off, 5 = very strong)
-    float radius   = 1.5f;  // neighbourhood-sampling radius in pixels
+    bool enabled = false;
+    float strength = 1.0f; // edge-shading intensity (0 = off, 5 = very strong)
+    float radius = 1.5f;   // neighbourhood-sampling radius in pixels
   } edlSettings;
 
   // Schütz Phase 1 – point cloud base size (world-space radius in metres).
@@ -251,19 +252,20 @@ struct ApplicationPreferences {
 
   // 3DConnexion App Sync Settings (synced to/from the 3DxWare cfg XML)
   struct TdxAppSettings {
-    std::string motionModel    = "Helicopter";
-    bool autoPivot             = false;
-    bool lockHorizon           = false;
-    bool suspendInput          = false;
-    bool lockTo3dViews         = false;
-    bool moveObjects           = false;
-    bool autokeyAnimation      = false;
-    bool selectionFollower     = true;
-    int  firstPersonEaseOut    = 600;
-    int  floorQueryRate        = 1;
-    bool lockSketchPlane       = true;
+    std::string motionModel = "Helicopter";
+    bool autoPivot = false;
+    bool lockHorizon = false;
+    bool suspendInput = false;
+    bool lockTo3dViews = false;
+    bool moveObjects = false;
+    bool autokeyAnimation = false;
+    bool selectionFollower = true;
+    int firstPersonEaseOut = 600;
+    int floorQueryRate = 1;
+    bool lockSketchPlane = true;
   } tdxSettings;
-  // Note: pivotVisibility is derived from showOrbitCenter / alwaysShowOrbitCenter at write time.
+  // Note: pivotVisibility is derived from showOrbitCenter /
+  // alwaysShowOrbitCenter at write time.
 
   int skyboxType = SKYBOX_HDR;
   glm::vec3 skyboxSolidColor = glm::vec3(0.2f, 0.3f, 0.4f);

@@ -11,8 +11,8 @@
 #include "../headers/Engine/BVHDebug.h"
 #include "../headers/Engine/BloomRenderer.h"
 #include "../headers/Engine/ComputePointCloudRenderer.h"
-#include "../headers/Engine/SSAORenderer.h"
 #include "../headers/Engine/IrradianceCache.h"
+#include "../headers/Engine/SSAORenderer.h"
 #include "Core/Camera.h"
 #include "Core/CursorSyncState.h"
 #include "Core/CursorSynchronizer.h"
@@ -30,6 +30,7 @@
 #include "Loaders/ModelLoader.h"
 #include "Loaders/PointCloudLoader.h"
 #include "Tools/BrushTool.h"
+
 
 // ---- GUI and Dialog ----
 #include "imgui/imgui_incl.h"
@@ -85,8 +86,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
                const glm::mat4 *rightView = nullptr);
 void renderModels(Engine::Shader *shader, const glm::mat4 &viewProj,
                   bool enableFrustumCulling = true);
-void renderPointClouds(Engine::Shader *shader,
-                       const glm::mat4 &view,
+void renderPointClouds(Engine::Shader *shader, const glm::mat4 &view,
                        const glm::mat4 &projection);
 void renderLightVisualizations(Engine::Shader *shader);
 void renderZeroPlane(Engine::Shader *shader, const glm::mat4 &projection,
@@ -263,13 +263,14 @@ bool hasModelGrabPoint = false; // Whether a valid grab point exists
 float deltaTime = 0.0f;
 float lastFrame = 0.0f;
 
-// ---- Async depth sampling for camera distance (avoids synchronous glReadPixels stall) ----
-// Double-buffered: while PBO[writeIdx] receives the current frame's read,
-// PBO[1-writeIdx] contains last frame's already-transferred depth value.
-GLuint g_distancePBO[2]       = {0, 0};
-int    g_distancePBOWriteIdx   = 0;
-float  g_cachedCenterDepth     = 1.0f;
-bool   g_distancePBOReady      = false;
+// ---- Async depth sampling for camera distance (avoids synchronous
+// glReadPixels stall) ---- Double-buffered: while PBO[writeIdx] receives the
+// current frame's read, PBO[1-writeIdx] contains last frame's
+// already-transferred depth value.
+GLuint g_distancePBO[2] = {0, 0};
+int g_distancePBOWriteIdx = 0;
+float g_cachedCenterDepth = 1.0f;
+bool g_distancePBOReady = false;
 
 // ---- Cursor System ----
 Cursor::CursorManager cursorManager;
@@ -313,7 +314,8 @@ Engine::Shader *instancedShader = nullptr;
 
 // Bloom rendering system
 Engine::BloomRenderer *bloomRenderer = nullptr;
-bool hdrFboValid = false; // set true after successful FBO init/resize, reset on resize
+bool hdrFboValid =
+    false; // set true after successful FBO init/resize, reset on resize
 
 // Schütz Phase 2: compute shader point-cloud rasterizer
 Engine::ComputePointCloudRenderer *computePointCloudRenderer = nullptr;
@@ -1428,10 +1430,12 @@ glm::mat4 calculateLightSpaceMatrix() {
 
   // Calculate actual scene bounds from all models.
   // boundingSphereRadius is measured from localBoundsCenter (AABB center in
-  // local space), so we must account for that offset when computing world bounds.
+  // local space), so we must account for that offset when computing world
+  // bounds.
   for (const auto &model : currentScene.models) {
-    // World-space center of the bounding sphere (model.position is the transform
-    // origin; localBoundsCenter is the offset to the AABB center in local space).
+    // World-space center of the bounding sphere (model.position is the
+    // transform origin; localBoundsCenter is the offset to the AABB center in
+    // local space).
     glm::vec3 worldSphereCenter =
         model.position + glm::vec3(model.scale * model.localBoundsCenter);
     float worldRadius =
@@ -1521,11 +1525,8 @@ void savePreferences() {
   j["camera"]["showOrbitCenter"] = preferences.showOrbitCenter;
   j["camera"]["alwaysShowOrbitCenter"] = preferences.alwaysShowOrbitCenter;
   j["camera"]["orbitCenterColor"] = {
-      preferences.orbitCenterColor.r,
-      preferences.orbitCenterColor.g,
-      preferences.orbitCenterColor.b,
-      preferences.orbitCenterColor.a
-  };
+      preferences.orbitCenterColor.r, preferences.orbitCenterColor.g,
+      preferences.orbitCenterColor.b, preferences.orbitCenterColor.a};
   j["camera"]["orbitCenterSphereRadius"] = preferences.orbitCenterSphereRadius;
   j["camera"]["autoConvergence"] = preferences.autoConvergence;
   j["camera"]["convergenceDistanceFactor"] =
@@ -1551,17 +1552,23 @@ void savePreferences() {
   j["spacemouse"]["centerCursor"] = preferences.spaceMouseCenterCursor;
 
   // 3DConnexion app sync settings
-  j["spacemouse"]["tdx"]["motionModel"]        = preferences.tdxSettings.motionModel;
-  j["spacemouse"]["tdx"]["autoPivot"]          = preferences.tdxSettings.autoPivot;
-  j["spacemouse"]["tdx"]["lockHorizon"]        = preferences.tdxSettings.lockHorizon;
-  j["spacemouse"]["tdx"]["suspendInput"]       = preferences.tdxSettings.suspendInput;
-  j["spacemouse"]["tdx"]["lockTo3dViews"]      = preferences.tdxSettings.lockTo3dViews;
-  j["spacemouse"]["tdx"]["moveObjects"]        = preferences.tdxSettings.moveObjects;
-  j["spacemouse"]["tdx"]["autokeyAnimation"]   = preferences.tdxSettings.autokeyAnimation;
-  j["spacemouse"]["tdx"]["selectionFollower"]  = preferences.tdxSettings.selectionFollower;
-  j["spacemouse"]["tdx"]["firstPersonEaseOut"] = preferences.tdxSettings.firstPersonEaseOut;
-  j["spacemouse"]["tdx"]["floorQueryRate"]     = preferences.tdxSettings.floorQueryRate;
-  j["spacemouse"]["tdx"]["lockSketchPlane"]    = preferences.tdxSettings.lockSketchPlane;
+  j["spacemouse"]["tdx"]["motionModel"] = preferences.tdxSettings.motionModel;
+  j["spacemouse"]["tdx"]["autoPivot"] = preferences.tdxSettings.autoPivot;
+  j["spacemouse"]["tdx"]["lockHorizon"] = preferences.tdxSettings.lockHorizon;
+  j["spacemouse"]["tdx"]["suspendInput"] = preferences.tdxSettings.suspendInput;
+  j["spacemouse"]["tdx"]["lockTo3dViews"] =
+      preferences.tdxSettings.lockTo3dViews;
+  j["spacemouse"]["tdx"]["moveObjects"] = preferences.tdxSettings.moveObjects;
+  j["spacemouse"]["tdx"]["autokeyAnimation"] =
+      preferences.tdxSettings.autokeyAnimation;
+  j["spacemouse"]["tdx"]["selectionFollower"] =
+      preferences.tdxSettings.selectionFollower;
+  j["spacemouse"]["tdx"]["firstPersonEaseOut"] =
+      preferences.tdxSettings.firstPersonEaseOut;
+  j["spacemouse"]["tdx"]["floorQueryRate"] =
+      preferences.tdxSettings.floorQueryRate;
+  j["spacemouse"]["tdx"]["lockSketchPlane"] =
+      preferences.tdxSettings.lockSketchPlane;
 
   // Cursor settings
   j["cursor"]["currentPreset"] = preferences.currentPresetName;
@@ -1585,7 +1592,8 @@ void savePreferences() {
   j["startup"]["scenePath"] = preferences.startupScenePath;
 
   // Scene loading behavior
-  j["startup"]["sceneLoadingBehavior"] = static_cast<int>(preferences.sceneLoadingBehavior);
+  j["startup"]["sceneLoadingBehavior"] =
+      static_cast<int>(preferences.sceneLoadingBehavior);
 
   // Save lighting settings
   j["lighting"]["mode"] = static_cast<int>(preferences.lightingMode);
@@ -1607,10 +1615,10 @@ void savePreferences() {
   j["ssao"]["power"] = preferences.ssaoSettings.power;
 
   // Schütz Phase 1 – save EDL and point cloud size settings
-  j["edl"]["enabled"]          = preferences.edlSettings.enabled;
-  j["edl"]["strength"]         = preferences.edlSettings.strength;
-  j["edl"]["radius"]           = preferences.edlSettings.radius;
-  j["pointcloud"]["baseSize"]  = preferences.pointCloudBaseSize;
+  j["edl"]["enabled"] = preferences.edlSettings.enabled;
+  j["edl"]["strength"] = preferences.edlSettings.strength;
+  j["edl"]["radius"] = preferences.edlSettings.radius;
+  j["pointcloud"]["baseSize"] = preferences.pointCloudBaseSize;
 
   // Save shadow settings
   j["shadows"]["pcfKernelSize"] = preferences.shadowSettings.pcfKernelSize;
@@ -1923,17 +1931,19 @@ void loadPreferences() {
 
       // Load orbit center visualization settings
       preferences.showOrbitCenter = j["camera"].value("showOrbitCenter", false);
-      preferences.alwaysShowOrbitCenter = j["camera"].value("alwaysShowOrbitCenter", false);
-      if (j["camera"].contains("orbitCenterColor") && j["camera"]["orbitCenterColor"].is_array() &&
+      preferences.alwaysShowOrbitCenter =
+          j["camera"].value("alwaysShowOrbitCenter", false);
+      if (j["camera"].contains("orbitCenterColor") &&
+          j["camera"]["orbitCenterColor"].is_array() &&
           j["camera"]["orbitCenterColor"].size() >= 4) {
-        preferences.orbitCenterColor = glm::vec4(
-            j["camera"]["orbitCenterColor"][0].get<float>(),
-            j["camera"]["orbitCenterColor"][1].get<float>(),
-            j["camera"]["orbitCenterColor"][2].get<float>(),
-            j["camera"]["orbitCenterColor"][3].get<float>()
-        );
+        preferences.orbitCenterColor =
+            glm::vec4(j["camera"]["orbitCenterColor"][0].get<float>(),
+                      j["camera"]["orbitCenterColor"][1].get<float>(),
+                      j["camera"]["orbitCenterColor"][2].get<float>(),
+                      j["camera"]["orbitCenterColor"][3].get<float>());
       }
-      preferences.orbitCenterSphereRadius = j["camera"].value("orbitCenterSphereRadius", 0.2f);
+      preferences.orbitCenterSphereRadius =
+          j["camera"].value("orbitCenterSphereRadius", 0.2f);
 
       preferences.autoConvergence = j["camera"].value("autoConvergence", false);
       preferences.convergenceDistanceFactor =
@@ -1983,18 +1993,24 @@ void loadPreferences() {
 
       // 3DConnexion app sync settings
       if (j["spacemouse"].contains("tdx")) {
-        auto& tdx = j["spacemouse"]["tdx"];
-        preferences.tdxSettings.motionModel       = tdx.value("motionModel",       "Helicopter");
-        preferences.tdxSettings.autoPivot         = tdx.value("autoPivot",         false);
-        preferences.tdxSettings.lockHorizon       = tdx.value("lockHorizon",       false);
-        preferences.tdxSettings.suspendInput      = tdx.value("suspendInput",      false);
-        preferences.tdxSettings.lockTo3dViews     = tdx.value("lockTo3dViews",     false);
-        preferences.tdxSettings.moveObjects       = tdx.value("moveObjects",       false);
-        preferences.tdxSettings.autokeyAnimation  = tdx.value("autokeyAnimation",  false);
-        preferences.tdxSettings.selectionFollower = tdx.value("selectionFollower", true);
-        preferences.tdxSettings.firstPersonEaseOut= tdx.value("firstPersonEaseOut",600);
-        preferences.tdxSettings.floorQueryRate    = tdx.value("floorQueryRate",    1);
-        preferences.tdxSettings.lockSketchPlane   = tdx.value("lockSketchPlane",   true);
+        auto &tdx = j["spacemouse"]["tdx"];
+        preferences.tdxSettings.motionModel =
+            tdx.value("motionModel", "Helicopter");
+        preferences.tdxSettings.autoPivot = tdx.value("autoPivot", false);
+        preferences.tdxSettings.lockHorizon = tdx.value("lockHorizon", false);
+        preferences.tdxSettings.suspendInput = tdx.value("suspendInput", false);
+        preferences.tdxSettings.lockTo3dViews =
+            tdx.value("lockTo3dViews", false);
+        preferences.tdxSettings.moveObjects = tdx.value("moveObjects", false);
+        preferences.tdxSettings.autokeyAnimation =
+            tdx.value("autokeyAnimation", false);
+        preferences.tdxSettings.selectionFollower =
+            tdx.value("selectionFollower", true);
+        preferences.tdxSettings.firstPersonEaseOut =
+            tdx.value("firstPersonEaseOut", 600);
+        preferences.tdxSettings.floorQueryRate = tdx.value("floorQueryRate", 1);
+        preferences.tdxSettings.lockSketchPlane =
+            tdx.value("lockSketchPlane", true);
       }
     }
 
@@ -2033,7 +2049,8 @@ void loadPreferences() {
       preferences.loadStartupScene = j["startup"].value("loadScene", false);
       preferences.startupScenePath = j["startup"].value("scenePath", "");
       preferences.sceneLoadingBehavior = static_cast<GUI::SceneLoadingBehavior>(
-        j["startup"].value("sceneLoadingBehavior", static_cast<int>(GUI::SCENE_LOAD_ALWAYS_ASK)));
+          j["startup"].value("sceneLoadingBehavior",
+                             static_cast<int>(GUI::SCENE_LOAD_ALWAYS_ASK)));
     }
 
     // Cursor settings
@@ -2079,9 +2096,9 @@ void loadPreferences() {
 
     // Schütz Phase 1 – load EDL and point cloud size settings
     if (j.contains("edl")) {
-      preferences.edlSettings.enabled  = j["edl"].value("enabled",  false);
-      preferences.edlSettings.strength  = j["edl"].value("strength", 1.0f);
-      preferences.edlSettings.radius    = j["edl"].value("radius",   1.5f);
+      preferences.edlSettings.enabled = j["edl"].value("enabled", false);
+      preferences.edlSettings.strength = j["edl"].value("strength", 1.0f);
+      preferences.edlSettings.radius = j["edl"].value("radius", 1.5f);
     }
     if (j.contains("pointcloud")) {
       preferences.pointCloudBaseSize = j["pointcloud"].value("baseSize", 0.02f);
@@ -2240,7 +2257,8 @@ void initializeVCTSettings() {
   vctSettings.voxelSize = 1.0f / 64.0f;
 
   // Quality settings
-  vctSettings.diffuseConeCount = 6; // Default: high quality with 6 cones (60° aperture)
+  vctSettings.diffuseConeCount =
+      6; // Default: high quality with 6 cones (60° aperture)
   vctSettings.tracingMaxDistance = 1.41421356237; // Default maximum distance
   vctSettings.shadowSampleCount = 10;             // Default shadow samples
   vctSettings.shadowStepMultiplier = 0.15f;       // Default step multiplier
@@ -2658,8 +2676,8 @@ int main() {
   // Initialize double-buffered PBO for async camera-distance depth sampling.
   glGenBuffers(2, g_distancePBO);
   for (GLuint pbo : g_distancePBO) {
-      glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo);
-      glBufferData(GL_PIXEL_PACK_BUFFER, sizeof(float), nullptr, GL_STREAM_READ);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo);
+    glBufferData(GL_PIXEL_PACK_BUFFER, sizeof(float), nullptr, GL_STREAM_READ);
   }
   glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 
@@ -2798,8 +2816,9 @@ int main() {
         } else {
           newAnchor = camera.Position + camera.Front * camera.OrbitDistance;
         }
-        spaceMouseInput.SetCursorAnchor(newAnchor, preferences.spaceMouseAnchorMode);
-        camera.OrbitPoint    = newAnchor;
+        spaceMouseInput.SetCursorAnchor(newAnchor,
+                                        preferences.spaceMouseAnchorMode);
+        camera.OrbitPoint = newAnchor;
         camera.OrbitDistance = glm::length(camera.Position - newAnchor);
       }
 
@@ -2818,49 +2837,50 @@ int main() {
     if (tdxSync.TryFindFile(pid)) {
       std::cout << "3DConnexion settings file found and loaded" << std::endl;
       // Seed preferences from what we read
-      const auto& ts = tdxSync.GetSettings();
-      preferences.tdxSettings.motionModel       = ts.motionModel;
-      preferences.tdxSettings.autoPivot         = ts.autoPivot;
-      preferences.tdxSettings.lockHorizon       = ts.lockHorizon;
-      preferences.tdxSettings.suspendInput      = ts.suspendInput;
-      preferences.tdxSettings.lockTo3dViews     = ts.lockTo3dViews;
-      preferences.tdxSettings.moveObjects       = ts.moveObjects;
-      preferences.tdxSettings.autokeyAnimation  = ts.autokeyAnimation;
+      const auto &ts = tdxSync.GetSettings();
+      preferences.tdxSettings.motionModel = ts.motionModel;
+      preferences.tdxSettings.autoPivot = ts.autoPivot;
+      preferences.tdxSettings.lockHorizon = ts.lockHorizon;
+      preferences.tdxSettings.suspendInput = ts.suspendInput;
+      preferences.tdxSettings.lockTo3dViews = ts.lockTo3dViews;
+      preferences.tdxSettings.moveObjects = ts.moveObjects;
+      preferences.tdxSettings.autokeyAnimation = ts.autokeyAnimation;
       preferences.tdxSettings.selectionFollower = ts.selectionFollower;
-      preferences.tdxSettings.firstPersonEaseOut= ts.firstPersonEaseOut;
-      preferences.tdxSettings.floorQueryRate    = ts.floorQueryRate;
-      preferences.tdxSettings.lockSketchPlane   = ts.lockSketchPlane;
+      preferences.tdxSettings.firstPersonEaseOut = ts.firstPersonEaseOut;
+      preferences.tdxSettings.floorQueryRate = ts.floorQueryRate;
+      preferences.tdxSettings.lockSketchPlane = ts.lockSketchPlane;
     } else {
-      std::cout << "3DConnexion settings file not yet found (will retry)" << std::endl;
+      std::cout << "3DConnexion settings file not yet found (will retry)"
+                << std::endl;
     }
 
-    tdxSync.OnSettingsChanged = [](const ThreeDConnexionSync::TdxSettings& s) {
+    tdxSync.OnSettingsChanged = [](const ThreeDConnexionSync::TdxSettings &s) {
       // Apply inbound pivot visibility change
       if (s.pivotVisibility == "ShowPivot") {
-        preferences.showOrbitCenter      = true;
+        preferences.showOrbitCenter = true;
         preferences.alwaysShowOrbitCenter = true;
       } else if (s.pivotVisibility == "ShowMovingPivot") {
-        preferences.showOrbitCenter      = true;
+        preferences.showOrbitCenter = true;
         preferences.alwaysShowOrbitCenter = false;
       } else {
-        preferences.showOrbitCenter      = false;
+        preferences.showOrbitCenter = false;
         preferences.alwaysShowOrbitCenter = false;
       }
       cursorManager.setShowOrbitCenter(preferences.showOrbitCenter);
       cursorManager.setAlwaysShowOrbitCenter(preferences.alwaysShowOrbitCenter);
 
       // Copy remaining settings into preferences
-      preferences.tdxSettings.motionModel       = s.motionModel;
-      preferences.tdxSettings.autoPivot         = s.autoPivot;
-      preferences.tdxSettings.lockHorizon       = s.lockHorizon;
-      preferences.tdxSettings.suspendInput      = s.suspendInput;
-      preferences.tdxSettings.lockTo3dViews     = s.lockTo3dViews;
-      preferences.tdxSettings.moveObjects       = s.moveObjects;
-      preferences.tdxSettings.autokeyAnimation  = s.autokeyAnimation;
+      preferences.tdxSettings.motionModel = s.motionModel;
+      preferences.tdxSettings.autoPivot = s.autoPivot;
+      preferences.tdxSettings.lockHorizon = s.lockHorizon;
+      preferences.tdxSettings.suspendInput = s.suspendInput;
+      preferences.tdxSettings.lockTo3dViews = s.lockTo3dViews;
+      preferences.tdxSettings.moveObjects = s.moveObjects;
+      preferences.tdxSettings.autokeyAnimation = s.autokeyAnimation;
       preferences.tdxSettings.selectionFollower = s.selectionFollower;
-      preferences.tdxSettings.firstPersonEaseOut= s.firstPersonEaseOut;
-      preferences.tdxSettings.floorQueryRate    = s.floorQueryRate;
-      preferences.tdxSettings.lockSketchPlane   = s.lockSketchPlane;
+      preferences.tdxSettings.firstPersonEaseOut = s.firstPersonEaseOut;
+      preferences.tdxSettings.floorQueryRate = s.floorQueryRate;
+      preferences.tdxSettings.lockSketchPlane = s.lockSketchPlane;
 
       savePreferences();
     };
@@ -3381,7 +3401,8 @@ int main() {
 
       // Validate HDR framebuffer on first use after init/resize
       if (!hdrFboValid) {
-        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) !=
+            GL_FRAMEBUFFER_COMPLETE) {
           std::cerr << "ERROR: HDR framebuffer not complete after resize!"
                     << std::endl;
           hdrEnabled = false; // Fall back to non-HDR rendering
@@ -3415,9 +3436,9 @@ int main() {
 
         // Schütz Phase 1: build Engine::EDLSettings from preferences
         Engine::EDLSettings frameEDL;
-        frameEDL.enabled  = preferences.edlSettings.enabled;
+        frameEDL.enabled = preferences.edlSettings.enabled;
         frameEDL.strength = preferences.edlSettings.strength;
-        frameEDL.radius   = preferences.edlSettings.radius;
+        frameEDL.radius = preferences.edlSettings.radius;
         const Engine::EDLSettings *edlPtr =
             frameEDL.enabled ? &frameEDL : nullptr;
 
@@ -3427,27 +3448,31 @@ int main() {
           renderEye(GL_BACK_LEFT, leftProjection, leftView, activeShader,
                     viewport, windowFlags, window, false, true, &leftProjection,
                     &leftView, &rightProjection, &rightView);
-          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_RIGHT,
-                                    edlPtr, preferences.nearPlane, preferences.farPlane);
+          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_RIGHT, edlPtr,
+                                    preferences.nearPlane,
+                                    preferences.farPlane);
 
           renderEye(GL_BACK_RIGHT, rightProjection, rightView, activeShader,
                     viewport, windowFlags, window, false, true, &leftProjection,
                     &leftView, &rightProjection, &rightView);
-          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_LEFT,
-                                    edlPtr, preferences.nearPlane, preferences.farPlane);
+          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_LEFT, edlPtr,
+                                    preferences.nearPlane,
+                                    preferences.farPlane);
         } else {
           // Normal: render left to left, right to right
           renderEye(GL_BACK_LEFT, leftProjection, leftView, activeShader,
                     viewport, windowFlags, window, false, true, &leftProjection,
                     &leftView, &rightProjection, &rightView);
-          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_LEFT,
-                                    edlPtr, preferences.nearPlane, preferences.farPlane);
+          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_LEFT, edlPtr,
+                                    preferences.nearPlane,
+                                    preferences.farPlane);
 
           renderEye(GL_BACK_RIGHT, rightProjection, rightView, activeShader,
                     viewport, windowFlags, window, false, true, &leftProjection,
                     &leftView, &rightProjection, &rightView);
-          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_RIGHT,
-                                    edlPtr, preferences.nearPlane, preferences.farPlane);
+          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_RIGHT, edlPtr,
+                                    preferences.nearPlane,
+                                    preferences.farPlane);
         }
       } else {
         // Mono view
@@ -3455,13 +3480,14 @@ int main() {
                   windowFlags, window, false);
         {
           Engine::EDLSettings frameEDL;
-          frameEDL.enabled  = preferences.edlSettings.enabled;
+          frameEDL.enabled = preferences.edlSettings.enabled;
           frameEDL.strength = preferences.edlSettings.strength;
-          frameEDL.radius   = preferences.edlSettings.radius;
+          frameEDL.radius = preferences.edlSettings.radius;
           const Engine::EDLSettings *edlPtr =
               frameEDL.enabled ? &frameEDL : nullptr;
-          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK,
-                                    edlPtr, preferences.nearPlane, preferences.farPlane);
+          bloomRenderer->applyBloom(0, bloomSettings, GL_BACK, edlPtr,
+                                    preferences.nearPlane,
+                                    preferences.farPlane);
         }
       }
 
@@ -3561,11 +3587,16 @@ void cleanup() {
     glDeleteVertexArrays(1, &pointCloud.vao);
     glDeleteBuffers(1, &pointCloud.vbo);
     // Schütz batch SSBOs (compute rasterizer path)
-    if (pointCloud.computeBatchSSBO)  glDeleteBuffers(1, &pointCloud.computeBatchSSBO);
-    if (pointCloud.computeXyz4bSSBO)  glDeleteBuffers(1, &pointCloud.computeXyz4bSSBO);
-    if (pointCloud.computeXyz8bSSBO)  glDeleteBuffers(1, &pointCloud.computeXyz8bSSBO);
-    if (pointCloud.computeXyz12bSSBO) glDeleteBuffers(1, &pointCloud.computeXyz12bSSBO);
-    if (pointCloud.computeRGBASSBO)   glDeleteBuffers(1, &pointCloud.computeRGBASSBO);
+    if (pointCloud.computeBatchSSBO)
+      glDeleteBuffers(1, &pointCloud.computeBatchSSBO);
+    if (pointCloud.computeXyz4bSSBO)
+      glDeleteBuffers(1, &pointCloud.computeXyz4bSSBO);
+    if (pointCloud.computeXyz8bSSBO)
+      glDeleteBuffers(1, &pointCloud.computeXyz8bSSBO);
+    if (pointCloud.computeXyz12bSSBO)
+      glDeleteBuffers(1, &pointCloud.computeXyz12bSSBO);
+    if (pointCloud.computeRGBASSBO)
+      glDeleteBuffers(1, &pointCloud.computeRGBASSBO);
   }
 
   // Delete triangle buffer resources
@@ -3803,12 +3834,18 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
 
         // Stack array — no heap allocation per light per eye.
         std::array<glm::mat4, 6> shadowMatrices = {
-            shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3( 1, 0, 0), glm::vec3(0,-1, 0)),
-            shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(-1, 0, 0), glm::vec3(0,-1, 0)),
-            shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3( 0, 1, 0), glm::vec3(0, 0, 1)),
-            shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3( 0,-1, 0), glm::vec3(0, 0,-1)),
-            shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3( 0, 0, 1), glm::vec3(0,-1, 0)),
-            shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3( 0, 0,-1), glm::vec3(0,-1, 0)),
+            shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(1, 0, 0),
+                                     glm::vec3(0, -1, 0)),
+            shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(-1, 0, 0),
+                                     glm::vec3(0, -1, 0)),
+            shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(0, 1, 0),
+                                     glm::vec3(0, 0, 1)),
+            shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(0, -1, 0),
+                                     glm::vec3(0, 0, -1)),
+            shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(0, 0, 1),
+                                     glm::vec3(0, -1, 0)),
+            shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(0, 0, -1),
+                                     glm::vec3(0, -1, 0)),
         };
 
         pointShadowShader->use();
@@ -3940,7 +3977,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   // Schütz Phase 1: point cloud per-frame uniforms for screen-space point size
   shader->setFloat("pointCloudBaseSize", preferences.pointCloudBaseSize);
   shader->setFloat("screenHeight", static_cast<float>(windowHeight));
-  shader->setFloat("fieldOfView",  glm::radians(preferences.fov));
+  shader->setFloat("fieldOfView", glm::radians(preferences.fov));
 
   // Set lighting mode uniforms - this is always needed
   shader->setInt("lightingMode", static_cast<int>(currentLightingMode));
@@ -4020,12 +4057,18 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     {
       char buf[64];
       for (int i = 0; i < (int)pointLights.size() && i < MAX_LIGHTS; i++) {
-        snprintf(buf, sizeof(buf), "lights[%d].position", i);   shader->setVec3(buf, pointLights[i].position);
-        snprintf(buf, sizeof(buf), "lights[%d].color", i);      shader->setVec3(buf, pointLights[i].color);
-        snprintf(buf, sizeof(buf), "lights[%d].intensity", i);  shader->setFloat(buf, pointLights[i].intensity);
-        snprintf(buf, sizeof(buf), "lights[%d].linear", i);     shader->setFloat(buf, pointLights[i].linear);
-        snprintf(buf, sizeof(buf), "lights[%d].quadratic", i);  shader->setFloat(buf, pointLights[i].quadratic);
-        snprintf(buf, sizeof(buf), "lightsCastShadows[%d]", i); shader->setBool(buf, pointLights[i].castShadows);
+        snprintf(buf, sizeof(buf), "lights[%d].position", i);
+        shader->setVec3(buf, pointLights[i].position);
+        snprintf(buf, sizeof(buf), "lights[%d].color", i);
+        shader->setVec3(buf, pointLights[i].color);
+        snprintf(buf, sizeof(buf), "lights[%d].intensity", i);
+        shader->setFloat(buf, pointLights[i].intensity);
+        snprintf(buf, sizeof(buf), "lights[%d].linear", i);
+        shader->setFloat(buf, pointLights[i].linear);
+        snprintf(buf, sizeof(buf), "lights[%d].quadratic", i);
+        shader->setFloat(buf, pointLights[i].quadratic);
+        snprintf(buf, sizeof(buf), "lightsCastShadows[%d]", i);
+        shader->setBool(buf, pointLights[i].castShadows);
       }
     }
     shader->setInt("numLights", std::min((int)pointLights.size(), MAX_LIGHTS));
@@ -4034,12 +4077,18 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     {
       char buf[64];
       for (int i = 0; i < (int)spotLights.size() && i < MAX_LIGHTS; i++) {
-        snprintf(buf, sizeof(buf), "spotLights[%d].position", i);    shader->setVec3(buf, spotLights[i].position);
-        snprintf(buf, sizeof(buf), "spotLights[%d].direction", i);   shader->setVec3(buf, spotLights[i].direction);
-        snprintf(buf, sizeof(buf), "spotLights[%d].color", i);       shader->setVec3(buf, spotLights[i].color);
-        snprintf(buf, sizeof(buf), "spotLights[%d].intensity", i);   shader->setFloat(buf, spotLights[i].intensity);
-        snprintf(buf, sizeof(buf), "spotLights[%d].innerCutOff", i); shader->setFloat(buf, spotLights[i].innerCutOff);
-        snprintf(buf, sizeof(buf), "spotLights[%d].outerCutOff", i); shader->setFloat(buf, spotLights[i].outerCutOff);
+        snprintf(buf, sizeof(buf), "spotLights[%d].position", i);
+        shader->setVec3(buf, spotLights[i].position);
+        snprintf(buf, sizeof(buf), "spotLights[%d].direction", i);
+        shader->setVec3(buf, spotLights[i].direction);
+        snprintf(buf, sizeof(buf), "spotLights[%d].color", i);
+        shader->setVec3(buf, spotLights[i].color);
+        snprintf(buf, sizeof(buf), "spotLights[%d].intensity", i);
+        shader->setFloat(buf, spotLights[i].intensity);
+        snprintf(buf, sizeof(buf), "spotLights[%d].innerCutOff", i);
+        shader->setFloat(buf, spotLights[i].innerCutOff);
+        snprintf(buf, sizeof(buf), "spotLights[%d].outerCutOff", i);
+        shader->setFloat(buf, spotLights[i].outerCutOff);
       }
     }
     shader->setInt("numSpotLights",
@@ -4053,7 +4102,9 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       glm::vec3 gc = voxelizer->getGridCenter();
       shader->setVec3("gridMin", gc - glm::vec3(halfSize));
       shader->setVec3("gridMax", gc + glm::vec3(halfSize));
-      shader->setFloat("voxelSize", voxelizer->getVoxelGridSize() / static_cast<float>(voxelizer->getResolution()));
+      shader->setFloat("voxelSize",
+                       voxelizer->getVoxelGridSize() /
+                           static_cast<float>(voxelizer->getResolution()));
 
       // Set VCT settings
       shader->setBool("vctSettings.indirectSpecularLight",
@@ -4089,7 +4140,9 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     glm::vec3 gc = voxelizer->getGridCenter();
     shader->setVec3("gridMin", gc - glm::vec3(halfSize));
     shader->setVec3("gridMax", gc + glm::vec3(halfSize));
-    shader->setFloat("voxelSize", voxelizer->getVoxelGridSize() / static_cast<float>(voxelizer->getResolution()));
+    shader->setFloat("voxelSize",
+                     voxelizer->getVoxelGridSize() /
+                         static_cast<float>(voxelizer->getResolution()));
 
     // Set VCT settings - only when in VCT mode
     shader->setBool("vctSettings.indirectSpecularLight",
@@ -4134,12 +4187,18 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     {
       char buf[64];
       for (int i = 0; i < (int)pointLights.size() && i < MAX_LIGHTS; i++) {
-        snprintf(buf, sizeof(buf), "lights[%d].position", i);   shader->setVec3(buf, pointLights[i].position);
-        snprintf(buf, sizeof(buf), "lights[%d].color", i);      shader->setVec3(buf, pointLights[i].color);
-        snprintf(buf, sizeof(buf), "lights[%d].intensity", i);  shader->setFloat(buf, pointLights[i].intensity);
-        snprintf(buf, sizeof(buf), "lights[%d].linear", i);     shader->setFloat(buf, pointLights[i].linear);
-        snprintf(buf, sizeof(buf), "lights[%d].quadratic", i);  shader->setFloat(buf, pointLights[i].quadratic);
-        snprintf(buf, sizeof(buf), "lightsCastShadows[%d]", i); shader->setBool(buf, pointLights[i].castShadows);
+        snprintf(buf, sizeof(buf), "lights[%d].position", i);
+        shader->setVec3(buf, pointLights[i].position);
+        snprintf(buf, sizeof(buf), "lights[%d].color", i);
+        shader->setVec3(buf, pointLights[i].color);
+        snprintf(buf, sizeof(buf), "lights[%d].intensity", i);
+        shader->setFloat(buf, pointLights[i].intensity);
+        snprintf(buf, sizeof(buf), "lights[%d].linear", i);
+        shader->setFloat(buf, pointLights[i].linear);
+        snprintf(buf, sizeof(buf), "lights[%d].quadratic", i);
+        shader->setFloat(buf, pointLights[i].quadratic);
+        snprintf(buf, sizeof(buf), "lightsCastShadows[%d]", i);
+        shader->setBool(buf, pointLights[i].castShadows);
       }
     }
     shader->setInt("numLights", std::min((int)pointLights.size(), MAX_LIGHTS));
@@ -4148,12 +4207,18 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     {
       char buf[64];
       for (int i = 0; i < (int)spotLights.size() && i < MAX_LIGHTS; i++) {
-        snprintf(buf, sizeof(buf), "spotLights[%d].position", i);    shader->setVec3(buf, spotLights[i].position);
-        snprintf(buf, sizeof(buf), "spotLights[%d].direction", i);   shader->setVec3(buf, spotLights[i].direction);
-        snprintf(buf, sizeof(buf), "spotLights[%d].color", i);       shader->setVec3(buf, spotLights[i].color);
-        snprintf(buf, sizeof(buf), "spotLights[%d].intensity", i);   shader->setFloat(buf, spotLights[i].intensity);
-        snprintf(buf, sizeof(buf), "spotLights[%d].innerCutOff", i); shader->setFloat(buf, spotLights[i].innerCutOff);
-        snprintf(buf, sizeof(buf), "spotLights[%d].outerCutOff", i); shader->setFloat(buf, spotLights[i].outerCutOff);
+        snprintf(buf, sizeof(buf), "spotLights[%d].position", i);
+        shader->setVec3(buf, spotLights[i].position);
+        snprintf(buf, sizeof(buf), "spotLights[%d].direction", i);
+        shader->setVec3(buf, spotLights[i].direction);
+        snprintf(buf, sizeof(buf), "spotLights[%d].color", i);
+        shader->setVec3(buf, spotLights[i].color);
+        snprintf(buf, sizeof(buf), "spotLights[%d].intensity", i);
+        shader->setFloat(buf, spotLights[i].intensity);
+        snprintf(buf, sizeof(buf), "spotLights[%d].innerCutOff", i);
+        shader->setFloat(buf, spotLights[i].innerCutOff);
+        snprintf(buf, sizeof(buf), "spotLights[%d].outerCutOff", i);
+        shader->setFloat(buf, spotLights[i].outerCutOff);
       }
     }
     shader->setInt("numSpotLights",
@@ -4196,10 +4261,11 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       // shaders
       shader->setVec3("gridMin", sharedGridMin);
       shader->setVec3("gridMax", sharedGridMax);
-      shader->setIVec3("gridResolution",
-                       sharedGridRes.x, sharedGridRes.y, sharedGridRes.z);
+      shader->setIVec3("gridResolution", sharedGridRes.x, sharedGridRes.y,
+                       sharedGridRes.z);
 
-      // DIAGNOSTIC: Log grid bounds once for debugging - should match compute shader values
+      // DIAGNOSTIC: Log grid bounds once for debugging - should match compute
+      // shader values
       static bool gridDebugLogged = false;
       if (!gridDebugLogged) {
         std::cout << "=== FRAGMENT SHADER GRID BOUNDS ===" << std::endl;
@@ -4231,12 +4297,18 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     {
       char buf[64];
       for (int i = 0; i < (int)pointLights.size() && i < MAX_LIGHTS; i++) {
-        snprintf(buf, sizeof(buf), "pointLights[%d].position", i);  shader->setVec3(buf, pointLights[i].position);
-        snprintf(buf, sizeof(buf), "pointLights[%d].color", i);     shader->setVec3(buf, pointLights[i].color);
-        snprintf(buf, sizeof(buf), "pointLights[%d].intensity", i); shader->setFloat(buf, pointLights[i].intensity);
-        snprintf(buf, sizeof(buf), "pointLights[%d].linear", i);    shader->setFloat(buf, pointLights[i].linear);
-        snprintf(buf, sizeof(buf), "pointLights[%d].quadratic", i); shader->setFloat(buf, pointLights[i].quadratic);
-        snprintf(buf, sizeof(buf), "lightsCastShadows[%d]", i);     shader->setBool(buf, pointLights[i].castShadows);
+        snprintf(buf, sizeof(buf), "pointLights[%d].position", i);
+        shader->setVec3(buf, pointLights[i].position);
+        snprintf(buf, sizeof(buf), "pointLights[%d].color", i);
+        shader->setVec3(buf, pointLights[i].color);
+        snprintf(buf, sizeof(buf), "pointLights[%d].intensity", i);
+        shader->setFloat(buf, pointLights[i].intensity);
+        snprintf(buf, sizeof(buf), "pointLights[%d].linear", i);
+        shader->setFloat(buf, pointLights[i].linear);
+        snprintf(buf, sizeof(buf), "pointLights[%d].quadratic", i);
+        shader->setFloat(buf, pointLights[i].quadratic);
+        snprintf(buf, sizeof(buf), "lightsCastShadows[%d]", i);
+        shader->setBool(buf, pointLights[i].castShadows);
       }
     }
 
@@ -4244,12 +4316,18 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     {
       char buf[64];
       for (int i = 0; i < (int)spotLights.size() && i < MAX_LIGHTS; i++) {
-        snprintf(buf, sizeof(buf), "spotLights[%d].position", i);    shader->setVec3(buf, spotLights[i].position);
-        snprintf(buf, sizeof(buf), "spotLights[%d].direction", i);   shader->setVec3(buf, spotLights[i].direction);
-        snprintf(buf, sizeof(buf), "spotLights[%d].color", i);       shader->setVec3(buf, spotLights[i].color);
-        snprintf(buf, sizeof(buf), "spotLights[%d].intensity", i);   shader->setFloat(buf, spotLights[i].intensity);
-        snprintf(buf, sizeof(buf), "spotLights[%d].innerCutOff", i); shader->setFloat(buf, spotLights[i].innerCutOff);
-        snprintf(buf, sizeof(buf), "spotLights[%d].outerCutOff", i); shader->setFloat(buf, spotLights[i].outerCutOff);
+        snprintf(buf, sizeof(buf), "spotLights[%d].position", i);
+        shader->setVec3(buf, spotLights[i].position);
+        snprintf(buf, sizeof(buf), "spotLights[%d].direction", i);
+        shader->setVec3(buf, spotLights[i].direction);
+        snprintf(buf, sizeof(buf), "spotLights[%d].color", i);
+        shader->setVec3(buf, spotLights[i].color);
+        snprintf(buf, sizeof(buf), "spotLights[%d].intensity", i);
+        shader->setFloat(buf, spotLights[i].intensity);
+        snprintf(buf, sizeof(buf), "spotLights[%d].innerCutOff", i);
+        shader->setFloat(buf, spotLights[i].innerCutOff);
+        snprintf(buf, sizeof(buf), "spotLights[%d].outerCutOff", i);
+        shader->setFloat(buf, spotLights[i].outerCutOff);
       }
     }
     shader->setInt("numPointLights",
@@ -4396,7 +4474,8 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
         // Cached irradiance values are no longer valid for new/moved geometry
         if (irradianceCache && irradianceCache->isInitialized()) {
           irradianceCache->clear();
-          std::cout << "Irradiance cache cleared due to scene change" << std::endl;
+          std::cout << "Irradiance cache cleared due to scene change"
+                    << std::endl;
         }
 
         // Mark voxelizer dirty so it re-voxelizes with new geometry
@@ -4476,17 +4555,19 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
         irradianceCache->isInitialized() &&
         radianceSettings.enableIrradianceCache && triangleCount > 0) {
 
-      // NOTE: Cache is persistent across frames - Ward's algorithm incrementally
-      // populates the cache where needed. Cache is only cleared when:
+      // NOTE: Cache is persistent across frames - Ward's algorithm
+      // incrementally populates the cache where needed. Cache is only cleared
+      // when:
       // 1. Scene geometry changes (BVH rebuild)
       // 2. User manually clears it (Ctrl+Shift+I shortcut)
-      // This allows the cache to build up coverage over time for better performance.
+      // This allows the cache to build up coverage over time for better
+      // performance.
 
       // Use compute shader to populate cache
       irradianceCacheComputeShader->use();
 
-      // CRITICAL FIX: Explicitly bind ALL required SSBOs before compute shader dispatch
-      // The compute shader needs access to:
+      // CRITICAL FIX: Explicitly bind ALL required SSBOs before compute shader
+      // dispatch The compute shader needs access to:
       // - Triangle buffer (binding 0)
       // - BVH nodes (binding 1)
       // - Triangle indices (binding 2)
@@ -4497,7 +4578,8 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       // Bind triangle buffer (binding 0)
       if (triangleSSBO != 0) {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, triangleSSBO);
-        std::cout << "Bound triangle SSBO " << triangleSSBO << " to binding 0" << std::endl;
+        std::cout << "Bound triangle SSBO " << triangleSSBO << " to binding 0"
+                  << std::endl;
       } else {
         std::cerr << "ERROR: Triangle SSBO is 0!" << std::endl;
       }
@@ -4506,18 +4588,21 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       if (enableBVH && bvhBuilt) {
         if (bvhNodeSSBO != 0) {
           glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, bvhNodeSSBO);
-          std::cout << "Bound BVH node SSBO " << bvhNodeSSBO << " to binding 1" << std::endl;
+          std::cout << "Bound BVH node SSBO " << bvhNodeSSBO << " to binding 1"
+                    << std::endl;
         } else {
           std::cerr << "ERROR: BVH node SSBO is 0!" << std::endl;
         }
         if (triangleIndexSSBO != 0) {
           glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, triangleIndexSSBO);
-          std::cout << "Bound triangle index SSBO " << triangleIndexSSBO << " to binding 2" << std::endl;
+          std::cout << "Bound triangle index SSBO " << triangleIndexSSBO
+                    << " to binding 2" << std::endl;
         } else {
           std::cerr << "ERROR: Triangle index SSBO is 0!" << std::endl;
         }
       } else {
-        std::cout << "BVH not enabled or not built - using linear traversal" << std::endl;
+        std::cout << "BVH not enabled or not built - using linear traversal"
+                  << std::endl;
       }
 
       // Bind cache SSBOs (bindings 3, 4, 5)
@@ -4549,7 +4634,8 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       GLuint computeProgramID = irradianceCacheComputeShader->getID();
       GLint gridMinLoc = glGetUniformLocation(computeProgramID, "gridMin");
       GLint gridMaxLoc = glGetUniformLocation(computeProgramID, "gridMax");
-      GLint gridResLoc = glGetUniformLocation(computeProgramID, "gridResolution");
+      GLint gridResLoc =
+          glGetUniformLocation(computeProgramID, "gridResolution");
 
       std::cout << "=== COMPUTE SHADER UNIFORM VALIDATION ===" << std::endl;
       std::cout << "gridMin location: " << gridMinLoc << std::endl;
@@ -4557,8 +4643,12 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       std::cout << "gridResolution location: " << gridResLoc << std::endl;
 
       if (gridMinLoc == -1 || gridMaxLoc == -1 || gridResLoc == -1) {
-        std::cerr << "ERROR: One or more grid uniforms not found in compute shader!" << std::endl;
-        std::cerr << "This means the shader cannot perform worldToGrid() correctly!" << std::endl;
+        std::cerr
+            << "ERROR: One or more grid uniforms not found in compute shader!"
+            << std::endl;
+        std::cerr
+            << "This means the shader cannot perform worldToGrid() correctly!"
+            << std::endl;
       }
 
       // Read back uniform values to verify they were set
@@ -4567,12 +4657,14 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       if (gridMinLoc != -1) {
         glGetUniformfv(computeProgramID, gridMinLoc, &readbackGridMin.x);
         std::cout << "gridMin readback: (" << readbackGridMin.x << ", "
-                  << readbackGridMin.y << ", " << readbackGridMin.z << ")" << std::endl;
+                  << readbackGridMin.y << ", " << readbackGridMin.z << ")"
+                  << std::endl;
       }
       if (gridMaxLoc != -1) {
         glGetUniformfv(computeProgramID, gridMaxLoc, &readbackGridMax.x);
         std::cout << "gridMax readback: (" << readbackGridMax.x << ", "
-                  << readbackGridMax.y << ", " << readbackGridMax.z << ")" << std::endl;
+                  << readbackGridMax.y << ", " << readbackGridMax.z << ")"
+                  << std::endl;
       }
       if (gridResLoc != -1) {
         glGetUniformiv(computeProgramID, gridResLoc, &readbackGridRes.x);
@@ -4607,180 +4699,201 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
 
       // CRITICAL CHECK: Verify we have triangles to process
       if (triangleCount == 0) {
-        std::cerr << "ERROR: triangleCount is 0! Cannot populate irradiance cache." << std::endl;
-        std::cerr << "This means no scene geometry was uploaded to the GPU." << std::endl;
+        std::cerr
+            << "ERROR: triangleCount is 0! Cannot populate irradiance cache."
+            << std::endl;
+        std::cerr << "This means no scene geometry was uploaded to the GPU."
+                  << std::endl;
         // Don't dispatch if there are no triangles
         goto skip_compute_dispatch;
       }
 
       { // Scope block to allow goto to skip variable initializations
-      // Dispatch compute shader
-      // Work groups process triangles in batches of 64
-      GLuint numWorkGroups = (triangleCount + 63) / 64;
-      std::cout << "Dispatching compute shader: " << numWorkGroups << " work groups" << std::endl;
-      std::cout << "This will process " << triangleCount << " triangles (sampling every 4th)" << std::endl;
-      glDispatchCompute(numWorkGroups, 1, 1);
+        // Dispatch compute shader
+        // Work groups process triangles in batches of 64
+        GLuint numWorkGroups = (triangleCount + 63) / 64;
+        std::cout << "Dispatching compute shader: " << numWorkGroups
+                  << " work groups" << std::endl;
+        std::cout << "This will process " << triangleCount
+                  << " triangles (sampling every 4th)" << std::endl;
+        glDispatchCompute(numWorkGroups, 1, 1);
 
-      // Check for OpenGL errors after dispatch
-      GLenum err = glGetError();
-      if (err != GL_NO_ERROR) {
-        std::cerr << "OpenGL error after glDispatchCompute: 0x" << std::hex << err << std::dec << std::endl;
-      }
+        // Check for OpenGL errors after dispatch
+        GLenum err = glGetError();
+        if (err != GL_NO_ERROR) {
+          std::cerr << "OpenGL error after glDispatchCompute: 0x" << std::hex
+                    << err << std::dec << std::endl;
+        }
 
-      // Wait for compute to finish before fragment shader reads cache
-      glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+        // Wait for compute to finish before fragment shader reads cache
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
-      // CRITICAL: Ensure GPU has fully completed all operations before CPU
-      // reads
-      glFinish();
+        // CRITICAL: Ensure GPU has fully completed all operations before CPU
+        // reads
+        glFinish();
 
-      // DIAGNOSTIC: Read back cache entry count and debug counters from GPU
-      glBindBuffer(GL_SHADER_STORAGE_BUFFER,
-                   irradianceCache->getCacheBufferSSBO());
-      uint32_t headerData[4] = {0};
-      glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(headerData),
-                         headerData);
-      glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-
-      gpuEntryCount = headerData[0];
-      uint32_t debugGridAttempts = headerData[2];
-      uint32_t debugGridSuccesses = headerData[3];
-
-      std::cout << "=== IRRADIANCE CACHE DEBUG ===" << std::endl;
-      std::cout << "Cache entry count (GPU): " << gpuEntryCount << std::endl;
-      std::cout << "Triangle count: " << triangleCount << std::endl;
-      std::cout << "Expected samples: ~" << (triangleCount / 4)
-                << " (1 in 4 triangles, after validation)" << std::endl;
-      std::cout << "DEBUG: Grid insertion attempts: " << debugGridAttempts << std::endl;
-      std::cout << "DEBUG: Grid insertions with valid cellIdx: " << debugGridSuccesses << std::endl;
-      if (debugGridAttempts > 0 && debugGridSuccesses == 0) {
-        std::cerr << "ERROR: ALL grid cell indices are invalid (0xFFFFFFFF)!" << std::endl;
-        std::cerr << "This means worldToGrid() or gridIndex() is broken!" << std::endl;
-      }
-
-      // DIAGNOSTIC STEP 10: Read back first cache entry to verify data validity
-      if (gpuEntryCount > 0) {
+        // DIAGNOSTIC: Read back cache entry count and debug counters from GPU
         glBindBuffer(GL_SHADER_STORAGE_BUFFER,
                      irradianceCache->getCacheBufferSSBO());
-
-        struct CacheEntry {
-          glm::vec3 position;
-          float harmonicMeanDist;
-          glm::vec3 normal;
-          float padding1;
-          glm::vec3 irradiance;
-          float padding2;
-        };
-
-        // Read first entry (skip 16-byte header: 4 uint32s)
-        CacheEntry firstEntry;
-        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER,
-                           16 + 0 * sizeof(CacheEntry), sizeof(CacheEntry),
-                           &firstEntry);
-
-        std::cout << "=== FIRST CACHE ENTRY DEBUG ===" << std::endl;
-        std::cout << "Position: (" << firstEntry.position.x << ", "
-                  << firstEntry.position.y << ", " << firstEntry.position.z
-                  << ")" << std::endl;
-        std::cout << "Normal: (" << firstEntry.normal.x << ", "
-                  << firstEntry.normal.y << ", " << firstEntry.normal.z << ")"
-                  << std::endl;
-        std::cout << "Irradiance: (" << firstEntry.irradiance.x << ", "
-                  << firstEntry.irradiance.y << ", " << firstEntry.irradiance.z
-                  << ")" << std::endl;
-        std::cout << "Harmonic mean dist: " << firstEntry.harmonicMeanDist
-                  << std::endl;
-
-        // DIAGNOSTIC: Calculate harmonic mean distance distribution statistics
-        // This helps verify the Ward algorithm fixes are working correctly
-        float minHMD = 1e10f, maxHMD = 0.0f, avgHMD = 0.0f;
-        int hmd1000Count = 0, validCount = 0;
-
-        // Sample up to 100 entries to get distribution statistics
-        uint32_t sampleCount = std::min(gpuEntryCount, 100u);
-        for (uint32_t i = 0; i < sampleCount; i++) {
-          CacheEntry entry;
-          glGetBufferSubData(GL_SHADER_STORAGE_BUFFER,
-                             16 + i * sizeof(CacheEntry), sizeof(CacheEntry),
-                             &entry);
-
-          float hmd = entry.harmonicMeanDist;
-
-          // Skip NaN/Inf values in statistics
-          if (!std::isnan(hmd) && !std::isinf(hmd) && hmd > 0.0f) {
-            if (hmd >= 999.0f)
-              hmd1000Count++; // Count pathologically large values
-            minHMD = std::min(minHMD, hmd);
-            maxHMD = std::max(maxHMD, hmd);
-            avgHMD += hmd;
-            validCount++;
-          }
-        }
-
-        if (validCount > 0) {
-          avgHMD /= validCount;
-
-          std::cout << "\n=== HARMONIC MEAN DISTANCE STATS (sampled "
-                    << sampleCount << " entries) ===" << std::endl;
-          std::cout << "Min HMD: " << minHMD << std::endl;
-          std::cout << "Max HMD: " << maxHMD << std::endl;
-          std::cout << "Avg HMD: " << avgHMD << std::endl;
-          std::cout << "Entries with HMD >= 999: " << hmd1000Count << " / "
-                    << sampleCount;
-          if (hmd1000Count > 0) {
-            std::cout << " (" << (100.0f * hmd1000Count / sampleCount) << "%)";
-          }
-          std::cout << std::endl;
-
-          // Quality assessment based on Ward's recommendations
-          if (avgHMD < 1.0f) {
-            std::cout << "⚠️ WARNING: Average HMD very small - may indicate too "
-                         "dense sampling"
-                      << std::endl;
-          } else if (avgHMD > 50.0f) {
-            std::cout
-                << "⚠️ WARNING: Average HMD very large - patches may be too big"
-                << std::endl;
-          } else {
-            std::cout
-                << "✓ Harmonic mean distances in reasonable range (1-50 units)"
-                << std::endl;
-          }
-        }
-
+        uint32_t headerData[4] = {0};
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(headerData),
+                           headerData);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-      }
 
-      // NOTE: With persistent caching, 0 entries on first frame is an error,
-      // but slow growth on later frames is expected (isCovered() filters duplicates)
-      static uint32_t lastEntryCount = 0;
+        gpuEntryCount = headerData[0];
+        uint32_t debugGridAttempts = headerData[2];
+        uint32_t debugGridSuccesses = headerData[3];
 
-      // Detect cache clear (count decreased) and reset tracking
-      if (gpuEntryCount < lastEntryCount) {
-        lastEntryCount = 0;
-        std::cout << "Cache was cleared - resetting tracking" << std::endl;
-      }
-
-      uint32_t entriesAdded = gpuEntryCount - lastEntryCount;
-
-      if (gpuEntryCount == 0) {
-        std::cout << "WARNING: Cache still empty after compute shader!" << std::endl;
-        std::cout << "Possible causes:" << std::endl;
-        std::cout << "  - All triangles filtered by isCovered() check (cache may be fully populated)"
+        std::cout << "=== IRRADIANCE CACHE DEBUG ===" << std::endl;
+        std::cout << "Cache entry count (GPU): " << gpuEntryCount << std::endl;
+        std::cout << "Triangle count: " << triangleCount << std::endl;
+        std::cout << "Expected samples: ~" << (triangleCount / 4)
+                  << " (1 in 4 triangles, after validation)" << std::endl;
+        std::cout << "DEBUG: Grid insertion attempts: " << debugGridAttempts
                   << std::endl;
-        std::cout << "  - Grid bounds don't cover scene geometry" << std::endl;
-        std::cout << "  - Compute shader not executing properly" << std::endl;
-      } else {
-        std::cout << "Cache population: +" << entriesAdded << " new entries this frame (total: "
-                  << gpuEntryCount << ")" << std::endl;
-        if (entriesAdded == 0 && lastEntryCount > 0) {
-          std::cout << "  (Cache stable - all sampled positions already covered)" << std::endl;
+        std::cout << "DEBUG: Grid insertions with valid cellIdx: "
+                  << debugGridSuccesses << std::endl;
+        if (debugGridAttempts > 0 && debugGridSuccesses == 0) {
+          std::cerr << "ERROR: ALL grid cell indices are invalid (0xFFFFFFFF)!"
+                    << std::endl;
+          std::cerr << "This means worldToGrid() or gridIndex() is broken!"
+                    << std::endl;
         }
-      }
-      lastEntryCount = gpuEntryCount;
+
+        // DIAGNOSTIC STEP 10: Read back first cache entry to verify data
+        // validity
+        if (gpuEntryCount > 0) {
+          glBindBuffer(GL_SHADER_STORAGE_BUFFER,
+                       irradianceCache->getCacheBufferSSBO());
+
+          struct CacheEntry {
+            glm::vec3 position;
+            float harmonicMeanDist;
+            glm::vec3 normal;
+            float padding1;
+            glm::vec3 irradiance;
+            float padding2;
+          };
+
+          // Read first entry (skip 16-byte header: 4 uint32s)
+          CacheEntry firstEntry;
+          glGetBufferSubData(GL_SHADER_STORAGE_BUFFER,
+                             16 + 0 * sizeof(CacheEntry), sizeof(CacheEntry),
+                             &firstEntry);
+
+          std::cout << "=== FIRST CACHE ENTRY DEBUG ===" << std::endl;
+          std::cout << "Position: (" << firstEntry.position.x << ", "
+                    << firstEntry.position.y << ", " << firstEntry.position.z
+                    << ")" << std::endl;
+          std::cout << "Normal: (" << firstEntry.normal.x << ", "
+                    << firstEntry.normal.y << ", " << firstEntry.normal.z << ")"
+                    << std::endl;
+          std::cout << "Irradiance: (" << firstEntry.irradiance.x << ", "
+                    << firstEntry.irradiance.y << ", "
+                    << firstEntry.irradiance.z << ")" << std::endl;
+          std::cout << "Harmonic mean dist: " << firstEntry.harmonicMeanDist
+                    << std::endl;
+
+          // DIAGNOSTIC: Calculate harmonic mean distance distribution
+          // statistics This helps verify the Ward algorithm fixes are working
+          // correctly
+          float minHMD = 1e10f, maxHMD = 0.0f, avgHMD = 0.0f;
+          int hmd1000Count = 0, validCount = 0;
+
+          // Sample up to 100 entries to get distribution statistics
+          uint32_t sampleCount = std::min(gpuEntryCount, 100u);
+          for (uint32_t i = 0; i < sampleCount; i++) {
+            CacheEntry entry;
+            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER,
+                               16 + i * sizeof(CacheEntry), sizeof(CacheEntry),
+                               &entry);
+
+            float hmd = entry.harmonicMeanDist;
+
+            // Skip NaN/Inf values in statistics
+            if (!std::isnan(hmd) && !std::isinf(hmd) && hmd > 0.0f) {
+              if (hmd >= 999.0f)
+                hmd1000Count++; // Count pathologically large values
+              minHMD = std::min(minHMD, hmd);
+              maxHMD = std::max(maxHMD, hmd);
+              avgHMD += hmd;
+              validCount++;
+            }
+          }
+
+          if (validCount > 0) {
+            avgHMD /= validCount;
+
+            std::cout << "\n=== HARMONIC MEAN DISTANCE STATS (sampled "
+                      << sampleCount << " entries) ===" << std::endl;
+            std::cout << "Min HMD: " << minHMD << std::endl;
+            std::cout << "Max HMD: " << maxHMD << std::endl;
+            std::cout << "Avg HMD: " << avgHMD << std::endl;
+            std::cout << "Entries with HMD >= 999: " << hmd1000Count << " / "
+                      << sampleCount;
+            if (hmd1000Count > 0) {
+              std::cout << " (" << (100.0f * hmd1000Count / sampleCount)
+                        << "%)";
+            }
+            std::cout << std::endl;
+
+            // Quality assessment based on Ward's recommendations
+            if (avgHMD < 1.0f) {
+              std::cout
+                  << "⚠️ WARNING: Average HMD very small - may indicate too "
+                     "dense sampling"
+                  << std::endl;
+            } else if (avgHMD > 50.0f) {
+              std::cout << "⚠️ WARNING: Average HMD very large - patches may be "
+                           "too big"
+                        << std::endl;
+            } else {
+              std::cout << "✓ Harmonic mean distances in reasonable range "
+                           "(1-50 units)"
+                        << std::endl;
+            }
+          }
+
+          glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        }
+
+        // NOTE: With persistent caching, 0 entries on first frame is an error,
+        // but slow growth on later frames is expected (isCovered() filters
+        // duplicates)
+        static uint32_t lastEntryCount = 0;
+
+        // Detect cache clear (count decreased) and reset tracking
+        if (gpuEntryCount < lastEntryCount) {
+          lastEntryCount = 0;
+          std::cout << "Cache was cleared - resetting tracking" << std::endl;
+        }
+
+        uint32_t entriesAdded = gpuEntryCount - lastEntryCount;
+
+        if (gpuEntryCount == 0) {
+          std::cout << "WARNING: Cache still empty after compute shader!"
+                    << std::endl;
+          std::cout << "Possible causes:" << std::endl;
+          std::cout << "  - All triangles filtered by isCovered() check (cache "
+                       "may be fully populated)"
+                    << std::endl;
+          std::cout << "  - Grid bounds don't cover scene geometry"
+                    << std::endl;
+          std::cout << "  - Compute shader not executing properly" << std::endl;
+        } else {
+          std::cout << "Cache population: +" << entriesAdded
+                    << " new entries this frame (total: " << gpuEntryCount
+                    << ")" << std::endl;
+          if (entriesAdded == 0 && lastEntryCount > 0) {
+            std::cout
+                << "  (Cache stable - all sampled positions already covered)"
+                << std::endl;
+          }
+        }
+        lastEntryCount = gpuEntryCount;
       } // End scope block
 
-      skip_compute_dispatch:
+    skip_compute_dispatch:
       // DON'T unbind cache buffers here - fragment shader needs to read them
       // during rendering! irradianceCache->unbindBuffers();
 
@@ -4798,10 +4911,11 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
       // NOTE: cacheEntryCount is read from the SSBO header, not from a uniform
-      // The fragment shader accesses it as: IrradianceCacheBuffer.cacheEntryCount
-      // No need to set it as a uniform - it's already in the buffer at offset 0
-      std::cout << "Fragment shader will read cacheEntryCount from SSBO: " << gpuEntryCount
-                << std::endl;
+      // The fragment shader accesses it as:
+      // IrradianceCacheBuffer.cacheEntryCount No need to set it as a uniform -
+      // it's already in the buffer at offset 0
+      std::cout << "Fragment shader will read cacheEntryCount from SSBO: "
+                << gpuEntryCount << std::endl;
 
       // DIAGNOSTIC: Check if grid cells are actually populated
       if (gpuEntryCount > 0) {
@@ -4898,6 +5012,11 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   renderSkybox(projection, view, shader);
   renderPointClouds(shader, view, projection);
 
+  // Render light gizmos (spheres/cones) while Ctrl is held
+  if (ctrlPressed) {
+    renderLightVisualizations(shader);
+  }
+
   // Render BVH debug visualization (after main scene rendering)
   if (showBVHDebug && bvhBuilt) {
     // BVH debug lines are now rendering
@@ -4930,12 +5049,13 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     }
 
     // Async double-buffered PBO depth sampling — eliminates 9 synchronous
-    // glReadPixels stalls per frame that were caused by Camera::getDistanceToNearestObject.
-    // Pattern: consume previous frame's result (no stall), then kick off this
-    // frame's read (GPU-to-PBO transfer happens while the CPU continues).
-    // 1-frame latency is imperceptible for movement speed and auto-convergence.
+    // glReadPixels stalls per frame that were caused by
+    // Camera::getDistanceToNearestObject. Pattern: consume previous frame's
+    // result (no stall), then kick off this frame's read (GPU-to-PBO transfer
+    // happens while the CPU continues). 1-frame latency is imperceptible for
+    // movement speed and auto-convergence.
     {
-      int readIdx  = 1 - g_distancePBOWriteIdx;
+      int readIdx = 1 - g_distancePBOWriteIdx;
       int writeIdx = g_distancePBOWriteIdx;
 
       // Consume previous frame's result — GPU has already finished by now.
@@ -4949,20 +5069,22 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
         glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
       }
 
-      // Kick off this frame's async read (nullptr → GPU writes directly to PBO).
+      // Kick off this frame's async read (nullptr → GPU writes directly to
+      // PBO).
       glBindBuffer(GL_PIXEL_PACK_BUFFER, g_distancePBO[writeIdx]);
-      glReadPixels(windowWidth / 2, windowHeight / 2, 1, 1,
-                   GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+      glReadPixels(windowWidth / 2, windowHeight / 2, 1, 1, GL_DEPTH_COMPONENT,
+                   GL_FLOAT, nullptr);
       glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
       g_distancePBOWriteIdx = readIdx; // swap for next frame
-      g_distancePBOReady    = true;
+      g_distancePBOReady = true;
 
       // Reconstruct world-space distance from cached (previous-frame) depth.
       float distanceToNearestObject = preferences.farPlane;
       if (g_cachedCenterDepth < 1.0f) {
-        glm::vec4 ndc   = glm::vec4(0.0f, 0.0f, g_cachedCenterDepth * 2.0f - 1.0f, 1.0f);
+        glm::vec4 ndc =
+            glm::vec4(0.0f, 0.0f, g_cachedCenterDepth * 2.0f - 1.0f, 1.0f);
         glm::mat4 invPV = glm::inverse(projection * view);
-        glm::vec4 wp    = invPV * ndc;
+        glm::vec4 wp = invPV * ndc;
         wp /= wp.w;
         distanceToNearestObject = glm::distance(camera.Position, glm::vec3(wp));
       }
@@ -5053,15 +5175,14 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     } else {
       switch (preferences.spaceMouseAnchorMode) {
       case GUI::SPACEMOUSE_ANCHOR_CLICK:
-        orbitPointToDisplay = spaceMouseClickAnchorSet
-            ? spaceMouseClickAnchor
-            : camera.OrbitPoint;
+        orbitPointToDisplay = spaceMouseClickAnchorSet ? spaceMouseClickAnchor
+                                                       : camera.OrbitPoint;
         break;
       case GUI::SPACEMOUSE_ANCHOR_CONTINUOUS:
       case GUI::SPACEMOUSE_ANCHOR_ON_START:
         orbitPointToDisplay = cursorManager.isCursorPositionValid()
-            ? cursorManager.getCursorPosition()
-            : camera.OrbitPoint;
+                                  ? cursorManager.getCursorPosition()
+                                  : camera.OrbitPoint;
         break;
       case GUI::SPACEMOUSE_ANCHOR_DISABLED:
       default:
@@ -5174,10 +5295,13 @@ void renderModels(Engine::Shader *shader, const glm::mat4 &viewProj,
                               glm::vec3(0, 0, 1));
     modelMatrix = glm::scale(modelMatrix, model.scale);
 
-    // Frustum culling: skip models whose bounding sphere is outside the view frustum
+    // Frustum culling: skip models whose bounding sphere is outside the view
+    // frustum
     if (enableFrustumCulling && model.boundingSphereRadius > 0.0f) {
-      glm::vec3 worldCenter = glm::vec3(modelMatrix * glm::vec4(model.localBoundsCenter, 1.0f));
-      float maxScale = glm::max(model.scale.x, glm::max(model.scale.y, model.scale.z));
+      glm::vec3 worldCenter =
+          glm::vec3(modelMatrix * glm::vec4(model.localBoundsCenter, 1.0f));
+      float maxScale =
+          glm::max(model.scale.x, glm::max(model.scale.y, model.scale.z));
       float worldRadius = model.boundingSphereRadius * maxScale;
       if (!Camera::isInFrustumPlanes(worldCenter, worldRadius, frustumPlanes))
         continue;
@@ -5187,8 +5311,9 @@ void renderModels(Engine::Shader *shader, const glm::mat4 &viewProj,
     shader->setMat4("model", modelMatrix);
 
     // Calculate and set normal matrix for proper normal transformation.
-    // For uniform-scale models (the common case) the inverse-transpose simplifies
-    // to mat3(modelMatrix), saving an expensive matrix inversion per model.
+    // For uniform-scale models (the common case) the inverse-transpose
+    // simplifies to mat3(modelMatrix), saving an expensive matrix inversion per
+    // model.
     glm::mat3 normalMatrix;
     if (std::abs(model.scale.x - model.scale.y) < 1e-6f &&
         std::abs(model.scale.y - model.scale.z) < 1e-6f) {
@@ -5281,8 +5406,7 @@ void renderModels(Engine::Shader *shader, const glm::mat4 &viewProj,
   }
 }
 
-void renderPointClouds(Engine::Shader *shader,
-                       const glm::mat4 &view,
+void renderPointClouds(Engine::Shader *shader, const glm::mat4 &view,
                        const glm::mat4 &projection) {
   // Skip point cloud rendering for depth pass as points don't cast good
   // shadows
@@ -5290,8 +5414,8 @@ void renderPointClouds(Engine::Shader *shader,
     return;
 
   // Schütz compute rasterizer: one clear + one dispatch per cloud + one resolve
-  bool useCompute = computePointCloudRenderer &&
-                    computePointCloudRenderer->isInitialized();
+  bool useCompute =
+      computePointCloudRenderer && computePointCloudRenderer->isInitialized();
   if (useCompute) {
     computePointCloudRenderer->beginFrame();
   }
@@ -5326,16 +5450,13 @@ void renderPointClouds(Engine::Shader *shader,
       // culling and packed 10/20/30-bit coordinate decoding.
       if (pointCloud.computeBatchSSBO != 0 && pointCloud.numBatches > 0) {
         computePointCloudRenderer->renderNode(
-            pointCloud.computeBatchSSBO,
-            pointCloud.computeXyz12bSSBO,
-            pointCloud.computeXyz8bSSBO,
-            pointCloud.computeXyz4bSSBO,
-            pointCloud.computeRGBASSBO,
-            pointCloud.numBatches,
+            pointCloud.computeBatchSSBO, pointCloud.computeXyz12bSSBO,
+            pointCloud.computeXyz8bSSBO, pointCloud.computeXyz4bSSBO,
+            pointCloud.computeRGBASSBO, pointCloud.numBatches,
             pointCloud.computePointsPerThread,
-            projection * view * modelMatrix,    // uMVP
-            view * modelMatrix,                  // uModelView (for precision level)
-            projection);                         // uProj      (for precision level)
+            projection * view * modelMatrix, // uMVP
+            view * modelMatrix,              // uModelView (for precision level)
+            projection);                     // uProj      (for precision level)
       }
     } else if (pointCloud.octreeRoot) {
       // GL_POINTS fallback: octree-based rendering unchanged
@@ -5368,15 +5489,20 @@ void renderPointClouds(Engine::Shader *shader,
   }
 
   // renderNode() calls m_rasterShader->use() internally, leaving the compute
-  // shader active.  Re-activate the scene shader so this flag lands in the
-  // right program; without this, isPointCloud stays true and meshes render
-  // normals-as-colour on every subsequent frame.
+  // shader active.  Re-activate the scene shader so isPointCloud=false lands
+  // in the right program; without this, meshes render normals-as-colour on
+  // every subsequent frame.
   shader->use();
   shader->setBool("isPointCloud", false);
 
   // Composite compute result into the HDR framebuffer.
+  // endFrame() internally calls m_depthStencilShader->use() then
+  // m_resolveShader->use(), leaving the resolve shader as the active program.
+  // Re-bind the scene shader afterward so callers (e.g. renderLightVisualizations)
+  // get correct glUniform* routing.
   if (useCompute) {
     computePointCloudRenderer->endFrame();
+    shader->use(); // restore scene shader after resolve pass
   }
 }
 
@@ -5677,6 +5803,11 @@ void DrawRadar(bool isStereoWindow, Camera camera, GLfloat focaldist,
 }
 
 void renderLightVisualizations(Engine::Shader *shader) {
+  // Ensure the scene shader is the active program before setting any uniforms
+  // or submitting draw calls.  renderPointClouds (and other subsystems) may
+  // leave a different program bound via their own internal shader->use() calls.
+  shader->use();
+
   // Render spheres for point lights
   for (size_t i = 0; i < pointLights.size(); i++) {
     const auto &light = pointLights[i];
@@ -5693,7 +5824,9 @@ void renderLightVisualizations(Engine::Shader *shader) {
     model = glm::scale(model, lightSphere.scale);
 
     shader->setMat4("model", model);
+    shader->setMat3("normalMatrix", glm::mat3(model)); // uniform scale — no need for inverse-transpose
     shader->setBool("isPointCloud", false);
+    shader->setBool("isSelected", false);
 
     // Set light color and emissive properties
     shader->setVec3("material.objectColor", light.color);
@@ -5746,7 +5879,9 @@ void renderLightVisualizations(Engine::Shader *shader) {
     model = glm::scale(model, lightCone.scale);
 
     shader->setMat4("model", model);
+    shader->setMat3("normalMatrix", glm::transpose(glm::inverse(glm::mat3(model)))); // non-uniform scale
     shader->setBool("isPointCloud", false);
+    shader->setBool("isSelected", false);
 
     // Set light color and emissive properties
     shader->setVec3("material.objectColor", light.color);
@@ -5794,20 +5929,25 @@ void updateSpaceMouseBounds() {
   for (const auto &pointCloud : currentScene.pointClouds) {
     if (pointCloud.hasBounds()) {
       // Fast path: use the pre-computed bounds stored at load time
-      const glm::vec3 pcMin = pointCloud.position + (pointCloud.boundsMin * pointCloud.scale);
-      const glm::vec3 pcMax = pointCloud.position + (pointCloud.boundsMax * pointCloud.scale);
+      const glm::vec3 pcMin =
+          pointCloud.position + (pointCloud.boundsMin * pointCloud.scale);
+      const glm::vec3 pcMax =
+          pointCloud.position + (pointCloud.boundsMax * pointCloud.scale);
       modelMin = glm::min(modelMin, pcMin);
       modelMax = glm::max(modelMax, pcMax);
     } else if (pointCloud.octreeRoot) {
       // Legacy: octree was built (e.g. by an older code path)
-      const glm::vec3 pcMin = pointCloud.position + (pointCloud.octreeBoundsMin * pointCloud.scale);
-      const glm::vec3 pcMax = pointCloud.position + (pointCloud.octreeBoundsMax * pointCloud.scale);
+      const glm::vec3 pcMin =
+          pointCloud.position + (pointCloud.octreeBoundsMin * pointCloud.scale);
+      const glm::vec3 pcMax =
+          pointCloud.position + (pointCloud.octreeBoundsMax * pointCloud.scale);
       modelMin = glm::min(modelMin, pcMin);
       modelMax = glm::max(modelMax, pcMax);
     } else if (!pointCloud.points.empty()) {
       // Last resort: iterate CPU-side points (only used by very old load paths)
       for (const auto &point : pointCloud.points) {
-        const glm::vec3 worldPos = pointCloud.position + (point.position * pointCloud.scale);
+        const glm::vec3 worldPos =
+            pointCloud.position + (point.position * pointCloud.scale);
         modelMin = glm::min(modelMin, worldPos);
         modelMax = glm::max(modelMax, worldPos);
       }
@@ -5897,8 +6037,9 @@ void updateSpaceMouseCursorAnchor() {
       // Without this, camera.OrbitPoint lags and the displayed sphere jumps
       // when SpaceMouse navigation begins (pivot switches to m_cursorAnchor).
       if (preferences.spaceMouseAnchorMode != GUI::SPACEMOUSE_ANCHOR_DISABLED) {
-        camera.OrbitPoint    = currentCursorPosition;
-        camera.OrbitDistance = glm::length(camera.Position - currentCursorPosition);
+        camera.OrbitPoint = currentCursorPosition;
+        camera.OrbitDistance =
+            glm::length(camera.Position - currentCursorPosition);
         spaceMouseInput.RefreshPivotPosition();
       }
     }
@@ -5917,8 +6058,9 @@ void updateSpaceMouseCursorAnchor() {
         lastCursorPosition = spaceMouseClickAnchor;
         spaceMouseInput.SetCursorAnchor(spaceMouseClickAnchor,
                                         preferences.spaceMouseAnchorMode);
-        camera.OrbitPoint    = spaceMouseClickAnchor;
-        camera.OrbitDistance = glm::length(camera.Position - spaceMouseClickAnchor);
+        camera.OrbitPoint = spaceMouseClickAnchor;
+        camera.OrbitDistance =
+            glm::length(camera.Position - spaceMouseClickAnchor);
         spaceMouseInput.RefreshPivotPosition();
       }
     } else if (settingChanged) {
@@ -6478,10 +6620,10 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
         } else {
           anchor = camera.Position + camera.Front * camera.OrbitDistance;
         }
-        spaceMouseClickAnchor    = anchor;
+        spaceMouseClickAnchor = anchor;
         spaceMouseClickAnchorSet = true;
         spaceMouseInput.SetCursorAnchor(anchor, GUI::SPACEMOUSE_ANCHOR_CLICK);
-        camera.OrbitPoint    = anchor;
+        camera.OrbitPoint = anchor;
         camera.OrbitDistance = glm::length(camera.Position - anchor);
         spaceMouseInput.RefreshPivotPosition();
       }
@@ -6526,7 +6668,8 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
             // Capture cursor state for synchronization
             Core::CursorSyncManager::getInstance().captureState(
                 capturedCursorPos, Core::CameraOperationType::Orbiting,
-                camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane),
+                camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane,
+                                           preferences.farPlane),
                 camera.GetViewMatrix(), windowWidth, windowHeight);
 
             // Enable mouse capture when orbiting starts
@@ -6543,7 +6686,8 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
             // Capture cursor state for synchronization
             Core::CursorSyncManager::getInstance().captureState(
                 capturedCursorPos, Core::CameraOperationType::Orbiting,
-                camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane),
+                camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane,
+                                           preferences.farPlane),
                 camera.GetViewMatrix(), windowWidth, windowHeight);
 
             isMouseCaptured = true;
@@ -6597,7 +6741,8 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
           // Capture cursor state for synchronization
           Core::CursorSyncManager::getInstance().captureState(
               capturedCursorPos, Core::CameraOperationType::Orbiting,
-              camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane),
+              camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane,
+                                         preferences.farPlane),
               camera.GetViewMatrix(), windowWidth, windowHeight);
 
           camera.StartOrbiting();
@@ -6636,15 +6781,16 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
             std::cout << "[CursorFix] Around cursor mode - using cursor "
                          "synchronization"
                       << std::endl;
-            // Note: Pass false for stereo mode since stereo matrices aren't available here.
-            // Using mono projection for cursor positioning is sufficient and avoids
-            // incorrect averaging with invalid default stereo matrices.
+            // Note: Pass false for stereo mode since stereo matrices aren't
+            // available here. Using mono projection for cursor positioning is
+            // sufficient and avoids incorrect averaging with invalid default
+            // stereo matrices.
             Core::CursorSynchronizer::synchronizeCursorPosition(
                 window,
                 Core::CursorSyncManager::getInstance().getWorldPosition(),
-                camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane),
-                camera.GetViewMatrix(), windowWidth, windowHeight,
-                false);
+                camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane,
+                                           preferences.farPlane),
+                camera.GetViewMatrix(), windowWidth, windowHeight, false);
             Core::CursorSyncManager::getInstance().markSynchronized();
           } else if (orbitFollowsCursor) {
             // Center cursor mode - cursor should be at viewport center after
@@ -6653,13 +6799,14 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
             Core::CursorSyncManager::getInstance().markSynchronized();
           } else {
             // This shouldn't happen, but fallback to synchronization
-            // Note: Pass false for stereo mode since stereo matrices aren't available here.
+            // Note: Pass false for stereo mode since stereo matrices aren't
+            // available here.
             Core::CursorSynchronizer::synchronizeCursorPosition(
                 window,
                 Core::CursorSyncManager::getInstance().getWorldPosition(),
-                camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane),
-                camera.GetViewMatrix(), windowWidth, windowHeight,
-                false);
+                camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane,
+                                           preferences.farPlane),
+                camera.GetViewMatrix(), windowWidth, windowHeight, false);
             Core::CursorSyncManager::getInstance().markSynchronized();
           }
         } else {
@@ -6672,12 +6819,13 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
 
             // Project the original 3D cursor position to screen coordinates
             // with the new camera view after orbiting
-            // Note: Pass false for stereo mode since stereo matrices aren't available here.
+            // Note: Pass false for stereo mode since stereo matrices aren't
+            // available here.
             Core::CursorSynchronizer::synchronizeCursorPosition(
                 window, originalCursorPos,
-                camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane),
-                camera.GetViewMatrix(), windowWidth, windowHeight,
-                false);
+                camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane,
+                                           preferences.farPlane),
+                camera.GetViewMatrix(), windowWidth, windowHeight, false);
           } else {
             // No valid cursor position - fallback to screen center
             glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
@@ -6729,7 +6877,8 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
 
       Core::CursorSyncManager::getInstance().captureState(
           cursorPos, Core::CameraOperationType::Panning,
-          camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane),
+          camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane,
+                                     preferences.farPlane),
           camera.GetViewMatrix(), windowWidth, windowHeight);
 
       camera.StartPanning();
@@ -6744,11 +6893,13 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
       camera.StopPanning();
 
       // Synchronize cursor position after panning
-      // Note: Pass false for stereo mode since stereo matrices aren't available here.
+      // Note: Pass false for stereo mode since stereo matrices aren't available
+      // here.
       if (Core::CursorSyncManager::getInstance().needsSynchronization()) {
         Core::CursorSynchronizer::synchronizeCursorPosition(
             window, Core::CursorSyncManager::getInstance().getWorldPosition(),
-            camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane),
+            camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane,
+                                       preferences.farPlane),
             camera.GetViewMatrix(), windowWidth, windowHeight, false);
         Core::CursorSyncManager::getInstance().markSynchronized();
       }
@@ -6769,7 +6920,8 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
 
       Core::CursorSyncManager::getInstance().captureState(
           cursorPos, Core::CameraOperationType::Rotating,
-          camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane),
+          camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane,
+                                     preferences.farPlane),
           camera.GetViewMatrix(), windowWidth, windowHeight);
 
       // Enable mouse capture for right button rotation
@@ -6783,11 +6935,13 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
       rightMousePressed = false;
 
       // Synchronize cursor position after rotation
-      // Note: Pass false for stereo mode since stereo matrices aren't available here.
+      // Note: Pass false for stereo mode since stereo matrices aren't available
+      // here.
       if (Core::CursorSyncManager::getInstance().needsSynchronization()) {
         Core::CursorSynchronizer::synchronizeCursorPosition(
             window, Core::CursorSyncManager::getInstance().getWorldPosition(),
-            camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane),
+            camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane,
+                                       preferences.farPlane),
             camera.GetViewMatrix(), windowWidth, windowHeight, false);
         Core::CursorSyncManager::getInstance().markSynchronized();
       }
@@ -7171,7 +7325,8 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
     case StereoVista::ShortcutAction::ClearIrradianceCache:
       if (irradianceCache && irradianceCache->isInitialized()) {
         irradianceCache->clear();
-        std::cout << "Irradiance cache cleared - will repopulate on next frame" << std::endl;
+        std::cout << "Irradiance cache cleared - will repopulate on next frame"
+                  << std::endl;
       } else {
         std::cout << "Irradiance cache not initialized" << std::endl;
       }
@@ -7299,8 +7454,8 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
 void printCursorSyncDiagnostics() {
   if (cursorManager.isCursorPositionValid()) {
     glm::vec3 cursorPos = cursorManager.getCursorPosition();
-    glm::mat4 projection =
-        camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane, preferences.farPlane);
+    glm::mat4 projection = camera.GetProjectionMatrix(
+        aspectRatio, preferences.nearPlane, preferences.farPlane);
     glm::mat4 view = camera.GetViewMatrix();
 
     Core::CursorSynchronizer::printDiagnostics(cursorPos, projection, view,

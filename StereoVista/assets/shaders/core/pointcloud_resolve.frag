@@ -1,13 +1,12 @@
-// Schütz compute rasterizer – Phase 2
-// Resolve pass: read the uint64_t framebuffer (depth:32 | index:32) and
-// composite point-cloud colours into the currently-bound HDR framebuffer.
-// Pixels where the framebuffer still holds the sentinel 0xFFFFFFFFFFFFFFFF
-// are discarded, leaving the underlying scene content intact.
+// Schütz compute rasterizer – Two-pass resolve, Pass 2 (colour only).
+// Pass 1 (pointcloud_depth_stencil.frag) already wrote gl_FragDepth and set
+// stencil=1 for every valid foreground point.  The GL stencil test (GL_EQUAL,
+// ref=1) rejects ~90-95% of pixels before this shader even runs, so the
+// expensive colour work executes only for the pixels that matter.
 //
-// Depth interaction: gl_FragDepth is written with the point's NDC depth so
-// that the hardware depth test compares it against the existing mesh depth.
-// Points behind meshes are discarded by GL_LESS; points in front overwrite
-// the mesh colour and update the depth buffer for EDL.
+// Removing gl_FragDepth here lets the GPU skip late-Z serialisation and run
+// colour fragments at full throughput.  Depth interaction is correct because
+// Pass 1 already updated the depth buffer with the point-cloud depths.
 #version 460 core
 #extension GL_ARB_gpu_shader_int64 : require
 
@@ -33,17 +32,12 @@ void main() {
 
     uint64_t entry = framebuffer[pixelID];
 
-    // Sentinel: no point was rasterised here – keep the scene pixel.
+    // Stencil test guarantees this is a valid foreground point, but keep the
+    // sentinel guard as a safety net against any edge-case stencil leakage.
     if (entry == 0xFFFFFFFFFFFFFFFFUL) discard;
 
-    // Write the point's NDC depth [0,1] so the hardware depth test compares it
-    // against the existing depth buffer (written by mesh rendering).  Points
-    // behind meshes are discarded; points in front overwrite the mesh pixel
-    // and update the depth buffer (used by EDL in the bloom final pass).
-    uint depth_uint = uint(entry >> 32UL);
-    gl_FragDepth    = uintBitsToFloat(depth_uint);
-
-    // Extract point index from the low 32 bits.
+    // Extract point index from the low 32 bits and unpack colour.
+    // No gl_FragDepth: depth was written correctly in Pass 1.
     uint idx    = uint(entry & 0xFFFFFFFFUL);
     uint packed = packedColor[idx];
 

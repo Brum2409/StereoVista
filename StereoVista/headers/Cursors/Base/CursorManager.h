@@ -141,13 +141,6 @@ private:
   // Position locking
   bool m_positionLocked;
 
-  // Async depth PBO for cursor position (avoids per-frame glReadPixels stall).
-  // Pattern: kick off async read each frame; consume previous frame's result
-  // via a fence sync (non-blocking poll). 0-or-1-frame latency is imperceptible.
-  GLuint m_depthPBO    = 0;
-  GLsync m_depthFence  = nullptr;
-  float  m_cachedDepth = 1.0f;
-
   // Helper function to calculate background cursor position
   glm::vec3 calculateBackgroundCursorPosition(GLFWwindow *window,
                                               const glm::mat4 &projection,

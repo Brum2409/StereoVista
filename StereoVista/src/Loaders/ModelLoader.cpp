@@ -128,8 +128,8 @@ namespace Engine {
             std::cout << "  Target radius: " << preferences.modelImportSettings.maxModelRadius << " units" << std::endl;
             std::cout << "  Applied scale factor: " << scaleFactor << std::endl;
             std::cout << "  (You can adjust this in Preferences > Model Import Settings)\n" << std::endl;
-            // Update bounding sphere radius to reflect the new scale
-            boundingSphereRadius = preferences.modelImportSettings.maxModelRadius;
+            // boundingSphereRadius stays in local space — renderModels multiplies
+            // by model.scale to get world-space radius, so do not overwrite here.
         }
     }
 

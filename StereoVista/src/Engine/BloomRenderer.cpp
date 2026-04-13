@@ -159,17 +159,23 @@ bool BloomRenderer::setupFramebuffers() {
   GLuint attachments[2] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
   glDrawBuffers(2, attachments);
 
-  // Schütz Phase 1: depth as a TEXTURE so the EDL pass can sample it
+  // Schütz Phase 1: depth as a TEXTURE so the EDL pass can sample it.
+  // GL_DEPTH32F_STENCIL8 adds a stencil channel used by the two-pass point
+  // cloud resolve (pass 1 writes stencil=1 for foreground points; pass 2 uses
+  // stencil test to skip ~90-95% of pixels before the fragment shader runs).
+  // Existing depth reads (EDL, etc.) are unaffected: with the default
+  // GL_DEPTH_STENCIL_TEXTURE_MODE (GL_DEPTH_COMPONENT), sampling the texture
+  // returns the depth component exactly as before.
   glGenTextures(1, &m_settings.depthTexture);
   glBindTexture(GL_TEXTURE_2D, m_settings.depthTexture);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F, m_width, m_height, 0,
-               GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH32F_STENCIL8, m_width, m_height, 0,
+               GL_DEPTH_STENCIL, GL_FLOAT_32_UNSIGNED_INT_24_8_REV, nullptr);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glBindTexture(GL_TEXTURE_2D, 0);
-  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D,
                          m_settings.depthTexture, 0);
 
   // Check framebuffer completeness

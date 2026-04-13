@@ -91,3 +91,4 @@ StereoVista/imgui.ini
 /OpenGL-VXGI-Engine-master
 *.h5
 /.kiro
+/compute_rasterizer-master

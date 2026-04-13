@@ -2,7 +2,7 @@
     "camera": {
         "alwaysShowOrbitCenter": false,
         "autoConvergence": true,
-        "convergence": 19.273231506347656,
+        "convergence": 12.547449111938477,
         "convergenceCapMax": 39.0,
         "convergenceCapMin": 0.800000011920929,
         "convergenceDistanceFactor": 1.2999999523162842,
@@ -37,9 +37,9 @@
         "currentPreset": "Sphere"
     },
     "edl": {
-        "enabled": false,
-        "radius": 3.200000047683716,
-        "strength": 4.809999942779541
+        "enabled": true,
+        "radius": 3.0999999046325684,
+        "strength": 4.170000076293945
     },
     "hdr": {
         "bloomIntensity": 0.1770000010728836,
@@ -114,10 +114,10 @@
         "enableCascades": false,
         "enableIndirectLighting": false,
         "enablePCSS": false,
-        "lightSize": 0.14100000262260437,
+        "lightSize": 0.09799999743700027,
         "numCascades": 4,
-        "pcfKernelSize": 9,
-        "shadowSoftness": 0.9100000262260437
+        "pcfKernelSize": 7,
+        "shadowSoftness": 2.2699999809265137
     },
     "skybox": {
         "exposure": 0.05999999865889549,
@@ -131,7 +131,7 @@
             0.10000000149011612,
             0.30000001192092896
         ],
-        "hdrPath": "C:\\Users\\Benbrem\\Downloads\\grasslands_sunset_1k.hdr",
+        "hdrPath": "C:\\Users\\Benbrem\\Downloads\\Arbeit\\Stereo-Demo-main\\Stereo-Viewer-Project\\bin\\x64\\Release\\skybox\\HDR\\table_mountain_2_puresky_4k.hdr",
         "selectedCubemap": 0,
         "solidColor": [
             0.20000000298023224,

@@ -48,6 +48,11 @@ void ComputePointCloudRenderer::init(int width, int height) {
     try {
         m_rasterShader = new Shader(
             "assets/shaders/core/pointcloud_rasterize.comp", Shader::ComputeShaderTag{});
+        // Pass 1: depth-only + stencil write (writes gl_FragDepth, no colour).
+        m_depthStencilShader = new Shader(
+            "assets/shaders/core/pointcloud_resolve.vert",
+            "assets/shaders/core/pointcloud_depth_stencil.frag");
+        // Pass 2: colour-only, stencil-guarded (no gl_FragDepth).
         m_resolveShader = new Shader(
             "assets/shaders/core/pointcloud_resolve.vert",
             "assets/shaders/core/pointcloud_resolve.frag");
@@ -67,10 +72,13 @@ void ComputePointCloudRenderer::init(int width, int height) {
     m_locProj             = glGetUniformLocation(pid, "uProj");
     m_locPointsPerThread  = glGetUniformLocation(pid, "uPointsPerThread");
 
-    // Cache resolve shader uniform locations
+    // Cache depth-stencil shader (pass 1) uniform location
+    m_depthStencilShader->use();
+    m_locDepthStencilImageSize = glGetUniformLocation(m_depthStencilShader->getID(), "uImageSize");
+
+    // Cache resolve shader (pass 2) uniform locations
     m_resolveShader->use();
-    GLuint rpid = m_resolveShader->getID();
-    m_locResolveImageSize = glGetUniformLocation(rpid, "uImageSize");
+    m_locResolveImageSize = glGetUniformLocation(m_resolveShader->getID(), "uImageSize");
 
     // Build fullscreen quad VAO
     glGenVertexArrays(1, &m_quadVAO);
@@ -127,8 +135,9 @@ void ComputePointCloudRenderer::resize(int width, int height) {
 void ComputePointCloudRenderer::cleanup() {
     freeBuffers();
 
-    delete m_rasterShader;  m_rasterShader  = nullptr;
-    delete m_resolveShader; m_resolveShader = nullptr;
+    delete m_rasterShader;       m_rasterShader       = nullptr;
+    delete m_depthStencilShader; m_depthStencilShader = nullptr;
+    delete m_resolveShader;      m_resolveShader      = nullptr;
 
     if (m_quadVAO) { glDeleteVertexArrays(1, &m_quadVAO); m_quadVAO = 0; }
     if (m_quadVBO) { glDeleteBuffers(1,     &m_quadVBO);  m_quadVBO = 0; }
@@ -195,25 +204,58 @@ void ComputePointCloudRenderer::renderNode(
 void ComputePointCloudRenderer::endFrame() {
     if (!m_initialized) return;
 
-    // Wait only for SSBO writes from the compute rasterize passes.
-    // GL_SHADER_STORAGE_BARRIER_BIT is sufficient and much lighter than
-    // GL_ALL_BARRIER_BITS, which flushes the entire GPU pipeline.
+    // Wait for all compute SSBO writes to be visible to the fragment shaders.
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
-    // ── Resolve / composite pass ────────────────────────────────────────────
-    // Framebuffer SSBO (binding 1) and RGBA SSBO (binding 44) remain bound
-    // from the rasterize pass; the fragment shader reads both.
-    //
-    // The resolve shader writes gl_FragDepth so the hardware depth test
-    // (GL_LESS) correctly discards points behind meshes, and the depth buffer
-    // is updated so the EDL pass sees accurate point-cloud depths.
+    glBindVertexArray(m_quadVAO);
+
+    // ── Pass 1: Depth + Stencil write ────────────────────────────────────────
+    // For every valid foreground point: write gl_FragDepth (hardware GL_LESS
+    // depth test discards points behind mesh) and set stencil=1.
+    // Hi-Z is disabled here (unavoidable when writing gl_FragDepth), but the
+    // shader does no colour work so per-fragment cost is minimal.
+    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    glEnable(GL_STENCIL_TEST);
+    glClearStencil(0);
+    glClear(GL_STENCIL_BUFFER_BIT);        // reset from any previous frame
+    glStencilFunc(GL_ALWAYS, 1, 0xFF);
+    glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);  // write 1 when depth test passes
+    glStencilMask(0xFF);
+
+    m_depthStencilShader->use();
+    glUniform2i(m_locDepthStencilImageSize, m_width, m_height);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+    // ── Pass 2: Colour write, stencil-guarded ────────────────────────────────
+    // Stencil test (GL_EQUAL, ref=1) rejects ~90-95% of pixels before the
+    // fragment shader even runs — stencil culling happens at the ROP stage,
+    // before shader invocation.  Only the ~5-10% of valid foreground pixels
+    // invoke the colour shader.
+    // No gl_FragDepth: depth was written correctly in Pass 1.  Disabling the
+    // depth test removes late-Z serialisation, letting the GPU run colour
+    // fragments at full throughput.
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_DEPTH_TEST);
+    glStencilFunc(GL_EQUAL, 1, 0xFF);
+    glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+    glStencilMask(0x00);               // do not write stencil in pass 2
 
     m_resolveShader->use();
     glUniform2i(m_locResolveImageSize, m_width, m_height);
-
-    glBindVertexArray(m_quadVAO);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+    // ── Restore GL state ──────────────────────────────────────────────────────
     glBindVertexArray(0);
+    glDisable(GL_STENCIL_TEST);
+    glStencilMask(0xFF);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
 
     // Unbind SSBOs
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER,  1, 0);
@@ -223,8 +265,8 @@ void ComputePointCloudRenderer::endFrame() {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 43, 0);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 44, 0);
 
-    // Clear the framebuffer now, while the GPU heads into vsync idle.
-    // The next beginFrame() can bind and dispatch without stalling.
+    // Clear the framebuffer SSBO for next frame while the GPU heads into vsync
+    // idle — the next beginFrame() can bind and dispatch without stalling.
     GLuint clearVal = 0xFFFFFFFFu;
     glClearNamedBufferSubData(m_framebufferSSBO, GL_R32UI,
                               0,

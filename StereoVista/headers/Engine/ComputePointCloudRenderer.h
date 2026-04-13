@@ -85,8 +85,9 @@ private:
     GLuint m_framebufferSSBO = 0;
 
     // Shaders (no clear shader – cleared via glClearNamedBufferSubData)
-    Shader* m_rasterShader  = nullptr;   // pointcloud_rasterize.comp
-    Shader* m_resolveShader = nullptr;   // pointcloud_resolve.vert/frag
+    Shader* m_rasterShader        = nullptr;  // pointcloud_rasterize.comp
+    Shader* m_depthStencilShader  = nullptr;  // pointcloud_depth_stencil.frag (resolve pass 1)
+    Shader* m_resolveShader       = nullptr;  // pointcloud_resolve.vert/frag  (resolve pass 2)
 
     // Fullscreen quad for the resolve pass
     GLuint m_quadVAO = 0;
@@ -99,7 +100,10 @@ private:
     GLint m_locProj              = -1;
     GLint m_locPointsPerThread   = -1;
 
-    // Cached resolve-shader uniform locations
+    // Cached depth-stencil shader (pass 1) uniform location
+    GLint m_locDepthStencilImageSize = -1;
+
+    // Cached resolve-shader (pass 2) uniform locations
     GLint m_locResolveImageSize  = -1;
 };
 

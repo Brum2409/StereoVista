@@ -139,7 +139,9 @@
     </Link>
     <PostBuildEvent>
       <Command>copy "$(SolutionDir)dependencies\bin\assimp-vc143-mt.dll" "$(OutDir)"
-copy "$(SolutionDir)dependencies\bin\LASzip64.dll" "$(OutDir)"</Command>
+copy "$(SolutionDir)dependencies\bin\LASzip64.dll" "$(OutDir)"
+robocopy "$(ProjectDir)assets" "$(OutDir)assets" /E /NJH /NJS /NFL /NDL
+IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -166,7 +168,9 @@ copy "$(SolutionDir)dependencies\bin\LASzip64.dll" "$(OutDir)"</Command>
     </Link>
     <PostBuildEvent>
       <Command>copy "$(SolutionDir)dependencies\bin\assimp-vc143-mt.dll" "$(OutDir)"
-copy "$(SolutionDir)dependencies\bin\LASzip64.dll" "$(OutDir)"</Command>
+copy "$(SolutionDir)dependencies\bin\LASzip64.dll" "$(OutDir)"
+robocopy "$(ProjectDir)assets" "$(OutDir)assets" /E /NJH /NJS /NFL /NDL
+IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
