@@ -165,6 +165,7 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
       <AdditionalDependencies>glfw3_mt.lib;opengl32.lib;assimp-vc143-mt.lib;libhdf5.lib;libhdf5_cpp.lib;libzlib.lib;libaec.lib;libszaec.lib;legacy_stdio_definitions.lib;Shlwapi.lib;TDxNavLib.lib;laszip64.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <IgnoreAllDefaultLibraries>
       </IgnoreAllDefaultLibraries>
+      <IgnoreSpecificDefaultLibraries>LIBCMT.lib;LIBCMTD.lib</IgnoreSpecificDefaultLibraries>
     </Link>
     <PostBuildEvent>
       <Command>copy "$(SolutionDir)dependencies\bin\assimp-vc143-mt.dll" "$(OutDir)"
