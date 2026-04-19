@@ -90,14 +90,14 @@ jobs:
     # ---------------------------
     # Create Release
     # ---------------------------
-    #- name: Create Release
-    #  if: steps.check_changes.outputs.changed == 'true'
-     # uses: softprops/action-gh-release@v1
-     # with:
-  #      tag_name: v0.0.${{ github.run_number }}
-      #  name: Release v0.0.${{ github.run_number }}
-   #     draft: false
-    #    prerelease: false
-    #    files: build.zip
+    - name: Create Release
+      if: steps.check_changes.outputs.changed == 'true'
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v0.0.${{ github.run_number }}
+        name: Release v0.0.${{ github.run_number }}
+        draft: false
+        prerelease: false
+        files: build.zip
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
