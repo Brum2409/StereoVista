@@ -2919,6 +2919,16 @@ int main() {
     // This will call callbacks like mouse_callback, key_callback etc.
     glfwPollEvents();
 
+    // Skip the rest of the frame while the window is minimized. Rendering at
+    // 0x0 produces incomplete framebuffer errors and wastes work; block on
+    // events until the window is restored.
+    if (glfwGetWindowAttrib(window, GLFW_ICONIFIED) ||
+        windowWidth <= 0 || windowHeight <= 0) {
+      glfwWaitEvents();
+      lastFrame = static_cast<float>(glfwGetTime());
+      continue;
+    }
+
     // ---- Update SpaceMouse Input ----
     if (spaceMouseInitialized) {
       bool wasSpaceMouseActive = spaceMouseActive;
@@ -6294,9 +6304,19 @@ bool rayIntersectsModel(const glm::vec3 &rayOrigin,
 // ---- Callbacks ----
 #pragma region Callbacks
 void framebuffer_size_callback(GLFWwindow *window, int width, int height) {
-  glViewport(0, 0, width, height);
   windowWidth = width;
   windowHeight = height;
+
+  // When the window is minimized GLFW reports a 0x0 framebuffer. Recreating
+  // renderer framebuffers at that size fails the GL_FRAMEBUFFER_COMPLETE check
+  // and spams errors until the window is restored. Keep the existing
+  // framebuffers and skip the viewport/GUI update; GLFW will invoke this
+  // callback again with valid dimensions on restore.
+  if (width <= 0 || height <= 0) {
+    return;
+  }
+
+  glViewport(0, 0, width, height);
 
   // Update GUI scaling based on new window dimensions
   UpdateGuiScale(width, height);
