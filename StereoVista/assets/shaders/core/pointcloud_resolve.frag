@@ -13,15 +13,20 @@
 //     geometry
 //   - write FragColor to the HDR colour attachment
 #version 460 core
-#extension GL_ARB_gpu_shader_int64 : require
+// No 64-bit extension required — the SSBO is read as uvec2 (same std430 layout
+// as uint64_t: .x = low 32 bits, .y = high 32 bits) to avoid requiring
+// GL_ARB_gpu_shader_int64, which NVIDIA drivers may not expose for fragment shaders.
 
 in  vec2 TexCoords;
 out vec4 FragColor;
 
 // Per-pixel framebuffer.  After the color-lookup compute pass this holds
-// (depth:32 | packedRGBA8:32).  Sentinel 0xFFFFFFFFFFFFFFFFUL = no point.
+// (depth:32 | packedRGBA8:32).  Sentinel 0xFFFFFFFFFFFFFFFF = no point.
+// Declared as uvec2 instead of uint64_t for cross-vendor fragment compatibility:
+//   .y = high 32 bits = depth
+//   .x = low  32 bits = packed RGBA8 colour
 layout(std430, binding = 1) readonly buffer ssFramebuffer {
-    uint64_t framebuffer[];
+    uvec2 framebuffer[];
 };
 
 uniform ivec2 uImageSize;
@@ -30,16 +35,15 @@ void main() {
     ivec2 coord   = ivec2(gl_FragCoord.xy);
     int   pixelID = coord.y * uImageSize.x + coord.x;
 
-    uint64_t entry = framebuffer[pixelID];
-    if (entry == 0xFFFFFFFFFFFFFFFFUL) discard;
+    uvec2 entry = framebuffer[pixelID];
+    if (entry.x == 0xFFFFFFFFu && entry.y == 0xFFFFFFFFu) discard;
 
-    // Depth (high 32 bits) → gl_FragDepth for hardware depth test
-    gl_FragDepth = uintBitsToFloat(uint(entry >> 32UL));
+    // Depth (high 32 bits = .y) → gl_FragDepth for hardware depth test
+    gl_FragDepth = uintBitsToFloat(entry.y);
 
-    // Colour (low 32 bits) → unpack RGBA8 directly, no scatter
-    uint packed = uint(entry & 0xFFFFFFFFUL);
-    float r = float( packed        & 0xFFu) / 255.0;
-    float g = float((packed >>  8u) & 0xFFu) / 255.0;
-    float b = float((packed >> 16u) & 0xFFu) / 255.0;
+    // Colour (low 32 bits = .x) → unpack RGBA8 directly, no scatter
+    float r = float( entry.x        & 0xFFu) / 255.0;
+    float g = float((entry.x >>  8u) & 0xFFu) / 255.0;
+    float b = float((entry.x >> 16u) & 0xFFu) / 255.0;
     FragColor = vec4(r, g, b, 1.0);
 }

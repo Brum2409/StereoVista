@@ -6,12 +6,15 @@
 // stencil-guarded and therefore only invokes the fragment shader for the ~5-10%
 // of pixels that actually contain a foreground point.
 #version 460 core
-#extension GL_ARB_gpu_shader_int64 : require
+// No 64-bit extension required — the SSBO is read as uvec2 (same std430 layout
+// as uint64_t: .x = low 32 bits, .y = high 32 bits) to avoid requiring
+// GL_ARB_gpu_shader_int64, which NVIDIA drivers may not expose for fragment shaders.
 
 // Per-pixel framebuffer written by pointcloud_rasterize.comp
 // (depth:32 | point_index:32).  Cleared to 0xFFFFFFFFFFFFFFFF each frame.
+// Declared as uvec2 instead of uint64_t for cross-vendor fragment compatibility.
 layout(std430, binding = 1) readonly coherent buffer ssFramebuffer {
-    uint64_t framebuffer[];
+    uvec2 framebuffer[];
 };
 
 uniform ivec2 uImageSize;
@@ -20,10 +23,10 @@ void main() {
     ivec2 coord   = ivec2(gl_FragCoord.xy);
     int   pixelID = coord.y * uImageSize.x + coord.x;
 
-    uint64_t entry = framebuffer[pixelID];
+    uvec2 entry = framebuffer[pixelID];
 
     // Sentinel: no point was rasterised here — discard (stencil stays 0).
-    if (entry == 0xFFFFFFFFFFFFFFFFUL) discard;
+    if (entry.x == 0xFFFFFFFFu && entry.y == 0xFFFFFFFFu) discard;
 
     // Valid foreground point: stencil=1 is written by GL state (GL_REPLACE).
     // No gl_FragDepth write — depth and colour are handled in Pass 2.

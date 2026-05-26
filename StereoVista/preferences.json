@@ -2,7 +2,7 @@
     "camera": {
         "alwaysShowOrbitCenter": false,
         "autoConvergence": true,
-        "convergence": 10.90931224822998,
+        "convergence": 3.060886859893799,
         "convergenceCapMax": 39.0,
         "convergenceCapMin": 0.800000011920929,
         "convergenceDistanceFactor": 1.2999999523162842,
@@ -37,9 +37,9 @@
         "currentPreset": "Sphere"
     },
     "edl": {
-        "enabled": false,
-        "radius": 4.800000190734863,
-        "strength": 4.210000038146973
+        "enabled": true,
+        "radius": 1.7999999523162842,
+        "strength": 2.9100000858306885
     },
     "hdr": {
         "bloomIntensity": 0.1770000010728836,
@@ -138,7 +138,7 @@
             0.30000001192092896,
             0.4000000059604645
         ],
-        "type": 1
+        "type": 0
     },
     "spacemouse": {
         "anchorMode": 1,
