@@ -2,7 +2,7 @@
     "camera": {
         "alwaysShowOrbitCenter": false,
         "autoConvergence": true,
-        "convergence": 12.547449111938477,
+        "convergence": 10.90931224822998,
         "convergenceCapMax": 39.0,
         "convergenceCapMin": 0.800000011920929,
         "convergenceDistanceFactor": 1.2999999523162842,
@@ -37,16 +37,16 @@
         "currentPreset": "Sphere"
     },
     "edl": {
-        "enabled": true,
-        "radius": 3.0999999046325684,
-        "strength": 4.170000076293945
+        "enabled": false,
+        "radius": 4.800000190734863,
+        "strength": 4.210000038146973
     },
     "hdr": {
         "bloomIntensity": 0.1770000010728836,
         "bloomThreshold": 0.33000001311302185,
         "enableBloom": false,
         "enabled": true,
-        "exposure": 2.059999942779541,
+        "exposure": 2.569999933242798,
         "toneMapOperator": 3
     },
     "lighting": {
@@ -170,9 +170,9 @@
         "radius": 0.6499999761581421
     },
     "startup": {
-        "loadScene": false,
+        "loadScene": true,
         "sceneLoadingBehavior": 0,
-        "scenePath": "C:\\Users\\Benbrem\\Downloads\\Arbeit\\ModelScenes\\Test.scene"
+        "scenePath": "C:\\Users\\Benbrem\\Downloads\\DEMO\\Scenes\\POINT TEST\\POINT.scene"
     },
     "ui": {
         "darkTheme": true,

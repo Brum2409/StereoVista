@@ -1,0 +1,66 @@
+// Schütz compute rasterizer – per-pixel colour lookup pass.
+//
+// Runs between the rasterize compute and the fragment resolve.  For each
+// pixel that has a valid point (entry != sentinel), it reads ssRGBA[index]
+// ONCE per pixel and packs the colour into the low 32 bits of the framebuffer
+// SSBO entry, replacing the index.
+//
+// Why this exists:
+//   The fragment-shader resolve used to do the scatter read of ssRGBA[idx]
+//   directly.  Fragment shaders have limited in-flight memory parallelism
+//   (they're organised in 2×2 quads), so random scatter reads serialise on
+//   DRAM latency — measured ~2.15 ms per eye for a typical view.
+//   Doing the same scatter in a large compute workgroup recovers full memory
+//   parallelism: many threads in-flight can hide DRAM latency much better.
+//   This matches Schütz's compute-resolve approach, but we keep the small
+//   fragment pass afterwards so we can write gl_FragDepth into the hardware
+//   depth attachment (which can't be bound as a writable image without
+//   changing its format).
+//
+// Workgroup layout: 256×1×1 (linear / 1D).
+//
+//   With a 2D layout (16×16), each warp of 32 threads spans two rows of the
+//   pixel grid.  For a 1920-wide screen, adjacent rows are 1920×8 = 15 360
+//   bytes apart in the linear SSBO, so a warp issues two separate cache-line
+//   groups — effectively halving coalescing efficiency.
+//
+//   With a 1D layout, each warp of 32 threads accesses 32 *consecutive*
+//   pixels (32×8 = 256 bytes = 4 cache lines) → fully coalesced reads and
+//   writes for the framebuffer SSBO, regardless of screen width.
+#version 460 core
+#extension GL_ARB_gpu_shader_int64 : require
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+// Framebuffer entry: (depth:32 | something:32).  This pass replaces the
+// `something` (point index after rasterize) with packed RGBA8 colour.
+layout(std430, binding = 1) buffer ssFramebufferBlock {
+    uint64_t framebuffer[];
+};
+
+// Per-point packed RGBA8 colours — scatter source.
+layout(std430, binding = 44) readonly buffer ssRGBABlock {
+    uint ssRGBA[];
+};
+
+uniform ivec2 uImageSize;
+
+void main() {
+    int pixelID = int(gl_GlobalInvocationID.x);
+
+    // Guard: the last workgroup may extend past the end of the framebuffer.
+    if (pixelID >= uImageSize.x * uImageSize.y) return;
+
+    uint64_t entry = framebuffer[pixelID];
+
+    // Sentinel → no point here, leave as-is so fragment shader discards.
+    if (entry == 0xFFFFFFFFFFFFFFFFUL) return;
+
+    // Index in low 32 bits → scatter into ssRGBA for colour.
+    uint  idx   = uint(entry & 0xFFFFFFFFUL);
+    uint  color = ssRGBA[idx];
+
+    // Repack: depth (high 32 bits) preserved, low 32 bits replaced with colour.
+    uint depth = uint(entry >> 32UL);
+    framebuffer[pixelID] = (uint64_t(depth) << 32UL) | uint64_t(color);
+}

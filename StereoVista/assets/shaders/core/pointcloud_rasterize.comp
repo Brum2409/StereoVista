@@ -46,6 +46,11 @@ struct Batch {
 };
 
 // ── SSBOs ────────────────────────────────────────────────────────────────────
+// `coherent` on the framebuffer keeps the non-atomic pre-read in writePixel()
+// fresh.  Without it, stale cached reads can cause threads to skip the cheap
+// "newEntry >= old" reject and fall through to atomicMin unnecessarily, which
+// INCREASES atomic-contention serialisation.  Removing coherent made compute
+// 70% slower in measurement (3.7 → 6.3 ms), so keep it.
 layout(std430, binding =  1) coherent buffer ssFramebufferBlock { uint64_t framebuffer[]; };
 layout(std430, binding = 40) readonly buffer ssBatchesBlock     { Batch    ssBatches[];   };
 layout(std430, binding = 41) readonly buffer ssXyz12bBlock      { uint     ssXyz_12b[];   };
@@ -139,14 +144,15 @@ int getPrecisionLevel(vec3 wgMin, vec3 wgMax) {
     else                           return 0;
 }
 
-// ── Pixel write (circle splat, depth-test via atomicMin) ──────────────────────
+// ── Pixel write (depth-test via atomicMin) ────────────────────────────────────
+// DIAGNOSTIC: non-atomic pre-read REMOVED.  The pre-read was supposed to skip
+// the atomic for points behind already-rendered closer points, but it forces
+// every point to do an extra global memory load.  Going straight to atomicMin
+// trades one read for potentially more atomic conflicts — which is faster
+// depends on hardware/workload.  Testing whether removing it helps.
 void writePixel(ivec2 px, uint64_t newEntry) {
     px = clamp(px, ivec2(0), uImageSize - ivec2(1));
     int pixelID = px.y * uImageSize.x + px.x;
-
-    // Non-atomic fast-reject; real race resolved by atomicMin below
-    uint64_t old = framebuffer[pixelID];
-    if (newEntry >= old) return;
 
     atomicMin(framebuffer[pixelID], newEntry);
 }
@@ -256,15 +262,20 @@ void main() {
         // ── Screen-space pixel coordinate ─────────────────────────────────────
         ivec2 px = ivec2((ndc.xy * 0.5 + 0.5) * vec2(uImageSize));
 
-        // ── Depth + index packed into 64 bits ─────────────────────────────────
-        // Store NDC depth in [0,1] so it can be written directly to the OpenGL
-        // depth buffer during the resolve pass, enabling correct point/mesh
-        // depth interaction.  ndc.z is already computed and guarded ∈ [-1,1]
-        // above.  floatBitsToUint on a [0,1] float preserves IEEE-754 sort
-        // order → atomicMin still works as a correct depth test.
-        float    depth01 = ndc.z * 0.5 + 0.5;   // map NDC z [-1,1] → OpenGL [0,1]
+        // ── Depth + index packed into 64 bits ────────────────────────────────
+        // High 32 bits: NDC depth [0,1] — drives atomicMin sort + gl_FragDepth.
+        // Low  32 bits: global point index — colour looked up in a subsequent
+        //               compute pass (pointcloud_color_lookup.comp) that has far
+        //               better scatter-read parallelism than a fragment shader.
+        //
+        // NOTE: We tested reading ssRGBA[index] here to eliminate the lookup pass.
+        // Even though the access is coalesced (consecutive indices per workgroup),
+        // it adds a data dependency before the atomicMin (can't start until color
+        // is loaded) that stalls warp scheduling — measured +8ms for 13M points.
+        // The lookup pass remains the correct architecture for the scatter step.
+        float    depth01 = ndc.z * 0.5 + 0.5;   // NDC z [-1,1] → OpenGL [0,1]
         uint     depth   = floatBitsToUint(depth01);
-        uint64_t entry = (uint64_t(depth) << 32UL) | uint64_t(index);
+        uint64_t entry   = (uint64_t(depth) << 32UL) | uint64_t(index);
 
         // ── Single-pixel write (matches Schütz's basic compute_loop_las) ──────
         writePixel(px, entry);

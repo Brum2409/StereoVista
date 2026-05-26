@@ -85,9 +85,10 @@ private:
     GLuint m_framebufferSSBO = 0;
 
     // Shaders (no clear shader – cleared via glClearNamedBufferSubData)
-    Shader* m_rasterShader        = nullptr;  // pointcloud_rasterize.comp
-    Shader* m_depthStencilShader  = nullptr;  // pointcloud_depth_stencil.frag (resolve pass 1)
-    Shader* m_resolveShader       = nullptr;  // pointcloud_resolve.vert/frag  (resolve pass 2)
+    Shader* m_rasterShader        = nullptr;  // pointcloud_rasterize.comp   – software rasterize
+    Shader* m_colorLookupShader   = nullptr;  // pointcloud_color_lookup.comp – per-pixel scatter
+    Shader* m_depthStencilShader  = nullptr;  // pointcloud_depth_stencil.frag (unused, kept for ref)
+    Shader* m_resolveShader       = nullptr;  // pointcloud_resolve.vert/frag  – depth+colour write
 
     // Fullscreen quad for the resolve pass
     GLuint m_quadVAO = 0;
@@ -100,11 +101,29 @@ private:
     GLint m_locProj              = -1;
     GLint m_locPointsPerThread   = -1;
 
-    // Cached depth-stencil shader (pass 1) uniform location
+    // Cached color-lookup compute shader uniform location
+    GLint m_locColorLookupImageSize  = -1;
+
+    // Cached depth-stencil shader (pass 1, unused) uniform location
     GLint m_locDepthStencilImageSize = -1;
 
     // Cached resolve-shader (pass 2) uniform locations
     GLint m_locResolveImageSize  = -1;
+
+    // ── GPU timing instrumentation (diagnostic; prints to console) ────────────
+    // Four ping-ponged GL_TIME_ELAPSED queries measure each GPU operation
+    // separately so we can see which one is the bottleneck.
+    GLuint m_qCompute[2] = {0, 0};  // rasterize compute dispatch(es)
+    GLuint m_qClear[2]   = {0, 0};  // (empty slot, kept for consistent output)
+    GLuint m_qLookup[2]  = {0, 0};  // color-lookup compute dispatch
+    GLuint m_qPass2[2]   = {0, 0};  // fragment resolve (depth+colour quad)
+    int    m_qIdx        = 0;
+    bool   m_qHavePrev   = false;
+    double m_accCompute  = 0.0;
+    double m_accClear    = 0.0;
+    double m_accLookup   = 0.0;
+    double m_accPass2    = 0.0;
+    int    m_accCount    = 0;
 };
 
 } // namespace Engine

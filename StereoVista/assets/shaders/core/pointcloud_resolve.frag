@@ -1,27 +1,27 @@
-// Schütz compute rasterizer – Two-pass resolve, Pass 2 (colour only).
-// Pass 1 (pointcloud_depth_stencil.frag) already wrote gl_FragDepth and set
-// stencil=1 for every valid foreground point.  The GL stencil test (GL_EQUAL,
-// ref=1) rejects ~90-95% of pixels before this shader even runs, so the
-// expensive colour work executes only for the pixels that matter.
+// Schütz compute rasterizer – final fragment resolve pass.
 //
-// Removing gl_FragDepth here lets the GPU skip late-Z serialisation and run
-// colour fragments at full throughput.  Depth interaction is correct because
-// Pass 1 already updated the depth buffer with the point-cloud depths.
+// At this point the framebuffer SSBO has been rewritten by
+// pointcloud_color_lookup.comp to contain (depth:32 | packedRGBA8:32) instead
+// of (depth:32 | point_index:32).  All scatter into ssRGBA happened in the
+// preceding compute pass, where memory parallelism is much higher.
+//
+// This shader does only the unavoidable per-fragment work:
+//   - read the per-pixel SSBO entry (1 contiguous read, cache-friendly)
+//   - discard sentinel
+//   - write gl_FragDepth so the hardware GL_LESS test handles mesh occlusion
+//     and the depth attachment gets updated for cursor snapping / EDL / subseq.
+//     geometry
+//   - write FragColor to the HDR colour attachment
 #version 460 core
 #extension GL_ARB_gpu_shader_int64 : require
 
 in  vec2 TexCoords;
 out vec4 FragColor;
 
-// Per-pixel framebuffer written by pointcloud_rasterize.comp
-// (depth:32 | point_index:32).  Cleared to 0xFFFFFFFFFFFFFFFF each frame.
-layout(std430, binding = 1) readonly coherent buffer ssFramebuffer {
+// Per-pixel framebuffer.  After the color-lookup compute pass this holds
+// (depth:32 | packedRGBA8:32).  Sentinel 0xFFFFFFFFFFFFFFFFUL = no point.
+layout(std430, binding = 1) readonly buffer ssFramebuffer {
     uint64_t framebuffer[];
-};
-
-// Per-point packed ABGR colours written during rasterisation.
-layout(std430, binding = 44) readonly coherent buffer ssColors {
-    uint packedColor[];
 };
 
 uniform ivec2 uImageSize;
@@ -31,19 +31,15 @@ void main() {
     int   pixelID = coord.y * uImageSize.x + coord.x;
 
     uint64_t entry = framebuffer[pixelID];
-
-    // Stencil test guarantees this is a valid foreground point, but keep the
-    // sentinel guard as a safety net against any edge-case stencil leakage.
     if (entry == 0xFFFFFFFFFFFFFFFFUL) discard;
 
-    // Extract point index from the low 32 bits and unpack colour.
-    // No gl_FragDepth: depth was written correctly in Pass 1.
-    uint idx    = uint(entry & 0xFFFFFFFFUL);
-    uint packed = packedColor[idx];
+    // Depth (high 32 bits) → gl_FragDepth for hardware depth test
+    gl_FragDepth = uintBitsToFloat(uint(entry >> 32UL));
 
+    // Colour (low 32 bits) → unpack RGBA8 directly, no scatter
+    uint packed = uint(entry & 0xFFFFFFFFUL);
     float r = float( packed        & 0xFFu) / 255.0;
     float g = float((packed >>  8u) & 0xFFu) / 255.0;
     float b = float((packed >> 16u) & 0xFFu) / 255.0;
-
     FragColor = vec4(r, g, b, 1.0);
 }
