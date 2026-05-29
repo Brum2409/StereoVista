@@ -67,6 +67,7 @@ extern GUI::ApplicationPreferences::RadianceSettings radianceSettings;
 extern bool enableBVH;
 extern bool showBVHDebug;
 extern Engine::BVHDebugRenderer bvhDebugRenderer;
+extern bool g_ddgiResetRequested; // set by GUI, consumed in the render loop
 
 // Selection state for object interaction
 extern enum class SelectedType {
@@ -497,52 +498,67 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         if (ImGui::MenuItem(cloudMenuText.c_str())) {
           auto selection =
               pfd::open_file(
-                  "Select a point cloud to import", ".",
+                  "Select point cloud file(s) to import", ".",
                   {"Point Cloud Files",
                    "*.txt *.xyz *.ply *.pcb *.h5 *.hdf5 *.f5 *.las *.laz",
-                   "All Files", "*"})
+                   "All Files", "*"},
+                  pfd::opt::multiselect)
                   .result();
 
           if (!selection.empty()) {
-            std::string filePath = selection[0];
-            std::string extension =
-                std::filesystem::path(filePath).extension().string();
+            // Separate LAS/LAZ tiles from other formats.  Multiple LAS/LAZ
+            // files are loaded together so they share a global centre and
+            // remain correctly positioned relative to each other.
+            std::vector<std::string> lasFiles, otherFiles;
+            for (const auto& path : selection) {
+              std::string ext = std::filesystem::path(path).extension().string();
+              std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+              if (ext == ".las" || ext == ".laz") lasFiles.push_back(path);
+              else otherFiles.push_back(path);
+            }
 
-            if (extension == ".las" || extension == ".laz") {
-              Engine::PointCloud newPointCloud =
-                  std::move(Engine::PointCloudLoader::loadFromLAS(filePath));
-              if (newPointCloud.isLoaded()) {
-                newPointCloud.filePath = filePath;
-                currentScene.pointClouds.emplace_back(std::move(newPointCloud));
-                updateSpaceMouseBounds();
+            if (!lasFiles.empty()) {
+              auto clouds = Engine::PointCloudLoader::loadFromLASMultiple(lasFiles);
+              for (auto& pc : clouds) {
+                currentScene.pointClouds.emplace_back(std::move(pc));
               }
-            } else if (extension == ".txt" || extension == ".xyz" ||
-                       extension == ".ply") {
-              Engine::PointCloud newPointCloud = std::move(
-                  Engine::PointCloudLoader::loadPointCloudFile(filePath));
-              newPointCloud.filePath = filePath;
-              currentScene.pointClouds.emplace_back(std::move(newPointCloud));
               updateSpaceMouseBounds();
-            } else if (extension == ".pcb") {
-              Engine::PointCloud newPointCloud =
-                  std::move(Engine::PointCloudLoader::loadFromBinary(filePath));
-              if (newPointCloud.isLoaded()) {
+            }
+
+            for (const auto& filePath : otherFiles) {
+              std::string extension =
+                  std::filesystem::path(filePath).extension().string();
+              std::transform(extension.begin(), extension.end(),
+                             extension.begin(), ::tolower);
+
+              if (extension == ".txt" || extension == ".xyz" ||
+                  extension == ".ply") {
+                Engine::PointCloud newPointCloud = std::move(
+                    Engine::PointCloudLoader::loadPointCloudFile(filePath));
                 newPointCloud.filePath = filePath;
-                newPointCloud.name =
-                    std::filesystem::path(filePath).stem().string();
                 currentScene.pointClouds.emplace_back(std::move(newPointCloud));
                 updateSpaceMouseBounds();
-              }
-            } else if (extension == ".h5" || extension == ".hdf5" ||
-                       extension == ".f5") {
-              Engine::PointCloud newPointCloud = std::move(
-                  Engine::PointCloudLoader::loadPointCloudFile(filePath));
-              if (newPointCloud.isLoaded()) {
-                newPointCloud.filePath = filePath;
-                newPointCloud.name =
-                    std::filesystem::path(filePath).stem().string();
-                currentScene.pointClouds.emplace_back(std::move(newPointCloud));
-                updateSpaceMouseBounds();
+              } else if (extension == ".pcb") {
+                Engine::PointCloud newPointCloud =
+                    std::move(Engine::PointCloudLoader::loadFromBinary(filePath));
+                if (newPointCloud.isLoaded()) {
+                  newPointCloud.filePath = filePath;
+                  newPointCloud.name =
+                      std::filesystem::path(filePath).stem().string();
+                  currentScene.pointClouds.emplace_back(std::move(newPointCloud));
+                  updateSpaceMouseBounds();
+                }
+              } else if (extension == ".h5" || extension == ".hdf5" ||
+                         extension == ".f5") {
+                Engine::PointCloud newPointCloud = std::move(
+                    Engine::PointCloudLoader::loadPointCloudFile(filePath));
+                if (newPointCloud.isLoaded()) {
+                  newPointCloud.filePath = filePath;
+                  newPointCloud.name =
+                      std::filesystem::path(filePath).stem().string();
+                  currentScene.pointClouds.emplace_back(std::move(newPointCloud));
+                  updateSpaceMouseBounds();
+                }
               }
             }
           }
@@ -1651,6 +1667,92 @@ void renderSettingsWindow() {
   ImGui::Begin("Settings", &showSettingsWindow);
   bool settingsChanged = false;
 
+  // Shared DDGI tuning controls. The same probe volume drives GI in both
+  // Radiance mode ("Enable DDGI") and Shadow Mapping mode ("Enable Indirect
+  // Lighting"), so both expose this identical set of sliders. These live in the
+  // mutually-exclusive lighting-mode branches of the Rendering tab, so only one
+  // copy is ever submitted per frame -- no ImGui ID collision.
+  auto drawDDGISettings = [&]() {
+    ImGui::Indent();
+
+    if (ImGui::SliderInt3("Probe Counts",
+                          &preferences.radianceSettings.ddgiProbeCounts.x, 2,
+                          48)) {
+      ::radianceSettings.ddgiProbeCounts =
+          preferences.radianceSettings.ddgiProbeCounts;
+      settingsChanged = true;
+    }
+    ImGui::SameLine();
+    DrawHelpMarker("Probes along X/Y/Z. More probes = finer GI, but more cost "
+                   "and memory. Changing this rebuilds the volume.");
+
+    if (ImGui::SliderInt("Rays / Probe",
+                         &preferences.radianceSettings.ddgiRaysPerProbe, 16,
+                         256)) {
+      ::radianceSettings.ddgiRaysPerProbe =
+          preferences.radianceSettings.ddgiRaysPerProbe;
+      settingsChanged = true;
+    }
+    ImGui::SameLine();
+    DrawHelpMarker("Rays traced per probe each frame. More = faster "
+                   "convergence, less noise, higher cost.");
+
+    if (ImGui::SliderFloat("GI Intensity",
+                           &preferences.radianceSettings.ddgiGIIntensity, 0.0f,
+                           1.0f, "%.3f")) {
+      ::radianceSettings.ddgiGIIntensity =
+          preferences.radianceSettings.ddgiGIIntensity;
+      settingsChanged = true;
+    }
+    ImGui::SameLine();
+    DrawHelpMarker("Multiplier for the indirect diffuse contribution. GI is "
+                   "physically multi-bounce, so high-albedo or bright-sky "
+                   "scenes need a low value (~0.05-0.3). Ctrl+click to type an "
+                   "exact value.");
+
+    if (ImGui::SliderFloat("Visibility (AO)",
+                           &preferences.radianceSettings.ddgiVisibilityStrength,
+                           0.0f, 1.0f, "%.2f")) {
+      ::radianceSettings.ddgiVisibilityStrength =
+          preferences.radianceSettings.ddgiVisibilityStrength;
+      settingsChanged = true;
+    }
+    ImGui::SameLine();
+    DrawHelpMarker("How strongly probe visibility darkens indirect light near "
+                   "geometry. Lower this if contact shadows look like harsh AO; "
+                   "raise it if light leaks through walls.");
+
+    if (ImGui::SliderFloat("Hysteresis",
+                           &preferences.radianceSettings.ddgiHysteresis, 0.0f,
+                           0.99f, "%.3f")) {
+      ::radianceSettings.ddgiHysteresis =
+          preferences.radianceSettings.ddgiHysteresis;
+      settingsChanged = true;
+    }
+    ImGui::SameLine();
+    DrawHelpMarker("Temporal blend. Higher = more stable but slower to react "
+                   "to lighting/scene changes.");
+
+    if (ImGui::SliderFloat("Normal Bias",
+                           &preferences.radianceSettings.ddgiNormalBias, 0.0f,
+                           1.0f, "%.2f")) {
+      ::radianceSettings.ddgiNormalBias =
+          preferences.radianceSettings.ddgiNormalBias;
+      settingsChanged = true;
+    }
+    ImGui::SameLine();
+    DrawHelpMarker("Surface offset (fraction of probe spacing) used when "
+                   "sampling probes. Reduces self-shadowing and leaks.");
+
+    if (ImGui::Button("Reset DDGI")) {
+      g_ddgiResetRequested = true;
+    }
+    ImGui::SameLine();
+    DrawHelpMarker("Clear all probes; they reconverge over a few frames.");
+
+    ImGui::Unindent();
+  };
+
   if (ImGui::BeginTabBar("SettingsTabs")) {
 
     // ===========================
@@ -1920,30 +2022,13 @@ void renderSettingsWindow() {
         }
         ImGui::SameLine();
         DrawHelpMarker(
-            "Add voxel-based global illumination to shadow mapping mode");
+            "Add real-time diffuse global illumination (DDGI light probes) to "
+            "shadow mapping mode. Direct lighting stays shadow-mapped; this only "
+            "adds the indirect bounce. Shares the same probe volume and tuning "
+            "as Radiance mode.");
 
         if (preferences.shadowSettings.enableIndirectLighting) {
-          ImGui::Indent();
-
-          if (ImGui::Checkbox("Indirect Diffuse",
-                              &preferences.vctSettings.indirectDiffuseLight)) {
-            vctSettings.indirectDiffuseLight =
-                preferences.vctSettings.indirectDiffuseLight;
-            settingsChanged = true;
-          }
-          ImGui::SameLine();
-          DrawHelpMarker("Color bleeding and bounce lighting");
-
-          if (ImGui::Checkbox("Indirect Specular",
-                              &preferences.vctSettings.indirectSpecularLight)) {
-            vctSettings.indirectSpecularLight =
-                preferences.vctSettings.indirectSpecularLight;
-            settingsChanged = true;
-          }
-          ImGui::SameLine();
-          DrawHelpMarker("Glossy reflections from voxelized scene");
-
-          ImGui::Unindent();
+          drawDDGISettings();
         }
 
         ImGui::Spacing();
@@ -2273,6 +2358,30 @@ void renderSettingsWindow() {
         ImGui::SameLine();
         DrawHelpMarker("Global material roughness (0=mirror, 1=diffuse)");
 
+        DrawSectionHeader("Soft Shadows");
+
+        if (ImGui::SliderInt("Shadow Samples",
+                             &preferences.radianceSettings.shadowSamples, 1,
+                             16)) {
+          ::radianceSettings.shadowSamples =
+              preferences.radianceSettings.shadowSamples;
+          settingsChanged = true;
+        }
+        ImGui::SameLine();
+        DrawHelpMarker("Shadow rays per light for direct lighting. 1 = hard "
+                       "shadows; higher = smoother penumbra (more cost).");
+
+        if (ImGui::SliderFloat("Shadow Softness",
+                               &preferences.radianceSettings.shadowSoftness,
+                               0.0f, 1.0f, "%.2f")) {
+          ::radianceSettings.shadowSoftness =
+              preferences.radianceSettings.shadowSoftness;
+          settingsChanged = true;
+        }
+        ImGui::SameLine();
+        DrawHelpMarker("Penumbra size: angular size of the sun and radius of "
+                       "point/spot sources. 0 = hard shadows.");
+
         DrawSectionHeader("Acceleration");
 
         if (ImGui::Checkbox("Enable BVH",
@@ -2328,26 +2437,23 @@ void renderSettingsWindow() {
           ImGui::Unindent();
         }
 
-        // Irradiance Caching Section
+        // Dynamic Diffuse GI (DDGI) Section
         ImGui::Separator();
-        DrawSectionHeader("Irradiance Caching");
+        DrawSectionHeader("Dynamic Diffuse GI (DDGI)");
 
-        if (ImGui::Checkbox(
-                "Enable Irradiance Cache (World-Space Ward)",
-                &preferences.radianceSettings.enableIrradianceCache)) {
-          ::radianceSettings.enableIrradianceCache =
-              preferences.radianceSettings.enableIrradianceCache;
+        if (ImGui::Checkbox("Enable DDGI",
+                            &preferences.radianceSettings.enableDDGI)) {
+          ::radianceSettings.enableDDGI =
+              preferences.radianceSettings.enableDDGI;
           settingsChanged = true;
         }
         ImGui::SameLine();
-        DrawHelpMarker("Cache indirect lighting using Ward's algorithm for "
-                       "3-5x performance boost");
+        DrawHelpMarker("Real-time diffuse global illumination from a grid of "
+                       "light probes (irradiance + visibility). Updated every "
+                       "frame via the BVH - no precompute.");
 
-        if (preferences.radianceSettings.enableIrradianceCache) {
-          ImGui::Indent();
-          ImGui::Text("World-space cache with adaptive sampling");
-          ImGui::Text("Note: Cache is populated via compute shader");
-          ImGui::Unindent();
+        if (preferences.radianceSettings.enableDDGI) {
+          drawDDGISettings();
         }
       }
 

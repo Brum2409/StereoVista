@@ -20,13 +20,20 @@
 in  vec2 TexCoords;
 out vec4 FragColor;
 
-// Per-pixel framebuffer.  After the color-lookup compute pass this holds
-// (depth:32 | packedRGBA8:32).  Sentinel 0xFFFFFFFFFFFFFFFF = no point.
+// Per-pixel framebuffer holding (depth:32 | (cloudID:5 | localIndex:27)).
+// Sentinel 0xFFFFFFFFFFFFFFFF = no point.
 // Declared as uvec2 instead of uint64_t for cross-vendor fragment compatibility:
 //   .y = high 32 bits = depth
-//   .x = low  32 bits = packed RGBA8 colour
+//   .x = low  32 bits = (cloudID | localIndex) payload  (no longer the colour)
 layout(std430, binding = 1) readonly buffer ssFramebuffer {
     uvec2 framebuffer[];
+};
+
+// Per-pixel resolved colour written by pointcloud_color_lookup.comp (one packed
+// RGBA8 per pixel).  Kept separate from the framebuffer so the payload survives
+// the per-cloud lookup passes.
+layout(std430, binding = 45) readonly buffer ssColor {
+    uint colorbuffer[];
 };
 
 uniform ivec2 uImageSize;
@@ -41,9 +48,10 @@ void main() {
     // Depth (high 32 bits = .y) → gl_FragDepth for hardware depth test
     gl_FragDepth = uintBitsToFloat(entry.y);
 
-    // Colour (low 32 bits = .x) → unpack RGBA8 directly, no scatter
-    float r = float( entry.x        & 0xFFu) / 255.0;
-    float g = float((entry.x >>  8u) & 0xFFu) / 255.0;
-    float b = float((entry.x >> 16u) & 0xFFu) / 255.0;
+    // Colour was resolved per-cloud into the separate colour buffer.
+    uint rgba = colorbuffer[pixelID];
+    float r = float( rgba        & 0xFFu) / 255.0;
+    float g = float((rgba >>  8u) & 0xFFu) / 255.0;
+    float b = float((rgba >> 16u) & 0xFFu) / 255.0;
     FragColor = vec4(r, g, b, 1.0);
 }

@@ -135,6 +135,26 @@ uniform sampler3D voxelGrid;
 uniform float voxelSize;
 uniform VCTSettings vctSettings;
 
+// ---- DDGI (Dynamic Diffuse GI) uniforms ----
+// In Shadow Mapping mode the "Enable Indirect Lighting" toggle now drives DDGI
+// (a probe grid traced through the BVH) instead of voxel cone tracing. Mirrors
+// the declarations + sampling math in radianceFragmentShader.glsl so the bounce
+// looks identical in both lighting modes.
+uniform bool enableDDGI;
+uniform sampler2D ddgi_irradianceMap;
+uniform sampler2D ddgi_depthMap;
+uniform vec3 ddgi_gridStart;
+uniform vec3 ddgi_gridStep;
+uniform ivec3 ddgi_probeCounts;
+uniform int ddgi_irradianceSide;
+uniform int ddgi_depthSide;
+uniform vec2 ddgi_irradianceTexels;
+uniform vec2 ddgi_depthTexels;
+uniform float ddgi_normalBias;
+uniform float ddgi_viewBias;
+uniform float ddgi_giIntensity;
+uniform float ddgi_visibilityStrength; // 0 = ignore probe occlusion (no AO), 1 = full
+
 // HDR rendering uniforms
 uniform HDRSettings hdrSettings;
 
@@ -1411,6 +1431,87 @@ vec3 traceSpecularVoxelCone(vec3 from, vec3 direction) {
     return acc.rgb * specularStrength * material.specularColor;
 }
 
+// ===========================================================================
+// DDGI sampling (matches ddgiTraceRays.glsl / radianceFragmentShader.glsl so the
+// indirect bounce looks the same in Shadow Mapping and Radiance modes).
+// ===========================================================================
+vec2 ddgiSignNotZero(vec2 v) {
+    return vec2(v.x >= 0.0 ? 1.0 : -1.0, v.y >= 0.0 ? 1.0 : -1.0);
+}
+
+vec2 ddgiOctEncode(vec3 v) {
+    float l1 = abs(v.x) + abs(v.y) + abs(v.z);
+    vec2 r = v.xy * (1.0 / l1);
+    if (v.z < 0.0) r = (1.0 - abs(r.yx)) * ddgiSignNotZero(r);
+    return r;
+}
+
+int ddgiProbeIndex(ivec3 c) {
+    return c.x + c.y * ddgi_probeCounts.x + c.z * ddgi_probeCounts.x * ddgi_probeCounts.y;
+}
+
+vec2 ddgiProbeAtlasUV(int idx, vec3 dir, float side, vec2 atlasTexels) {
+    vec2 octUV = ddgiOctEncode(normalize(dir)) * 0.5 + 0.5;
+    vec2 tile = vec2(float(idx % ddgi_probeCounts.x), float(idx / ddgi_probeCounts.x));
+    vec2 origin = tile * (side + 2.0) + 1.0;
+    return (origin + octUV * side) / atlasTexels;
+}
+
+vec3 sampleDDGIIrradiance(vec3 worldPos, vec3 normal, vec3 viewDir) {
+    vec3 biased = worldPos + normal * ddgi_normalBias + viewDir * ddgi_viewBias;
+    vec3 gridF = (biased - ddgi_gridStart) / ddgi_gridStep;
+    ivec3 baseCoord = clamp(ivec3(floor(gridF)), ivec3(0), ddgi_probeCounts - 1);
+    vec3 alpha = clamp(gridF - vec3(baseCoord), 0.0, 1.0);
+
+    vec3 sumIrr = vec3(0.0);
+    float sumW = 0.0;
+
+    for (int i = 0; i < 8; i++) {
+        ivec3 offset = ivec3(i & 1, (i >> 1) & 1, (i >> 2) & 1);
+        ivec3 probeCoord = clamp(baseCoord + offset, ivec3(0), ddgi_probeCounts - 1);
+        int pIdx = ddgiProbeIndex(probeCoord);
+        vec3 probePos = ddgi_gridStart + vec3(probeCoord) * ddgi_gridStep;
+
+        vec3 tri = mix(1.0 - alpha, alpha, vec3(offset));
+        float weight = tri.x * tri.y * tri.z;
+
+        vec3 dirToProbe = normalize(probePos - worldPos);
+        float wrap = (dot(dirToProbe, normal) + 1.0) * 0.5;
+        weight *= (wrap * wrap) + 0.2;
+
+        vec3 probeToPoint = biased - probePos;
+        float distToProbe = length(probeToPoint);
+        vec2 depthUV = ddgiProbeAtlasUV(pIdx, normalize(probeToPoint), float(ddgi_depthSide), ddgi_depthTexels);
+        vec2 moments = texture(ddgi_depthMap, depthUV).rg;
+        float mean = moments.x;
+        float variance = abs(moments.y - mean * mean);
+        float cheb = 1.0;
+        if (distToProbe > mean) {
+            float v = distToProbe - mean;
+            cheb = variance / (variance + v * v);
+            cheb = cheb * cheb; // softer falloff than the classic cubed term
+        }
+        // Dial occlusion strength down so probe visibility doesn't read as
+        // harsh AO; ddgi_visibilityStrength=0 disables it entirely.
+        cheb = mix(1.0, max(cheb, 0.05), ddgi_visibilityStrength);
+        weight *= cheb;
+
+        // Gentle weight crushing: only suppresses near-zero contributors.
+        const float crush = 0.05;
+        if (weight < crush) weight *= (weight * weight) / (crush * crush);
+        weight = max(weight, 0.0);
+
+        vec2 irrUV = ddgiProbeAtlasUV(pIdx, normal, float(ddgi_irradianceSide), ddgi_irradianceTexels);
+        vec3 irr = texture(ddgi_irradianceMap, irrUV).rgb;
+
+        sumIrr += irr * weight;
+        sumW += weight;
+    }
+
+    if (sumW > 0.0) return sumIrr / sumW;
+    return vec3(0.0);
+}
+
 // Calculate indirect diffuse lighting with configurable number of cones
 vec3 calculateIndirectDiffuseLight(vec3 normal, vec3 baseColor) {
     const float DIFFUSE_INDIRECT_FACTOR = 0.52;
@@ -1675,19 +1776,14 @@ void main() {
             hdrColor += matProps.emissive * emissiveIntensity;
         }
 
-        // Add indirect lighting from voxel cone tracing if enabled
-        if (shadowSettings.enableIndirectLighting && isInVoxelGrid(fs_in.FragPos)) {
-            // Indirect diffuse (global illumination)
-            if (vctSettings.indirectDiffuseLight) {
-                vec3 indirectDiffuse = calculateIndirectDiffuseLight(normal, diffuseColor);
-                hdrColor += indirectDiffuse;
-            }
-
-            // Indirect specular (reflections)
-            if (vctSettings.indirectSpecularLight) {
-                vec3 indirectSpecular = calculateIndirectSpecularLight(viewDir);
-                hdrColor += indirectSpecular;
-            }
+        // Add indirect diffuse GI from the DDGI probe volume (replaces the old
+        // voxel cone tracing path). Direct lighting above stays shadow-mapped;
+        // only this bounce term comes from the probes. The stored probe value is
+        // cosine-weighted average radiance (E/PI), so indirect diffuse is just
+        // albedo * irradiance -- no extra 1/PI -- matching the radiance shader.
+        if (enableDDGI) {
+            vec3 indirect = sampleDDGIIrradiance(fs_in.FragPos, normal, viewDir);
+            hdrColor += diffuseColor * indirect * ddgi_giIntensity;
         }
 
         // Store HDR result for tone mapping

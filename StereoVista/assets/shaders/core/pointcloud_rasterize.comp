@@ -64,6 +64,7 @@ uniform mat4  uModelView;       // view * model        – precision level (view
 uniform mat4  uProj;            // projection matrix   – precision level
 uniform ivec2 uImageSize;
 uniform int   uPointsPerThread; // ceil(kComputeBatchSize / 128)
+uniform uint  uCloudID;         // 5-bit id of this cloud → packed in framebuffer payload
 
 // ── Frustum culling ───────────────────────────────────────────────────────────
 // Adapted from Schütz compute_rasterizer / three.js (MIT).
@@ -262,11 +263,15 @@ void main() {
         // ── Screen-space pixel coordinate ─────────────────────────────────────
         ivec2 px = ivec2((ndc.xy * 0.5 + 0.5) * vec2(uImageSize));
 
-        // ── Depth + index packed into 64 bits ────────────────────────────────
+        // ── Depth + (cloudID | index) packed into 64 bits ────────────────────
         // High 32 bits: NDC depth [0,1] — drives atomicMin sort + gl_FragDepth.
-        // Low  32 bits: global point index — colour looked up in a subsequent
-        //               compute pass (pointcloud_color_lookup.comp) that has far
-        //               better scatter-read parallelism than a fragment shader.
+        // Low  32 bits: payload = (cloudID:5 | localIndex:27).  The cloud id lets
+        //               the colour-lookup pass resolve each pixel against the
+        //               CORRECT cloud's ssRGBA buffer when several point clouds
+        //               share this framebuffer.  Without it, every pixel was
+        //               coloured with whichever cloud was bound last, so colours
+        //               bled across clouds.  27-bit index ⇒ ≤134,217,728 points
+        //               per cloud; 5-bit id ⇒ ≤32 clouds per frame.
         //
         // NOTE: We tested reading ssRGBA[index] here to eliminate the lookup pass.
         // Even though the access is coalesced (consecutive indices per workgroup),
@@ -275,7 +280,8 @@ void main() {
         // The lookup pass remains the correct architecture for the scatter step.
         float    depth01 = ndc.z * 0.5 + 0.5;   // NDC z [-1,1] → OpenGL [0,1]
         uint     depth   = floatBitsToUint(depth01);
-        uint64_t entry   = (uint64_t(depth) << 32UL) | uint64_t(index);
+        uint     payload = (uCloudID << 27) | (index & 0x07FFFFFFu);
+        uint64_t entry   = (uint64_t(depth) << 32UL) | uint64_t(payload);
 
         // ── Single-pixel write (matches Schütz's basic compute_loop_las) ──────
         writePixel(px, entry);

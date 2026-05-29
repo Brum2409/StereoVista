@@ -203,14 +203,20 @@ struct ApplicationPreferences {
     int bvhDebugRenderMode =
         1; // 0=DEPTH_TESTED, 1=ALWAYS_ON_TOP, 2=DEPTH_BIASED
 
-    // Irradiance caching settings
-    bool enableIrradianceCache = false;
-    int irradianceCacheDivisor = 4; // Cache resolution divisor (2, 4, 8)
-    int irradianceCacheSamplesPerPixel =
-        4; // Samples per cache pixel (higher quality)
-    float irradianceCacheMaxDistance =
-        2.0f; // Max world-space interpolation distance
-    float irradianceCacheNormalThreshold = 0.5f; // Min dot(N,N) for validity
+    // Dynamic Diffuse Global Illumination (DDGI) settings
+    bool enableDDGI = false;
+    glm::ivec3 ddgiProbeCounts = glm::ivec3(16, 8, 16); // probe grid resolution
+    int ddgiRaysPerProbe = 64;       // rays traced per probe per frame
+    float ddgiHysteresis = 0.97f;    // temporal blend (higher = more stable)
+    float ddgiNormalBias = 0.35f;    // surface bias as a fraction of probe spacing
+    float ddgiGIIntensity = 0.3f;    // indirect diffuse multiplier
+    int ddgiDepthSharpness = 50;     // cosine power for the visibility moments
+    float ddgiVisibilityStrength = 0.7f; // probe-occlusion strength (0=off, 1=full)
+    bool ddgiShowProbes = false;     // debug-render the probe grid
+
+    // Soft shadow settings (direct lighting in Radiance mode)
+    int shadowSamples = 4;           // shadow rays per light (1 = hard shadows)
+    float shadowSoftness = 0.3f;     // penumbra size (0 = hard)
   } radianceSettings;
 
   // Scroll and movement settings

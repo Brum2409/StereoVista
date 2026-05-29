@@ -16,6 +16,7 @@
 #include <glm/glm.hpp>
 #include <glad/glad.h>
 #include <cstdint>
+#include <vector>
 
 namespace Engine {
 
@@ -80,9 +81,20 @@ private:
     int  m_width  = 0;
     int  m_height = 0;
 
-    // Framebuffer SSBO: uint64_t[width*height] – packed (depth:32 | index:32).
-    // Matches Schütz's ssFramebuffer (binding 1).
+    // Framebuffer SSBO: uint64_t[width*height] – packed (depth:32 | payload:32),
+    // payload = (cloudID:5 | localIndex:27).  Matches Schütz's ssFramebuffer (binding 1).
     GLuint m_framebufferSSBO = 0;
+
+    // Per-pixel resolved colour (packed RGBA8, binding 45).  Written by the
+    // per-cloud colour-lookup passes, read by the resolve pass.  Kept separate
+    // from the framebuffer so the (depth|cloudID|index) payload survives every
+    // per-cloud lookup pass.
+    GLuint m_colorbufferSSBO = 0;
+
+    // RGBA SSBO of every cloud rasterised this frame, in render order.  The index
+    // into this vector is the cloud id packed into the framebuffer payload, so
+    // endFrame() runs one colour-lookup pass per cloud against its own buffer.
+    std::vector<GLuint> m_frameRGBASSBOs;
 
     // Shaders (no clear shader – cleared via glClearNamedBufferSubData)
     Shader* m_rasterShader        = nullptr;  // pointcloud_rasterize.comp   – software rasterize
@@ -100,9 +112,11 @@ private:
     GLint m_locModelView         = -1;
     GLint m_locProj              = -1;
     GLint m_locPointsPerThread   = -1;
+    GLint m_locCloudID           = -1;   // uCloudID in the rasterize shader
 
     // Cached color-lookup compute shader uniform location
     GLint m_locColorLookupImageSize  = -1;
+    GLint m_locLookupCloudID         = -1;   // uLookupCloudID in the color-lookup shader
 
     // Cached depth-stencil shader (pass 1, unused) uniform location
     GLint m_locDepthStencilImageSize = -1;

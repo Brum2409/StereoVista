@@ -1555,13 +1555,14 @@ namespace Engine {
     // Streaming version: points are quantised and uploaded to GPU one batch at
     // a time.  Peak CPU RAM ≈ one batch (~280 KB) + one tiny sample buffer.
     // -------------------------------------------------------------------------
-    PointCloud PointCloudLoader::loadFromLAS(const std::string& filePath, size_t downsampleFactor)
+    PointCloud PointCloudLoader::loadFromLAS(const std::string& filePath, size_t downsampleFactor,
+                                              const glm::dvec3* globalCenter)
     {
         PointCloud pointCloud;
         pointCloud.name     = std::filesystem::path(filePath).stem().string();
         pointCloud.position = glm::vec3(0.0f);
         pointCloud.rotation = glm::vec3(-90.0f, 0.0f, 0.0f);
-        pointCloud.scale    = glm::vec3(0.01f);
+        pointCloud.scale    = glm::vec3(0.1f);
 
         // ── Helper: open a LASzip reader ─────────────────────────────────────
         auto openReader = [&](laszip_POINTER& r, laszip_BOOL& compressed) -> bool {
@@ -1601,10 +1602,14 @@ namespace Engine {
                 ? static_cast<int64_t>(hdr->extended_number_of_point_records)
                 : static_cast<int64_t>(hdr->number_of_point_records);
 
-        // Subtract bounding-box centre to keep float coordinates near origin
-        const double cx = (hdr->min_x + hdr->max_x) * 0.5;
-        const double cy = (hdr->min_y + hdr->max_y) * 0.5;
-        const double cz = (hdr->min_z + hdr->max_z) * 0.5;
+        // Subtract a centre point to keep float coordinates near origin.
+        // When loading multiple files as one scene, globalCenter is the shared
+        // centre across all files so they stay correctly positioned relative to
+        // each other.  For a single-file load it falls back to this file's own
+        // bounding-box midpoint.
+        const double cx = globalCenter ? globalCenter->x : (hdr->min_x + hdr->max_x) * 0.5;
+        const double cy = globalCenter ? globalCenter->y : (hdr->min_y + hdr->max_y) * 0.5;
+        const double cz = globalCenter ? globalCenter->z : (hdr->min_z + hdr->max_z) * 0.5;
 
         std::cout << "[LAS] " << (is_compressed ? "LAZ" : "LAS")
                   << " v1." << static_cast<int>(hdr->version_minor)
@@ -1731,6 +1736,73 @@ namespace Engine {
         std::cout << "[LAS] Streamed " << totalPoints << " points into "
                   << batchIndex << " compute batches (no octree, no CPU copy)\n";
         return pointCloud;
+    }
+
+    // -------------------------------------------------------------------------
+    // Multi-file LAS/LAZ loader
+    // Reads all file headers first to compute a single shared bounding-box
+    // centre, then loads each file with that centre so the tiles stay
+    // correctly positioned relative to each other.
+    // -------------------------------------------------------------------------
+    std::vector<PointCloud> PointCloudLoader::loadFromLASMultiple(
+        const std::vector<std::string>& filePaths, size_t downsampleFactor)
+    {
+        if (filePaths.empty()) return {};
+
+        // Pass 1: scan every header to build the global bounding box
+        double gMinX =  DBL_MAX, gMinY =  DBL_MAX, gMinZ =  DBL_MAX;
+        double gMaxX = -DBL_MAX, gMaxY = -DBL_MAX, gMaxZ = -DBL_MAX;
+        int    validHeaders = 0;
+
+        for (const auto& path : filePaths) {
+            laszip_POINTER r = nullptr;
+            laszip_BOOL    compressed = 0;
+            if (laszip_create(&r)) continue;
+            if (laszip_open_reader(r, path.c_str(), &compressed)) {
+                laszip_destroy(r); continue;
+            }
+            laszip_header_struct* hdr = nullptr;
+            laszip_get_header_pointer(r, &hdr);
+
+            gMinX = std::min(gMinX, hdr->min_x);  gMaxX = std::max(gMaxX, hdr->max_x);
+            gMinY = std::min(gMinY, hdr->min_y);  gMaxY = std::max(gMaxY, hdr->max_y);
+            gMinZ = std::min(gMinZ, hdr->min_z);  gMaxZ = std::max(gMaxZ, hdr->max_z);
+            ++validHeaders;
+
+            laszip_close_reader(r);
+            laszip_destroy(r);
+        }
+
+        if (validHeaders == 0) {
+            std::cerr << "[LAS-Multi] No valid headers found\n";
+            return {};
+        }
+
+        const glm::dvec3 globalCenter((gMinX + gMaxX) * 0.5,
+                                       (gMinY + gMaxY) * 0.5,
+                                       (gMinZ + gMaxZ) * 0.5);
+
+        std::cout << "[LAS-Multi] " << filePaths.size() << " file(s), "
+                  << validHeaders << " valid\n"
+                  << "[LAS-Multi] Global bounds X[" << gMinX << ".." << gMaxX << "]"
+                  << " Y[" << gMinY << ".." << gMaxY << "]"
+                  << " Z[" << gMinZ << ".." << gMaxZ << "]\n"
+                  << "[LAS-Multi] Shared centre ("
+                  << globalCenter.x << "," << globalCenter.y << "," << globalCenter.z << ")\n";
+
+        // Pass 2: load each file using the shared global centre
+        std::vector<PointCloud> result;
+        result.reserve(filePaths.size());
+        for (const auto& path : filePaths) {
+            PointCloud pc = loadFromLAS(path, downsampleFactor, &globalCenter);
+            if (pc.isLoaded()) {
+                pc.filePath = path;
+                result.push_back(std::move(pc));
+            } else {
+                std::cerr << "[LAS-Multi] Failed to load: " << path << "\n";
+            }
+        }
+        return result;
     }
 
 } // namespace Engine

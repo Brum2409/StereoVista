@@ -123,7 +123,7 @@
     <ClCompile Include="src\Tools\BrushTool.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\Engine\IrradianceCache.cpp">
+    <ClCompile Include="src\Engine\DDGIVolume.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\Engine\SSAORenderer.cpp">
@@ -476,10 +476,7 @@
     <ClInclude Include="headers\Loaders\ModelLoader.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="headers\Engine\IrradianceCacheRecord.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\Engine\IrradianceCache.h">
+    <ClInclude Include="headers\Engine\DDGIVolume.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\Engine\SSAORenderer.h">

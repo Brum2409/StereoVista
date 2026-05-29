@@ -10,6 +10,8 @@ in VS_OUT {
    flat int meshIndex;
 } fs_in;
 
+const float PI = 3.14159265359;
+
 // ---- LIGHTING MODE CONSTANTS ----
 const int LIGHTING_SHADOW_MAPPING = 0;
 const int LIGHTING_VOXEL_CONE_TRACING = 1;
@@ -75,59 +77,49 @@ uniform float skyIntensity;
 uniform float emissiveIntensity;
 uniform float materialRoughness;
 
-// World-space irradiance caching uniforms
-uniform bool enableIrradianceCache;
+// ---- DDGI (Dynamic Diffuse Global Illumination) ----
+uniform bool enableDDGI;
+uniform sampler2D ddgi_irradianceMap;
+uniform sampler2D ddgi_depthMap;
+uniform vec3 ddgi_gridStart;
+uniform vec3 ddgi_gridStep;
+uniform ivec3 ddgi_probeCounts;
+uniform int ddgi_irradianceSide;
+uniform int ddgi_depthSide;
+uniform vec2 ddgi_irradianceTexels;
+uniform vec2 ddgi_depthTexels;
+uniform float ddgi_normalBias;
+uniform float ddgi_viewBias;
+uniform float ddgi_giIntensity;
+uniform float ddgi_visibilityStrength; // 0 = ignore probe occlusion (no AO), 1 = full
 
-// Grid parameters
-uniform vec3 gridMin;
-uniform vec3 gridMax;
-uniform ivec3 gridResolution;
-
-// Irradiance cache entry structure (matches C++ and compute shader)
-struct IrradianceCacheEntry {
-    vec3 position;
-    float harmonicMeanDist;
-    vec3 normal;
-    float padding1;
-    vec3 irradiance;
-    float padding2;
-};
-
-// Grid cell structure
-struct GridCell {
-    uint entryStart;
-    uint entryCount;
-};
-
-// Cache buffer (binding = 3)
-layout(std430, binding = 3) readonly buffer IrradianceCacheBuffer {
-    uint cacheEntryCount;
-    uint maxCacheEntries;
-    uint padding1, padding2;
-    IrradianceCacheEntry entries[];
-};
-
-// Grid cell buffer (binding = 4)
-layout(std430, binding = 4) readonly buffer GridCellBuffer {
-    GridCell cells[];
-};
-
-// Indirection list (binding = 5)
-layout(std430, binding = 5) readonly buffer GridIndirectionBuffer {
-    uint entryIndices[];
-};
-
-// No camera uniforms needed - we use rasterized fragment position
+// ---- Soft shadow controls (final shading only; probes use hard shadows) ----
+uniform int shadowSamples;       // 1 = hard shadow
+uniform float sunAngularRadius;  // radians; angular size of the sun disk
+uniform float lightSourceRadius; // world units; radius of point/spot sources
 
 // Scene lights
-const int MAX_POINT_LIGHTS = 8;
+const int MAX_POINT_LIGHTS = 16;
 struct PointLight {
     vec3 position;
     vec3 color;
     float intensity;
+    float linear;
+    float quadratic;
 };
 uniform PointLight pointLights[MAX_POINT_LIGHTS];
 uniform int numPointLights;
+
+struct SpotLight {
+    vec3 position;
+    vec3 direction;
+    vec3 color;
+    float intensity;
+    float innerCutOff;
+    float outerCutOff;
+};
+uniform SpotLight spotLights[MAX_POINT_LIGHTS];
+uniform int numSpotLights;
 
 // Sun light
 struct Sun {
@@ -171,7 +163,7 @@ struct Triangle {
 struct BVHNode {
     vec3 minBounds;     // AABB minimum bounds
     uint leftFirst;     // Left child index or first triangle index
-    vec3 maxBounds;     // AABB maximum bounds  
+    vec3 maxBounds;     // AABB maximum bounds
     uint triCount;      // Triangle count (0 for interior nodes)
 };
 
@@ -224,27 +216,27 @@ vec2 random2(vec2 co, inout uint state) {
     );
 }
 
-// Ray-triangle intersection (MÃ¶llerâ€“Trumbore)
+// Ray-triangle intersection (Moller-Trumbore)
 bool intersectTriangle(Ray ray, Triangle tri, out float t) {
     const float EPSILON = 0.0000001;
     vec3 edge1 = tri.v1 - tri.v0;
     vec3 edge2 = tri.v2 - tri.v0;
     vec3 h = cross(ray.direction, edge2);
     float a = dot(edge1, h);
-    
+
     if (abs(a) < EPSILON) return false;
-    
+
     float f = 1.0 / a;
     vec3 s = ray.origin - tri.v0;
     float u = f * dot(s, h);
-    
+
     if (u < 0.0 || u > 1.0) return false;
-    
+
     vec3 q = cross(s, edge1);
     float v = f * dot(ray.direction, q);
-    
+
     if (v < 0.0 || u + v > 1.0) return false;
-    
+
     t = f * dot(edge2, q);
     return t > EPSILON;
 }
@@ -255,7 +247,7 @@ bool intersectGroundPlane(Ray ray, GroundPlane plane, out float t) {
     if (abs(denom) < 0.0001) {
         return false; // Ray is parallel to plane
     }
-    
+
     t = dot(plane.point - ray.origin, plane.normal) / denom;
     return t > 0.001;
 }
@@ -277,7 +269,7 @@ bool rayAABBIntersect(Ray ray, vec3 boxMin, vec3 boxMax) {
     vec3 t2 = max(tMin, tMax);
     float tNear = max(max(t1.x, t1.y), t1.z);
     float tFar = min(min(t2.x, t2.y), t2.z);
-    
+
     return tFar >= tNear && tFar > 0.0;
 }
 
@@ -289,7 +281,7 @@ float rayBoundingBoxDistance(Ray ray, vec3 boxMin, vec3 boxMax) {
     vec3 t2 = max(tMin, tMax);
     float tNear = max(max(t1.x, t1.y), t1.z);
     float tFar = min(min(t2.x, t2.y), t2.z);
-    
+
     bool hit = tFar >= tNear && tFar > 0.0;
     return hit ? (tNear > 0.0 ? tNear : 0.0) : 1.0e30;
 }
@@ -299,23 +291,23 @@ HitInfo castRayBVH(Ray ray) {
     HitInfo result;
     result.hit = false;
     result.distance = rayMaxDistance;
-    
+
     if (numBVHNodes == 0) return result;
-    
+
     uint stack[32];
     int stackIndex = 0;
-    
+
     stack[stackIndex++] = 0u;
-    
+
     while (stackIndex > 0) {
         BVHNode node = bvhNodes[stack[--stackIndex]];
         bool isLeaf = node.triCount > 0u;
-        
+
         if (isLeaf) {
             for (uint i = 0u; i < node.triCount; i++) {
                 uint triIdx = triangleIndices[node.leftFirst + i];
                 if (triIdx >= numTriangles) continue; // Safety check
-                
+
                 float t;
                 if (intersectTriangle(ray, triangles[triIdx], t) && t < result.distance) {
                     result.hit = true;
@@ -332,19 +324,19 @@ HitInfo castRayBVH(Ray ray) {
         } else {
             uint childIndexA = node.leftFirst + 0u;
             uint childIndexB = node.leftFirst + 1u;
-            
+
             if (childIndexA >= numBVHNodes || childIndexB >= numBVHNodes) continue; // Safety check
-            
+
             BVHNode childA = bvhNodes[childIndexA];
             BVHNode childB = bvhNodes[childIndexB];
-            
+
             bool hitA = rayAABBIntersect(ray, childA.minBounds, childA.maxBounds);
             bool hitB = rayAABBIntersect(ray, childB.minBounds, childB.maxBounds);
-            
+
             if (hitA && hitB) {
                 float dstA = rayBoundingBoxDistance(ray, childA.minBounds, childA.maxBounds);
                 float dstB = rayBoundingBoxDistance(ray, childB.minBounds, childB.maxBounds);
-                
+
                 if (dstA <= dstB) {
                     if (dstB < result.distance && stackIndex < 31) stack[stackIndex++] = childIndexB;
                     if (dstA < result.distance && stackIndex < 31) stack[stackIndex++] = childIndexA;
@@ -359,7 +351,7 @@ HitInfo castRayBVH(Ray ray) {
             }
         }
     }
-    
+
     return result;
 }
 
@@ -368,7 +360,7 @@ HitInfo castRayLinear(Ray ray) {
     HitInfo hit;
     hit.hit = false;
     hit.distance = rayMaxDistance;
-    
+
     for (int i = 0; i < numTriangles; i++) {
         float t;
         if (intersectTriangle(ray, triangles[i], t) && t < hit.distance) {
@@ -383,20 +375,20 @@ HitInfo castRayLinear(Ray ray) {
             hit.materialId = triangles[i].materialId;
         }
     }
-    
+
     return hit;
 }
 
 // Cast ray and find closest hit
 HitInfo castRay(Ray ray) {
     HitInfo hit;
-    
+
     if (enableBVH && numBVHNodes > 0) {
         hit = castRayBVH(ray);
     } else {
         hit = castRayLinear(ray);
     }
-    
+
     if (hasGroundPlane) {
         float t;
         if (intersectGroundPlane(ray, groundPlane, t) && t < hit.distance) {
@@ -411,14 +403,14 @@ HitInfo castRay(Ray ray) {
             hit.materialId = -1;
         }
     }
-    
+
     return hit;
 }
 
 // Test for shadow occlusion
 bool isInShadow(vec3 point, vec3 normal, vec3 lightDir, float lightDistance) {
-    Ray shadowRay = createRay(point + 0.001 * normal, lightDir); // Offset to avoid self-intersection
-    
+    Ray shadowRay = createRay(point + 0.002 * normal, lightDir); // Offset to avoid self-intersection
+
     HitInfo shadowHit = castRay(shadowRay);
     return shadowHit.hit && shadowHit.distance < lightDistance;
 }
@@ -428,11 +420,11 @@ vec3 sampleCosineHemisphere(vec3 normal, vec2 rand) {
     float cosTheta = sqrt(rand.x);
     float sinTheta = sqrt(1.0 - rand.x);
     float phi = 2.0 * 3.14159 * rand.y;
-    
+
     vec3 w = normal;
     vec3 u = normalize(cross(abs(w.x) > 0.1 ? vec3(0, 1, 0) : vec3(1, 0, 0), w));
     vec3 v = cross(w, u);
-    
+
     return normalize(u * sinTheta * cos(phi) + v * sinTheta * sin(phi) + w * cosTheta);
 }
 
@@ -445,46 +437,46 @@ vec3 randomUnitVector(vec2 seed, inout uint state) {
     return vec3(r * cos(a), r * sin(a), z);
 }
 
-// Iterative path tracing with PCG RNG
+// Iterative path tracing with PCG RNG (fallback indirect when DDGI is off)
 vec3 rayColor(Ray initialRay, int maxDepth, inout uint rngState) {
     vec3 finalColor = vec3(0.0);
     vec3 attenuation = vec3(1.0);
     Ray currentRay = initialRay;
-    
+
     for (int depth = 0; depth < maxDepth; depth++) {
         HitInfo hit = castRay(currentRay);
-        
+
         if (!hit.hit || hit.distance > rayMaxDistance) {
             vec3 unitDirection = normalize(currentRay.direction);
             float t = 0.5 * (unitDirection.y + 1.0);
-            vec3 skyColor = (1.0 - t) * vec3(1.0, 1.0, 1.0) + t * vec3(0.5, 0.7, 1.0);
-            finalColor += attenuation * skyColor * skyIntensity;
+            vec3 skyCol = (1.0 - t) * vec3(1.0, 1.0, 1.0) + t * vec3(0.5, 0.7, 1.0);
+            finalColor += attenuation * skyCol * skyIntensity;
             break;
         }
-        
+
         if (enableEmissiveLighting && hit.emissiveness > 0.0) {
             finalColor += attenuation * hit.albedo * hit.emissiveness * emissiveIntensity;
         }
-        
+
         if (!enableIndirectLighting && depth > 0) {
             break;
         }
-        
+
         vec3 conservativeAlbedo = clamp(hit.albedo, 0.0, 1.0);
         attenuation *= conservativeAlbedo * indirectIntensity;
-        
+
         vec2 seed = hit.point.xy + float(depth) * 123.456;
         vec2 rand = random2(seed, rngState);
-        
+
         vec3 scatterDir;
         float brdfWeight = 1.0;
-        
+
         float specularAmount = clamp(hit.shininess / 128.0, 0.0, 1.0);
         float diffuseAmount = 1.0 - specularAmount;
-        
+
         if (specularAmount > 0.8) {
             vec3 reflectedDir = reflect(currentRay.direction, hit.normal);
-            
+
             if (hit.roughness > 0.01) {
                 vec3 roughnessOffset = sampleCosineHemisphere(hit.normal, random2(rand, rngState)) * hit.roughness;
                 scatterDir = normalize(reflectedDir + roughnessOffset);
@@ -492,203 +484,225 @@ vec3 rayColor(Ray initialRay, int maxDepth, inout uint rngState) {
                 scatterDir = reflectedDir;
             }
             brdfWeight = 1.0;
-            
+
         } else if (specularAmount < 0.2) {
             scatterDir = sampleCosineHemisphere(hit.normal, rand);
             brdfWeight = 1.0;
-            
+
         } else {
             scatterDir = sampleCosineHemisphere(hit.normal, rand);
-            
+
             brdfWeight = diffuseAmount + specularAmount * max(0.0, dot(scatterDir, reflect(currentRay.direction, hit.normal)));
         }
-        
+
         attenuation *= brdfWeight;
-        
+
         currentRay = createRay(hit.point + 0.001 * hit.normal, scatterDir);
-        
+
         float maxComponent = max(max(attenuation.r, attenuation.g), attenuation.b);
         float survivalProbability = min(maxComponent, 0.95);
-        
+
         if (depth >= 3) {
             vec2 rrSeed = hit.point.yz + float(depth) * 456.789;
             float rrRandom = random(rrSeed, rngState);
-            
+
             if (rrRandom > survivalProbability) {
                 break;
             }
             attenuation /= survivalProbability;
         }
     }
-    
+
     return finalColor;
 }
 
-// ---- IRRADIANCE CACHING HELPER FUNCTIONS ----
-
-// Convert world position to grid coordinates
-ivec3 worldToGrid(vec3 worldPos) {
-    vec3 normalized = (worldPos - gridMin) / (gridMax - gridMin);
-    normalized = clamp(normalized, 0.0, 0.999);
-    return ivec3(normalized * vec3(gridResolution));
+// ===========================================================================
+// DDGI sampling (matches ddgiTraceRays.glsl exactly so the recursive bounce
+// captured by the probes equals the final on-screen shading).
+// ===========================================================================
+vec2 signNotZero(vec2 v) {
+    return vec2(v.x >= 0.0 ? 1.0 : -1.0, v.y >= 0.0 ? 1.0 : -1.0);
 }
 
-// Get linear grid index
-uint gridIndex(ivec3 coord) {
-    if (any(lessThan(coord, ivec3(0))) || any(greaterThanEqual(coord, gridResolution))) {
-        return 0xFFFFFFFF; // Invalid
-    }
-    return uint(coord.x + coord.y * gridResolution.x + coord.z * gridResolution.x * gridResolution.y);
+vec2 octEncode(vec3 v) {
+    float l1 = abs(v.x) + abs(v.y) + abs(v.z);
+    vec2 r = v.xy * (1.0 / l1);
+    if (v.z < 0.0) r = (1.0 - abs(r.yx)) * signNotZero(r);
+    return r;
 }
 
-// Ward's weight function
-// Fixed to properly implement Ward's recommended interpolation radius
-float wardWeight(vec3 entryPos, vec3 entryNormal, float harmonicMeanDist,
-                 vec3 queryPos, vec3 queryNormal) {
-    // Validate inputs to prevent garbage reads from causing issues
-    if (isnan(harmonicMeanDist) || isinf(harmonicMeanDist) || harmonicMeanDist <= 0.0) {
-        return 0.0;
-    }
-
-    float dist = length(queryPos - entryPos);
-
-    // CRITICAL FIX: Ward recommends cutoff at 1-2x harmonicMeanDist, NOT 10x
-    // Larger multiplier = huge patches with poor spatial resolution
-    // Smaller multiplier = tighter, more accurate interpolation
-    if (dist > harmonicMeanDist * 2.0) {
-        return 0.0;
-    }
-
-    float normalDot = max(0.0, dot(entryNormal, queryNormal));
-
-    // Ward's formula: w = 1 / (a + b)
-    // where a = ||x - P|| / R₀
-    // and b = sqrt(1 - N·n)
-    float a = dist / harmonicMeanDist;
-    float b = sqrt(max(0.0, 1.0 - normalDot));
-
-    return 1.0 / (a + b + 0.001); // Add epsilon to avoid division by zero
+int ddgiProbeIndex(ivec3 c) {
+    return c.x + c.y * ddgi_probeCounts.x + c.z * ddgi_probeCounts.x * ddgi_probeCounts.y;
 }
 
-// Interpolate irradiance using Ward's algorithm
-vec3 interpolateFromCache(vec3 worldPos, vec3 normal) {
-    ivec3 cellCoord = worldToGrid(worldPos);
+vec2 ddgiProbeAtlasUV(int idx, vec3 dir, float side, vec2 atlasTexels) {
+    vec2 octUV = octEncode(normalize(dir)) * 0.5 + 0.5;
+    vec2 tile = vec2(float(idx % ddgi_probeCounts.x), float(idx / ddgi_probeCounts.x));
+    vec2 origin = tile * (side + 2.0) + 1.0;
+    return (origin + octUV * side) / atlasTexels;
+}
 
-    vec3 irradiance = vec3(0.0);
-    float totalWeight = 0.0;
+vec3 sampleDDGIIrradiance(vec3 worldPos, vec3 normal, vec3 viewDir) {
+    vec3 biased = worldPos + normal * ddgi_normalBias + viewDir * ddgi_viewBias;
+    vec3 gridF = (biased - ddgi_gridStart) / ddgi_gridStep;
+    ivec3 baseCoord = clamp(ivec3(floor(gridF)), ivec3(0), ddgi_probeCounts - 1);
+    vec3 alpha = clamp(gridF - vec3(baseCoord), 0.0, 1.0);
 
-    // Search 3x3x3 neighborhood (27 cells)
-    for (int dz = -1; dz <= 1; dz++) {
-        for (int dy = -1; dy <= 1; dy++) {
-            for (int dx = -1; dx <= 1; dx++) {
-                ivec3 neighborCell = cellCoord + ivec3(dx, dy, dz);
-                uint cellIdx = gridIndex(neighborCell);
+    vec3 sumIrr = vec3(0.0);
+    float sumW = 0.0;
 
-                if (cellIdx == 0xFFFFFFFF) continue;
+    for (int i = 0; i < 8; i++) {
+        ivec3 offset = ivec3(i & 1, (i >> 1) & 1, (i >> 2) & 1);
+        ivec3 probeCoord = clamp(baseCoord + offset, ivec3(0), ddgi_probeCounts - 1);
+        int pIdx = ddgiProbeIndex(probeCoord);
+        vec3 probePos = ddgi_gridStart + vec3(probeCoord) * ddgi_gridStep;
 
-                GridCell cell = cells[cellIdx];
+        vec3 tri = mix(1.0 - alpha, alpha, vec3(offset));
+        float weight = tri.x * tri.y * tri.z;
 
-                // Check all entries in this cell
-                for (uint i = 0; i < cell.entryCount && i < 16u; i++) {
-                    // Use indirection buffer to get actual entry index
-                    uint entryIdx = entryIndices[cell.entryStart + i];
-                    
-                    // Skip invalid entries (0xFFFFFFFF is our sentinel for uninitialized)
-                    if (entryIdx == 0xFFFFFFFFu || entryIdx >= cacheEntryCount) continue;
+        vec3 dirToProbe = normalize(probePos - worldPos);
+        float wrap = (dot(dirToProbe, normal) + 1.0) * 0.5;
+        weight *= (wrap * wrap) + 0.2;
 
-                    IrradianceCacheEntry entry = entries[entryIdx];
-
-                    // Compute Ward weight
-                    float weight = wardWeight(entry.position, entry.normal,
-                                            entry.harmonicMeanDist,
-                                            worldPos, normal);
-
-                    // Validate weight and entry data to prevent garbage accumulation
-                    // CRITICAL FIX: Higher threshold filters distant contributions for better quality
-                    // 0.1 threshold ensures only meaningful neighbors contribute
-                    if (weight > 0.1 && !any(isnan(entry.irradiance)) && !any(isinf(entry.irradiance))) {
-                        // Clamp irradiance to reasonable range to prevent blowouts
-                        vec3 clampedIrradiance = clamp(entry.irradiance, vec3(0.0), vec3(100.0));
-                        irradiance += clampedIrradiance * weight;
-                        totalWeight += weight;
-                    }
-                }
-            }
+        vec3 probeToPoint = biased - probePos;
+        float distToProbe = length(probeToPoint);
+        vec2 depthUV = ddgiProbeAtlasUV(pIdx, normalize(probeToPoint), float(ddgi_depthSide), ddgi_depthTexels);
+        vec2 moments = texture(ddgi_depthMap, depthUV).rg;
+        float mean = moments.x;
+        float variance = abs(moments.y - mean * mean);
+        float cheb = 1.0;
+        if (distToProbe > mean) {
+            float v = distToProbe - mean;
+            cheb = variance / (variance + v * v);
+            cheb = cheb * cheb; // softer falloff than the classic cubed term
         }
+        // Dial occlusion strength down so probe visibility doesn't read as
+        // harsh AO; ddgi_visibilityStrength=0 disables it entirely.
+        cheb = mix(1.0, max(cheb, 0.05), ddgi_visibilityStrength);
+        weight *= cheb;
+
+        // Gentle weight crushing: only suppresses near-zero contributors.
+        const float crush = 0.05;
+        if (weight < crush) weight *= (weight * weight) / (crush * crush);
+        weight = max(weight, 0.0);
+
+        vec2 irrUV = ddgiProbeAtlasUV(pIdx, normal, float(ddgi_irradianceSide), ddgi_irradianceTexels);
+        vec3 irr = texture(ddgi_irradianceMap, irrUV).rgb;
+
+        sumIrr += irr * weight;
+        sumW += weight;
     }
 
-    // Normalize
-    // Use matching threshold for consistency
-    if (totalWeight > 0.1) {
-        return irradiance / totalWeight;
-    }
-
-    // No valid cache entries found
+    if (sumW > 0.0) return sumIrr / sumW;
     return vec3(0.0);
 }
 
-// Main lighting calculation with PCG RNG
-vec3 calculateRadianceLighting(vec3 worldPos, vec3 normal, vec3 materialColor, float shininess, vec3 viewDir, inout uint rngState) {
-    vec3 color = vec3(0.0);
+// ===========================================================================
+// Soft shadows (final shading): jitter the shadow ray over the light's solid
+// angle using a low-discrepancy Vogel disk so few samples stay smooth.
+// ===========================================================================
+vec2 vogelDisk(int i, int n, float phase) {
+    float r = sqrt((float(i) + 0.5) / float(n));
+    float theta = float(i) * 2.39996323 + phase; // golden angle
+    return vec2(r * cos(theta), r * sin(theta));
+}
 
-    // Check if irradiance caching is enabled
-    if (enableIrradianceCache && cacheEntryCount > 0) {
-        // Try to interpolate from world-space cache
-        vec3 cachedIrradiance = interpolateFromCache(worldPos, normal);
+// Returns light visibility in [0,1]. coneRadius is the perpendicular offset
+// added to the unit light direction (== tan(half-angle) of the source).
+float softShadowVisibility(vec3 pos, vec3 N, vec3 L, float lightDist,
+                           float coneRadius, int samples, float phase) {
+    if (samples <= 1 || coneRadius <= 0.0) {
+        return isInShadow(pos, N, L, lightDist) ? 0.0 : 1.0;
+    }
+    vec3 up = abs(L.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3 t = normalize(cross(up, L));
+    vec3 b = cross(L, t);
+    float vis = 0.0;
+    for (int i = 0; i < samples; i++) {
+        vec2 d = vogelDisk(i, samples, phase) * coneRadius;
+        vec3 jL = normalize(L + t * d.x + b * d.y);
+        vis += isInShadow(pos, N, jL, lightDist) ? 0.0 : 1.0;
+    }
+    return vis / float(samples);
+}
 
-        // Check if cache lookup succeeded
-        if (length(cachedIrradiance) > 0.001) {
-            // Cache hit - use cached irradiance
-            // CRITICAL FIX: Apply Lambertian BRDF = ρ/π
-            // The cache stores irradiance E = (π/N) × Σ Li
-            // Outgoing radiance: L_out = BRDF × E = (ρ/π) × E
-            // This division by π ensures consistency with the fallback path tracer
-            color = (cachedIrradiance * materialColor) / 3.14159265359;
-        } else {
-            // Cache miss - use standard path tracing as fallback
-            // CRITICAL FIX: Use 4 samples minimum for cache misses to reduce noise
-            // 1 sample produces extreme grain, 4 samples gives acceptable quality
-            int fallbackSamples = max(samplesPerPixel, 4);
+// ===========================================================================
+// Direct lighting (returns irradiance E, before the /pi Lambert term)
+// ===========================================================================
+vec3 directIrradiance(vec3 pos, vec3 N, inout uint rngState) {
+    vec3 E = vec3(0.0);
+    float phase = randomValue(rngState) * 6.28318530718;
 
-            for (int i = 0; i < fallbackSamples; i++) {
-                vec2 seed = worldPos.xy + float(i) * 0.1;
-                vec2 rand = random2(seed, rngState);
-                vec3 rayDir = sampleCosineHemisphere(normal, rand);
-                color += materialColor * rayColor(createRay(worldPos + 0.001 * normal, rayDir), maxBounces, rngState);
-            }
-
-            if (fallbackSamples > 0) {
-                color /= float(fallbackSamples);
-            }
-
-            // SAFETY: Guarantee minimum visibility (10% ambient)
-            color = max(color, materialColor * 0.1);
+    if (sun.enabled) {
+        vec3 L = normalize(-sun.direction);
+        float ndl = max(dot(N, L), 0.0);
+        if (ndl > 0.0) {
+            float vis = softShadowVisibility(pos, N, L, 1.0e30,
+                                             sunAngularRadius, shadowSamples, phase);
+            E += sun.color * sun.intensity * ndl * vis;
         }
-    } else {
-        // Cache disabled or empty - use standard path tracing
-        int samples = max(samplesPerPixel, 1); // Ensure at least 1 sample
+    }
 
+    for (int i = 0; i < numPointLights; i++) {
+        vec3 d = pointLights[i].position - pos;
+        float dist = length(d);
+        vec3 L = d / max(dist, 1e-4);
+        float ndl = max(dot(N, L), 0.0);
+        if (ndl <= 0.0) continue;
+        float atten = 1.0 / (1.0 + pointLights[i].linear * dist + pointLights[i].quadratic * dist * dist);
+        // Penumbra grows with source size relative to distance.
+        float coneRadius = lightSourceRadius / max(dist, 1e-3);
+        float vis = softShadowVisibility(pos, N, L, dist, coneRadius, shadowSamples, phase);
+        E += pointLights[i].color * pointLights[i].intensity * atten * ndl * vis;
+    }
+
+    for (int i = 0; i < numSpotLights; i++) {
+        vec3 d = spotLights[i].position - pos;
+        float dist = length(d);
+        vec3 L = d / max(dist, 1e-4);
+        float ndl = max(dot(N, L), 0.0);
+        if (ndl <= 0.0) continue;
+        float theta = dot(normalize(-spotLights[i].direction), L);
+        float epsilon = max(spotLights[i].innerCutOff - spotLights[i].outerCutOff, 1e-4);
+        float cone = clamp((theta - spotLights[i].outerCutOff) / epsilon, 0.0, 1.0);
+        if (cone <= 0.0) continue;
+        float atten = 1.0 / (1.0 + 0.09 * dist + 0.032 * dist * dist);
+        float coneRadius = lightSourceRadius / max(dist, 1e-3);
+        float vis = softShadowVisibility(pos, N, L, dist, coneRadius, shadowSamples, phase);
+        E += spotLights[i].color * spotLights[i].intensity * atten * ndl * cone * vis;
+    }
+
+    return E;
+}
+
+// Main lighting: direct + indirect (DDGI or path-traced fallback) + emissive
+vec3 calculateRadianceLighting(vec3 worldPos, vec3 normal, vec3 materialColor, vec3 viewDir, inout uint rngState) {
+    // Direct diffuse lighting (Lambert outgoing = albedo/pi * E)
+    vec3 result = materialColor / PI * directIrradiance(worldPos, normal, rngState);
+
+    // Indirect diffuse
+    if (enableDDGI) {
+        vec3 indirect = sampleDDGIIrradiance(worldPos, normal, viewDir);
+        result += materialColor * indirect * ddgi_giIntensity;
+    } else if (enableIndirectLighting) {
+        // Path-traced fallback
+        int samples = max(samplesPerPixel, 1);
+        vec3 indirect = vec3(0.0);
         for (int i = 0; i < samples; i++) {
             vec2 seed = worldPos.xy + float(i) * 0.1;
             vec2 rand = random2(seed, rngState);
             vec3 rayDir = sampleCosineHemisphere(normal, rand);
-            color += materialColor * rayColor(createRay(worldPos + 0.001 * normal, rayDir), maxBounces, rngState);
+            indirect += materialColor * rayColor(createRay(worldPos + 0.001 * normal, rayDir), maxBounces, rngState);
         }
-
-        if (samples > 0) {
-            color /= float(samples);
-        }
-
-        // SAFETY: Guarantee minimum visibility (10% ambient)
-        color = max(color, materialColor * 0.1);
+        result += indirect / float(samples);
     }
 
-    // Add emissive contribution
+    // Emissive
     if (material.emissive > 0.0) {
-        color += materialColor * material.emissive * emissiveIntensity;
+        result += materialColor * material.emissive * emissiveIntensity;
     }
 
-    return color;
+    return result;
 }
 
 void main() {
@@ -715,41 +729,41 @@ void main() {
         uint pixelIndex = uint(pixelCoord.y * 1920 + pixelCoord.x); // Approx. screen width
         uint rngState = pixelIndex + uint(gl_FragCoord.x * gl_FragCoord.y) * 719393u;
 
-        result = calculateRadianceLighting(worldPos, normal, materialColor, material.shininess, viewDir, rngState);
+        result = calculateRadianceLighting(worldPos, normal, materialColor, viewDir, rngState);
     } else {
         result = materialColor * 0.3;
-        
+
         if (material.emissive > 0.0) {
             result += materialColor * material.emissive;
         }
     }
-    
+
     if (selectionMode && isSelected) {
         if (selectedMeshIndex == -1 || selectedMeshIndex == fs_in.meshIndex) {
             result = mix(result, vec3(1.0, 0.0, 0.0), 0.3);
         }
     }
-    
+
     result = result / (result + vec3(1.0));
     result = pow(result, vec3(1.0/2.2));
-    
+
     FragColor = vec4(result, 1.0);
-    
+
     if (showFragmentCursor && cursorPos.w > 0.5) {
         float distanceToCursor = length(cursorPos.xyz - fs_in.FragPos);
         float distanceFromCamera = length(cursorPos.xyz - viewPos);
-        
+
         float scaleFactor = distanceFromCamera;
         float outerRadius = baseOuterRadius * scaleFactor;
         float outerBorderThickness = baseOuterBorderThickness * scaleFactor;
         float innerRadius = baseInnerRadius * scaleFactor;
         float innerBorderThickness = baseInnerBorderThickness * scaleFactor;
-        
-        float tOuter = step(outerRadius - outerBorderThickness, distanceToCursor) - 
+
+        float tOuter = step(outerRadius - outerBorderThickness, distanceToCursor) -
                       step(outerRadius, distanceToCursor);
-        float tInner = step(innerRadius - innerBorderThickness, distanceToCursor) - 
+        float tInner = step(innerRadius - innerBorderThickness, distanceToCursor) -
                       step(innerRadius, distanceToCursor);
-        
+
         vec4 inner = mix(FragColor, innerCursorColor, tInner);
         FragColor = mix(inner, outerCursorColor, tOuter);
     }

@@ -11,7 +11,7 @@
 #include "../headers/Engine/BVHDebug.h"
 #include "../headers/Engine/BloomRenderer.h"
 #include "../headers/Engine/ComputePointCloudRenderer.h"
-#include "../headers/Engine/IrradianceCache.h"
+#include "../headers/Engine/DDGIVolume.h"
 #include "../headers/Engine/SSAORenderer.h"
 #include "Core/Camera.h"
 #include "Core/CursorSyncState.h"
@@ -369,9 +369,14 @@ bool enableBVH = true; // BVH toggle
 Engine::BVHDebugRenderer bvhDebugRenderer;
 bool showBVHDebug = false;
 
-// ---- World-Space Irradiance Cache System ----
-Engine::IrradianceCache *irradianceCache = nullptr;
-Engine::Shader *irradianceCacheComputeShader = nullptr;
+// ---- Dynamic Diffuse Global Illumination (DDGI) ----
+Engine::DDGIVolume *ddgiVolume = nullptr;
+Engine::Shader *ddgiTraceShader = nullptr;          // probe ray tracing
+Engine::Shader *ddgiUpdateIrradianceShader = nullptr; // irradiance probe blend
+Engine::Shader *ddgiUpdateDistanceShader = nullptr;   // depth/visibility probe blend
+Engine::Shader *ddgiBorderIrradianceShader = nullptr; // irradiance border copy
+Engine::Shader *ddgiBorderDistanceShader = nullptr;   // depth border copy
+bool g_ddgiResetRequested = false; // set by the GUI "Reset DDGI" button
 
 // BVH invalidation tracking
 struct SceneState {
@@ -687,8 +692,6 @@ bool loadSkyboxFromPath(const std::string &basePath) {
       if (allFilesExist) {
         try {
           cubemapTexture = loadCubemap(faces);
-          std::cout << "Skybox textures loaded from: " << fullPath << " using "
-                    << convention.description << std::endl;
           return true;
         } catch (const std::exception &e) {
           std::cerr << "Failed to load skybox textures from " << fullPath
@@ -793,6 +796,45 @@ void cleanupBVHBuffers() {
     glDeleteBuffers(1, &triangleIndexSSBO);
     triangleIndexSSBO = 0;
   }
+}
+
+// Average color of a 2D texture (its 1x1 top mip level), cached per texture id.
+// DDGI probe rays need the bounce albedo of textured surfaces, but diffuse GI
+// integrates over the hemisphere -- a single average albedo per surface is both
+// sufficient and cheap. Textures are stored as linear RGB8/RGBA8 (no sRGB
+// internal format) with a full mip chain already generated in
+// Model::TextureFromFile, so the box-filtered top mip is exactly the mean texel.
+static glm::vec3 getAverageTextureColor(GLuint texId) {
+  static std::unordered_map<GLuint, glm::vec3> cache;
+  if (texId == 0)
+    return glm::vec3(1.0f);
+  auto it = cache.find(texId);
+  if (it != cache.end())
+    return it->second;
+
+  GLint prevTex = 0;
+  glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex);
+  glBindTexture(GL_TEXTURE_2D, texId);
+
+  GLint w = 0, h = 0;
+  glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &w);
+  glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &h);
+
+  glm::vec3 avg(1.0f);
+  if (w > 0 && h > 0) {
+    // Top mip level index = floor(log2(max(w, h))); that level is 1x1.
+    int maxLevel = 0;
+    for (int m = std::max(w, h); m > 1; m >>= 1)
+      maxLevel++;
+    glGenerateMipmap(GL_TEXTURE_2D); // ensure the full chain exists
+    unsigned char px[4] = {255, 255, 255, 255};
+    glGetTexImage(GL_TEXTURE_2D, maxLevel, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    avg = glm::vec3(px[0], px[1], px[2]) / 255.0f;
+  }
+
+  glBindTexture(GL_TEXTURE_2D, (GLuint)prevTex);
+  cache[texId] = avg;
+  return avg;
 }
 
 void buildBVH(const std::vector<Engine::BVHTriangle> &triangles) {
@@ -962,9 +1004,6 @@ void setupShadowMapping() {
 
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-  std::cout << "Shadow mapping initialized with " << SHADOW_WIDTH << "x"
-            << SHADOW_HEIGHT << " resolution" << std::endl;
-
   // Load shadow mapping shaders
   try {
     simpleDepthShader =
@@ -1009,11 +1048,6 @@ void setupPointShadowMapping() {
 
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-  std::cout << "Point shadow mapping initialized with " << SHADOW_WIDTH_POINT
-            << "x" << SHADOW_HEIGHT_POINT
-            << " cubemap-array resolution for up to " << MAX_LIGHTS
-            << " point lights" << std::endl;
-
   // Load point shadow shaders
   try {
     pointShadowShader =
@@ -1037,9 +1071,6 @@ bool loadHDRSkybox(const std::string &hdrPath) {
     stbi_set_flip_vertically_on_load(false);
     return false;
   }
-
-  std::cout << "Loaded HDR image: " << width << "x" << height << " with "
-            << nrComponents << " components" << std::endl;
 
   // Create HDR texture with floating point format
   unsigned int hdrTexture;
@@ -1253,8 +1284,6 @@ bool loadHDRSkybox(const std::string &hdrPath) {
   glGetIntegerv(GL_VIEWPORT, viewport);
   glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
 
-  std::cout << "HDR skybox loaded and converted successfully: " << hdrPath
-            << std::endl;
   return true;
 }
 
@@ -1349,7 +1378,6 @@ void initSkybox() {
       try {
         cubemapTexture = loadCubemap(faces);
         texturesLoaded = true;
-        std::cout << "Skybox textures loaded from: " << basePath << std::endl;
         break;
       } catch (const std::exception &e) {
         std::cerr << "Failed to load skybox textures from " << basePath << ": "
@@ -1697,17 +1725,31 @@ void savePreferences() {
   j["radiance"]["bvhDebugRenderMode"] =
       preferences.radianceSettings.bvhDebugRenderMode;
 
-  // Save irradiance cache settings
-  j["radiance"]["enableIrradianceCache"] =
-      preferences.radianceSettings.enableIrradianceCache;
-  j["radiance"]["irradianceCacheDivisor"] =
-      preferences.radianceSettings.irradianceCacheDivisor;
-  j["radiance"]["irradianceCacheSamplesPerPixel"] =
-      preferences.radianceSettings.irradianceCacheSamplesPerPixel;
-  j["radiance"]["irradianceCacheMaxDistance"] =
-      preferences.radianceSettings.irradianceCacheMaxDistance;
-  j["radiance"]["irradianceCacheNormalThreshold"] =
-      preferences.radianceSettings.irradianceCacheNormalThreshold;
+  // Save DDGI settings
+  j["radiance"]["enableDDGI"] = preferences.radianceSettings.enableDDGI;
+  j["radiance"]["ddgiProbeCountX"] =
+      preferences.radianceSettings.ddgiProbeCounts.x;
+  j["radiance"]["ddgiProbeCountY"] =
+      preferences.radianceSettings.ddgiProbeCounts.y;
+  j["radiance"]["ddgiProbeCountZ"] =
+      preferences.radianceSettings.ddgiProbeCounts.z;
+  j["radiance"]["ddgiRaysPerProbe"] =
+      preferences.radianceSettings.ddgiRaysPerProbe;
+  j["radiance"]["ddgiHysteresis"] =
+      preferences.radianceSettings.ddgiHysteresis;
+  j["radiance"]["ddgiNormalBias"] =
+      preferences.radianceSettings.ddgiNormalBias;
+  j["radiance"]["ddgiGIIntensity"] =
+      preferences.radianceSettings.ddgiGIIntensity;
+  j["radiance"]["ddgiDepthSharpness"] =
+      preferences.radianceSettings.ddgiDepthSharpness;
+  j["radiance"]["ddgiVisibilityStrength"] =
+      preferences.radianceSettings.ddgiVisibilityStrength;
+  j["radiance"]["ddgiShowProbes"] =
+      preferences.radianceSettings.ddgiShowProbes;
+  j["radiance"]["shadowSamples"] = preferences.radianceSettings.shadowSamples;
+  j["radiance"]["shadowSoftness"] =
+      preferences.radianceSettings.shadowSoftness;
 
   // Update preferences struct
   preferences.skyboxType = static_cast<int>(skyboxConfig.type);
@@ -2195,17 +2237,31 @@ void loadPreferences() {
       preferences.radianceSettings.bvhDebugRenderMode =
           j["radiance"].value("bvhDebugRenderMode", 1);
 
-      // Load irradiance cache settings
-      preferences.radianceSettings.enableIrradianceCache =
-          j["radiance"].value("enableIrradianceCache", false);
-      preferences.radianceSettings.irradianceCacheDivisor =
-          j["radiance"].value("irradianceCacheDivisor", 4);
-      preferences.radianceSettings.irradianceCacheSamplesPerPixel =
-          j["radiance"].value("irradianceCacheSamplesPerPixel", 4);
-      preferences.radianceSettings.irradianceCacheMaxDistance =
-          j["radiance"].value("irradianceCacheMaxDistance", 2.0f);
-      preferences.radianceSettings.irradianceCacheNormalThreshold =
-          j["radiance"].value("irradianceCacheNormalThreshold", 0.5f);
+      // Load DDGI settings
+      preferences.radianceSettings.enableDDGI =
+          j["radiance"].value("enableDDGI", false);
+      preferences.radianceSettings.ddgiProbeCounts =
+          glm::ivec3(j["radiance"].value("ddgiProbeCountX", 16),
+                     j["radiance"].value("ddgiProbeCountY", 8),
+                     j["radiance"].value("ddgiProbeCountZ", 16));
+      preferences.radianceSettings.ddgiRaysPerProbe =
+          j["radiance"].value("ddgiRaysPerProbe", 64);
+      preferences.radianceSettings.ddgiHysteresis =
+          j["radiance"].value("ddgiHysteresis", 0.97f);
+      preferences.radianceSettings.ddgiNormalBias =
+          j["radiance"].value("ddgiNormalBias", 0.25f);
+      preferences.radianceSettings.ddgiGIIntensity =
+          j["radiance"].value("ddgiGIIntensity", 0.3f);
+      preferences.radianceSettings.ddgiDepthSharpness =
+          j["radiance"].value("ddgiDepthSharpness", 50);
+      preferences.radianceSettings.ddgiVisibilityStrength =
+          j["radiance"].value("ddgiVisibilityStrength", 0.7f);
+      preferences.radianceSettings.ddgiShowProbes =
+          j["radiance"].value("ddgiShowProbes", false);
+      preferences.radianceSettings.shadowSamples =
+          j["radiance"].value("shadowSamples", 4);
+      preferences.radianceSettings.shadowSoftness =
+          j["radiance"].value("shadowSoftness", 0.3f);
     }
 
     // Model import settings
@@ -2539,21 +2595,27 @@ int main() {
     radianceShader = nullptr;
   }
 
-  // ---- Initialize Irradiance Cache Compute Shader ----
-  try {
-    irradianceCacheComputeShader =
-        Engine::loadComputeShader("core/irradianceCacheCompute.glsl");
-  } catch (std::exception &e) {
-    std::cout << "Warning: Failed to load irradiance cache compute shader: "
-              << e.what() << std::endl;
-    irradianceCacheComputeShader = nullptr;
-  }
+  // ---- Initialize DDGI Compute Shaders ----
+  auto loadDDGIShader = [](const char *path) -> Engine::Shader * {
+    try {
+      return Engine::loadComputeShader(path);
+    } catch (std::exception &e) {
+      std::cout << "Warning: Failed to load DDGI compute shader " << path << ": "
+                << e.what() << std::endl;
+      return nullptr;
+    }
+  };
+  ddgiTraceShader = loadDDGIShader("core/ddgiTraceRays.glsl");
+  ddgiUpdateIrradianceShader = loadDDGIShader("core/ddgiUpdateIrradiance.glsl");
+  ddgiUpdateDistanceShader = loadDDGIShader("core/ddgiUpdateDistance.glsl");
+  ddgiBorderIrradianceShader = loadDDGIShader("core/ddgiBorderIrradiance.glsl");
+  ddgiBorderDistanceShader = loadDDGIShader("core/ddgiBorderDistance.glsl");
 
-  // ---- Initialize Irradiance Cache ----
-  irradianceCache = new Engine::IrradianceCache();
-  irradianceCache->initialize(glm::ivec3(32, 32, 32), 10000);
-  irradianceCache->setSceneBounds(glm::vec3(-10, -10, -10),
-                                  glm::vec3(10, 10, 10));
+  // ---- Initialize DDGI Volume ----
+  ddgiVolume = new Engine::DDGIVolume();
+  ddgiVolume->initialize(preferences.radianceSettings.ddgiProbeCounts,
+                         preferences.radianceSettings.ddgiRaysPerProbe);
+  ddgiVolume->setSceneBounds(glm::vec3(-10, -10, -10), glm::vec3(10, 10, 10));
 
   // ---- Initialize Instanced Rendering Shader ----
   try {
@@ -2612,7 +2674,6 @@ int main() {
   // Try to load office.scene (relative to executable), fallback to simple cube
   bool sceneLoaded = false;
   try {
-    std::cout << "Attempting to load office.scene..." << std::endl;
     currentScene = Engine::loadScene("office.scene", camera);
 
     // Sync lights from scene to global variables
@@ -3613,11 +3674,16 @@ void cleanup() {
   cleanupTriangleBuffer();
   cleanupBVHBuffers();
 
-  // Cleanup world-space irradiance cache
-  if (irradianceCache) {
-    delete irradianceCache;
-    irradianceCache = nullptr;
+  // Cleanup DDGI volume
+  if (ddgiVolume) {
+    delete ddgiVolume;
+    ddgiVolume = nullptr;
   }
+  delete ddgiTraceShader;
+  delete ddgiUpdateIrradianceShader;
+  delete ddgiUpdateDistanceShader;
+  delete ddgiBorderIrradianceShader;
+  delete ddgiBorderDistanceShader;
 
   // Cleanup BVH debug renderer
   bvhDebugRenderer.cleanup();
@@ -3707,31 +3773,43 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
                GLFWwindow *window, bool renderGUIFlag, bool isStereo,
                const glm::mat4 *leftProjection, const glm::mat4 *leftView,
                const glm::mat4 *rightProjection, const glm::mat4 *rightView) {
-  // CRITICAL FIX: Calculate grid bounds ONCE and share between shaders
-  // This prevents coordinate system mismatch between cache population and
-  // lookup
-  glm::vec3 sharedGridMin, sharedGridMax;
-  glm::ivec3 sharedGridRes;
-  bool cacheEnabled = irradianceCache && irradianceCache->isInitialized() &&
-                      radianceSettings.enableIrradianceCache;
+  // ---- DDGI: size the probe grid to the scene once per frame ----
+  // The probe grid spans the BVH root AABB (padded so probes surround the
+  // geometry rather than sitting on its surface). Both the update passes and
+  // the fragment-shader lookup read the same grid placement from ddgiVolume.
+  // DDGI is available in Radiance mode (its own "Enable DDGI" toggle) and now
+  // also in Shadow Mapping mode, where it replaces the old VCT-based indirect
+  // GI behind the existing "Enable Indirect Lighting" toggle. Shadow Mapping
+  // keeps its shadow-mapped direct lighting -- only the indirect bounce is DDGI.
+  bool ddgiActive =
+      ddgiVolume && ddgiVolume->isInitialized() &&
+      ((radianceSettings.enableDDGI &&
+        currentLightingMode == GUI::LIGHTING_RADIANCE) ||
+       (preferences.shadowSettings.enableIndirectLighting &&
+        currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING));
 
-  if (cacheEnabled) {
-    // Calculate grid bounds from BVH root
-    if (bvhBuilt && !gpuBVHNodes.empty()) {
-      const auto &rootNode = gpuBVHNodes[0];
-      sharedGridMin = glm::vec3(rootNode.minX, rootNode.minY, rootNode.minZ);
-      sharedGridMax = glm::vec3(rootNode.maxX, rootNode.maxY, rootNode.maxZ);
-    } else {
-      // Fallback: use default bounds
-      sharedGridMin = glm::vec3(-10.0f, -10.0f, -10.0f);
-      sharedGridMax = glm::vec3(10.0f, 10.0f, 10.0f);
+  if (ddgiActive) {
+    // Keep probe count / ray budget in sync with the GUI (no-op if unchanged).
+    ddgiVolume->reconfigure(radianceSettings.ddgiProbeCounts,
+                            radianceSettings.ddgiRaysPerProbe);
+
+    // Honor an explicit GUI reset request.
+    if (g_ddgiResetRequested) {
+      ddgiVolume->clear();
+      g_ddgiResetRequested = false;
     }
 
-    // Add 5% padding to avoid edge cases
-    glm::vec3 padding = (sharedGridMax - sharedGridMin) * 0.05f;
-    sharedGridMin -= padding;
-    sharedGridMax += padding;
-    sharedGridRes = irradianceCache->getGridResolution();
+    glm::vec3 boundsMin, boundsMax;
+    if (bvhBuilt && !gpuBVHNodes.empty()) {
+      const auto &rootNode = gpuBVHNodes[0];
+      boundsMin = glm::vec3(rootNode.minX, rootNode.minY, rootNode.minZ);
+      boundsMax = glm::vec3(rootNode.maxX, rootNode.maxY, rootNode.maxZ);
+    } else {
+      boundsMin = glm::vec3(-10.0f, -10.0f, -10.0f);
+      boundsMax = glm::vec3(10.0f, 10.0f, 10.0f);
+    }
+    glm::vec3 padding = (boundsMax - boundsMin) * 0.1f + glm::vec3(0.05f);
+    ddgiVolume->setSceneBounds(boundsMin - padding, boundsMax + padding);
   }
 
   // Set the draw buffer and clear color and depth buffers
@@ -3771,11 +3849,11 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
 
   // 1. Update the voxel grid if voxel visualization is enabled or we're using
   // voxel cone tracing or shadow mapping with indirect lighting
+  // Shadow Mapping mode's indirect lighting is now DDGI (probe-traced via the
+  // BVH), not voxel cone tracing, so it no longer needs the voxel grid.
   bool needsVoxelization =
       (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) ||
-      voxelizer->showDebugVisualization ||
-      (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING &&
-       preferences.shadowSettings.enableIndirectLighting);
+      voxelizer->showDebugVisualization;
   if (needsVoxelization) {
     // Keep voxelizer lights in sync with the scene so voxelized
     // lighting matches the actual point lights (not just the default).
@@ -4104,43 +4182,26 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     shader->setInt("numSpotLights",
                    std::min((int)spotLights.size(), MAX_LIGHTS));
 
-    // Add VCT uniforms if indirect lighting is enabled
-    if (preferences.shadowSettings.enableIndirectLighting) {
-      // Set voxel grid parameters -- must account for gridCenter so that
-      // cone tracing samples match the voxelization coordinate mapping.
-      float halfSize = voxelizer->getVoxelGridSize() * 0.5f;
-      glm::vec3 gc = voxelizer->getGridCenter();
-      shader->setVec3("gridMin", gc - glm::vec3(halfSize));
-      shader->setVec3("gridMax", gc + glm::vec3(halfSize));
-      shader->setFloat("voxelSize",
-                       voxelizer->getVoxelGridSize() /
-                           static_cast<float>(voxelizer->getResolution()));
+    // ---- DDGI indirect diffuse (replaces the old VCT GI in shadow mapping) ----
+    // Shadow Mapping keeps its shadow-mapped direct lighting; only the indirect
+    // bounce now comes from the DDGI probe volume. The probe trace/update itself
+    // runs in the shared geometry+DDGI block after this lighting if/else; here we
+    // just bind the atlases and set the sampling uniforms for the rasterizer.
+    shader->setBool("enableDDGI", ddgiActive);
+    if (ddgiActive) {
+      // Probe atlases sample on units 16/17 (material uses texture units 0-15).
+      ddgiVolume->bindTexturesForSampling(16, 17);
+      ddgiVolume->setSamplingUniforms(shader, 16, 17);
 
-      // Set VCT settings
-      shader->setBool("vctSettings.indirectSpecularLight",
-                      vctSettings.indirectSpecularLight);
-      shader->setBool("vctSettings.indirectDiffuseLight",
-                      vctSettings.indirectDiffuseLight);
-      shader->setInt("vctSettings.diffuseConeCount",
-                     vctSettings.diffuseConeCount);
-      shader->setFloat("vctSettings.tracingMaxDistance",
-                       vctSettings.tracingMaxDistance);
-
-      // Bind voxel 3D texture - using texture unit 5
-      glActiveTexture(GL_TEXTURE5);
-      glBindTexture(GL_TEXTURE_3D, voxelizer->getVoxelTexture());
-      shader->setInt("voxelGrid", 5);
-
-      // Set default material properties for indirect lighting
-      shader->setFloat("material.diffuseReflectivity", 0.8f);
-      shader->setFloat("material.specularReflectivity", 0.0f);
-      shader->setFloat("material.specularDiffusion", 0.5f);
-      shader->setVec3("material.specularColor", glm::vec3(1.0f));
+      glm::vec3 step = ddgiVolume->getGridStep();
+      float minStep = glm::min(glm::min(step.x, step.y), step.z);
+      shader->setFloat("ddgi_normalBias",
+                       radianceSettings.ddgiNormalBias * minStep);
+      shader->setFloat("ddgi_viewBias", 0.15f * minStep);
+      shader->setFloat("ddgi_giIntensity", radianceSettings.ddgiGIIntensity);
+      shader->setFloat("ddgi_visibilityStrength",
+                       radianceSettings.ddgiVisibilityStrength);
     }
-
-    // Set shadow settings uniform
-    shader->setBool("shadowSettings.enableIndirectLighting",
-                    preferences.shadowSettings.enableIndirectLighting);
   }
   // Voxel cone tracing specific setup
   else if (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
@@ -4258,48 +4319,31 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     shader->setFloat("emissiveIntensity", radianceSettings.emissiveIntensity);
     shader->setFloat("materialRoughness", radianceSettings.materialRoughness);
 
-    // Set world-space irradiance cache uniforms
-    shader->setBool("enableIrradianceCache",
-                    radianceSettings.enableIrradianceCache);
+    // ---- DDGI sampling uniforms ----
+    shader->setBool("enableDDGI", ddgiActive);
+    if (ddgiActive) {
+      // Probe atlases sample on units 16/17 (material uses texture units 0-15).
+      ddgiVolume->bindTexturesForSampling(16, 17);
+      ddgiVolume->setSamplingUniforms(shader, 16, 17);
 
-    if (irradianceCache && irradianceCache->isInitialized()) {
-      // Bind cache SSBOs
-      irradianceCache->bindBuffers();
-
-      // Use SHARED grid bounds (same values as compute shader)
-      // This ensures worldToGrid() produces identical cell indices in both
-      // shaders
-      shader->setVec3("gridMin", sharedGridMin);
-      shader->setVec3("gridMax", sharedGridMax);
-      shader->setIVec3("gridResolution", sharedGridRes.x, sharedGridRes.y,
-                       sharedGridRes.z);
-
-      // DIAGNOSTIC: Log grid bounds once for debugging - should match compute
-      // shader values
-      static bool gridDebugLogged = false;
-      if (!gridDebugLogged) {
-        std::cout << "=== FRAGMENT SHADER GRID BOUNDS ===" << std::endl;
-        std::cout << "Grid bounds: Min(" << sharedGridMin.x << ", "
-                  << sharedGridMin.y << ", " << sharedGridMin.z << ")"
-                  << std::endl;
-        std::cout << "            Max(" << sharedGridMax.x << ", "
-                  << sharedGridMax.y << ", " << sharedGridMax.z << ")"
-                  << std::endl;
-        std::cout << "Grid resolution: " << sharedGridRes.x << "x"
-                  << sharedGridRes.y << "x" << sharedGridRes.z << std::endl;
-        std::cout << "Total grid cells: "
-                  << (sharedGridRes.x * sharedGridRes.y * sharedGridRes.z)
-                  << std::endl;
-        gridDebugLogged = true;
-      }
-
-      // Check if bounds are degenerate
-      if (sharedGridMin.x >= sharedGridMax.x ||
-          sharedGridMin.y >= sharedGridMax.y ||
-          sharedGridMin.z >= sharedGridMax.z) {
-        std::cerr << "ERROR: Degenerate grid bounds!" << std::endl;
-      }
+      glm::vec3 step = ddgiVolume->getGridStep();
+      float minStep = glm::min(glm::min(step.x, step.y), step.z);
+      shader->setFloat("ddgi_normalBias",
+                       radianceSettings.ddgiNormalBias * minStep);
+      shader->setFloat("ddgi_viewBias", 0.15f * minStep);
+      shader->setFloat("ddgi_giIntensity", radianceSettings.ddgiGIIntensity);
+      shader->setFloat("ddgi_visibilityStrength",
+                       radianceSettings.ddgiVisibilityStrength);
     }
+
+    // ---- Soft shadow uniforms (direct lighting, always active in Radiance) ----
+    // Keep the penumbra modest so few samples stay clean: sun softness maps to
+    // a near-realistic angular radius, point/spot to a small world radius.
+    shader->setInt("shadowSamples", radianceSettings.shadowSamples);
+    shader->setFloat("sunAngularRadius",
+                     radianceSettings.shadowSoftness * 0.02f);
+    shader->setFloat("lightSourceRadius",
+                     radianceSettings.shadowSoftness * 0.2f);
 
     // No camera matrices needed - using rasterized fragment positions
 
@@ -4342,6 +4386,8 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     }
     shader->setInt("numPointLights",
                    std::min((int)pointLights.size(), MAX_LIGHTS));
+    shader->setInt("numSpotLights",
+                   std::min((int)spotLights.size(), MAX_LIGHTS));
 
     // Set sun properties
     shader->setBool("sun.enabled", sun.enabled);
@@ -4355,8 +4401,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       std::cout << "=== SHADER UNIFORMS DEBUG ===" << std::endl;
       std::cout << "enableRaytracing: " << radianceSettings.enableRaytracing
                 << std::endl;
-      std::cout << "enableIrradianceCache: "
-                << radianceSettings.enableIrradianceCache << std::endl;
+      std::cout << "enableDDGI: " << radianceSettings.enableDDGI << std::endl;
       std::cout << "samplesPerPixel: " << radianceSettings.samplesPerPixel
                 << std::endl;
       std::cout << "maxBounces: " << radianceSettings.maxBounces << std::endl;
@@ -4371,7 +4416,17 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       }
       shaderDebugLogged = true;
     }
+  }
 
+  // ---- Shared scene geometry + DDGI update (runs after the lighting if/else) ----
+  // The triangle SSBO + BVH feed both the Radiance path tracer and the DDGI
+  // probe trace, and DDGI's per-frame trace/update is identical regardless of
+  // lighting mode. So this block runs for Radiance (always, for the path tracer)
+  // and for any mode where DDGI is active -- including Shadow Mapping with
+  // indirect lighting enabled. `shader` is whichever rasterization shader is
+  // active this frame; its path-tracer geometry uniforms (numTriangles, etc.)
+  // are harmless no-ops on shaders that don't declare them.
+  if (currentLightingMode == GUI::LIGHTING_RADIANCE || ddgiActive) {
     // Check if scene has changed to determine if we need to recalculate
     // triangle data
     bool sceneChanged = lastSceneState.hasChanged(currentScene);
@@ -4403,6 +4458,24 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
           // Get mesh vertices and indices directly (they are public members)
           const auto &vertices = mesh.vertices;
           const auto &indices = mesh.indices;
+
+          // Albedo for GI/path-tracing rays: match what the rasterizer shows.
+          // When the mesh has a diffuse texture the rasterizer samples it and
+          // ignores objectColor, so feed the GI the texture's average color;
+          // otherwise fall back to the flat model color. (Diffuse GI integrates
+          // over the hemisphere, so one average albedo per surface is enough.)
+          glm::vec3 meshAlbedo = model.color;
+          if (!mesh.textures.empty()) {
+            GLuint diffuseId = mesh.textures[0].id;
+            for (const auto &t : mesh.textures) {
+              if (t.type == "texture_diffuse") {
+                diffuseId = t.id;
+                break;
+              }
+            }
+            if (diffuseId != 0)
+              meshAlbedo = getAverageTextureColor(diffuseId);
+          }
 
           // Extract ALL triangles (no more skipping for performance)
           for (size_t i = 0; i < indices.size(); i += 3) {
@@ -4440,7 +4513,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
               triangleData.push_back(0.0f);        // padding for vec3 alignment
               triangleData.insert(
                   triangleData.end(),
-                  {model.color.x, model.color.y, model.color.z}); // vec3 color
+                  {meshAlbedo.x, meshAlbedo.y, meshAlbedo.z}); // vec3 color
               triangleData.push_back(
                   model.emissive); // float emissiveness (no padding needed,
                                    // fills vec3 slot)
@@ -4454,7 +4527,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
               triangleData.push_back(0.0f); // padding for next struct alignment
 
               // Create BVH triangle
-              Engine::BVHTriangle bvhTri(v0, v1, v2, normal, model.color,
+              Engine::BVHTriangle bvhTri(v0, v1, v2, normal, meshAlbedo,
                                          model.emissive, model.shininess,
                                          materialId);
               bvhTriangles.push_back(bvhTri);
@@ -4480,12 +4553,11 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
         updateBVHBuffers();
         bvhBuffersUploaded = true;
 
-        // Clear irradiance cache when scene geometry changes
-        // Cached irradiance values are no longer valid for new/moved geometry
-        if (irradianceCache && irradianceCache->isInitialized()) {
-          irradianceCache->clear();
-          std::cout << "Irradiance cache cleared due to scene change"
-                    << std::endl;
+        // Reset DDGI probes when scene geometry changes - cached irradiance and
+        // visibility are no longer valid; probes reconverge over a few frames.
+        if (ddgiVolume && ddgiVolume->isInitialized()) {
+          ddgiVolume->clear();
+          std::cout << "DDGI volume cleared due to scene change" << std::endl;
         }
 
         // Mark voxelizer dirty so it re-voxelizes with new geometry
@@ -4560,429 +4632,158 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     // lighting)
     shader->setBool("hasGroundPlane", false);
 
-    // Populate irradiance cache using compute shader
-    if (irradianceCacheComputeShader && irradianceCache &&
-        irradianceCache->isInitialized() &&
-        radianceSettings.enableIrradianceCache && triangleCount > 0) {
+    // ---- DDGI: trace probe rays and update the probe atlases ----
+    // Runs entirely on the GPU each frame: (1) trace rays from every probe
+    // through the BVH, (2) blend the results into the irradiance + visibility
+    // octahedral atlases with temporal hysteresis, (3) copy the octahedral
+    // borders so bilinear sampling is seamless. The fragment shader then
+    // samples the atlases (bound on texture units 16/17 above).
+    if (ddgiActive && ddgiTraceShader && ddgiUpdateIrradianceShader &&
+        ddgiUpdateDistanceShader && ddgiBorderIrradianceShader &&
+        ddgiBorderDistanceShader && triangleCount > 0) {
 
-      // NOTE: Cache is persistent across frames - Ward's algorithm
-      // incrementally populates the cache where needed. Cache is only cleared
-      // when:
-      // 1. Scene geometry changes (BVH rebuild)
-      // 2. User manually clears it (Ctrl+Shift+I shortcut)
-      // This allows the cache to build up coverage over time for better
-      // performance.
+      const int IRR_SIDE = Engine::DDGIVolume::IRRADIANCE_SIDE;
+      const int DEP_SIDE = Engine::DDGIVolume::DEPTH_SIDE;
+      glm::ivec3 pc = ddgiVolume->getProbeCounts();
+      int rays = ddgiVolume->getRaysPerProbe();
+      int probeCount = ddgiVolume->getProbeCount();
+      glm::vec3 step = ddgiVolume->getGridStep();
+      float minStep = glm::min(glm::min(step.x, step.y), step.z);
+      float normalBiasWorld = radianceSettings.ddgiNormalBias * minStep;
+      float maxDist = 2.0f * glm::length(step);
+      bool firstFrame = ddgiVolume->consumeFirstFrame();
 
-      // Use compute shader to populate cache
-      irradianceCacheComputeShader->use();
+      // Per-frame random rotation so the spherical-Fibonacci probe rays cover
+      // all directions over many frames (must match between trace + update).
+      auto frameRand = []() {
+        static uint32_t s = 2463534242u;
+        s ^= s << 13;
+        s ^= s >> 17;
+        s ^= s << 5;
+        return float(s & 0x00FFFFFFu) / float(0x01000000u);
+      };
+      glm::mat4 rotM = glm::rotate(glm::mat4(1.0f), frameRand() * 6.2831853f,
+                                   glm::vec3(1, 0, 0));
+      rotM = glm::rotate(rotM, frameRand() * 6.2831853f, glm::vec3(0, 1, 0));
+      rotM = glm::rotate(rotM, frameRand() * 6.2831853f, glm::vec3(0, 0, 1));
+      glm::mat3 randomRotation = glm::mat3(rotM);
 
-      // CRITICAL FIX: Explicitly bind ALL required SSBOs before compute shader
-      // dispatch The compute shader needs access to:
-      // - Triangle buffer (binding 0)
-      // - BVH nodes (binding 1)
-      // - Triangle indices (binding 2)
-      // - Cache buffers (bindings 3, 4, 5)
+      auto groupsOf = [](int total, int local) -> GLuint {
+        return (GLuint)((total + local - 1) / local);
+      };
 
-      std::cout << "=== BINDING SSBOs FOR COMPUTE SHADER ===" << std::endl;
-
-      // Bind triangle buffer (binding 0)
-      if (triangleSSBO != 0) {
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, triangleSSBO);
-        std::cout << "Bound triangle SSBO " << triangleSSBO << " to binding 0"
-                  << std::endl;
-      } else {
-        std::cerr << "ERROR: Triangle SSBO is 0!" << std::endl;
-      }
-
-      // Bind BVH buffers (bindings 1, 2) if BVH is enabled
+      // --- Pass 1: trace rays into the ray-data SSBO (binding 6) ---
+      ddgiTraceShader->use();
+      glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, triangleSSBO);
       if (enableBVH && bvhBuilt) {
-        if (bvhNodeSSBO != 0) {
-          glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, bvhNodeSSBO);
-          std::cout << "Bound BVH node SSBO " << bvhNodeSSBO << " to binding 1"
-                    << std::endl;
-        } else {
-          std::cerr << "ERROR: BVH node SSBO is 0!" << std::endl;
-        }
-        if (triangleIndexSSBO != 0) {
-          glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, triangleIndexSSBO);
-          std::cout << "Bound triangle index SSBO " << triangleIndexSSBO
-                    << " to binding 2" << std::endl;
-        } else {
-          std::cerr << "ERROR: Triangle index SSBO is 0!" << std::endl;
-        }
-      } else {
-        std::cout << "BVH not enabled or not built - using linear traversal"
-                  << std::endl;
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, bvhNodeSSBO);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, triangleIndexSSBO);
       }
-
-      // Bind cache SSBOs (bindings 3, 4, 5)
-      irradianceCache->bindBuffers();
-      std::cout << "Bound cache SSBOs to bindings 3, 4, 5" << std::endl;
-
-      // Use SHARED grid bounds (calculated once at beginning of renderEye)
-      // This ensures worldToGrid() produces identical cell indices in both
-      // shaders
-      irradianceCacheComputeShader->setVec3("gridMin", sharedGridMin);
-      irradianceCacheComputeShader->setVec3("gridMax", sharedGridMax);
-      glUniform3i(glGetUniformLocation(irradianceCacheComputeShader->getID(),
-                                       "gridResolution"),
-                  sharedGridRes.x, sharedGridRes.y, sharedGridRes.z);
-
-      // DIAGNOSTIC: Log compute shader grid bounds - should match fragment
-      // shader
-      std::cout << "=== COMPUTE SHADER GRID BOUNDS ===" << std::endl;
-      std::cout << "Grid bounds: Min(" << sharedGridMin.x << ", "
-                << sharedGridMin.y << ", " << sharedGridMin.z << ")"
-                << std::endl;
-      std::cout << "            Max(" << sharedGridMax.x << ", "
-                << sharedGridMax.y << ", " << sharedGridMax.z << ")"
-                << std::endl;
-      std::cout << "Grid resolution: " << sharedGridRes.x << "x"
-                << sharedGridRes.y << "x" << sharedGridRes.z << std::endl;
-
-      // CRITICAL VALIDATION: Verify uniforms are actually set in the shader
-      GLuint computeProgramID = irradianceCacheComputeShader->getID();
-      GLint gridMinLoc = glGetUniformLocation(computeProgramID, "gridMin");
-      GLint gridMaxLoc = glGetUniformLocation(computeProgramID, "gridMax");
-      GLint gridResLoc =
-          glGetUniformLocation(computeProgramID, "gridResolution");
-
-      std::cout << "=== COMPUTE SHADER UNIFORM VALIDATION ===" << std::endl;
-      std::cout << "gridMin location: " << gridMinLoc << std::endl;
-      std::cout << "gridMax location: " << gridMaxLoc << std::endl;
-      std::cout << "gridResolution location: " << gridResLoc << std::endl;
-
-      if (gridMinLoc == -1 || gridMaxLoc == -1 || gridResLoc == -1) {
-        std::cerr
-            << "ERROR: One or more grid uniforms not found in compute shader!"
-            << std::endl;
-        std::cerr
-            << "This means the shader cannot perform worldToGrid() correctly!"
-            << std::endl;
-      }
-
-      // Read back uniform values to verify they were set
-      glm::vec3 readbackGridMin, readbackGridMax;
-      glm::ivec3 readbackGridRes;
-      if (gridMinLoc != -1) {
-        glGetUniformfv(computeProgramID, gridMinLoc, &readbackGridMin.x);
-        std::cout << "gridMin readback: (" << readbackGridMin.x << ", "
-                  << readbackGridMin.y << ", " << readbackGridMin.z << ")"
-                  << std::endl;
-      }
-      if (gridMaxLoc != -1) {
-        glGetUniformfv(computeProgramID, gridMaxLoc, &readbackGridMax.x);
-        std::cout << "gridMax readback: (" << readbackGridMax.x << ", "
-                  << readbackGridMax.y << ", " << readbackGridMax.z << ")"
-                  << std::endl;
-      }
-      if (gridResLoc != -1) {
-        glGetUniformiv(computeProgramID, gridResLoc, &readbackGridRes.x);
-        std::cout << "gridResolution readback: " << readbackGridRes.x << "x"
-                  << readbackGridRes.y << "x" << readbackGridRes.z << std::endl;
-      }
-
-      // Set sampling parameters
-      // CRITICAL FIX: Ward recommends 32-64 samples for stable harmonic mean
-      // Higher sample count = more accurate local feature size estimates
-      irradianceCacheComputeShader->setInt("samplesPerEntry", 32);
-      irradianceCacheComputeShader->setFloat("minSpacing", 0.5f);
-      irradianceCacheComputeShader->setFloat("randomSeed",
-                                             static_cast<float>(glfwGetTime()));
-
-      // Set triangle and BVH parameters
-      irradianceCacheComputeShader->setInt("numTriangles", triangleCount);
-      irradianceCacheComputeShader->setInt(
-          "numBVHNodes", static_cast<int>(gpuBVHNodes.size()));
-      irradianceCacheComputeShader->setBool("enableBVH", enableBVH && bvhBuilt);
-      irradianceCacheComputeShader->setFloat("rayMaxDistance",
-                                             radianceSettings.rayMaxDistance);
-
-      std::cout << "=== COMPUTE SHADER PARAMETERS ===" << std::endl;
-      std::cout << "numTriangles: " << triangleCount << std::endl;
-      std::cout << "numBVHNodes: " << gpuBVHNodes.size() << std::endl;
-      std::cout << "enableBVH: " << (enableBVH && bvhBuilt) << std::endl;
-      std::cout << "samplesPerEntry: 32" << std::endl;
-
-      // Declare variable that needs to be accessible after goto label
-      uint32_t gpuEntryCount = 0;
-
-      // CRITICAL CHECK: Verify we have triangles to process
-      if (triangleCount == 0) {
-        std::cerr
-            << "ERROR: triangleCount is 0! Cannot populate irradiance cache."
-            << std::endl;
-        std::cerr << "This means no scene geometry was uploaded to the GPU."
-                  << std::endl;
-        // Don't dispatch if there are no triangles
-        goto skip_compute_dispatch;
-      }
-
-      { // Scope block to allow goto to skip variable initializations
-        // Dispatch compute shader
-        // Work groups process triangles in batches of 64
-        GLuint numWorkGroups = (triangleCount + 63) / 64;
-        std::cout << "Dispatching compute shader: " << numWorkGroups
-                  << " work groups" << std::endl;
-        std::cout << "This will process " << triangleCount
-                  << " triangles (sampling every 4th)" << std::endl;
-        glDispatchCompute(numWorkGroups, 1, 1);
-
-        // Check for OpenGL errors after dispatch
-        GLenum err = glGetError();
-        if (err != GL_NO_ERROR) {
-          std::cerr << "OpenGL error after glDispatchCompute: 0x" << std::hex
-                    << err << std::dec << std::endl;
+      ddgiVolume->bindRayBuffer(6);
+      ddgiVolume->bindTexturesForSampling(0, 1); // previous-frame atlases
+      ddgiVolume->setSamplingUniforms(ddgiTraceShader, 0, 1);
+      ddgiTraceShader->setFloat("ddgi_normalBias", normalBiasWorld);
+      ddgiTraceShader->setInt("numTriangles", triangleCount);
+      ddgiTraceShader->setInt("numBVHNodes",
+                              static_cast<int>(gpuBVHNodes.size()));
+      ddgiTraceShader->setBool("enableBVH", enableBVH && bvhBuilt);
+      ddgiTraceShader->setFloat("rayMaxDistance",
+                                radianceSettings.rayMaxDistance);
+      ddgiTraceShader->setFloat("emissiveIntensity",
+                                radianceSettings.emissiveIntensity);
+      ddgiTraceShader->setFloat("skyIntensity", radianceSettings.skyIntensity);
+      ddgiTraceShader->setMat3("u_randomRotation", randomRotation);
+      {
+        char buf[64];
+        int np = std::min((int)pointLights.size(), MAX_LIGHTS);
+        for (int i = 0; i < np; i++) {
+          snprintf(buf, sizeof(buf), "pointLights[%d].position", i);
+          ddgiTraceShader->setVec3(buf, pointLights[i].position);
+          snprintf(buf, sizeof(buf), "pointLights[%d].color", i);
+          ddgiTraceShader->setVec3(buf, pointLights[i].color);
+          snprintf(buf, sizeof(buf), "pointLights[%d].intensity", i);
+          ddgiTraceShader->setFloat(buf, pointLights[i].intensity);
+          snprintf(buf, sizeof(buf), "pointLights[%d].linear", i);
+          ddgiTraceShader->setFloat(buf, pointLights[i].linear);
+          snprintf(buf, sizeof(buf), "pointLights[%d].quadratic", i);
+          ddgiTraceShader->setFloat(buf, pointLights[i].quadratic);
         }
+        ddgiTraceShader->setInt("numPointLights", np);
 
-        // Wait for compute to finish before fragment shader reads cache
-        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-
-        // CRITICAL: Ensure GPU has fully completed all operations before CPU
-        // reads
-        glFinish();
-
-        // DIAGNOSTIC: Read back cache entry count and debug counters from GPU
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER,
-                     irradianceCache->getCacheBufferSSBO());
-        uint32_t headerData[4] = {0};
-        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(headerData),
-                           headerData);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-
-        gpuEntryCount = headerData[0];
-        uint32_t debugGridAttempts = headerData[2];
-        uint32_t debugGridSuccesses = headerData[3];
-
-        std::cout << "=== IRRADIANCE CACHE DEBUG ===" << std::endl;
-        std::cout << "Cache entry count (GPU): " << gpuEntryCount << std::endl;
-        std::cout << "Triangle count: " << triangleCount << std::endl;
-        std::cout << "Expected samples: ~" << (triangleCount / 4)
-                  << " (1 in 4 triangles, after validation)" << std::endl;
-        std::cout << "DEBUG: Grid insertion attempts: " << debugGridAttempts
-                  << std::endl;
-        std::cout << "DEBUG: Grid insertions with valid cellIdx: "
-                  << debugGridSuccesses << std::endl;
-        if (debugGridAttempts > 0 && debugGridSuccesses == 0) {
-          std::cerr << "ERROR: ALL grid cell indices are invalid (0xFFFFFFFF)!"
-                    << std::endl;
-          std::cerr << "This means worldToGrid() or gridIndex() is broken!"
-                    << std::endl;
+        int ns = std::min((int)spotLights.size(), MAX_LIGHTS);
+        for (int i = 0; i < ns; i++) {
+          snprintf(buf, sizeof(buf), "spotLights[%d].position", i);
+          ddgiTraceShader->setVec3(buf, spotLights[i].position);
+          snprintf(buf, sizeof(buf), "spotLights[%d].direction", i);
+          ddgiTraceShader->setVec3(buf, spotLights[i].direction);
+          snprintf(buf, sizeof(buf), "spotLights[%d].color", i);
+          ddgiTraceShader->setVec3(buf, spotLights[i].color);
+          snprintf(buf, sizeof(buf), "spotLights[%d].intensity", i);
+          ddgiTraceShader->setFloat(buf, spotLights[i].intensity);
+          snprintf(buf, sizeof(buf), "spotLights[%d].innerCutOff", i);
+          ddgiTraceShader->setFloat(buf, spotLights[i].innerCutOff);
+          snprintf(buf, sizeof(buf), "spotLights[%d].outerCutOff", i);
+          ddgiTraceShader->setFloat(buf, spotLights[i].outerCutOff);
         }
+        ddgiTraceShader->setInt("numSpotLights", ns);
 
-        // DIAGNOSTIC STEP 10: Read back first cache entry to verify data
-        // validity
-        if (gpuEntryCount > 0) {
-          glBindBuffer(GL_SHADER_STORAGE_BUFFER,
-                       irradianceCache->getCacheBufferSSBO());
+        ddgiTraceShader->setBool("sun.enabled", sun.enabled);
+        ddgiTraceShader->setVec3("sun.direction", sun.direction);
+        ddgiTraceShader->setVec3("sun.color", sun.color);
+        ddgiTraceShader->setFloat("sun.intensity", sun.intensity);
+      }
+      glDispatchCompute(groupsOf(probeCount * rays, 64), 1, 1);
+      glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
-          struct CacheEntry {
-            glm::vec3 position;
-            float harmonicMeanDist;
-            glm::vec3 normal;
-            float padding1;
-            glm::vec3 irradiance;
-            float padding2;
-          };
+      // --- Pass 2: blend ray results into the probe atlases (images 0/1) ---
+      ddgiVolume->bindImagesForUpdate();
+      ddgiVolume->bindRayBuffer(6);
 
-          // Read first entry (skip 16-byte header: 4 uint32s)
-          CacheEntry firstEntry;
-          glGetBufferSubData(GL_SHADER_STORAGE_BUFFER,
-                             16 + 0 * sizeof(CacheEntry), sizeof(CacheEntry),
-                             &firstEntry);
+      ddgiUpdateIrradianceShader->use();
+      ddgiVolume->setGridUniforms(ddgiUpdateIrradianceShader);
+      ddgiUpdateIrradianceShader->setMat3("u_randomRotation", randomRotation);
+      ddgiUpdateIrradianceShader->setFloat("u_hysteresis",
+                                           radianceSettings.ddgiHysteresis);
+      ddgiUpdateIrradianceShader->setBool("u_firstFrame", firstFrame);
+      glDispatchCompute(groupsOf(pc.x * IRR_SIDE, 8),
+                        groupsOf(pc.y * pc.z * IRR_SIDE, 8), 1);
 
-          std::cout << "=== FIRST CACHE ENTRY DEBUG ===" << std::endl;
-          std::cout << "Position: (" << firstEntry.position.x << ", "
-                    << firstEntry.position.y << ", " << firstEntry.position.z
-                    << ")" << std::endl;
-          std::cout << "Normal: (" << firstEntry.normal.x << ", "
-                    << firstEntry.normal.y << ", " << firstEntry.normal.z << ")"
-                    << std::endl;
-          std::cout << "Irradiance: (" << firstEntry.irradiance.x << ", "
-                    << firstEntry.irradiance.y << ", "
-                    << firstEntry.irradiance.z << ")" << std::endl;
-          std::cout << "Harmonic mean dist: " << firstEntry.harmonicMeanDist
-                    << std::endl;
+      ddgiUpdateDistanceShader->use();
+      ddgiVolume->setGridUniforms(ddgiUpdateDistanceShader);
+      ddgiUpdateDistanceShader->setMat3("u_randomRotation", randomRotation);
+      ddgiUpdateDistanceShader->setFloat("u_hysteresis",
+                                         radianceSettings.ddgiHysteresis);
+      ddgiUpdateDistanceShader->setBool("u_firstFrame", firstFrame);
+      ddgiUpdateDistanceShader->setFloat(
+          "u_depthSharpness",
+          static_cast<float>(radianceSettings.ddgiDepthSharpness));
+      ddgiUpdateDistanceShader->setFloat("u_maxDistance", maxDist);
+      glDispatchCompute(groupsOf(pc.x * DEP_SIDE, 8),
+                        groupsOf(pc.y * pc.z * DEP_SIDE, 8), 1);
 
-          // DIAGNOSTIC: Calculate harmonic mean distance distribution
-          // statistics This helps verify the Ward algorithm fixes are working
-          // correctly
-          float minHMD = 1e10f, maxHMD = 0.0f, avgHMD = 0.0f;
-          int hmd1000Count = 0, validCount = 0;
+      glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
-          // Sample up to 100 entries to get distribution statistics
-          uint32_t sampleCount = std::min(gpuEntryCount, 100u);
-          for (uint32_t i = 0; i < sampleCount; i++) {
-            CacheEntry entry;
-            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER,
-                               16 + i * sizeof(CacheEntry), sizeof(CacheEntry),
-                               &entry);
+      // --- Pass 3: octahedral border copy ---
+      ddgiBorderIrradianceShader->use();
+      ddgiBorderIrradianceShader->setIVec3("ddgi_probeCounts", pc.x, pc.y, pc.z);
+      ddgiBorderIrradianceShader->setInt("ddgi_side", IRR_SIDE);
+      glDispatchCompute(groupsOf(pc.x * (IRR_SIDE + 2), 8),
+                        groupsOf(pc.y * pc.z * (IRR_SIDE + 2), 8), 1);
 
-            float hmd = entry.harmonicMeanDist;
+      ddgiBorderDistanceShader->use();
+      ddgiBorderDistanceShader->setIVec3("ddgi_probeCounts", pc.x, pc.y, pc.z);
+      ddgiBorderDistanceShader->setInt("ddgi_side", DEP_SIDE);
+      glDispatchCompute(groupsOf(pc.x * (DEP_SIDE + 2), 8),
+                        groupsOf(pc.y * pc.z * (DEP_SIDE + 2), 8), 1);
 
-            // Skip NaN/Inf values in statistics
-            if (!std::isnan(hmd) && !std::isinf(hmd) && hmd > 0.0f) {
-              if (hmd >= 999.0f)
-                hmd1000Count++; // Count pathologically large values
-              minHMD = std::min(minHMD, hmd);
-              maxHMD = std::max(maxHMD, hmd);
-              avgHMD += hmd;
-              validCount++;
-            }
-          }
+      // Make image writes visible to fragment-shader texture fetches, unbind.
+      glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT |
+                      GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+      glBindImageTexture(0, 0, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA16F);
+      glBindImageTexture(1, 0, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RG16F);
 
-          if (validCount > 0) {
-            avgHMD /= validCount;
-
-            std::cout << "\n=== HARMONIC MEAN DISTANCE STATS (sampled "
-                      << sampleCount << " entries) ===" << std::endl;
-            std::cout << "Min HMD: " << minHMD << std::endl;
-            std::cout << "Max HMD: " << maxHMD << std::endl;
-            std::cout << "Avg HMD: " << avgHMD << std::endl;
-            std::cout << "Entries with HMD >= 999: " << hmd1000Count << " / "
-                      << sampleCount;
-            if (hmd1000Count > 0) {
-              std::cout << " (" << (100.0f * hmd1000Count / sampleCount)
-                        << "%)";
-            }
-            std::cout << std::endl;
-
-            // Quality assessment based on Ward's recommendations
-            if (avgHMD < 1.0f) {
-              std::cout
-                  << "⚠️ WARNING: Average HMD very small - may indicate too "
-                     "dense sampling"
-                  << std::endl;
-            } else if (avgHMD > 50.0f) {
-              std::cout << "⚠️ WARNING: Average HMD very large - patches may be "
-                           "too big"
-                        << std::endl;
-            } else {
-              std::cout << "✓ Harmonic mean distances in reasonable range "
-                           "(1-50 units)"
-                        << std::endl;
-            }
-          }
-
-          glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-        }
-
-        // NOTE: With persistent caching, 0 entries on first frame is an error,
-        // but slow growth on later frames is expected (isCovered() filters
-        // duplicates)
-        static uint32_t lastEntryCount = 0;
-
-        // Detect cache clear (count decreased) and reset tracking
-        if (gpuEntryCount < lastEntryCount) {
-          lastEntryCount = 0;
-          std::cout << "Cache was cleared - resetting tracking" << std::endl;
-        }
-
-        uint32_t entriesAdded = gpuEntryCount - lastEntryCount;
-
-        if (gpuEntryCount == 0) {
-          std::cout << "WARNING: Cache still empty after compute shader!"
-                    << std::endl;
-          std::cout << "Possible causes:" << std::endl;
-          std::cout << "  - All triangles filtered by isCovered() check (cache "
-                       "may be fully populated)"
-                    << std::endl;
-          std::cout << "  - Grid bounds don't cover scene geometry"
-                    << std::endl;
-          std::cout << "  - Compute shader not executing properly" << std::endl;
-        } else {
-          std::cout << "Cache population: +" << entriesAdded
-                    << " new entries this frame (total: " << gpuEntryCount
-                    << ")" << std::endl;
-          if (entriesAdded == 0 && lastEntryCount > 0) {
-            std::cout
-                << "  (Cache stable - all sampled positions already covered)"
-                << std::endl;
-          }
-        }
-        lastEntryCount = gpuEntryCount;
-      } // End scope block
-
-    skip_compute_dispatch:
-      // DON'T unbind cache buffers here - fragment shader needs to read them
-      // during rendering! irradianceCache->unbindBuffers();
-
-      // CRITICAL FIX: Switch back to the radiance shader after compute shader!
-      // Without this, the compute shader (which has no vertex/fragment stages)
-      // remains active and geometry won't be rasterized!
+      // Switch back to the active rasterization shader (radiance or shadow map).
       shader->use();
-
-      // CRITICAL: Always read the current cache entry count from GPU buffer
-      // This ensures we have the correct value regardless of code path taken
-      glBindBuffer(GL_SHADER_STORAGE_BUFFER,
-                   irradianceCache->getCacheBufferSSBO());
-      glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(uint32_t),
-                         &gpuEntryCount);
-      glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-
-      // NOTE: cacheEntryCount is read from the SSBO header, not from a uniform
-      // The fragment shader accesses it as:
-      // IrradianceCacheBuffer.cacheEntryCount No need to set it as a uniform -
-      // it's already in the buffer at offset 0
-      std::cout << "Fragment shader will read cacheEntryCount from SSBO: "
-                << gpuEntryCount << std::endl;
-
-      // DIAGNOSTIC: Check if grid cells are actually populated
-      if (gpuEntryCount > 0) {
-        struct GridCell {
-          uint32_t entryStart;
-          uint32_t entryCount;
-          // NO padding - must match IrradianceCache.h structure exactly!
-        };
-
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER,
-                     irradianceCache->getGridCellsSSBO());
-
-        uint32_t gridSize = sharedGridRes.x * sharedGridRes.y * sharedGridRes.z;
-        uint32_t nonEmptyCells = 0;
-        uint32_t totalEntries = 0;
-        uint32_t maxEntriesInCell = 0;
-
-        // Sample first 1000 cells to check population
-        uint32_t samplesToCheck = std::min(gridSize, 1000u);
-        for (uint32_t i = 0; i < samplesToCheck; i++) {
-          GridCell cell;
-          glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, i * sizeof(GridCell),
-                             sizeof(GridCell), &cell);
-
-          if (cell.entryCount > 0) {
-            nonEmptyCells++;
-            totalEntries += cell.entryCount;
-            maxEntriesInCell = std::max(maxEntriesInCell, cell.entryCount);
-          }
-        }
-
-        std::cout << "\n=== GRID CELL POPULATION DEBUG ===" << std::endl;
-        std::cout << "Total grid cells: " << gridSize << std::endl;
-        std::cout << "Non-empty cells (sampled " << samplesToCheck
-                  << "): " << nonEmptyCells << std::endl;
-        std::cout << "Total entries in sampled cells: " << totalEntries
-                  << std::endl;
-        std::cout << "Max entries in a single cell: " << maxEntriesInCell
-                  << std::endl;
-        std::cout << "Avg entries per non-empty cell: "
-                  << (nonEmptyCells > 0 ? (float)totalEntries / nonEmptyCells
-                                        : 0.0f)
-                  << std::endl;
-
-        if (nonEmptyCells == 0) {
-          std::cout << "ERROR: No grid cells populated! Cache lookup will fail!"
-                    << std::endl;
-          std::cout << "Possible causes:" << std::endl;
-          std::cout << "  - worldToGrid() returning out-of-bounds coordinates"
-                    << std::endl;
-          std::cout << "  - gridIndex() always returning 0xFFFFFFFF"
-                    << std::endl;
-          std::cout << "  - Atomic operations on cells[] failing" << std::endl;
-        }
-
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-      }
     }
   }
 
@@ -6798,9 +6599,6 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
           if (camera.orbitAroundCursor) {
             // Around cursor mode - use synchronization to restore cursor to
             // 3D position
-            std::cout << "[CursorFix] Around cursor mode - using cursor "
-                         "synchronization"
-                      << std::endl;
             // Note: Pass false for stereo mode since stereo matrices aren't
             // available here. Using mono projection for cursor positioning is
             // sufficient and avoids incorrect averaging with invalid default
@@ -7343,12 +7141,12 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
       break;
 
     case StereoVista::ShortcutAction::ClearIrradianceCache:
-      if (irradianceCache && irradianceCache->isInitialized()) {
-        irradianceCache->clear();
-        std::cout << "Irradiance cache cleared - will repopulate on next frame"
+      if (ddgiVolume && ddgiVolume->isInitialized()) {
+        ddgiVolume->clear();
+        std::cout << "DDGI probes reset - will reconverge over the next frames"
                   << std::endl;
       } else {
-        std::cout << "Irradiance cache not initialized" << std::endl;
+        std::cout << "DDGI volume not initialized" << std::endl;
       }
       break;
 

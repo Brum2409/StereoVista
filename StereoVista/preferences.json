@@ -2,7 +2,7 @@
     "camera": {
         "alwaysShowOrbitCenter": false,
         "autoConvergence": true,
-        "convergence": 3.060886859893799,
+        "convergence": 39.0,
         "convergenceCapMax": 39.0,
         "convergenceCapMin": 0.800000011920929,
         "convergenceDistanceFactor": 1.2999999523162842,
@@ -28,7 +28,7 @@
         "scrollMomentum": 0.12999999523162842,
         "separation": 0.09000000357627869,
         "showOrbitCenter": true,
-        "speedFactor": 0.9869999885559082,
+        "speedFactor": 5.0,
         "useNewStereoMethod": true,
         "useSmoothScrolling": true,
         "zoomToCursor": true
@@ -37,16 +37,16 @@
         "currentPreset": "Sphere"
     },
     "edl": {
-        "enabled": true,
-        "radius": 1.7999999523162842,
-        "strength": 2.9100000858306885
+        "enabled": false,
+        "radius": 0.8999999761581421,
+        "strength": 1.840000033378601
     },
     "hdr": {
         "bloomIntensity": 0.1770000010728836,
         "bloomThreshold": 0.33000001311302185,
         "enableBloom": false,
         "enabled": true,
-        "exposure": 2.569999933242798,
+        "exposure": 1.309999942779541,
         "toneMapOperator": 3
     },
     "lighting": {
@@ -91,21 +91,29 @@
     "radiance": {
         "bvhDebugMaxDepth": 8,
         "bvhDebugRenderMode": 0,
+        "ddgiDepthSharpness": 50,
+        "ddgiGIIntensity": 0.17000000178813934,
+        "ddgiHysteresis": 0.9900000095367432,
+        "ddgiNormalBias": 0.28999999165534973,
+        "ddgiProbeCountX": 48,
+        "ddgiProbeCountY": 48,
+        "ddgiProbeCountZ": 48,
+        "ddgiRaysPerProbe": 38,
+        "ddgiShowProbes": false,
+        "ddgiVisibilityStrength": 0.30000001192092896,
         "emissiveIntensity": 1.2899999618530273,
         "enableBVH": true,
+        "enableDDGI": true,
         "enableEmissiveLighting": true,
         "enableIndirectLighting": true,
-        "enableIrradianceCache": true,
         "enableRaytracing": true,
         "indirectIntensity": 0.30000001192092896,
-        "irradianceCacheDivisor": 2,
-        "irradianceCacheMaxDistance": 1.600000023841858,
-        "irradianceCacheNormalThreshold": 0.4399999976158142,
-        "irradianceCacheSamplesPerPixel": 3,
         "materialRoughness": 0.5,
         "maxBounces": 2,
         "rayMaxDistance": 50.0,
         "samplesPerPixel": 1,
+        "shadowSamples": 1,
+        "shadowSoftness": 0.3199999928474426,
         "showBVHDebug": false,
         "skyIntensity": 0.11999999731779099
     },
@@ -114,10 +122,10 @@
         "enableCascades": false,
         "enableIndirectLighting": false,
         "enablePCSS": false,
-        "lightSize": 0.09799999743700027,
+        "lightSize": 0.03400000184774399,
         "numCascades": 4,
         "pcfKernelSize": 7,
-        "shadowSoftness": 2.2699999809265137
+        "shadowSoftness": 11.34000015258789
     },
     "skybox": {
         "exposure": 0.05999999865889549,
@@ -163,11 +171,11 @@
         "translationSensitivity": 1.0
     },
     "ssao": {
-        "bias": 0.041999999433755875,
+        "bias": 0.01899999938905239,
         "enabled": false,
         "kernelSize": 64,
-        "power": 1.899999976158142,
-        "radius": 0.6499999761581421
+        "power": 1.2999999523162842,
+        "radius": 0.28999999165534973
     },
     "startup": {
         "loadScene": true,
@@ -176,7 +184,7 @@
     },
     "ui": {
         "darkTheme": true,
-        "enableSpawnAnimation": true,
+        "enableSpawnAnimation": false,
         "guiScaleFactor": 1.0,
         "show3DCursor": true,
         "showFPS": true

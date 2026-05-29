@@ -32,18 +32,27 @@
 
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
-// Framebuffer entry: (depth:32 | something:32).  This pass replaces the
-// `something` (point index after rasterize) with packed RGBA8 colour.
-layout(std430, binding = 1) buffer ssFramebufferBlock {
+// Framebuffer entry: (depth:32 | (cloudID:5 | localIndex:27)).  This pass only
+// READS the framebuffer — the payload must survive every per-cloud lookup pass,
+// so the resolved colour is written to a SEPARATE colour buffer instead.
+layout(std430, binding = 1) readonly buffer ssFramebufferBlock {
     uint64_t framebuffer[];
 };
 
-// Per-point packed RGBA8 colours — scatter source.
+// Per-pixel resolved colour output (one packed RGBA8 per pixel).  Written here,
+// read by the fragment resolve pass.
+layout(std430, binding = 45) writeonly buffer ssColorBlock {
+    uint colorbuffer[];
+};
+
+// Per-point packed RGBA8 colours of ONE point cloud — scatter source.
+// Re-bound by the renderer before each per-cloud dispatch.
 layout(std430, binding = 44) readonly buffer ssRGBABlock {
     uint ssRGBA[];
 };
 
 uniform ivec2 uImageSize;
+uniform uint  uLookupCloudID;   // only resolve pixels owned by this cloud
 
 void main() {
     int pixelID = int(gl_GlobalInvocationID.x);
@@ -53,14 +62,16 @@ void main() {
 
     uint64_t entry = framebuffer[pixelID];
 
-    // Sentinel → no point here, leave as-is so fragment shader discards.
+    // Sentinel → no point here; leave colorbuffer untouched (resolve discards it).
     if (entry == 0xFFFFFFFFFFFFFFFFUL) return;
 
-    // Index in low 32 bits → scatter into ssRGBA for colour.
-    uint  idx   = uint(entry & 0xFFFFFFFFUL);
-    uint  color = ssRGBA[idx];
+    // Low 32 bits = (cloudID:5 | localIndex:27).  Only the cloud that owns this
+    // pixel resolves it, against its own ssRGBA buffer — so colours from one
+    // cloud can never be looked up in another cloud's colour array.
+    uint payload = uint(entry & 0xFFFFFFFFUL);
+    uint cloudID = payload >> 27;
+    if (cloudID != uLookupCloudID) return;
 
-    // Repack: depth (high 32 bits) preserved, low 32 bits replaced with colour.
-    uint depth = uint(entry >> 32UL);
-    framebuffer[pixelID] = (uint64_t(depth) << 32UL) | uint64_t(color);
+    uint idx = payload & 0x07FFFFFFu;
+    colorbuffer[pixelID] = ssRGBA[idx];
 }

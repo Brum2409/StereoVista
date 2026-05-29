@@ -328,8 +328,6 @@ namespace Engine {
 
             // Check if scene directory exists (it may not exist for scenes with no external assets)
             if (!std::filesystem::exists(sceneDir)) {
-                std::cout << "Warning: Scene directory not found: " << sceneDir.string() << std::endl;
-                std::cout << "Continuing to load scene (directory only needed if scene has external models/textures/point clouds)" << std::endl;
             }
 
             // Load camera state if it exists in the scene

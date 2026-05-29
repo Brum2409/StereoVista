@@ -18,6 +18,10 @@ static const float kQuadVerts[] = {
      1.0f, -1.0f,  1.0f, 0.0f,
 };
 
+// Max simultaneous point clouds per frame.  Must match the cloudID bit width in
+// pointcloud_rasterize.comp / pointcloud_color_lookup.comp (5 bits → 32).
+static constexpr uint32_t kMaxComputeClouds = 32;
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 void ComputePointCloudRenderer::init(int width, int height) {
@@ -78,10 +82,12 @@ void ComputePointCloudRenderer::init(int width, int height) {
     m_locModelView        = glGetUniformLocation(pid, "uModelView");
     m_locProj             = glGetUniformLocation(pid, "uProj");
     m_locPointsPerThread  = glGetUniformLocation(pid, "uPointsPerThread");
+    m_locCloudID          = glGetUniformLocation(pid, "uCloudID");
 
     // Cache color-lookup compute uniform location
     m_colorLookupShader->use();
     m_locColorLookupImageSize = glGetUniformLocation(m_colorLookupShader->getID(), "uImageSize");
+    m_locLookupCloudID        = glGetUniformLocation(m_colorLookupShader->getID(), "uLookupCloudID");
 
     // Cache depth-stencil shader uniform location (unused but shader is loaded)
     m_depthStencilShader->use();
@@ -110,7 +116,6 @@ void ComputePointCloudRenderer::init(int width, int height) {
     glGenQueries(2, m_qPass2);    // fragment resolve
 
     m_initialized = true;
-    std::cout << "[ComputePC] Initialised (" << width << "×" << height << ")\n";
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -135,10 +140,21 @@ void ComputePointCloudRenderer::allocateBuffers() {
                               totalPixels * static_cast<GLsizeiptr>(sizeof(uint64_t)),
                               GL_RED_INTEGER, GL_UNSIGNED_INT,
                               &clearVal);
+
+    // Per-pixel resolved-colour buffer (one packed RGBA8 per pixel).  No clear
+    // needed: every non-sentinel pixel is written by its owning cloud's lookup
+    // pass, and sentinel pixels are discarded by the resolve shader.
+    glGenBuffers(1, &m_colorbufferSSBO);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_colorbufferSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER,
+                 totalPixels * static_cast<GLsizeiptr>(sizeof(uint32_t)),
+                 nullptr, GL_DYNAMIC_COPY);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
 
 void ComputePointCloudRenderer::freeBuffers() {
     if (m_framebufferSSBO) { glDeleteBuffers(1, &m_framebufferSSBO); m_framebufferSSBO = 0; }
+    if (m_colorbufferSSBO) { glDeleteBuffers(1, &m_colorbufferSSBO); m_colorbufferSSBO = 0; }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -173,6 +189,10 @@ void ComputePointCloudRenderer::cleanup() {
 void ComputePointCloudRenderer::beginFrame() {
     if (!m_initialized) return;
 
+    // Start a fresh per-frame list of cloud rgba buffers.  Each renderNode()
+    // call appends one; its slot index becomes that cloud's id.
+    m_frameRGBASSBOs.clear();
+
     // Framebuffer was already cleared at the end of the previous endFrame().
     // Just bind it – no stall, the compute dispatch can start immediately.
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, m_framebufferSSBO);
@@ -198,6 +218,23 @@ void ComputePointCloudRenderer::renderNode(
     if (!m_initialized || numBatches == 0) return;
     if (!batchSSBO || !xyz4bSSBO || !rgbaSSBO) return;
 
+    // Assign this cloud a stable per-frame id = its slot in the render order.
+    // The id is packed into the framebuffer payload so endFrame() can resolve
+    // each pixel's colour against the CORRECT cloud's rgba buffer.  Packed into
+    // 5 bits → at most kMaxComputeClouds clouds per frame.
+    uint32_t cloudID = static_cast<uint32_t>(m_frameRGBASSBOs.size());
+    if (cloudID >= kMaxComputeClouds) {
+        static bool warned = false;
+        if (!warned) {
+            std::cerr << "[ComputePC] WARNING: more than " << kMaxComputeClouds
+                      << " point clouds in one frame; extra clouds may show wrong "
+                         "colours. Widen the cloudID bit budget to fix.\n";
+            warned = true;
+        }
+        cloudID = kMaxComputeClouds - 1;
+    }
+    m_frameRGBASSBOs.push_back(rgbaSSBO);
+
     // Always re-bind the rasterize shader before setting uniforms.
     // main.cpp calls shader->set*(…) on the *scene* shader between beginFrame()
     // and renderNode().  Those methods use glGetUniformLocation on the scene
@@ -207,6 +244,7 @@ void ComputePointCloudRenderer::renderNode(
     // which is only set here and not anywhere else per-cloud.
     m_rasterShader->use();
     glUniform2i(m_locImageSize, m_width, m_height);
+    glUniform1ui(m_locCloudID, cloudID);
 
     // Bind packed-coordinate and batch SSBOs (matching shader bindings)
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 40, batchSSBO);
@@ -258,10 +296,22 @@ void ComputePointCloudRenderer::endFrame() {
     glBeginQuery(GL_TIME_ELAPSED, m_qLookup[m_qIdx]);
     m_colorLookupShader->use();
     glUniform2i(m_locColorLookupImageSize, m_width, m_height);
+    // Per-pixel resolved-colour output (read later by the resolve pass).
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 45, m_colorbufferSSBO);
     {
         int totalPixels = m_width * m_height;
         int groupsX = (totalPixels + 255) / 256;
-        glDispatchCompute(groupsX, 1, 1);
+        // One lookup dispatch per cloud, each bound to its own rgba buffer.  A
+        // pixel is only written by the pass whose id matches the cloud that won
+        // that pixel (cloudID stored in the payload), so colours never bleed
+        // between clouds.  The passes write disjoint pixels, so no barrier is
+        // needed between them — only the single barrier after the loop (below).
+        size_t n = m_frameRGBASSBOs.size();
+        for (size_t i = 0; i < n && i < kMaxComputeClouds; ++i) {
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 44, m_frameRGBASSBOs[i]);
+            glUniform1ui(m_locLookupCloudID, static_cast<GLuint>(i));
+            glDispatchCompute(groupsX, 1, 1);
+        }
     }
     glEndQuery(GL_TIME_ELAPSED);
 
@@ -303,6 +353,7 @@ void ComputePointCloudRenderer::endFrame() {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 42, 0);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 43, 0);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 44, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 45, 0);
 
     // Clear the framebuffer SSBO for next frame while the GPU heads into vsync
     // idle — the next beginFrame() can bind and dispatch without stalling.
@@ -330,12 +381,12 @@ void ComputePointCloudRenderer::endFrame() {
         m_accLookup  += double(lk)  * 1e-6;
         m_accPass2   += double(p2)  * 1e-6;
         if (++m_accCount >= 120) {
-            double n = m_accCount;
-            std::cout << "[PC GPU] rasterize=" << (m_accCompute/n)
-                      << " ms  lookup=" << (m_accLookup/n)
-                      << " ms  resolve=" << (m_accPass2/n)
-                      << " ms  total=" << ((m_accCompute + m_accLookup + m_accPass2)/n)
-                      << " ms  (avg/eye)\n";
+            //double n = m_accCount;
+            //std::cout << "[PC GPU] rasterize=" << (m_accCompute/n)
+            //          << " ms  lookup=" << (m_accLookup/n)
+            //          << " ms  resolve=" << (m_accPass2/n)
+            //          << " ms  total=" << ((m_accCompute + m_accLookup + m_accPass2)/n)
+            //          << " ms  (avg/eye)\n";
             m_accCompute = m_accClear = m_accLookup = m_accPass2 = 0.0;
             m_accCount = 0;
         }

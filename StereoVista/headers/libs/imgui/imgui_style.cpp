@@ -231,7 +231,6 @@ bool InitializeImGuiWithFonts(GLFWwindow *window, bool isDarkTheme) {
       ImFont *emojiFont = io.Fonts->AddFontFromFileTTF(
           emojiFontPath, 16.0f * scale, &emoji_config, emoji_ranges);
       if (emojiFont) {
-        std::cout << "Loaded emoji font: " << emojiFontPath << std::endl;
         break;
       }
     }
