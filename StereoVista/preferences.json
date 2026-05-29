@@ -2,7 +2,7 @@
     "camera": {
         "alwaysShowOrbitCenter": false,
         "autoConvergence": true,
-        "convergence": 39.0,
+        "convergence": 10.910804748535156,
         "convergenceCapMax": 39.0,
         "convergenceCapMin": 0.800000011920929,
         "convergenceDistanceFactor": 1.2999999523162842,
@@ -28,7 +28,7 @@
         "scrollMomentum": 0.12999999523162842,
         "separation": 0.09000000357627869,
         "showOrbitCenter": true,
-        "speedFactor": 5.0,
+        "speedFactor": 1.0,
         "useNewStereoMethod": true,
         "useSmoothScrolling": true,
         "zoomToCursor": true
@@ -178,13 +178,13 @@
         "radius": 0.28999999165534973
     },
     "startup": {
-        "loadScene": true,
+        "loadScene": false,
         "sceneLoadingBehavior": 0,
         "scenePath": "C:\\Users\\Benbrem\\Downloads\\DEMO\\Scenes\\POINT TEST\\POINT.scene"
     },
     "ui": {
         "darkTheme": true,
-        "enableSpawnAnimation": false,
+        "enableSpawnAnimation": true,
         "guiScaleFactor": 1.0,
         "show3DCursor": true,
         "showFPS": true
