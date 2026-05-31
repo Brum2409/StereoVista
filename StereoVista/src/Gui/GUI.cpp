@@ -1922,9 +1922,9 @@ void renderSettingsWindow() {
                          "values = stronger darkening");
         }
 
-        // ---- Schütz Phase 1: Eye-Dome Lighting ----
+        // ---- Eye-Dome Lighting ----
         ImGui::Spacing();
-        DrawSectionHeader("Eye-Dome Lighting (Schütz Phase 1)");
+        DrawSectionHeader("Eye-Dome Lighting");
 
         if (ImGui::Checkbox("Enable EDL", &preferences.edlSettings.enabled)) {
           settingsChanged = true;
@@ -1932,7 +1932,7 @@ void renderSettingsWindow() {
         ImGui::SameLine();
         DrawHelpMarker(
             "Eye-Dome Lighting adds depth cues to point clouds by darkening "
-            "depth discontinuities. Based on Schütz (Potree) Phase 1 "
+            "depth discontinuities."
             "rendering. "
             "Requires HDR to be enabled.");
 
@@ -1954,20 +1954,6 @@ void renderSettingsWindow() {
           DrawHelpMarker("Neighbourhood sampling radius in pixels. "
                          "Larger values detect wider depth transitions.");
         }
-
-        ImGui::Spacing();
-        DrawSectionHeader("Point Cloud Rendering (Schütz Phase 1)");
-
-        if (ImGui::SliderFloat("Point Base Size",
-                               &preferences.pointCloudBaseSize, 0.001f, 0.2f,
-                               "%.4f")) {
-          settingsChanged = true;
-        }
-        ImGui::SameLine();
-        DrawHelpMarker(
-            "World-space radius of each point splat in metres. "
-            "Smaller values = sharper, more detailed point clouds; "
-            "larger values = gaps filled in at the cost of over-filling.");
 
         ImGui::Spacing();
         DrawSectionHeader("Shadow Quality");
