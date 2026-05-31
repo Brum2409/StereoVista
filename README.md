@@ -113,7 +113,7 @@ StereoVista features a comprehensive ImGui-based interface with multiple windows
   * Camera parameters (FOV, near/far planes, movement speed)
   * Stereo settings (separation, convergence, rendering method)
   * Mouse and scroll behavior (sensitivity, smoothing, momentum)
-  * Radar configuration (position, scale, visibility)
+  * Radar configuration (position, size, zoom, visibility)
   * Lighting mode selection (Shadow Mapping vs. VCT)
 
 * **3D Cursor Settings**

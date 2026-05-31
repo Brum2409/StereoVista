@@ -38,6 +38,7 @@
 #include <portable-file-dialogs.h>
 
 // ---- Utility Libraries ----
+#include <cmath>
 #include <corecrt_math_defines.h>
 #include <fstream>
 #include <glm/gtx/component_wise.hpp>
@@ -1529,7 +1530,12 @@ void savePreferences() {
   j["radar"]["posX"] = preferences.radarPos.x;
   j["radar"]["posY"] = preferences.radarPos.y;
   j["radar"]["scale"] = preferences.radarScale;
+  j["radar"]["radius"] = preferences.radarRadius;
   j["radar"]["showScene"] = preferences.radarShowScene;
+  j["radar"]["autoFit"] = preferences.radarAutoFit;
+  j["radar"]["sliceEnabled"] = preferences.radarSliceEnabled;
+  j["radar"]["sliceOffset"] = preferences.radarSliceOffset;
+  j["radar"]["frustumSpread"] = preferences.radarFrustumSpread;
 
   // Camera settings
   j["camera"]["separation"] = preferences.separation;
@@ -1940,8 +1946,13 @@ void loadPreferences() {
       preferences.radarEnabled = j["radar"].value("enabled", false);
       preferences.radarPos.x = j["radar"].value("posX", 0.8f);
       preferences.radarPos.y = j["radar"].value("posY", -0.8f);
-      preferences.radarScale = j["radar"].value("scale", 0.2f);
+      preferences.radarScale = j["radar"].value("scale", 0.03f);
+      preferences.radarRadius = j["radar"].value("radius", 0.18f);
       preferences.radarShowScene = j["radar"].value("showScene", true);
+      preferences.radarAutoFit = j["radar"].value("autoFit", true);
+      preferences.radarSliceEnabled = j["radar"].value("sliceEnabled", true);
+      preferences.radarSliceOffset = j["radar"].value("sliceOffset", 1.0f);
+      preferences.radarFrustumSpread = j["radar"].value("frustumSpread", 0.12f);
     }
 
     // Camera settings
@@ -5287,7 +5298,7 @@ void renderPointClouds(Engine::Shader *shader, const glm::mat4 &view,
       }
 
       shader->setBool("isChunkOutline", true);
-      shader->setVec3("outlineColor", glm::vec3(0.0f, 1.0f, 0.0f));
+      shader->setVec4("outlineColor", glm::vec4(0.0f, 1.0f, 0.0f, 1.0f));
 
       glBindVertexArray(pointCloud.chunkOutlineVAO);
       glDrawArrays(
@@ -5413,18 +5424,59 @@ void DrawRadar(bool isStereoWindow, Camera camera, GLfloat focaldist,
                glm::mat4 leftprojection, glm::mat4 rightview,
                glm::mat4 rightprojection, Engine::Shader *shader,
                bool renderScene, float radarScale, glm::vec2 position) {
-  // construct view and projection matrices
-  glm::mat4 p(1.0f);
-  glm::mat4 v(1.0f);
-  v = glm::translate(v, glm::vec3(position, 0));
-  v = glm::rotate(v, -90.0f, glm::vec3(1.0f, 0, 0));
-  v = glm::rotate(v, 180.0f, glm::vec3(1.0f, 0.0f, 0.0f));
-  v = glm::scale(v, glm::vec3(radarScale));
-  v = v * view;
+  // ---- Radar coordinate spaces -------------------------------------------
+  // "content" space: the scene seen from straight above the camera, scaled by
+  //   radarScale.  +Y here is the direction the camera is currently looking.
+  // "scope" space: a screen-fixed unit circle of radius R used for the
+  //   background, range rings, heading marker and camera dot.
+  // Both share the same aspect-corrected projection so the scope stays round
+  // and lands in the same screen corner regardless of window aspect ratio.
+  const float TWO_PI = 6.28318530718f;
+  float aspect =
+      (windowHeight > 0) ? (float)windowWidth / (float)windowHeight : 1.0f;
+  float R = preferences.radarRadius;
 
-  // construct frustum in NDC and inv-project it
+  // Keep the whole scope on-screen regardless of the configured position.
+  // (x is divided by aspect on screen, and the heading marker pokes a little
+  // past the top of the ring.)
+  float halfX = R / aspect;
+  position.x = glm::clamp(position.x, -1.0f + halfX, 1.0f - halfX);
+  position.y = glm::clamp(position.y, -1.0f + R, 1.0f - R * 1.25f);
+
+  // Aspect-correct orthographic projection, offset to the radar position. The
+  // position offset is applied *after* the ortho so it is not squashed by the
+  // aspect correction.
+  glm::mat4 orthoMat =
+      glm::ortho(-aspect, aspect, -1.0f, 1.0f, -1000.0f, 1000.0f);
+  glm::mat4 radarProj =
+      glm::translate(glm::mat4(1.0f), glm::vec3(position, 0.0f)) * orthoMat;
+
+  // Content zoom (world units -> radar units).  Auto-fit frames the convergence
+  // plane at a fixed fraction of the scope radius so the green convergence line
+  // stays inside the radar no matter how far out the convergence is set.
+  const float CONV_FIT = 0.5f; // convergence sits at 50% of the scope radius
+  float effScale = radarScale;
+  if (preferences.radarAutoFit)
+    effScale = R * CONV_FIT / glm::max(focaldist, 0.001f);
+
+  // world -> camera eye space -> top-down -> scaled.  The +90 deg rotation
+  // about X (camera forward becomes +Y / up) replaces the previous broken
+  // rotations: glm::rotate expects radians, the old code passed raw degrees.
+  glm::mat4 contentView =
+      glm::rotate(glm::mat4(1.0f), glm::radians(90.0f),
+                  glm::vec3(1.0f, 0.0f, 0.0f)) *
+      glm::scale(glm::mat4(1.0f), glm::vec3(effScale)) * view;
+
+  // World-space height of the radar slice plane: a bit above the camera so the
+  // roof / ceiling is cut away and interiors are visible from above.  Camera
+  // world position is recovered from the view matrix so it always matches the
+  // matrix actually being rendered (e.g. during SpaceMouse navigation).
+  glm::vec3 radarCamPos = glm::vec3(glm::inverse(view)[3]);
+  float radarClipHeight = radarCamPos.y + preferences.radarSliceOffset;
+
+  // ---- Build the stereo frustum outline in world space -------------------
   glm::vec2 frust_ndc[6]{};
-  glm::vec4 frust_world[12]{}; // idx 0-5 left, idx 6-11 right
+  glm::vec4 frust_world[12]{}; // idx 0-5 left eye, idx 6-11 right eye
 
   glm::mat4 defaultView =
       glm::lookAt(glm::vec3(0.0f, 0.0f, 0.0f),  // eye at origin
@@ -5435,98 +5487,117 @@ void DrawRadar(bool isStereoWindow, Camera camera, GLfloat focaldist,
       projection * defaultView * glm::vec4(0, 0, focaldist, 1.0f);
   fd_ndc = divw(fd_ndc);
 
-  // define the line endpoints in ndc
-  frust_ndc[0].x = -1.0; // near left
-  frust_ndc[0].y = -1.0;
-  frust_ndc[1].x = 1.0; // near right
-  frust_ndc[1].y = -1.0;
-  frust_ndc[2].x = -1.0; // far left
-  frust_ndc[2].y = 1.0;
-  frust_ndc[3].x = 1.0; // far right
-  frust_ndc[3].y = 1.0;
-  frust_ndc[4].x = -1.0; // focaldist left
-  frust_ndc[4].y = fd_ndc.z;
-  frust_ndc[5].x = 1.0; // focaldist right
-  frust_ndc[5].y = fd_ndc.z;
+  // Cap the visualized far plane to a few times the convergence distance.
+  // Inverse-projecting the true far plane (NDC z ~ 1, e.g. 1000 units) is
+  // numerically ill-conditioned, so once the disparity is exaggerated the far
+  // corners jitter wildly frame to frame. A capped far is well within the
+  // scope's precision and is off-scope (clipped) anyway.
+  float radarFarDist =
+      glm::min(preferences.farPlane, glm::max(focaldist, 0.1f) * 2.5f);
+  glm::vec4 far_ndc =
+      divw(projection * defaultView * glm::vec4(0, 0, radarFarDist, 1.0f));
 
-  // transform the points back to world space
+  frust_ndc[0] = glm::vec2(-1.0f, -1.0f);      // near left
+  frust_ndc[1] = glm::vec2(1.0f, -1.0f);       // near right
+  frust_ndc[2] = glm::vec2(-1.0f, far_ndc.z);  // far left
+  frust_ndc[3] = glm::vec2(1.0f, far_ndc.z);   // far right
+  frust_ndc[4] = glm::vec2(-1.0f, fd_ndc.z);   // focal/convergence left
+  frust_ndc[5] = glm::vec2(1.0f, fd_ndc.z);    // focal/convergence right
+
   glm::mat4 inv_left = glm::inverse(leftprojection * leftview);
   glm::mat4 inv_right = glm::inverse(rightprojection * rightview);
-  for (int i = 0; i < 6; i++) {
-    glm::vec4 p(frust_ndc[i].x, 0, frust_ndc[i].y, 1.0f);
-    frust_world[i] = inv_left * p;
-    frust_world[i] = divw(frust_world[i]);
-    frust_world[i + 6] = inv_right * p;
-    frust_world[i + 6] = divw(frust_world[i + 6]);
+  for (int k = 0; k < 6; k++) {
+    glm::vec4 q(frust_ndc[k].x, 0.0f, frust_ndc[k].y, 1.0f);
+    frust_world[k] = divw(inv_left * q);
+    frust_world[k + 6] = divw(inv_right * q);
   }
 
-  // construct frustum lines
+  // At a comfortable eye separation the two frustums overlap on the radar.
+  // Exaggerate the baseline by scaling each left/right corner pair apart from
+  // its midpoint (the mono frustum). This keeps the convergence crossing exact
+  // (left == right there, so it is unaffected) while spreading the near and far
+  // ends so the two eyes are clearly distinguishable.  The factor is chosen so
+  // the near-plane gap is radarFrustumSpread * scope-radius regardless of zoom.
+  if (preferences.radarFrustumSpread > 0.0f) {
+    float eyeSepRadar = preferences.separation * effScale;
+    if (eyeSepRadar > 1e-6f) {
+      float spreadF =
+          glm::max(1.0f, preferences.radarFrustumSpread * R / eyeSepRadar);
+      for (int k = 0; k < 6; k++) {
+        glm::vec4 mid = 0.5f * (frust_world[k] + frust_world[k + 6]);
+        frust_world[k] = mid + (frust_world[k] - mid) * spreadF;
+        frust_world[k + 6] = mid + (frust_world[k + 6] - mid) * spreadF;
+      }
+    }
+  }
+
+  // Pack each eye as 4 outline edges (8 verts) followed by the
+  // focal/convergence line (2 verts).  Left eye -> verts [0,10), right -> [10,20).
   const int numPoints = 20;
   GLfloat buf[numPoints * 3];
-  int i = 0;
-  buf[i++] = frust_world[0].x; // near left --> far left
-  buf[i++] = frust_world[0].y;
-  buf[i++] = frust_world[0].z;
-  buf[i++] = frust_world[2].x;
-  buf[i++] = frust_world[2].y;
-  buf[i++] = frust_world[2].z;
-  buf[i++] = frust_world[1].x; // near right --> far right
-  buf[i++] = frust_world[1].y;
-  buf[i++] = frust_world[1].z;
-  buf[i++] = frust_world[3].x;
-  buf[i++] = frust_world[3].y;
-  buf[i++] = frust_world[3].z;
-  buf[i++] = frust_world[0].x; // near left --> near right
-  buf[i++] = frust_world[0].y;
-  buf[i++] = frust_world[0].z;
-  buf[i++] = frust_world[1].x;
-  buf[i++] = frust_world[1].y;
-  buf[i++] = frust_world[1].z;
-  buf[i++] = frust_world[2].x; // far left --> far right
-  buf[i++] = frust_world[2].y;
-  buf[i++] = frust_world[2].z;
-  buf[i++] = frust_world[3].x;
-  buf[i++] = frust_world[3].y;
-  buf[i++] = frust_world[3].z;
-  buf[i++] = frust_world[4].x; // focal left --> focal right
-  buf[i++] = frust_world[4].y;
-  buf[i++] = frust_world[4].z;
-  buf[i++] = frust_world[5].x;
-  buf[i++] = frust_world[5].y;
-  buf[i++] = frust_world[5].z;
+  auto packEye = [](GLfloat *dst, const glm::vec4 *w) {
+    int n = 0;
+    auto put = [&](int idx) {
+      dst[n++] = w[idx].x;
+      dst[n++] = w[idx].y;
+      dst[n++] = w[idx].z;
+    };
+    put(0); put(2); // near left  -> far left
+    put(1); put(3); // near right -> far right
+    put(0); put(1); // near plane
+    put(2); put(3); // far plane
+    put(4); put(5); // focal / convergence line
+  };
+  packEye(buf, frust_world);          // left eye
+  packEye(buf + 30, frust_world + 6); // right eye
 
-  buf[i++] = frust_world[6].x; // near left --> far left
-  buf[i++] = frust_world[6].y;
-  buf[i++] = frust_world[6].z;
-  buf[i++] = frust_world[8].x;
-  buf[i++] = frust_world[8].y;
-  buf[i++] = frust_world[8].z;
-  buf[i++] = frust_world[7].x; // near right --> far right
-  buf[i++] = frust_world[7].y;
-  buf[i++] = frust_world[7].z;
-  buf[i++] = frust_world[9].x;
-  buf[i++] = frust_world[9].y;
-  buf[i++] = frust_world[9].z;
-  buf[i++] = frust_world[6].x; // near left --> near right
-  buf[i++] = frust_world[6].y;
-  buf[i++] = frust_world[6].z;
-  buf[i++] = frust_world[7].x;
-  buf[i++] = frust_world[7].y;
-  buf[i++] = frust_world[7].z;
-  buf[i++] = frust_world[8].x; // far left --> far right
-  buf[i++] = frust_world[8].y;
-  buf[i++] = frust_world[8].z;
-  buf[i++] = frust_world[9].x;
-  buf[i++] = frust_world[9].y;
-  buf[i++] = frust_world[9].z;
-  buf[i++] = frust_world[10].x; // focal left --> focal right
-  buf[i++] = frust_world[10].y;
-  buf[i++] = frust_world[10].z;
-  buf[i++] = frust_world[11].x;
-  buf[i++] = frust_world[11].y;
-  buf[i++] = frust_world[11].z;
+  // ---- Build screen-fixed scope geometry ---------------------------------
+  const int SEGS = 72;
+  std::vector<glm::vec3> disc;
+  disc.reserve(SEGS + 2);
+  disc.push_back(glm::vec3(0.0f));
+  for (int s = 0; s <= SEGS; ++s) {
+    float a = (float)s / SEGS * TWO_PI;
+    disc.push_back(glm::vec3(R * std::cos(a), R * std::sin(a), 0.0f));
+  }
+  auto makeRing = [&](float r) {
+    std::vector<glm::vec3> ring;
+    ring.reserve(SEGS);
+    for (int s = 0; s < SEGS; ++s) {
+      float a = (float)s / SEGS * TWO_PI;
+      ring.push_back(glm::vec3(r * std::cos(a), r * std::sin(a), 0.0f));
+    }
+    return ring;
+  };
+  std::vector<glm::vec3> ringOuter = makeRing(R);
+  std::vector<glm::vec3> ringMid = makeRing(R * 0.5f);
+  std::vector<glm::vec3> spokes = {
+      glm::vec3(0.0f, -R, 0.0f), glm::vec3(0.0f, R, 0.0f),
+      glm::vec3(-R, 0.0f, 0.0f), glm::vec3(R, 0.0f, 0.0f)};
+  float hb = R * 0.10f, ht = R * 0.16f, hy = R + R * 0.03f;
+  std::vector<glm::vec3> heading = {glm::vec3(-hb, hy, 0.0f),
+                                    glm::vec3(hb, hy, 0.0f),
+                                    glm::vec3(0.0f, hy + ht, 0.0f)};
+  std::vector<glm::vec3> centerDot;
+  centerDot.push_back(glm::vec3(0.0f));
+  for (int s = 0; s <= 14; ++s) {
+    float a = (float)s / 14 * TWO_PI;
+    float cr = R * 0.045f;
+    centerDot.push_back(glm::vec3(cr * std::cos(a), cr * std::sin(a), 0.0f));
+  }
 
-  // render the lines
+  // ---- Colors ------------------------------------------------------------
+  glm::vec4 bgColor(0.03f, 0.05f, 0.08f, 0.66f);      // translucent dark scope
+  glm::vec4 ringColor(0.45f, 0.85f, 1.00f, 0.85f);    // outer border
+  glm::vec4 ringMidColor(0.35f, 0.55f, 0.70f, 0.30f); // faint range ring
+  glm::vec4 spokeColor(0.35f, 0.55f, 0.70f, 0.25f);   // faint crosshair
+  glm::vec4 leftEyeColor(0.30f, 0.70f, 1.00f, 0.95f);  // left frustum
+  glm::vec4 rightEyeColor(1.00f, 0.55f, 0.30f, 0.95f); // right frustum
+  glm::vec4 focalColor(0.35f, 1.00f, 0.45f, 0.95f);    // convergence (green)
+  glm::vec4 headingColor(0.45f, 0.85f, 1.00f, 0.95f);
+  glm::vec4 centerColor(1.00f, 1.00f, 1.00f, 0.95f);
+
+  // ---- GL state ----------------------------------------------------------
   glUseProgram(0);
   glBindVertexArray(0);
   glActiveTexture(GL_TEXTURE0);
@@ -5534,81 +5605,167 @@ void DrawRadar(bool isStereoWindow, Camera camera, GLfloat focaldist,
 
   glViewport(0, 0, windowWidth, windowHeight);
   glDisable(GL_DEPTH_TEST);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-  GLuint vao;
-  GLuint vbo;
+  GLuint vao, vbo;
   glGenVertexArrays(1, &vao);
   glGenBuffers(1, &vbo);
-
   glBindVertexArray(vao);
   glBindBuffer(GL_ARRAY_BUFFER, vbo);
-  glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * 3 * numPoints, buf,
-               GL_STATIC_DRAW);
   glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat),
                         (void *)0);
-
   glEnableVertexAttribArray(0);
-  glBindBuffer(GL_ARRAY_BUFFER, 0);
-  glBindVertexArray(0);
 
   shader->use();
-  shader->setMat4("projection", p);
-  shader->setMat4("view", v);
-  shader->setMat4("model", glm::mat4(1));
-
-  shader->setBool("isChunkOutline", true);
   shader->setBool("isPointCloud", false);
+  shader->setBool("isChunkOutline", true);
+  shader->setMat4("model", glm::mat4(1.0f));
 
-  glLineWidth(1.0f);
+  auto uploadVec = [&](const std::vector<glm::vec3> &v) {
+    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(v.size() * sizeof(glm::vec3)),
+                 v.data(), GL_DYNAMIC_DRAW);
+  };
 
-  glm::vec4 leftColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
-  glm::vec4 rightColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
-
-  glBindVertexArray(vao);
+  std::vector<GLenum> targets;
   if (isStereoWindow) {
-    glDrawBuffer(GL_BACK_LEFT);
-    shader->setVec4("outlineColor", leftColor);
-    glDrawArrays(GL_LINES, 0, 10);
-    shader->setVec4("outlineColor", rightColor);
-    glDrawArrays(GL_LINES, 10, 10);
-
-    glDrawBuffer(GL_BACK_RIGHT);
-    shader->setVec4("outlineColor", leftColor);
-    glDrawArrays(GL_LINES, 0, 10);
-    shader->setVec4("outlineColor", rightColor);
-    glDrawArrays(GL_LINES, 10, 10);
+    targets.push_back(GL_BACK_LEFT);
+    targets.push_back(GL_BACK_RIGHT);
   } else {
-    glDrawBuffer(GL_BACK);
-    shader->setVec4("outlineColor", leftColor);
-    glDrawArrays(GL_LINES, 0, 10);
-    shader->setVec4("outlineColor", rightColor);
-    glDrawArrays(GL_LINES, 10, 10);
+    targets.push_back(GL_BACK);
   }
-  glBindVertexArray(0);
 
-  shader->setBool("isChunkOutline", false);
+  // The scope is clipped to a circle using the stencil buffer.
+  glDisable(GL_SCISSOR_TEST); // ensure the clear covers the whole buffer
+  glEnable(GL_STENCIL_TEST);
+  glStencilMask(0xFF);
+  glClearStencil(0);
+  glClear(GL_STENCIL_BUFFER_BIT);
 
-  // render the model seen from above
-  if (renderScene) {
-    shader->use();
-    shader->setMat4("projection", p);
-    shader->setMat4("view", v);
-    shader->setMat4("model", glm::mat4(1));
+  for (GLenum target : targets) {
+    glDrawBuffer(target);
 
-    if (isStereoWindow) {
-      glDrawBuffer(GL_BACK_LEFT);
-      renderModels(shader, p * v);
-      glDrawBuffer(GL_BACK_RIGHT);
-      renderModels(shader, p * v);
-    } else {
-      glDrawBuffer(GL_BACK);
-      renderModels(shader, p * v);
+    // (1) translucent background disc; also writes the circular stencil mask.
+    shader->setMat4("projection", radarProj);
+    shader->setMat4("view", glm::mat4(1.0f));
+    glStencilFunc(GL_ALWAYS, 1, 0xFF);
+    glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+    glStencilMask(0xFF);
+    uploadVec(disc);
+    shader->setVec4("outlineColor", bgColor);
+    glDrawArrays(GL_TRIANGLE_FAN, 0, (GLsizei)disc.size());
+
+    // From here on, draw only inside the circle and leave the mask untouched.
+    glStencilFunc(GL_EQUAL, 1, 0xFF);
+    glStencilMask(0x00);
+
+    // (2) the scene from above (clipped to the scope).
+    if (renderScene) {
+      shader->setMat4("projection", radarProj);
+      shader->setMat4("view", contentView);
+      shader->setMat4("model", glm::mat4(1.0f));
+      shader->setBool("isChunkOutline", false);
+
+      // Slice the scene horizontally just above the camera so we see the
+      // interior from above instead of the roof.
+      if (preferences.radarSliceEnabled) {
+        shader->setBool("radarClipEnabled", true);
+        shader->setFloat("radarClipHeight", radarClipHeight);
+        glEnable(GL_CLIP_DISTANCE0);
+      }
+
+      // Depth-test the radar scene so the top-down view shows the *topmost*
+      // surfaces.  Without it (painter's order) the surfaces drawn last win,
+      // which are typically undersides, making the scene look like it is
+      // viewed from below.  The radar ortho looks straight down, so higher-up
+      // geometry maps nearer and GL_LESS keeps it.  Clear depth first so the
+      // radar only occludes against itself, not the main frame.  Culling is
+      // disabled so the highest surface always wins regardless of winding.
+      glEnable(GL_DEPTH_TEST);
+      glDepthFunc(GL_LESS);
+      glDepthMask(GL_TRUE);
+      glClear(GL_DEPTH_BUFFER_BIT);
+      glDisable(GL_CULL_FACE);
+
+      // The shadow map is built from the full scene (roof included), so a
+      // sliced interior would stay in the roof's shadow and render black.
+      // Disable shadows for the radar pass so the floor plan is fully lit.
+      bool savedShadows = enableShadows;
+      enableShadows = false;
+      renderModels(shader, radarProj * contentView, /*frustumCulling=*/false);
+      enableShadows = savedShadows;
+
+      glEnable(GL_CULL_FACE);
+      glDisable(GL_DEPTH_TEST);
+      glDisable(GL_CLIP_DISTANCE0);
+
+      // renderModels rebinds buffers and may switch programs - restore ours.
+      shader->use();
+      shader->setBool("radarClipEnabled", false);
+      shader->setBool("isPointCloud", false);
+      shader->setBool("isChunkOutline", true);
+      shader->setMat4("model", glm::mat4(1.0f));
+      glBindVertexArray(vao);
+      glBindBuffer(GL_ARRAY_BUFFER, vbo);
     }
+
+    // (3) faint range ring + crosshair, on top of the scene (screen-fixed).
+    shader->setMat4("projection", radarProj);
+    shader->setMat4("view", glm::mat4(1.0f));
+    glLineWidth(1.0f);
+    uploadVec(ringMid);
+    shader->setVec4("outlineColor", ringMidColor);
+    glDrawArrays(GL_LINE_LOOP, 0, (GLsizei)ringMid.size());
+    uploadVec(spokes);
+    shader->setVec4("outlineColor", spokeColor);
+    glDrawArrays(GL_LINES, 0, (GLsizei)spokes.size());
+
+    // (4) stereo frustum: per-eye outlines + green convergence lines.
+    shader->setMat4("view", contentView);
+    glLineWidth(1.5f);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(buf), buf, GL_DYNAMIC_DRAW);
+    shader->setVec4("outlineColor", leftEyeColor);
+    glDrawArrays(GL_LINES, 0, 8);
+    shader->setVec4("outlineColor", rightEyeColor);
+    glDrawArrays(GL_LINES, 10, 8);
+    shader->setVec4("outlineColor", focalColor);
+    glDrawArrays(GL_LINES, 8, 2);
+    glDrawArrays(GL_LINES, 18, 2);
+
+    // (5) on-top overlays (not circle-clipped): border, heading, camera dot.
+    glDisable(GL_STENCIL_TEST);
+    shader->setMat4("projection", radarProj);
+    shader->setMat4("view", glm::mat4(1.0f));
+
+    glLineWidth(2.0f);
+    uploadVec(ringOuter);
+    shader->setVec4("outlineColor", ringColor);
+    glDrawArrays(GL_LINE_LOOP, 0, (GLsizei)ringOuter.size());
+
+    uploadVec(heading);
+    shader->setVec4("outlineColor", headingColor);
+    glDrawArrays(GL_TRIANGLE_FAN, 0, (GLsizei)heading.size());
+
+    uploadVec(centerDot);
+    shader->setVec4("outlineColor", centerColor);
+    glDrawArrays(GL_TRIANGLE_FAN, 0, (GLsizei)centerDot.size());
+
+    glEnable(GL_STENCIL_TEST); // restore for the next target
   }
 
+  // ---- restore GL state --------------------------------------------------
+  shader->setBool("isChunkOutline", false);
+  glLineWidth(1.0f);
+  glDisable(GL_CLIP_DISTANCE0);
+  glDisable(GL_STENCIL_TEST);
+  glStencilMask(0xFF);
+  glStencilFunc(GL_ALWAYS, 0, 0xFF);
+  glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+  glDisable(GL_BLEND);
   glEnable(GL_DEPTH_TEST);
 
-  // Cleanup temporary VAO/VBO
+  glBindVertexArray(0);
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
   glDeleteVertexArrays(1, &vao);
   glDeleteBuffers(1, &vbo);
 }

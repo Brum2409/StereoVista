@@ -2,7 +2,7 @@
     "camera": {
         "alwaysShowOrbitCenter": false,
         "autoConvergence": true,
-        "convergence": 10.910804748535156,
+        "convergence": 2.976402759552002,
         "convergenceCapMax": 39.0,
         "convergenceCapMin": 0.800000011920929,
         "convergenceDistanceFactor": 1.2999999523162842,
@@ -26,7 +26,7 @@
         "orbitFollowsCursor": false,
         "scrollDeceleration": 2.0,
         "scrollMomentum": 0.12999999523162842,
-        "separation": 0.09000000357627869,
+        "separation": 0.10999999940395355,
         "showOrbitCenter": true,
         "speedFactor": 1.0,
         "useNewStereoMethod": true,
@@ -37,7 +37,7 @@
         "currentPreset": "Sphere"
     },
     "edl": {
-        "enabled": false,
+        "enabled": true,
         "radius": 0.8999999761581421,
         "strength": 1.840000033378601
     },
@@ -82,25 +82,30 @@
         "baseSize": 0.0010000000474974513
     },
     "radar": {
-        "enabled": false,
-        "posX": 0.49000000953674316,
-        "posY": -1.0,
+        "autoFit": true,
+        "enabled": true,
+        "frustumSpread": 0.27000001072883606,
+        "posX": 0.6499999761581421,
+        "posY": 0.3700000047683716,
+        "radius": 0.3499999940395355,
         "scale": 0.03999999910593033,
-        "showScene": true
+        "showScene": true,
+        "sliceEnabled": true,
+        "sliceOffset": 3.359999895095825
     },
     "radiance": {
         "bvhDebugMaxDepth": 8,
         "bvhDebugRenderMode": 0,
         "ddgiDepthSharpness": 50,
-        "ddgiGIIntensity": 0.17000000178813934,
+        "ddgiGIIntensity": 0.0989999994635582,
         "ddgiHysteresis": 0.9900000095367432,
-        "ddgiNormalBias": 0.28999999165534973,
-        "ddgiProbeCountX": 48,
-        "ddgiProbeCountY": 48,
-        "ddgiProbeCountZ": 48,
-        "ddgiRaysPerProbe": 38,
+        "ddgiNormalBias": 1.0,
+        "ddgiProbeCountX": 24,
+        "ddgiProbeCountY": 24,
+        "ddgiProbeCountZ": 24,
+        "ddgiRaysPerProbe": 24,
         "ddgiShowProbes": false,
-        "ddgiVisibilityStrength": 0.30000001192092896,
+        "ddgiVisibilityStrength": 0.800000011920929,
         "emissiveIntensity": 1.2899999618530273,
         "enableBVH": true,
         "enableDDGI": true,
@@ -184,7 +189,7 @@
     },
     "ui": {
         "darkTheme": true,
-        "enableSpawnAnimation": true,
+        "enableSpawnAnimation": false,
         "guiScaleFactor": 1.0,
         "show3DCursor": true,
         "showFPS": true

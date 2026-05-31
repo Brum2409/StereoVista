@@ -191,6 +191,7 @@ uniform bool isPointCloud;
 uniform bool selectionMode;
 uniform bool isSelected;
 uniform bool isChunkOutline;
+uniform vec4 outlineColor;
 uniform int selectedMeshIndex;
 uniform bool isMeshSelected;
 
@@ -1840,19 +1841,14 @@ void main() {
     }
     
     if (isChunkOutline) {
-        vec3 outlineColor = vec3(1.0, 1.0, 0.0);
-        
-        // For HDR rendering, output raw color
-        if (hdrSettings.enabled) {
-            FragColor = vec4(outlineColor, 1.0);
-        } else {
-            FragColor = vec4(outlineColor, 1.0);
-        }
-        
-        // Extract bright areas for bloom
-        float brightness = calculateLuminance(outlineColor);
+        // Flat-colored line / overlay pass (chunk outlines, radar). Color and
+        // alpha are supplied by the outlineColor uniform set by the caller.
+        FragColor = outlineColor;
+
+        // Extract bright areas for bloom from the RGB only
+        float brightness = calculateLuminance(outlineColor.rgb);
         if (brightness > hdrSettings.bloomThreshold && hdrSettings.enableBloom) {
-            BrightColor = vec4(outlineColor, 1.0);
+            BrightColor = vec4(outlineColor.rgb, 1.0);
         } else {
             BrightColor = vec4(0.0, 0.0, 0.0, 1.0);
         }

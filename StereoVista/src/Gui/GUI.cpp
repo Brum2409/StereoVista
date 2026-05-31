@@ -2997,12 +2997,43 @@ void renderSettingsWindow() {
         DrawHelpMarker(
             "Horizontal and vertical position of the radar (-1 to 1)");
 
-        if (ImGui::SliderFloat("Scale", &preferences.radarScale, 0.001f, 0.5f,
-                               "%.3f")) {
+        if (ImGui::SliderFloat("Size", &preferences.radarRadius, 0.05f, 0.5f,
+                               "%.2f")) {
           settingsChanged = true;
         }
         ImGui::SameLine();
-        DrawHelpMarker("Size of the radar display");
+        DrawHelpMarker("On-screen radius of the radar scope");
+
+        if (ImGui::Checkbox("Auto-fit to Convergence",
+                            &preferences.radarAutoFit)) {
+          settingsChanged = true;
+        }
+        ImGui::SameLine();
+        DrawHelpMarker(
+            "Automatically scale the radar so the convergence plane (green "
+            "line) always sits inside the scope. Turn off for manual zoom.");
+
+        if (!preferences.radarAutoFit) {
+          if (ImGui::SliderFloat("Zoom", &preferences.radarScale, 0.001f, 0.5f,
+                                 "%.3f")) {
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker(
+              "How much of the scene fits inside the scope (world units to "
+              "radar units). Lower zooms out to show more of the scene.");
+        }
+
+        if (ImGui::SliderFloat("Frustum Separation",
+                               &preferences.radarFrustumSpread, 0.0f, 0.4f,
+                               "%.2f")) {
+          settingsChanged = true;
+        }
+        ImGui::SameLine();
+        DrawHelpMarker(
+            "Exaggerate the gap between the left/right eye frustums so they "
+            "are distinguishable at comfortable separations. The convergence "
+            "crossing stays accurate. 0 = true-to-life.");
 
         if (ImGui::Checkbox("Show Scene in Radar",
                             &preferences.radarShowScene)) {
@@ -3010,6 +3041,28 @@ void renderSettingsWindow() {
         }
         ImGui::SameLine();
         DrawHelpMarker("Show the scene models in the radar view");
+
+        if (preferences.radarShowScene) {
+          if (ImGui::Checkbox("Slice Scene (Top-Down)",
+                              &preferences.radarSliceEnabled)) {
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker(
+              "Cut away geometry above the camera so building interiors are "
+              "visible from above instead of just the roof.");
+
+          if (preferences.radarSliceEnabled) {
+            if (ImGui::SliderFloat("Slice Height", &preferences.radarSliceOffset,
+                                   -2.0f, 10.0f, "%.2f")) {
+              settingsChanged = true;
+            }
+            ImGui::SameLine();
+            DrawHelpMarker(
+                "Height of the slice plane above the camera (world units). "
+                "Lower values cut closer to the floor.");
+          }
+        }
         ImGui::Unindent();
       }
 

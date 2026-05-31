@@ -29,6 +29,13 @@ const int LIGHTING_RADIANCE = 2;
 uniform bool isPointCloud;
 uniform int currentMeshIndex;
 
+// Radar top-down slice clip plane (world space). When enabled, geometry above
+// radarClipHeight (world Y) is clipped so building interiors are visible from
+// above instead of just the roof. Only takes effect while GL_CLIP_DISTANCE0
+// is enabled (the radar scene pass); ignored otherwise.
+uniform bool radarClipEnabled;
+uniform float radarClipHeight;
+
 void main() {
     // Normal matrix from model
     mat3 normalMatrix = transpose(inverse(mat3(model)));
@@ -53,4 +60,8 @@ void main() {
     
     // Clip-space position
     gl_Position = projection * view * vec4(vs_out.FragPos, 1.0);
+
+    // Radar slice clip plane (no effect unless GL_CLIP_DISTANCE0 is enabled)
+    gl_ClipDistance[0] =
+        radarClipEnabled ? (radarClipHeight - vs_out.FragPos.y) : 1.0;
 }

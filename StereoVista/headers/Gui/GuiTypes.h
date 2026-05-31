@@ -240,8 +240,13 @@ struct ApplicationPreferences {
 
   bool radarEnabled = false;
   glm::vec2 radarPos = glm::vec2(0.8f, -0.8f);
-  float radarScale = 0.03f;
+  float radarScale = 0.03f;   // manual zoom: world units -> radar units
+  float radarRadius = 0.18f;  // on-screen radius of the radar scope (NDC)
   bool radarShowScene = true;
+  bool radarAutoFit = true;   // auto-scale so the convergence plane fits the scope
+  bool radarSliceEnabled = true; // clip geometry above the camera (top-down slice)
+  float radarSliceOffset = 1.0f; // slice height above the camera (world units)
+  float radarFrustumSpread = 0.12f; // exaggerate eye baseline (0 = true-to-life)
 
   bool showZeroPlane = false;
 

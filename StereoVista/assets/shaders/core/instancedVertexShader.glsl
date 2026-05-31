@@ -62,4 +62,8 @@ void main() {
 
     // Clip-space position
     gl_Position = projection * view * vec4(vs_out.FragPos, 1.0);
+
+    // Brush instances are never sliced by the radar clip plane; keep them when
+    // GL_CLIP_DISTANCE0 is enabled during the radar scene pass.
+    gl_ClipDistance[0] = 1.0;
 }

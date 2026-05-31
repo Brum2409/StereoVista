@@ -203,6 +203,7 @@ uniform bool isPointCloud;
 uniform bool selectionMode;
 uniform bool isSelected;
 uniform bool isChunkOutline;
+uniform vec4 outlineColor;
 uniform int selectedMeshIndex;
 uniform bool isMeshSelected;
 
@@ -1088,7 +1089,8 @@ vec3 CalcDirLight(Sun dirLight, vec3 normal, vec3 viewDir, vec3 diffuseTexColor,
     
     // Energy-conserving lighting calculation with AO
     float aoFactor = getAmbientOcclusion(fs_in.TexCoords);
-    vec3 ambient = dirLight.color * diffuseTexColor * 0.05 * aoFactor; // Apply AO to ambient
+    // No constant ambient when DDGI provides the indirect fill (keeps shadows black).
+    vec3 ambient = enableDDGI ? vec3(0.0) : dirLight.color * diffuseTexColor * 0.05 * aoFactor;
     vec3 diffuse = dirLight.color * NdotL * diffuseTexColor * (1.0 - fresnel); // Diffuse reduced by Fresnel
     vec3 specular = dirLight.color * specularPower * fresnel;
     
@@ -1128,7 +1130,8 @@ vec3 CalcPointLight(PointLight light, int lightIndex, vec3 normal, vec3 fragPos,
     
     // Energy-conserving point light calculation with AO
     float aoFactor = getAmbientOcclusion(fs_in.TexCoords);
-    vec3 ambient = light.color * diffuseTexColor * 0.02 * aoFactor; // Apply AO to ambient
+    // No constant ambient when DDGI provides the indirect fill (keeps shadows black).
+    vec3 ambient = enableDDGI ? vec3(0.0) : light.color * diffuseTexColor * 0.02 * aoFactor;
     vec3 diffuse = light.color * NdotL * diffuseTexColor * (1.0 - fresnel);
     vec3 specular = light.color * specularPower * fresnel;
     
@@ -1172,7 +1175,8 @@ vec3 CalcSpotLight(SpotLight light, int lightIndex, vec3 normal, vec3 fragPos, v
     
     // Energy-conserving spot light calculation with AO
     float aoFactor = getAmbientOcclusion(fs_in.TexCoords);
-    vec3 ambient = light.color * diffuseTexColor * 0.02 * aoFactor; // Apply AO to ambient
+    // No constant ambient when DDGI provides the indirect fill (keeps shadows black).
+    vec3 ambient = enableDDGI ? vec3(0.0) : light.color * diffuseTexColor * 0.02 * aoFactor;
     vec3 diffuse = light.color * NdotL * diffuseTexColor * (1.0 - fresnel);
     vec3 specular = light.color * specularPower * fresnel;
     
@@ -1638,19 +1642,14 @@ void main() {
     }
     
     if (isChunkOutline) {
-        vec3 outlineColor = vec3(1.0, 1.0, 0.0);
-        
-        // For HDR rendering, output raw color
-        if (hdrSettings.enabled) {
-            FragColor = vec4(outlineColor, 1.0);
-        } else {
-            FragColor = vec4(outlineColor, 1.0);
-        }
-        
-        // Extract bright areas for bloom
-        float brightness = calculateLuminance(outlineColor);
+        // Flat-colored line / overlay pass (chunk outlines, radar). Color and
+        // alpha are supplied by the outlineColor uniform set by the caller.
+        FragColor = outlineColor;
+
+        // Extract bright areas for bloom from the RGB only
+        float brightness = calculateLuminance(outlineColor.rgb);
         if (brightness > hdrSettings.bloomThreshold && hdrSettings.enableBloom) {
-            BrightColor = vec4(outlineColor, 1.0);
+            BrightColor = vec4(outlineColor.rgb, 1.0);
         } else {
             BrightColor = vec4(0.0, 0.0, 0.0, 1.0);
         }
@@ -1693,8 +1692,11 @@ void main() {
         // Initialize HDR color accumulation for shadow mapping
         hdrColor = vec3(0.0);
 
-        // Add ambient lighting component for PBR
-        if (materialSettings.enablePBR) {
+        // Constant ambient fill -- ONLY when DDGI is off. With DDGI enabled the
+        // indirect probe bounce (added at the end of this block) is the sole fill
+        // light, so shadowed areas go properly black and are lit only by bounced
+        // GI. Without DDGI we keep a tiny ambient so the scene isn't pitch black.
+        if (materialSettings.enablePBR && !enableDDGI) {
             // Simple ambient for PBR - would be replaced by IBL in full implementation
             vec3 ambient = vec3(0.03) * matProps.albedo;
             float ao = getAmbientOcclusion(fs_in.TexCoords);
@@ -1718,8 +1720,10 @@ void main() {
                     float clampedShininess = max(material.shininess, 4.0);
                     float spec = pow(max(dot(normal, halfwayDir), 0.0), clampedShininess);
 
-                    // Energy-conserving shadow mapping lighting
-                    vec3 ambient = sun.color * diffuseColor * 0.05;
+                    // Energy-conserving shadow mapping lighting. Drop the constant
+                    // ambient when DDGI is active so the shadow goes fully black and
+                    // is filled only by the indirect probe bounce below.
+                    vec3 ambient = enableDDGI ? vec3(0.0) : sun.color * diffuseColor * 0.05;
                     vec3 diffuse = sun.color * diff * diffuseColor;
 
                     // Scale specular contribution based on shininess
