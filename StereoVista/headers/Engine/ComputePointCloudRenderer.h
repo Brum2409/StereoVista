@@ -52,6 +52,8 @@ public:
     //   mvp              – proj * view * model  (projection + frustum culling)
     //   modelView        – view * model         (precision-level sphere projection)
     //   proj             – projection matrix    (precision-level sphere projection)
+    //   splatMaxRadius   – 0 = single-pixel rasterize (off); >0 = max adaptive
+    //                      round-splat radius in pixels (fills close-up/sparse gaps)
     void renderNode(GLuint batchSSBO,
                     GLuint xyz12bSSBO,
                     GLuint xyz8bSSBO,
@@ -61,7 +63,8 @@ public:
                     int      pointsPerThread,
                     const glm::mat4& mvp,
                     const glm::mat4& modelView,
-                    const glm::mat4& proj);
+                    const glm::mat4& proj,
+                    int      splatMaxRadius = 0);
 
     // Wait for all compute work to finish, then composite the point cloud result
     // over the currently-bound HDR framebuffer with a fullscreen quad.
@@ -113,6 +116,7 @@ private:
     GLint m_locProj              = -1;
     GLint m_locPointsPerThread   = -1;
     GLint m_locCloudID           = -1;   // uCloudID in the rasterize shader
+    GLint m_locSplatMaxRadius    = -1;   // uSplatMaxRadius in the rasterize shader
 
     // Cached color-lookup compute shader uniform location
     GLint m_locColorLookupImageSize  = -1;

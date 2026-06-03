@@ -160,6 +160,16 @@ struct ApplicationPreferences {
   // The vertex shader projects this to screen-space pixels via perspective.
   float pointCloudBaseSize = 0.02f;
 
+  // Schütz Phase 2 – adaptive point splatting (close-up / sparse hole filling).
+  // When enabled, the compute rasterizer widens each point into a small round
+  // splat whose radius is derived from the on-screen point spacing, so gaps
+  // don't appear when the camera is close to (or in a sparse part of) the cloud.
+  // Cost is self-limiting: distant/dense views collapse to single pixels.
+  struct PointSplatSettings {
+    bool enabled = true;
+    int  maxRadius = 4; // upper clamp on splat radius in pixels (1–8)
+  } pointSplatSettings;
+
   // Shadow quality settings
   struct ShadowSettings {
     int pcfKernelSize = 3; // 3, 5, 7, or 9

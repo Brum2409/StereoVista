@@ -2,7 +2,7 @@
     "camera": {
         "alwaysShowOrbitCenter": false,
         "autoConvergence": true,
-        "convergence": 2.976402759552002,
+        "convergence": 38.99568557739258,
         "convergenceCapMax": 39.0,
         "convergenceCapMin": 0.800000011920929,
         "convergenceDistanceFactor": 1.2999999523162842,
@@ -37,9 +37,9 @@
         "currentPreset": "Sphere"
     },
     "edl": {
-        "enabled": true,
-        "radius": 0.8999999761581421,
-        "strength": 1.840000033378601
+        "enabled": false,
+        "radius": 2.0,
+        "strength": 5.0
     },
     "hdr": {
         "bloomIntensity": 0.1770000010728836,
@@ -79,11 +79,13 @@
         "sortByPrimitiveType": false
     },
     "pointcloud": {
-        "baseSize": 0.0010000000474974513
+        "baseSize": 0.0010000000474974513,
+        "splatEnabled": true,
+        "splatMaxRadius": 2
     },
     "radar": {
         "autoFit": true,
-        "enabled": true,
+        "enabled": false,
         "frustumSpread": 0.27000001072883606,
         "posX": 0.6499999761581421,
         "posY": 0.3700000047683716,

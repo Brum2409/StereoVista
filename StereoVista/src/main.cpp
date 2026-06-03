@@ -1653,6 +1653,8 @@ void savePreferences() {
   j["edl"]["strength"] = preferences.edlSettings.strength;
   j["edl"]["radius"] = preferences.edlSettings.radius;
   j["pointcloud"]["baseSize"] = preferences.pointCloudBaseSize;
+  j["pointcloud"]["splatEnabled"] = preferences.pointSplatSettings.enabled;
+  j["pointcloud"]["splatMaxRadius"] = preferences.pointSplatSettings.maxRadius;
 
   // Save shadow settings
   j["shadows"]["pcfKernelSize"] = preferences.shadowSettings.pcfKernelSize;
@@ -2155,6 +2157,10 @@ void loadPreferences() {
     }
     if (j.contains("pointcloud")) {
       preferences.pointCloudBaseSize = j["pointcloud"].value("baseSize", 0.02f);
+      preferences.pointSplatSettings.enabled =
+          j["pointcloud"].value("splatEnabled", true);
+      preferences.pointSplatSettings.maxRadius =
+          j["pointcloud"].value("splatMaxRadius", 4);
     }
 
     // Shadow settings
@@ -5271,6 +5277,11 @@ void renderPointClouds(Engine::Shader *shader, const glm::mat4 &view,
       // Schütz compute path: one workgroup per batch, with per-batch frustum
       // culling and packed 10/20/30-bit coordinate decoding.
       if (pointCloud.computeBatchSSBO != 0 && pointCloud.numBatches > 0) {
+        // Adaptive splatting: 0 disables it (single-pixel rasterize), otherwise
+        // pass the user's max radius clamp so close-up/sparse views fill gaps.
+        int splatMaxRadius = preferences.pointSplatSettings.enabled
+                                 ? preferences.pointSplatSettings.maxRadius
+                                 : 0;
         computePointCloudRenderer->renderNode(
             pointCloud.computeBatchSSBO, pointCloud.computeXyz12bSSBO,
             pointCloud.computeXyz8bSSBO, pointCloud.computeXyz4bSSBO,
@@ -5278,7 +5289,8 @@ void renderPointClouds(Engine::Shader *shader, const glm::mat4 &view,
             pointCloud.computePointsPerThread,
             projection * view * modelMatrix, // uMVP
             view * modelMatrix,              // uModelView (for precision level)
-            projection);                     // uProj      (for precision level)
+            projection,                      // uProj      (for precision level)
+            splatMaxRadius);                 // adaptive splat radius clamp (px)
       }
     } else if (pointCloud.octreeRoot) {
       // GL_POINTS fallback: octree-based rendering unchanged

@@ -65,6 +65,7 @@ uniform mat4  uProj;            // projection matrix   – precision level
 uniform ivec2 uImageSize;
 uniform int   uPointsPerThread; // ceil(kComputeBatchSize / 128)
 uniform uint  uCloudID;         // 5-bit id of this cloud → packed in framebuffer payload
+uniform int   uSplatMaxRadius;  // 0 = single-pixel (off); >0 = max adaptive round-splat radius (px)
 
 // ── Frustum culling ───────────────────────────────────────────────────────────
 // Adapted from Schütz compute_rasterizer / three.js (MIT).
@@ -145,17 +146,65 @@ int getPrecisionLevel(vec3 wgMin, vec3 wgMax) {
     else                           return 0;
 }
 
+// ── Adaptive splat sizing (Option A: close-up / sparse hole filling) ──────────
+// A single-pixel write leaves visible gaps once the camera is close enough that
+// neighbouring points land more than a pixel apart.  We fix that by widening
+// each point into a small round splat — but ONLY the points that actually need
+// it.  The decision is made PER POINT from its own view-space depth, not once
+// per batch, so:
+//   • far points keep a radius of 0  → single-pixel fast path, zero extra cost;
+//   • near points splat just enough to bridge the gap to their neighbour;
+//   • sparse regions (large local spacing) start splatting from farther away
+//     than dense regions, because the world-space gap is bigger.
+//
+// Two-step estimate:
+//   1. getBatchSpacing(): once per batch, estimate the LOCAL world-space gap
+//      between neighbouring points from the batch AABB.  Point clouds are
+//      usually surface scans, so we treat the two largest box extents as an
+//      area covering N points: spacing ≈ sqrt(area / N).
+//   2. per point: project that world gap to pixels at the point's depth
+//      (radius ≈ 0.5 · spacing · projScale / viewDepth) and clamp to
+//      [0, uSplatMaxRadius].  viewDepth is the perspective clip.w we already
+//      compute for the projection, so the per-point cost is a single divide.
+float getBatchSpacing(vec3 boxSize, int numPoints) {
+    if (numPoints <= 1) return 0.0;
+    // Sort the three extents → d0 (largest) ≥ d1 ≥ d2 (smallest).
+    float d0 = max(boxSize.x, max(boxSize.y, boxSize.z));
+    float d2 = min(boxSize.x, min(boxSize.y, boxSize.z));
+    float d1 = (boxSize.x + boxSize.y + boxSize.z) - d0 - d2;   // middle extent
+    float area = max(d0 * d1, 1e-12);                           // surface footprint
+    return sqrt(area / float(numPoints));                      // local point spacing
+}
+
 // ── Pixel write (depth-test via atomicMin) ────────────────────────────────────
 // DIAGNOSTIC: non-atomic pre-read REMOVED.  The pre-read was supposed to skip
 // the atomic for points behind already-rendered closer points, but it forces
 // every point to do an extra global memory load.  Going straight to atomicMin
 // trades one read for potentially more atomic conflicts — which is faster
 // depends on hardware/workload.  Testing whether removing it helps.
-void writePixel(ivec2 px, uint64_t newEntry) {
-    px = clamp(px, ivec2(0), uImageSize - ivec2(1));
-    int pixelID = px.y * uImageSize.x + px.x;
+void writePixel(ivec2 px, uint64_t newEntry, int radius) {
+    // Fast path: single pixel (unchanged behaviour when splatting is off / far).
+    if (radius <= 0) {
+        ivec2 p = clamp(px, ivec2(0), uImageSize - ivec2(1));
+        atomicMin(framebuffer[p.y * uImageSize.x + p.x], newEntry);
+        return;
+    }
 
-    atomicMin(framebuffer[pixelID], newEntry);
+    // Round-splat: write the SAME (depth | payload) entry to every pixel inside
+    // the radius.  The colour-lookup pass resolves each splat pixel against this
+    // point's colour, and atomicMin keeps the nearest point per pixel, so a
+    // closer point's splat always wins.  Out-of-bounds pixels are skipped (not
+    // clamped) to avoid smearing splats along the screen border.
+    int r2 = radius * radius;
+    for (int dy = -radius; dy <= radius; ++dy) {
+        for (int dx = -radius; dx <= radius; ++dx) {
+            if (dx * dx + dy * dy > r2) continue;   // disk, not square
+            ivec2 p = px + ivec2(dx, dy);
+            if (p.x < 0 || p.y < 0 || p.x >= uImageSize.x || p.y >= uImageSize.y)
+                continue;
+            atomicMin(framebuffer[p.y * uImageSize.x + p.x], newEntry);
+        }
+    }
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -175,6 +224,26 @@ void main() {
 
     // ── Precision level ───────────────────────────────────────────────────────
     int level = getPrecisionLevel(wgMin, wgMax);
+
+    // ── Adaptive splat scale (close-up / sparse hole filling) ──────────────────
+    // Precompute, once per batch, everything in the per-point radius formula that
+    // does NOT depend on the individual point's depth:
+    //   radius_px(point) = splatScale / clip.w
+    // where splatScale = 0.5 · worldSpacing · (uProj[1][1] · imageHeight · 0.5).
+    //   • worldSpacing : local point gap (getBatchSpacing), converted to view
+    //     units via the model scale baked into uModelView's first column so the
+    //     projection is correct even when the cloud is scaled.
+    //   • uProj[1][1] · imageHeight · 0.5 : world length → pixels at unit depth.
+    //   • 0.5 : we only need to bridge HALF the gap to reach the neighbour.
+    // splatScale is 0 when splatting is disabled, so the per-point radius is 0
+    // and writePixel() takes the single-pixel fast path.
+    float splatScale = 0.0;
+    if (uSplatMaxRadius > 0) {
+        float worldSpacing = getBatchSpacing(boxSize, batch.numPoints);
+        float modelScale   = length(vec3(uModelView[0]));   // |view·model x-axis|
+        float pxPerUnit    = uProj[1][1] * float(uImageSize.y) * 0.5;
+        splatScale = 0.5 * worldSpacing * modelScale * pxPerUnit;
+    }
 
     // ── Point loop ────────────────────────────────────────────────────────────
     // Strided access: thread T processes points T, T+128, T+256, …
@@ -263,6 +332,21 @@ void main() {
         // ── Screen-space pixel coordinate ─────────────────────────────────────
         ivec2 px = ivec2((ndc.xy * 0.5 + 0.5) * vec2(uImageSize));
 
+        // ── Per-point splat radius ────────────────────────────────────────────
+        // Guarded by the uSplatMaxRadius>0 uniform branch so that when splatting
+        // is DISABLED this whole block (incl. the divide) is skipped and the path
+        // below is byte-for-byte the original single-pixel write — zero overhead.
+        // The branch is uniform across the dispatch (same for every invocation),
+        // so it's coherent/predicted and effectively free.
+        //
+        // When enabled: project this point's local neighbour gap to pixels at its
+        // own depth (clip.w = view-space depth).  Far points give <1px → radius 0
+        // → single-pixel fast path; only near (or locally sparse) points splat.
+        int splatRadius = 0;
+        if (uSplatMaxRadius > 0) {
+            splatRadius = clamp(int(splatScale / clip.w), 0, uSplatMaxRadius);
+        }
+
         // ── Depth + (cloudID | index) packed into 64 bits ────────────────────
         // High 32 bits: NDC depth [0,1] — drives atomicMin sort + gl_FragDepth.
         // Low  32 bits: payload = (cloudID:5 | localIndex:27).  The cloud id lets
@@ -283,7 +367,7 @@ void main() {
         uint     payload = (uCloudID << 27) | (index & 0x07FFFFFFu);
         uint64_t entry   = (uint64_t(depth) << 32UL) | uint64_t(payload);
 
-        // ── Single-pixel write (matches Schütz's basic compute_loop_las) ──────
-        writePixel(px, entry);
+        // ── Write (single-pixel, or adaptive round-splat when zoomed in) ──────
+        writePixel(px, entry, splatRadius);
     }
 }

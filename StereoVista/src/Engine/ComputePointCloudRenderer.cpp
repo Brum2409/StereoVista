@@ -83,6 +83,7 @@ void ComputePointCloudRenderer::init(int width, int height) {
     m_locProj             = glGetUniformLocation(pid, "uProj");
     m_locPointsPerThread  = glGetUniformLocation(pid, "uPointsPerThread");
     m_locCloudID          = glGetUniformLocation(pid, "uCloudID");
+    m_locSplatMaxRadius   = glGetUniformLocation(pid, "uSplatMaxRadius");
 
     // Cache color-lookup compute uniform location
     m_colorLookupShader->use();
@@ -213,7 +214,8 @@ void ComputePointCloudRenderer::renderNode(
         int      pointsPerThread,
         const glm::mat4& mvp,
         const glm::mat4& modelView,
-        const glm::mat4& proj)
+        const glm::mat4& proj,
+        int      splatMaxRadius)
 {
     if (!m_initialized || numBatches == 0) return;
     if (!batchSSBO || !xyz4bSSBO || !rgbaSSBO) return;
@@ -245,6 +247,7 @@ void ComputePointCloudRenderer::renderNode(
     m_rasterShader->use();
     glUniform2i(m_locImageSize, m_width, m_height);
     glUniform1ui(m_locCloudID, cloudID);
+    glUniform1i(m_locSplatMaxRadius, splatMaxRadius);
 
     // Bind packed-coordinate and batch SSBOs (matching shader bindings)
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 40, batchSSBO);

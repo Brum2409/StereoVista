@@ -1955,6 +1955,33 @@ void renderSettingsWindow() {
                          "Larger values detect wider depth transitions.");
         }
 
+        // ---- Point Splatting (close-up / sparse density) ----
+        ImGui::Spacing();
+        DrawSectionHeader("Point Splatting");
+
+        if (ImGui::Checkbox("Enable Splatting",
+                            &preferences.pointSplatSettings.enabled)) {
+          settingsChanged = true;
+        }
+        ImGui::SameLine();
+        DrawHelpMarker(
+            "Widens each point into a small round splat sized from its on-screen "
+            "spacing, filling the gaps that appear when you view the cloud close "
+            "up or in a sparse area. Distant / dense views collapse back to "
+            "single pixels, so the cost is paid only where it's needed.");
+
+        if (preferences.pointSplatSettings.enabled) {
+          if (ImGui::SliderInt("Max Splat Radius",
+                               &preferences.pointSplatSettings.maxRadius, 1, 8,
+                               "%d px")) {
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker("Upper limit on the splat radius in pixels. Higher = "
+                         "fills larger gaps when extremely close, but costs more "
+                         "atomic writes. 3-4 is a good balance.");
+        }
+
         ImGui::Spacing();
         DrawSectionHeader("Shadow Quality");
 
