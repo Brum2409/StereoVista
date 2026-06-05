@@ -582,10 +582,10 @@ void SetupImGuiStyle(bool bStyleDark_, float alpha_) {
   style.ChildBorderSize = 1.0f * scale;
   style.PopupRounding = 8.0f * scale;
   style.PopupBorderSize = 1.0f * scale;
-  style.FramePadding = ImVec2(8 * scale, 5 * scale);
-  style.FrameRounding = 8.0f * scale;
+  style.FramePadding = ImVec2(10 * scale, 7 * scale);
+  style.FrameRounding = 7.0f * scale;
   style.FrameBorderSize = 0.0f;
-  style.ItemSpacing = ImVec2(10 * scale, 8 * scale);
+  style.ItemSpacing = ImVec2(10 * scale, 9 * scale);
   style.ItemInnerSpacing = ImVec2(8 * scale, 6 * scale);
   style.CellPadding = ImVec2(6 * scale, 4 * scale);
   style.IndentSpacing = 22.0f * scale;
@@ -606,21 +606,21 @@ void SetupImGuiStyle(bool bStyleDark_, float alpha_) {
     // Modern Dark Theme with blue accents
     ImVec4 *colors = style.Colors;
 
-    // Define color palette
-    const ImVec4 bgDark = ImVec4(0.11f, 0.12f, 0.14f, 1.00f);      // #1C1E23
-    const ImVec4 bgMedium = ImVec4(0.14f, 0.15f, 0.17f, 1.00f);    // #24262B
-    const ImVec4 bgLight = ImVec4(0.18f, 0.19f, 0.22f, 1.00f);     // #2E3138
-    const ImVec4 bgVeryLight = ImVec4(0.22f, 0.23f, 0.26f, 1.00f); // #383A42
+    // Define color palette - deeper, cooler neutrals for a premium feel
+    const ImVec4 bgDark = ImVec4(0.085f, 0.090f, 0.105f, 1.00f);     // #16171B
+    const ImVec4 bgMedium = ImVec4(0.115f, 0.122f, 0.140f, 1.00f);   // #1D1F24
+    const ImVec4 bgLight = ImVec4(0.155f, 0.165f, 0.190f, 1.00f);    // #282A30
+    const ImVec4 bgVeryLight = ImVec4(0.205f, 0.217f, 0.245f, 1.00f);// #34373E
 
     const ImVec4 textPrimary = ImVec4(0.95f, 0.96f, 0.98f, 1.00f);
     const ImVec4 textSecondary = ImVec4(0.65f, 0.68f, 0.72f, 1.00f);
-    const ImVec4 textDisabled = ImVec4(0.40f, 0.42f, 0.46f, 1.00f);
+    const ImVec4 textDisabled = ImVec4(0.46f, 0.49f, 0.55f, 1.00f);
 
-    // Modern blue accent colors
-    const ImVec4 accentPrimary = ImVec4(0.26f, 0.59f, 0.98f, 1.00f); // #4396F9
-    const ImVec4 accentHover = ImVec4(0.36f, 0.69f, 1.00f, 1.00f);   // #5CAFFF
-    const ImVec4 accentActive = ImVec4(0.20f, 0.49f, 0.88f, 1.00f);  // #337DE0
-    const ImVec4 accentDim = ImVec4(0.26f, 0.59f, 0.98f, 0.40f);
+    // Modern indigo-blue accent colors
+    const ImVec4 accentPrimary = ImVec4(0.33f, 0.56f, 1.00f, 1.00f); // #548FFF
+    const ImVec4 accentHover = ImVec4(0.45f, 0.66f, 1.00f, 1.00f);   // #73A8FF
+    const ImVec4 accentActive = ImVec4(0.25f, 0.46f, 0.92f, 1.00f);  // #4076EB
+    const ImVec4 accentDim = ImVec4(0.33f, 0.56f, 1.00f, 0.40f);
 
     // Success, Warning, Danger colors
     const ImVec4 success = ImVec4(0.26f, 0.73f, 0.42f, 1.00f); // #43BB6C
