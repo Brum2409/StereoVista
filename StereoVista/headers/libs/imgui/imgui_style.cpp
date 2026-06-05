@@ -758,10 +758,10 @@ void SetupImGuiStyle(bool bStyleDark_, float alpha_) {
     const ImVec4 textSecondary = ImVec4(0.40f, 0.42f, 0.46f, 1.00f);
     const ImVec4 textDisabled = ImVec4(0.60f, 0.62f, 0.66f, 1.00f);
 
-    // Blue accent for light theme
-    const ImVec4 accentPrimary = ImVec4(0.20f, 0.50f, 0.95f, 1.00f);
-    const ImVec4 accentHover = ImVec4(0.30f, 0.60f, 1.00f, 1.00f);
-    const ImVec4 accentActive = ImVec4(0.15f, 0.40f, 0.85f, 1.00f);
+    // Indigo-blue accent for light theme (matches the dark theme accent)
+    const ImVec4 accentPrimary = ImVec4(0.26f, 0.50f, 0.98f, 1.00f);
+    const ImVec4 accentHover = ImVec4(0.36f, 0.60f, 1.00f, 1.00f);
+    const ImVec4 accentActive = ImVec4(0.20f, 0.42f, 0.90f, 1.00f);
 
     // Store custom colors
     g_StyleColors.primary = accentPrimary;

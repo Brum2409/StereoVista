@@ -1974,12 +1974,13 @@ void renderSettingsWindow() {
       ImVec4 col = aiConnected ? g_StyleColors.success : g_StyleColors.warning;
       ImGui::PushStyleColor(ImGuiCol_ChildBg,
                             ImVec4(col.x, col.y, col.z, 0.12f));
-      ImGui::BeginChild("##aistatus", ImVec2(0, ImGui::GetFrameHeight() * 1.6f),
+      ImGui::BeginChild("##aistatus", ImVec2(0, ImGui::GetFrameHeight() * 2.2f),
                         true);
       DrawInlineIcon(aiConnected ? ICON_FA_CHECK : ICON_FA_EXCLAMATION_TRIANGLE,
                      col);
       ImGui::AlignTextToFramePadding();
-      ImGui::TextUnformatted(
+      ImGui::TextWrapped(
+          "%s",
           aiConnected
               ? "Connected. The assistant can read and modify your scene."
               : "Not connected. Add an API key under Connection to enable "
@@ -2045,17 +2046,18 @@ void renderSettingsWindow() {
                                  "Add a cube to the scene",
                                  "Enable soft shadows",
                                  "Switch to a sunset sky"};
-    float avail = ImGui::GetContentRegionAvail().x;
-    float chipX = 0.0f;
+    const float rightEdge =
+        ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
     for (int i = 0; i < IM_ARRAYSIZE(suggestions); ++i) {
-      float w = ImGui::CalcTextSize(suggestions[i]).x +
-                ImGui::GetStyle().FramePadding.x * 2.0f + 8.0f * scale;
-      if (i > 0 && chipX + w < avail) {
-        ImGui::SameLine();
-      } else if (i > 0) {
-        chipX = 0.0f;
+      // Keep the chip on the current row only if it actually fits.
+      if (i > 0) {
+        float chipW = ImGui::CalcTextSize(suggestions[i]).x +
+                      ImGui::GetStyle().FramePadding.x * 2.0f;
+        float nextX = ImGui::GetItemRectMax().x + spacing + chipW;
+        if (nextX < rightEdge)
+          ImGui::SameLine();
       }
-      chipX += w + ImGui::GetStyle().ItemSpacing.x;
       if (ImGui::Button(suggestions[i]))
         submitPrompt(suggestions[i]);
     }
