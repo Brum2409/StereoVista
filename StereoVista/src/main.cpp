@@ -286,6 +286,42 @@ int windowWidth = 1920;
 int windowHeight = 1080;
 bool isStereoWindow = false;
 
+// ---- 3D Viewport (free area not covered by the docked GUI panels) ----
+// The scene renders into this sub-rectangle of the window instead of the whole
+// window, so it no longer draws behind the left Scene Hierarchy panel or the
+// top menu bar. g_viewportX is the left inset (GL x origin in the default
+// framebuffer); g_viewportTopInset is the window-space gap above the region;
+// width/height are the region size. Updated each frame from the GUI insets.
+int g_viewportX = 0;
+int g_viewportTopInset = 0;
+int g_viewportWidth = 1920;
+int g_viewportHeight = 1080;
+// Last size the offscreen render targets were sized to, for change detection.
+static int g_lastViewportW = -1;
+static int g_lastViewportH = -1;
+
+// Map an OS cursor position (window pixels, top-left origin) to viewport NDC.
+static inline glm::vec2 WindowToViewportNDC(double mx, double my) {
+  float w = static_cast<float>(g_viewportWidth > 0 ? g_viewportWidth : 1);
+  float h = static_cast<float>(g_viewportHeight > 0 ? g_viewportHeight : 1);
+  return glm::vec2(
+      (2.0f * (static_cast<float>(mx) - static_cast<float>(g_viewportX))) / w -
+          1.0f,
+      1.0f -
+          (2.0f * (static_cast<float>(my) -
+                   static_cast<float>(g_viewportTopInset))) /
+              h);
+}
+
+// Map viewport NDC to an OS cursor position (window pixels, top-left origin).
+static inline glm::vec2 ViewportNDCToWindow(float ndcX, float ndcY) {
+  return glm::vec2(static_cast<float>(g_viewportX) +
+                       (ndcX + 1.0f) * 0.5f * static_cast<float>(g_viewportWidth),
+                   static_cast<float>(g_viewportTopInset) +
+                       (1.0f - ndcY) * 0.5f *
+                           static_cast<float>(g_viewportHeight));
+}
+
 // ---- Lighting ----
 std::vector<Engine::PointLight> pointLights;
 std::vector<Engine::SpotLight> spotLights;
@@ -3097,8 +3133,10 @@ int main() {
           grabScreenPos /= grabScreenPos.w;
 
           // Convert NDC to screen coordinates
-          float screenX = (grabScreenPos.x + 1.0f) * 0.5f * windowWidth;
-          float screenY = (1.0f - grabScreenPos.y) * 0.5f * windowHeight;
+          glm::vec2 screenPx =
+              ViewportNDCToWindow(grabScreenPos.x, grabScreenPos.y);
+          float screenX = screenPx.x;
+          float screenY = screenPx.y;
 
           // Update hidden cursor position to track the grab point
           glfwSetCursorPos(Window::nativeWindow, screenX, screenY);
@@ -3148,8 +3186,10 @@ int main() {
       if (lightScreenPos.w > 0.0f) {
         lightScreenPos /= lightScreenPos.w;
 
-        float screenX = (lightScreenPos.x + 1.0f) * 0.5f * windowWidth;
-        float screenY = (1.0f - lightScreenPos.y) * 0.5f * windowHeight;
+        glm::vec2 screenPx =
+            ViewportNDCToWindow(lightScreenPos.x, lightScreenPos.y);
+        float screenX = screenPx.x;
+        float screenY = screenPx.y;
 
         glfwSetCursorPos(Window::nativeWindow, screenX, screenY);
         lastX = screenX;
@@ -3194,8 +3234,10 @@ int main() {
       if (lightScreenPos.w > 0.0f) {
         lightScreenPos /= lightScreenPos.w;
 
-        float screenX = (lightScreenPos.x + 1.0f) * 0.5f * windowWidth;
-        float screenY = (1.0f - lightScreenPos.y) * 0.5f * windowHeight;
+        glm::vec2 screenPx =
+            ViewportNDCToWindow(lightScreenPos.x, lightScreenPos.y);
+        float screenX = screenPx.x;
+        float screenY = screenPx.y;
 
         glfwSetCursorPos(Window::nativeWindow, screenX, screenY);
         lastX = screenX;
@@ -3257,19 +3299,18 @@ int main() {
           glm::vec4 refScreenPos = viewProj * glm::vec4(referencePoint, 1.0f);
           refScreenPos /= refScreenPos.w; // Perspective divide
 
-          // Convert to screen coordinates
-          float screenX = (refScreenPos.x + 1.0f) * 0.5f * windowWidth;
-          float screenY =
-              (1.0f - refScreenPos.y) * 0.5f * windowHeight; // Flip Y
+          // Convert to screen coordinates (within the free-area viewport)
+          glm::vec2 refPx = ViewportNDCToWindow(refScreenPos.x, refScreenPos.y);
+          float screenX = refPx.x;
+          float screenY = refPx.y; // Flip Y handled by the mapping
 
           // Apply mouse offset in screen space
           screenX += totalXOffset;
           screenY -=
               totalYOffset; // Invert Y to match cursor movement direction
 
-          // Convert back to NDC
-          glm::vec2 newNDC = glm::vec2((screenX / windowWidth) * 2.0f - 1.0f,
-                                       1.0f - (screenY / windowHeight) * 2.0f);
+          // Convert back to NDC (viewport-relative)
+          glm::vec2 newNDC = WindowToViewportNDC(screenX, screenY);
 
           // Unproject to get the new grab point position in world space
           glm::vec4 newGrabPointWorld =
@@ -3310,8 +3351,8 @@ int main() {
           // Convert to NDC and add mouse offset
           glm::vec2 currentNDC = glm::vec2(lightScreenPos.x, lightScreenPos.y);
           glm::vec2 mouseOffsetNDC =
-              glm::vec2(totalXOffset / (windowWidth * 0.5f),
-                        totalYOffset / (windowHeight * 0.5f));
+              glm::vec2(totalXOffset / (g_viewportWidth * 0.5f),
+                        totalYOffset / (g_viewportHeight * 0.5f));
           glm::vec2 newNDC = currentNDC + mouseOffsetNDC;
 
           // Convert back to world space
@@ -3345,8 +3386,8 @@ int main() {
           // Convert to NDC and add mouse offset
           glm::vec2 currentNDC = glm::vec2(lightScreenPos.x, lightScreenPos.y);
           glm::vec2 mouseOffsetNDC =
-              glm::vec2(totalXOffset / (windowWidth * 0.5f),
-                        totalYOffset / (windowHeight * 0.5f));
+              glm::vec2(totalXOffset / (g_viewportWidth * 0.5f),
+                        totalYOffset / (g_viewportHeight * 0.5f));
           glm::vec2 newNDC = currentNDC + mouseOffsetNDC;
 
           // Convert back to world space
@@ -3407,8 +3448,43 @@ int main() {
       }
     }
 
-    aspectRatio =
-        static_cast<float>(windowWidth) / static_cast<float>(windowHeight);
+    // ---- Size the 3D viewport to the free area beside the docked GUI ----
+    // g_dockLeftWidth / g_dockTopHeight are published by renderGUI each frame
+    // (0 when the GUI is hidden, so the viewport fills the window then).
+    {
+      // When the GUI is hidden the viewport fills the whole window. (renderGUI
+      // isn't called at all in that case, so its published insets can be stale.)
+      int reservedLeft = showGui ? static_cast<int>(g_dockLeftWidth + 0.5f) : 0;
+      int reservedTop = showGui ? static_cast<int>(g_dockTopHeight + 0.5f) : 0;
+      // Keep a sane minimum viewport size.
+      reservedLeft = glm::clamp(reservedLeft, 0, glm::max(0, windowWidth - 64));
+      reservedTop = glm::clamp(reservedTop, 0, glm::max(0, windowHeight - 64));
+      g_viewportX = reservedLeft;
+      g_viewportTopInset = reservedTop;
+      g_viewportWidth = glm::max(1, windowWidth - reservedLeft);
+      g_viewportHeight = glm::max(1, windowHeight - reservedTop);
+
+      // Resize the offscreen render targets to the viewport when it changes so
+      // HDR/bloom, SSAO and the compute point-cloud image stay pixel-aligned.
+      if (g_viewportWidth != g_lastViewportW ||
+          g_viewportHeight != g_lastViewportH) {
+        if (bloomRenderer) {
+          bloomRenderer->resize(g_viewportWidth, g_viewportHeight);
+          hdrFboValid = false; // re-validated next frame
+        }
+        if (ssaoRenderer) {
+          ssaoRenderer->resize(g_viewportWidth, g_viewportHeight);
+        }
+        if (computePointCloudRenderer) {
+          computePointCloudRenderer->resize(g_viewportWidth, g_viewportHeight);
+        }
+        g_lastViewportW = g_viewportWidth;
+        g_lastViewportH = g_viewportHeight;
+      }
+    }
+
+    aspectRatio = static_cast<float>(g_viewportWidth) /
+                  static_cast<float>(g_viewportHeight);
     glm::mat4 projection = camera.GetProjectionMatrix(
         aspectRatio, preferences.nearPlane, preferences.farPlane);
 
@@ -3537,30 +3613,30 @@ int main() {
                     viewport, windowFlags, window, false, true, &leftProjection,
                     &leftView, &rightProjection, &rightView);
           bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_RIGHT, edlPtr,
-                                    preferences.nearPlane,
-                                    preferences.farPlane);
+                                    preferences.nearPlane, preferences.farPlane,
+                                    g_viewportX, 0);
 
           renderEye(GL_BACK_RIGHT, rightProjection, rightView, activeShader,
                     viewport, windowFlags, window, false, true, &leftProjection,
                     &leftView, &rightProjection, &rightView);
           bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_LEFT, edlPtr,
-                                    preferences.nearPlane,
-                                    preferences.farPlane);
+                                    preferences.nearPlane, preferences.farPlane,
+                                    g_viewportX, 0);
         } else {
           // Normal: render left to left, right to right
           renderEye(GL_BACK_LEFT, leftProjection, leftView, activeShader,
                     viewport, windowFlags, window, false, true, &leftProjection,
                     &leftView, &rightProjection, &rightView);
           bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_LEFT, edlPtr,
-                                    preferences.nearPlane,
-                                    preferences.farPlane);
+                                    preferences.nearPlane, preferences.farPlane,
+                                    g_viewportX, 0);
 
           renderEye(GL_BACK_RIGHT, rightProjection, rightView, activeShader,
                     viewport, windowFlags, window, false, true, &leftProjection,
                     &leftView, &rightProjection, &rightView);
           bloomRenderer->applyBloom(0, bloomSettings, GL_BACK_RIGHT, edlPtr,
-                                    preferences.nearPlane,
-                                    preferences.farPlane);
+                                    preferences.nearPlane, preferences.farPlane,
+                                    g_viewportX, 0);
         }
       } else {
         // Mono view
@@ -3574,8 +3650,8 @@ int main() {
           const Engine::EDLSettings *edlPtr =
               frameEDL.enabled ? &frameEDL : nullptr;
           bloomRenderer->applyBloom(0, bloomSettings, GL_BACK, edlPtr,
-                                    preferences.nearPlane,
-                                    preferences.farPlane);
+                                    preferences.nearPlane, preferences.farPlane,
+                                    g_viewportX, 0);
         }
       }
 
@@ -4072,7 +4148,13 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     // Bind default framebuffer for non-HDR rendering
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
   }
-  glViewport(0, 0, windowWidth, windowHeight);
+  // Render the scene into the free-area sub-viewport. The HDR framebuffer is
+  // sized to the viewport, so it draws at the origin; the default framebuffer
+  // is the full window, so the scene is offset to the free area (g_viewportX).
+  {
+    bool usingHDR = preferences.hdrSettings.enabled && bloomRenderer != nullptr;
+    glViewport(usingHDR ? 0 : g_viewportX, 0, g_viewportWidth, g_viewportHeight);
+  }
 
   shader->use();
   shader->setMat4("projection", projection);
@@ -4081,7 +4163,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
 
   // Schütz Phase 1: point cloud per-frame uniforms for screen-space point size
   shader->setFloat("pointCloudBaseSize", preferences.pointCloudBaseSize);
-  shader->setFloat("screenHeight", static_cast<float>(windowHeight));
+  shader->setFloat("screenHeight", static_cast<float>(g_viewportHeight));
   shader->setFloat("fieldOfView", glm::radians(preferences.fov));
 
   // Set lighting mode uniforms - this is always needed
@@ -4898,9 +4980,17 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       }
 
       // Kick off this frame's async read (nullptr → GPU writes directly to
-      // PBO).
+      // PBO). Sample the centre of the free-area viewport, not the window
+      // centre. For HDR the read FBO is viewport-sized (origin 0,0); for
+      // non-HDR it's the full-window default buffer (scene offset by
+      // g_viewportX).
+      bool usingHDRRead =
+          preferences.hdrSettings.enabled && bloomRenderer != nullptr;
+      int centerX =
+          (usingHDRRead ? 0 : g_viewportX) + g_viewportWidth / 2;
+      int centerY = g_viewportHeight / 2;
       glBindBuffer(GL_PIXEL_PACK_BUFFER, g_distancePBO[writeIdx]);
-      glReadPixels(windowWidth / 2, windowHeight / 2, 1, 1, GL_DEPTH_COMPONENT,
+      glReadPixels(centerX, centerY, 1, 1, GL_DEPTH_COMPONENT,
                    GL_FLOAT, nullptr);
       glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
       g_distancePBOWriteIdx = readIdx; // swap for next frame
@@ -4969,6 +5059,16 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   // Render zero plane if enabled (AFTER distance calculation)
   if (preferences.showZeroPlane) {
     renderZeroPlane(shader, projection, view, preferences.convergence);
+  }
+
+  // Tell the cursor system where the scene was drawn so it samples depth and
+  // maps the mouse within the free-area sub-viewport. For HDR the scene fills
+  // the (viewport-sized) HDR FBO at the origin; for non-HDR it sits at the free
+  // offset inside the full-window default framebuffer.
+  {
+    bool usingHDR = preferences.hdrSettings.enabled && bloomRenderer != nullptr;
+    cursorManager.setViewport(usingHDR ? 0 : g_viewportX, 0, g_viewportWidth,
+                              g_viewportHeight, g_viewportX, g_viewportTopInset);
   }
 
   // Calculate cursor position AFTER scene rendering but BEFORE cursor
@@ -6065,9 +6165,11 @@ PointCloud loadPointCloudFile(const std::string &filePath,
 void calculateMouseRay(float mouseX, float mouseY, glm::vec3 &rayOrigin,
                        glm::vec3 &rayDirection, glm::vec3 &rayNear,
                        glm::vec3 &rayFar, float aspect) {
-  // Convert mouse position to normalized device coordinates
-  float x = (2.0f * mouseX) / windowWidth - 1.0f;
-  float y = 1.0f - (2.0f * mouseY) / windowHeight;
+  // Convert mouse position to normalized device coordinates within the
+  // free-area viewport (so picking matches what is rendered there).
+  glm::vec2 ndc = WindowToViewportNDC(mouseX, mouseY);
+  float x = ndc.x;
+  float y = ndc.y;
 
   // Calculate near and far points in clip space
   glm::vec4 rayNearClip = glm::vec4(x, y, -1.0, 1.0);
@@ -6291,21 +6393,11 @@ void framebuffer_size_callback(GLFWwindow *window, int width, int height) {
   // Update GUI scaling based on new window dimensions
   UpdateGuiScale(width, height);
 
-  // Resize bloom renderer if it exists
-  if (bloomRenderer) {
-    bloomRenderer->resize(width, height);
-    hdrFboValid = false; // will be re-validated on next frame
-  }
-
-  // Resize compute point-cloud renderer if it exists (Schütz Phase 2)
-  if (computePointCloudRenderer) {
-    computePointCloudRenderer->resize(width, height);
-  }
-
-  // Resize SSAO renderer if it exists
-  if (ssaoRenderer) {
-    ssaoRenderer->resize(width, height);
-  }
+  // Note: the offscreen render targets (bloom/HDR, SSAO, compute point cloud)
+  // are sized to the free-area 3D viewport, not the full window. That resize is
+  // driven from the render loop's per-frame viewport change-detection (which
+  // also fires when the docked panels change width), so it is intentionally not
+  // done here.
 }
 
 void scroll_callback(GLFWwindow *window, double xoffset, double yoffset) {
@@ -6384,7 +6476,7 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
 
         glm::vec3 rayOrigin, rayDirection, rayNear, rayFar;
         calculateMouseRay(lastX, lastY, rayOrigin, rayDirection, rayNear,
-                          rayFar, (float)windowWidth / (float)windowHeight);
+                          rayFar, aspectRatio);
 
         float closestDistance = std::numeric_limits<float>::max();
         glm::vec3 hitPosition;
@@ -6420,7 +6512,7 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
       } else if (ctrlPressed || altPressed) {
         glm::vec3 rayOrigin, rayDirection, rayNear, rayFar;
         calculateMouseRay(lastX, lastY, rayOrigin, rayDirection, rayNear,
-                          rayFar, (float)windowWidth / (float)windowHeight);
+                          rayFar, aspectRatio);
 
         float closestDistance = std::numeric_limits<float>::max();
         int closestModelIndex = -1;
@@ -6545,8 +6637,7 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
             // model
             glm::vec3 grabRayOrigin, grabRayDirection, grabRayNear, grabRayFar;
             calculateMouseRay(lastX, lastY, grabRayOrigin, grabRayDirection,
-                              grabRayNear, grabRayFar,
-                              (float)windowWidth / (float)windowHeight);
+                              grabRayNear, grabRayFar, aspectRatio);
             float grabDistance;
             if (rayIntersectsModel(grabRayOrigin, grabRayDirection,
                                    currentScene.models[currentSelectedIndex],
@@ -6833,9 +6924,11 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
           if (grabScreenPos.w > 0.0f) {
             grabScreenPos /= grabScreenPos.w;
 
-            // Convert NDC to screen coordinates
-            float screenX = (grabScreenPos.x + 1.0f) * 0.5f * windowWidth;
-            float screenY = (1.0f - grabScreenPos.y) * 0.5f * windowHeight;
+            // Convert NDC to screen coordinates (within the free-area viewport)
+            glm::vec2 grabPx =
+                ViewportNDCToWindow(grabScreenPos.x, grabScreenPos.y);
+            float screenX = grabPx.x;
+            float screenY = grabPx.y;
 
             // Set cursor position to the final grab point location
             glfwSetCursorPos(window, screenX, screenY);

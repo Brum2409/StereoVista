@@ -46,3 +46,10 @@ void CleanupGUI();
 // ImGui style setup (to avoid redefinition)
 void SetupImGuiStyle(bool bStyleDark_, float alpha_);
 bool InitializeImGuiWithFonts(GLFWwindow *window, bool isDarkTheme);
+
+// Published every frame by renderGUI: the pixel extents of the docked GUI
+// regions the 3D viewport must not render behind. g_dockLeftWidth is the width
+// of the left Scene Hierarchy panel; g_dockTopHeight is the height of the main
+// menu bar. Both are 0 when the GUI is hidden (viewport fills the window).
+extern float g_dockLeftWidth;
+extern float g_dockTopHeight;

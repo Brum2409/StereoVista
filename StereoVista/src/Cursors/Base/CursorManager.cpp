@@ -113,12 +113,18 @@ void CursorManager::updateCursorPosition(
   m_windowWidth = windowWidth;
   m_windowHeight = windowHeight;
 
-  // Additional bounds check: ensure cursor is actually within window dimensions
-  // This prevents edge rendering if callback order causes position update
-  // before enter callback
-  if (m_lastX < 0.0f || m_lastX >= static_cast<float>(m_windowWidth) ||
-      m_lastY < 0.0f || m_lastY >= static_cast<float>(m_windowHeight)) {
-    // Cursor is outside window bounds - invalidate and return
+  // Resolve the scene-region sub-rectangle. When unset, fall back to the full
+  // window so behavior is unchanged.
+  const int vpW = (m_vpWidth > 0) ? m_vpWidth : m_windowWidth;
+  const int vpH = (m_vpHeight > 0) ? m_vpHeight : m_windowHeight;
+  // Region-local cursor position (origin at the top-left of the scene region).
+  const float rx = m_lastX - static_cast<float>(m_vpLeftInset);
+  const float ryTop = m_lastY - static_cast<float>(m_vpTopInset);
+
+  // Bounds check: the cursor must be inside the scene region (not over the
+  // docked GUI panels). This avoids picking through the panels.
+  if (rx < 0.0f || rx >= static_cast<float>(vpW) || ryTop < 0.0f ||
+      ryTop >= static_cast<float>(vpH)) {
     m_cursorPositionValid = false;
     m_sphereCursor->setPositionValid(false);
     m_fragmentCursor->setPositionValid(false);
@@ -132,15 +138,15 @@ void CursorManager::updateCursorPosition(
   const float DEPTH_THRESHOLD = 0.9999f;
 
   float depth;
-  glReadPixels(static_cast<GLint>(m_lastX),
-               static_cast<GLint>((float)m_windowHeight - m_lastY),
+  glReadPixels(static_cast<GLint>(m_vpOriginX + rx),
+               static_cast<GLint>(m_vpOriginYGL + (vpH - ryTop)),
                1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &depth);
 
   // Convert cursor position to world space using center projection/view
   // Always use the center matrices to avoid jumps when eye selection changes
   glm::mat4 vpInv = glm::inverse(projection * view);
-  glm::vec4 ndc = glm::vec4((m_lastX / (float)m_windowWidth) * 2.0 - 1.0,
-                            1.0 - (m_lastY / (float)m_windowHeight) * 2.0,
+  glm::vec4 ndc = glm::vec4((rx / (float)vpW) * 2.0 - 1.0,
+                            1.0 - (ryTop / (float)vpH) * 2.0,
                             depth * 2.0 - 1.0, 1.0);
   auto worldPosH = vpInv * ndc;
   auto worldPos = worldPosH / worldPosH.w;
@@ -312,13 +318,16 @@ void CursorManager::cleanup() {
 // Calculate background cursor position when cursor is over empty space
 glm::vec3 CursorManager::calculateBackgroundCursorPosition(
     GLFWwindow *window, const glm::mat4 &projection, const glm::mat4 &view) {
-  // Use already stored mouse position from updateCursorPosition
-  float mouseX = m_lastX;
-  float mouseY = m_lastY;
+  // Use already stored mouse position from updateCursorPosition, mapped into
+  // the scene-region sub-rectangle (falls back to full window when unset).
+  const int vpW = (m_vpWidth > 0) ? m_vpWidth : m_windowWidth;
+  const int vpH = (m_vpHeight > 0) ? m_vpHeight : m_windowHeight;
+  float mouseX = m_lastX - static_cast<float>(m_vpLeftInset);
+  float mouseY = m_lastY - static_cast<float>(m_vpTopInset);
 
   // Convert to normalized device coordinates
-  float x = (2.0f * mouseX) / (float)m_windowWidth - 1.0f;
-  float y = 1.0f - (2.0f * mouseY) / (float)m_windowHeight;
+  float x = (2.0f * mouseX) / (float)vpW - 1.0f;
+  float y = 1.0f - (2.0f * mouseY) / (float)vpH;
 
   // Project to a reasonable distance from camera (middle of view frustum)
   float targetDepth = 0.5f; // NDC depth between near (0) and far (1)
@@ -338,5 +347,15 @@ glm::vec3 CursorManager::calculateBackgroundCursorPosition(
       glm::mix(glm::vec3(nearWorld), glm::vec3(farWorld), targetDepth);
 
   return worldPos;
+}
+
+void CursorManager::setViewport(int originX, int originYGL, int width,
+                                int height, int leftInset, int topInset) {
+  m_vpOriginX = originX;
+  m_vpOriginYGL = originYGL;
+  m_vpWidth = width;
+  m_vpHeight = height;
+  m_vpLeftInset = leftInset;
+  m_vpTopInset = topInset;
 }
 } // namespace Cursor

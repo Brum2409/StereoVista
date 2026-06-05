@@ -107,13 +107,152 @@ extern void updateSkybox();
 // Constants
 extern const int MAX_LIGHTS;
 
-// Helper function for section headers in ImGui
+// ===========================================================================
+// Redesigned GUI: navigation state + reusable modern widgets
+// ===========================================================================
+
+// Categories for the redesigned, sidebar-navigated Settings window. Declared at
+// file scope so the main menu bar can deep-link straight to a category (e.g.
+// the "AI Assistant" shortcut).
+enum SettingsCategory {
+  SETTINGS_CAT_AI = 0,
+  SETTINGS_CAT_RENDERING,
+  SETTINGS_CAT_CAMERA,
+  SETTINGS_CAT_ENVIRONMENT,
+  SETTINGS_CAT_DISPLAY,
+  SETTINGS_CAT_INPUT,
+  SETTINGS_CAT_IMPORT,
+  SETTINGS_CAT_SHORTCUTS
+};
+static int g_settingsCategory = SETTINGS_CAT_AI;
+
+// Docked-region insets published to the render loop (see Gui.h). Updated each
+// frame in renderGUI so the 3D viewport can be sized to the free area.
+float g_dockLeftWidth = 0.0f;
+float g_dockTopHeight = 0.0f;
+
+// Draw a FontAwesome glyph inline using the dedicated icon font (the icon font
+// is always guaranteed to contain the glyph, unlike the merged regular font),
+// then keep the cursor on the same line so a label can follow.
+static void DrawInlineIcon(const char *icon, const ImVec4 &color) {
+  ImGui::AlignTextToFramePadding();
+  if (g_Fonts.icons) {
+    ImGui::PushFont(g_Fonts.icons);
+    ImGui::PushStyleColor(ImGuiCol_Text, color);
+    ImGui::TextUnformatted(icon);
+    ImGui::PopStyleColor();
+    ImGui::PopFont();
+    ImGui::SameLine();
+  }
+}
+
+// Modern section header: a colored accent bar followed by a bright title and a
+// thin separator. Used everywhere via the existing call sites.
 static void DrawSectionHeader(const char *label) {
+  float scale = g_GuiScale.currentScale;
   ImGui::Spacing();
-  ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
-  ImGui::Text("%s", label);
-  ImGui::PopStyleColor();
+  ImVec2 p = ImGui::GetCursorScreenPos();
+  float fontSize = ImGui::GetFontSize();
+  ImDrawList *dl = ImGui::GetWindowDrawList();
+  ImU32 accent = ImGui::GetColorU32(g_StyleColors.accent);
+  dl->AddRectFilled(ImVec2(p.x, p.y + 2.0f * scale),
+                    ImVec2(p.x + 3.5f * scale, p.y + fontSize),
+                    accent, 2.0f * scale);
+  ImGui::Indent(10.0f * scale);
+  ImGui::TextUnformatted(label);
+  ImGui::Unindent(10.0f * scale);
+  ImGui::Spacing();
   ImGui::Separator();
+}
+
+// Vertical sidebar navigation entry (icon + label). Returns true when clicked.
+// The icon is rendered through the dedicated icon font via the draw list so it
+// is reliable regardless of whether the merged-font path succeeded.
+static bool DrawNavItem(const char *icon, const char *label, bool selected) {
+  float scale = g_GuiScale.currentScale;
+  float fullWidth = ImGui::GetContentRegionAvail().x;
+  float rowH = ImGui::GetFrameHeight() + 8.0f * scale;
+  ImVec2 p0 = ImGui::GetCursorScreenPos();
+
+  ImGui::PushID(label);
+  ImGui::PushStyleColor(
+      ImGuiCol_HeaderHovered,
+      ImVec4(g_StyleColors.primary.x, g_StyleColors.primary.y,
+             g_StyleColors.primary.z, 0.16f));
+  // Pass selected=false so ImGui does not paint its own selection fill; we draw
+  // a custom accent pill instead.
+  bool clicked = ImGui::Selectable("##navitem", false,
+                                   ImGuiSelectableFlags_None,
+                                   ImVec2(fullWidth, rowH));
+  ImGui::PopStyleColor();
+  ImGui::PopID();
+
+  ImDrawList *dl = ImGui::GetWindowDrawList();
+  float fontSize = ImGui::GetFontSize();
+  ImU32 textCol = ImGui::GetColorU32(selected ? ImGuiCol_Text
+                                              : ImGuiCol_TextDisabled);
+
+  if (selected) {
+    ImU32 fill = ImGui::GetColorU32(
+        ImVec4(g_StyleColors.primary.x, g_StyleColors.primary.y,
+               g_StyleColors.primary.z, 0.16f));
+    dl->AddRectFilled(p0, ImVec2(p0.x + fullWidth, p0.y + rowH), fill,
+                      8.0f * scale);
+    dl->AddRectFilled(ImVec2(p0.x, p0.y + rowH * 0.18f),
+                      ImVec2(p0.x + 3.0f * scale, p0.y + rowH * 0.82f),
+                      ImGui::GetColorU32(g_StyleColors.primary), 2.0f * scale);
+    textCol = ImGui::GetColorU32(ImGuiCol_Text);
+  }
+
+  float pad = 14.0f * scale;
+  float iconSlot = 24.0f * scale;
+  ImVec2 iconPos(p0.x + pad, p0.y + (rowH - fontSize) * 0.5f);
+  if (g_Fonts.icons)
+    dl->AddText(g_Fonts.icons, fontSize, iconPos, textCol, icon);
+  ImVec2 labelPos(p0.x + pad + iconSlot, p0.y + (rowH - fontSize) * 0.5f);
+  dl->AddText(labelPos, textCol, label);
+
+  return clicked;
+}
+
+// A modern on/off toggle switch. Returns true on the frame it changes.
+static bool DrawToggleSwitch(const char *label, bool *v) {
+  float scale = g_GuiScale.currentScale;
+  ImGui::PushID(label);
+  float height = ImGui::GetFrameHeight();
+  float width = height * 1.85f;
+  float radius = height * 0.5f;
+  ImVec2 p = ImGui::GetCursorScreenPos();
+  ImGui::InvisibleButton("##toggle", ImVec2(width, height));
+  bool changed = false;
+  if (ImGui::IsItemClicked()) {
+    *v = !*v;
+    changed = true;
+  }
+
+  ImDrawList *dl = ImGui::GetWindowDrawList();
+  bool hovered = ImGui::IsItemHovered();
+  ImU32 bg;
+  if (*v)
+    bg = ImGui::GetColorU32(hovered ? g_StyleColors.primaryHover
+                                    : g_StyleColors.primary);
+  else
+    bg = ImGui::GetColorU32(hovered ? ImGuiCol_FrameBgHovered
+                                    : ImGuiCol_FrameBg);
+  dl->AddRectFilled(p, ImVec2(p.x + width, p.y + height), bg, radius);
+  float knob = radius - 2.5f * scale;
+  float cx = *v ? (p.x + width - radius) : (p.x + radius);
+  dl->AddCircleFilled(ImVec2(cx, p.y + radius), knob,
+                      IM_COL32(255, 255, 255, 255));
+
+  if (label && label[0] != '\0' &&
+      !(label[0] == '#' && label[1] == '#')) {
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(label);
+  }
+  ImGui::PopID();
+  return changed;
 }
 
 // Helper function for help markers (tooltips)
@@ -318,6 +457,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
   ImGui::NewFrame();
 
   if (!showGui) {
+    // GUI hidden: the viewport fills the whole window.
+    g_dockLeftWidth = 0.0f;
+    g_dockTopHeight = 0.0f;
     if (showFPS) {
       ImGui::SetNextWindowPos(ImVec2(windowWidth - 120, windowHeight - 60));
       ImGui::Begin("FPS Counter", nullptr,
@@ -990,8 +1132,19 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       showBrushToolWindow = true;
     }
 
+    // AI Assistant quick access (accent-highlighted, deep-links into Settings)
+    ImGui::PushStyleColor(ImGuiCol_Text, g_StyleColors.accent);
+    if (ImGui::MenuItem("AI Assistant")) {
+      showSettingsWindow = true;
+      g_settingsCategory = SETTINGS_CAT_AI;
+    }
+    ImGui::PopStyleColor();
+
     ImGui::EndMainMenuBar();
   }
+
+  // Publish the menu bar height so the render loop can reserve the top strip.
+  g_dockTopHeight = ImGui::GetFrameHeight();
 
   // ========================
   // SCENE HIERARCHY PANEL
@@ -1007,10 +1160,17 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
                    ImGuiWindowFlags_NoCollapse);
 
+  // Publish the panel width so the render loop can reserve the left strip.
+  g_dockLeftWidth = ImGui::GetWindowWidth();
+
   // Scene objects list with search filter
   static char searchBuffer[128] = "";
+  DrawInlineIcon(ICON_FA_SEARCH,
+                 ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+  ImGui::PushItemWidth(-1);
   ImGui::InputTextWithHint("##Search", "Search objects...", searchBuffer,
                            sizeof(searchBuffer));
+  ImGui::PopItemWidth();
   ImGui::Separator();
 
   if (ImGui::BeginChild("ObjectList", ImVec2(0, 250 * g_GuiScale.currentScale),
@@ -1515,11 +1675,10 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
     ImGui::EndChild();
   }
 
-  ImGui::Separator();
+  ImGui::Spacing();
 
   // Properties Panel
-  ImGui::Text("Properties");
-  ImGui::Separator();
+  DrawSectionHeader("Properties");
 
   if (ImGui::BeginChild("PropertiesPanel", ImVec2(0, 0), false)) {
     if (currentSelectedType == SelectedType::Model &&
@@ -1663,7 +1822,11 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
 }
 
 void renderSettingsWindow() {
-  ImGui::SetNextWindowSize(ImVec2(550, 700), ImGuiCond_FirstUseEver);
+  float scale = g_GuiScale.currentScale;
+  ImGui::SetNextWindowSize(ImVec2(900 * scale, 720 * scale),
+                           ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSizeConstraints(ImVec2(640 * scale, 420 * scale),
+                                      ImVec2(100000.0f, 100000.0f));
   ImGui::Begin("Settings", &showSettingsWindow);
   bool settingsChanged = false;
 
@@ -1753,12 +1916,221 @@ void renderSettingsWindow() {
     ImGui::Unindent();
   };
 
-  if (ImGui::BeginTabBar("SettingsTabs")) {
+  // ===========================================================================
+  // Sidebar navigation (left) + content area (right)
+  // ===========================================================================
+  struct SettingsNavEntry {
+    int id;
+    const char *icon;
+    const char *label;
+  };
+  static const SettingsNavEntry kNavEntries[] = {
+      {SETTINGS_CAT_AI, ICON_FA_ROBOT, "AI Assistant"},
+      {SETTINGS_CAT_RENDERING, ICON_FA_LIGHTBULB, "Rendering"},
+      {SETTINGS_CAT_CAMERA, ICON_FA_VIDEO, "Camera & 3D"},
+      {SETTINGS_CAT_ENVIRONMENT, ICON_FA_MOUNTAIN, "Environment"},
+      {SETTINGS_CAT_DISPLAY, ICON_FA_DESKTOP, "Display"},
+      {SETTINGS_CAT_INPUT, ICON_FA_MOUSE, "Input & Devices"},
+      {SETTINGS_CAT_IMPORT, ICON_FA_FILE_IMPORT, "Import"},
+      {SETTINGS_CAT_SHORTCUTS, ICON_FA_KEYBOARD, "Shortcuts"},
+  };
 
-    // ===========================
-    // RENDERING TAB
-    // ===========================
-    if (ImGui::BeginTabItem("Rendering")) {
+  float navWidth = 210.0f * scale;
+  ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.0f, 0.0f, 0.0f, 0.18f));
+  ImGui::BeginChild("##SettingsNav", ImVec2(navWidth, 0), true);
+  ImGui::PopStyleColor();
+  {
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4 * scale, 6 * scale));
+    DrawInlineIcon(ICON_FA_SLIDERS_H, g_StyleColors.accent);
+    ImGui::TextUnformatted("Settings");
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    for (const auto &entry : kNavEntries) {
+      if (DrawNavItem(entry.icon, entry.label, g_settingsCategory == entry.id))
+        g_settingsCategory = entry.id;
+    }
+    ImGui::PopStyleVar();
+  }
+  ImGui::EndChild();
+
+  ImGui::SameLine();
+  ImGui::BeginChild("##SettingsContent", ImVec2(0, 0), false);
+
+  // ===========================
+  // AI ASSISTANT TAB (scaffold)
+  // ===========================
+  if (g_settingsCategory == SETTINGS_CAT_AI) {
+    ImGui::PushID("AITab");
+
+    DrawInlineIcon(ICON_FA_ROBOT, g_StyleColors.accent);
+    ImGui::TextUnformatted("AI Assistant");
+    ImGui::PushStyleColor(ImGuiCol_Text,
+                          ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped(
+        "Describe what you want in plain language and the assistant will "
+        "adjust your scene and settings for you — change the lighting, "
+        "add objects, tune the look, and more.");
+    ImGui::PopStyleColor();
+    ImGui::Spacing();
+
+    // Connection state (scaffold-only: no network transport yet).
+    static bool aiConnected = false;
+    static char aiApiKey[256] = "";
+    static char aiModel[128] = "claude-opus-4-8";
+    static char aiEndpoint[256] = "https://api.anthropic.com/v1/messages";
+    static int aiProvider = 0;
+    static std::vector<std::pair<bool, std::string>> aiHistory; // {isUser,text}
+    static char aiInput[1024] = "";
+
+    // Status banner
+    {
+      ImVec4 col = aiConnected ? g_StyleColors.success : g_StyleColors.warning;
+      ImGui::PushStyleColor(ImGuiCol_ChildBg,
+                            ImVec4(col.x, col.y, col.z, 0.12f));
+      ImGui::BeginChild("##aistatus", ImVec2(0, ImGui::GetFrameHeight() * 2.2f),
+                        true);
+      DrawInlineIcon(aiConnected ? ICON_FA_CHECK : ICON_FA_EXCLAMATION_TRIANGLE,
+                     col);
+      ImGui::AlignTextToFramePadding();
+      ImGui::TextWrapped(
+          "%s",
+          aiConnected
+              ? "Connected. The assistant can read and modify your scene."
+              : "Not connected. Add an API key under Connection to enable "
+                "live requests.");
+      ImGui::EndChild();
+      ImGui::PopStyleColor();
+    }
+
+    ImGui::Spacing();
+    DrawSectionHeader("Conversation");
+
+    // Chat transcript
+    ImGui::BeginChild("##aichat", ImVec2(0, 260 * scale), true);
+    if (aiHistory.empty()) {
+      ImGui::PushStyleColor(ImGuiCol_Text,
+                            ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+      ImGui::Spacing();
+      ImGui::TextWrapped("No messages yet. Try one of the suggestions below, "
+                         "or type your own request.");
+      ImGui::PopStyleColor();
+    } else {
+      for (const auto &msg : aiHistory) {
+        const bool isUser = msg.first;
+        ImGui::PushStyleColor(
+            ImGuiCol_Text,
+            isUser ? ImGui::GetStyleColorVec4(ImGuiCol_Text)
+                   : g_StyleColors.accent);
+        DrawInlineIcon(isUser ? ICON_FA_COMMENT : ICON_FA_ROBOT,
+                       isUser ? ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled)
+                              : g_StyleColors.accent);
+        ImGui::TextUnformatted(isUser ? "You" : "Assistant");
+        ImGui::PopStyleColor();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextWrapped("%s", msg.second.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+      }
+      ImGui::SetScrollHereY(1.0f);
+    }
+    ImGui::EndChild();
+
+    // Lambda to "submit" a prompt. Scaffold only: echoes the prompt and an
+    // honest placeholder until a transport + apply layer is wired up.
+    auto submitPrompt = [&](const std::string &prompt) {
+      if (prompt.empty())
+        return;
+      aiHistory.emplace_back(true, prompt);
+      aiHistory.emplace_back(
+          false,
+          aiConnected
+              ? "(Live requests are not wired up in this build yet.)"
+              : "I can't act on this yet — add an API key under "
+                "Connection to enable live requests. Once connected I'll be "
+                "able to apply changes like this directly to your scene.");
+      aiInput[0] = '\0';
+    };
+
+    // Suggestion chips
+    ImGui::Spacing();
+    const char *suggestions[] = {"Make the lighting warmer",
+                                 "Add a cube to the scene",
+                                 "Enable soft shadows",
+                                 "Switch to a sunset sky"};
+    const float rightEdge =
+        ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    for (int i = 0; i < IM_ARRAYSIZE(suggestions); ++i) {
+      // Keep the chip on the current row only if it actually fits.
+      if (i > 0) {
+        float chipW = ImGui::CalcTextSize(suggestions[i]).x +
+                      ImGui::GetStyle().FramePadding.x * 2.0f;
+        float nextX = ImGui::GetItemRectMax().x + spacing + chipW;
+        if (nextX < rightEdge)
+          ImGui::SameLine();
+      }
+      if (ImGui::Button(suggestions[i]))
+        submitPrompt(suggestions[i]);
+    }
+
+    // Input row
+    ImGui::Spacing();
+    float sendW = 90.0f * scale;
+    ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - sendW -
+                         ImGui::GetStyle().ItemSpacing.x);
+    bool entered = ImGui::InputTextWithHint(
+        "##aiinput", "Ask the assistant to change your scene…", aiInput,
+        sizeof(aiInput), ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::PopItemWidth();
+    ImGui::SameLine();
+    bool sendClicked = ImGui::Button("Send", ImVec2(sendW, 0));
+    if (entered || sendClicked)
+      submitPrompt(std::string(aiInput));
+
+    if (!aiHistory.empty()) {
+      if (ImGui::SmallButton("Clear conversation"))
+        aiHistory.clear();
+    }
+
+    // Connection / configuration
+    ImGui::Spacing();
+    if (ImGui::CollapsingHeader("Connection")) {
+      DrawToggleSwitch("Enable live requests", &aiConnected);
+      ImGui::SameLine();
+      DrawHelpMarker("When connected, the assistant sends your prompts to the "
+                     "configured provider. Networking is not implemented in "
+                     "this build — this is the UI scaffold.");
+
+      const char *providers[] = {"Anthropic (Claude)", "OpenAI", "Custom"};
+      ImGui::Combo("Provider", &aiProvider, providers,
+                   IM_ARRAYSIZE(providers));
+
+      ImGui::InputText("API Key", aiApiKey, sizeof(aiApiKey),
+                       ImGuiInputTextFlags_Password);
+      ImGui::SameLine();
+      DrawHelpMarker("Stored only for this session in this scaffold build.");
+
+      ImGui::InputText("Model", aiModel, sizeof(aiModel));
+      ImGui::InputText("Endpoint", aiEndpoint, sizeof(aiEndpoint));
+    }
+
+    if (ImGui::CollapsingHeader("What the assistant can do")) {
+      ImGui::BulletText("Adjust rendering, camera and environment settings");
+      ImGui::BulletText("Create primitives and lights");
+      ImGui::BulletText("Tune materials and the overall look");
+      ImGui::BulletText("Explain what each setting does");
+    }
+
+    ImGui::PopID();
+  }
+
+  // ===========================
+  // RENDERING TAB
+  // ===========================
+  if (g_settingsCategory == SETTINGS_CAT_RENDERING) {
       ImGui::PushID("RenderingTab");
       DrawSectionHeader("Lighting System");
 
@@ -2471,13 +2843,12 @@ void renderSettingsWindow() {
       }
 
       ImGui::PopID();
-      ImGui::EndTabItem();
-    }
+  }
 
     // ===========================
     // CAMERA TAB
     // ===========================
-    if (ImGui::BeginTabItem("Camera")) {
+  if (g_settingsCategory == SETTINGS_CAT_CAMERA) {
       ImGui::PushID("CameraTab");
       DrawSectionHeader("View Settings");
 
@@ -2718,13 +3089,12 @@ void renderSettingsWindow() {
       }
 
       ImGui::PopID();
-      ImGui::EndTabItem();
-    }
+  }
 
     // ===========================
     // ENVIRONMENT TAB
     // ===========================
-    if (ImGui::BeginTabItem("Environment")) {
+  if (g_settingsCategory == SETTINGS_CAT_ENVIRONMENT) {
       ImGui::PushID("EnvironmentTab");
       DrawSectionHeader("Skybox");
 
@@ -2920,13 +3290,12 @@ void renderSettingsWindow() {
       DrawHelpMarker("Default specular diffusion for new objects");
 
       ImGui::PopID();
-      ImGui::EndTabItem();
-    }
+  }
 
     // ===========================
     // DISPLAY TAB
     // ===========================
-    if (ImGui::BeginTabItem("Display")) {
+  if (g_settingsCategory == SETTINGS_CAT_DISPLAY) {
       ImGui::PushID("DisplayTab");
       DrawSectionHeader("Interface");
 
@@ -3149,13 +3518,12 @@ void renderSettingsWindow() {
                      "• Always Merge: Keep existing scene and add new objects");
 
       ImGui::PopID();
-      ImGui::EndTabItem();
-    }
+  }
 
     // ===========================
     // INPUT TAB
     // ===========================
-    if (ImGui::BeginTabItem("Input")) {
+  if (g_settingsCategory == SETTINGS_CAT_INPUT) {
       ImGui::PushID("InputTab");
       DrawSectionHeader("Mouse Settings");
 
@@ -3639,13 +4007,12 @@ void renderSettingsWindow() {
       }
 
       ImGui::PopID();
-      ImGui::EndTabItem();
-    }
+  }
 
     // ===========================
     // IMPORT TAB
     // ===========================
-    if (ImGui::BeginTabItem("Import")) {
+  if (g_settingsCategory == SETTINGS_CAT_IMPORT) {
       ImGui::PushID("ImportTab");
       DrawSectionHeader("Model Import Options");
 
@@ -3778,13 +4145,12 @@ void renderSettingsWindow() {
       }
 
       ImGui::PopID();
-      ImGui::EndTabItem();
-    }
+  }
 
     // ===========================
     // SHORTCUTS TAB
     // ===========================
-    if (ImGui::BeginTabItem("Shortcuts")) {
+  if (g_settingsCategory == SETTINGS_CAT_SHORTCUTS) {
       ImGui::PushID("ShortcutsTab");
       DrawSectionHeader("Shortcut Profiles");
 
@@ -4224,11 +4590,9 @@ void renderSettingsWindow() {
       }
 
       ImGui::PopID();
-      ImGui::EndTabItem();
-    }
-
-    ImGui::EndTabBar();
   }
+
+  ImGui::EndChild(); // ##SettingsContent
 
   if (settingsChanged) {
     savePreferences();
