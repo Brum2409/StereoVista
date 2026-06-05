@@ -126,6 +126,11 @@ enum SettingsCategory {
 };
 static int g_settingsCategory = SETTINGS_CAT_AI;
 
+// Docked-region insets published to the render loop (see Gui.h). Updated each
+// frame in renderGUI so the 3D viewport can be sized to the free area.
+float g_dockLeftWidth = 0.0f;
+float g_dockTopHeight = 0.0f;
+
 // Draw a FontAwesome glyph inline using the dedicated icon font (the icon font
 // is always guaranteed to contain the glyph, unlike the merged regular font),
 // then keep the cursor on the same line so a label can follow.
@@ -452,6 +457,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
   ImGui::NewFrame();
 
   if (!showGui) {
+    // GUI hidden: the viewport fills the whole window.
+    g_dockLeftWidth = 0.0f;
+    g_dockTopHeight = 0.0f;
     if (showFPS) {
       ImGui::SetNextWindowPos(ImVec2(windowWidth - 120, windowHeight - 60));
       ImGui::Begin("FPS Counter", nullptr,
@@ -1135,6 +1143,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
     ImGui::EndMainMenuBar();
   }
 
+  // Publish the menu bar height so the render loop can reserve the top strip.
+  g_dockTopHeight = ImGui::GetFrameHeight();
+
   // ========================
   // SCENE HIERARCHY PANEL
   // ========================
@@ -1148,6 +1159,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
   ImGui::Begin("Scene Hierarchy", nullptr,
                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
                    ImGuiWindowFlags_NoCollapse);
+
+  // Publish the panel width so the render loop can reserve the left strip.
+  g_dockLeftWidth = ImGui::GetWindowWidth();
 
   // Scene objects list with search filter
   static char searchBuffer[128] = "";

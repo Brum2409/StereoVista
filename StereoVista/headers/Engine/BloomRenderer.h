@@ -59,10 +59,14 @@ public:
   // Apply bloom effect and render final result.
   // edlSettings / nearPlane / farPlane are used to compute Eye-Dome Lighting
   // when EDL is enabled; they are ignored when EDL is disabled.
+  // presentOffsetX / presentOffsetY shift the final composited image within the
+  // target framebuffer so it can land in a sub-rectangle (e.g. the free area
+  // beside the docked GUI panels). Defaults present at the origin (full window).
   void applyBloom(GLuint sceneTexture, const BloomSettings &settings,
                   GLenum drawBuffer = GL_BACK,
                   const EDLSettings *edlSettings = nullptr,
-                  float nearPlane = 0.1f, float farPlane = 200.0f);
+                  float nearPlane = 0.1f, float farPlane = 200.0f,
+                  int presentOffsetX = 0, int presentOffsetY = 0);
 
   // Set SSAO texture to be applied during final composition
   void setSSAOTexture(GLuint ssaoTexture, bool ssaoEnabled);

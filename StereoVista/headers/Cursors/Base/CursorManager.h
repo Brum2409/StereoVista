@@ -38,6 +38,17 @@ public:
   // Reset frame calculation flag (call at start of each frame)
   void resetFrameCalculationFlag();
 
+  // Define the sub-rectangle of the render target the scene is drawn into, so
+  // mouse picking maps correctly when the 3D viewport doesn't fill the window.
+  //  originX/originYGL : bottom-left of the scene region in the currently bound
+  //                      framebuffer's pixel space (GL origin, bottom-left).
+  //  width/height      : size of the scene region in pixels.
+  //  leftInset/topInset: window-space gap to the left of / above the region,
+  //                      used to convert the OS cursor position into the region.
+  // Defaults (all zero / unset) reproduce full-window behavior.
+  void setViewport(int originX, int originYGL, int width, int height,
+                   int leftInset, int topInset);
+
   // Render all visible cursors
   void renderCursors(const glm::mat4 &projection, const glm::mat4 &view);
 
@@ -130,6 +141,15 @@ private:
   // Window dimensions
   int m_windowWidth;
   int m_windowHeight;
+
+  // Scene-region sub-rectangle within the render target (see setViewport).
+  // Zero width/height means "unset" -> fall back to the full window.
+  int m_vpOriginX = 0;
+  int m_vpOriginYGL = 0;
+  int m_vpWidth = 0;
+  int m_vpHeight = 0;
+  int m_vpLeftInset = 0;
+  int m_vpTopInset = 0;
 
   // Mouse position
   float m_lastX;

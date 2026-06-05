@@ -378,7 +378,8 @@ void BloomRenderer::applyBloom(GLuint sceneTexture,
                                const BloomSettings &settings,
                                GLenum drawBuffer,
                                const EDLSettings *edlSettings,
-                               float nearPlane, float farPlane) {
+                               float nearPlane, float farPlane,
+                               int presentOffsetX, int presentOffsetY) {
   if (!m_initialized)
     return;
 
@@ -445,10 +446,13 @@ void BloomRenderer::applyBloom(GLuint sceneTexture,
     }
   }
 
-  // Final composition
+  // Final composition. Present into the requested sub-rectangle so the image
+  // lands in the free area beside the docked GUI panels (offsets default to 0,
+  // i.e. full-window present). The clear still affects the whole eye buffer so
+  // the reserved strips are a clean color behind the (opaque) GUI panels.
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
   glDrawBuffer(drawBuffer); // Set the target draw buffer for stereo support
-  glViewport(0, 0, m_width, m_height);
+  glViewport(presentOffsetX, presentOffsetY, m_width, m_height);
   glClear(GL_COLOR_BUFFER_BIT);
 
   if (m_settings.finalShader) {
