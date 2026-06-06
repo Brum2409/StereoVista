@@ -3425,6 +3425,17 @@ void renderSettingsWindow() {
         DrawHelpMarker("Show the scene models in the radar view");
 
         if (preferences.radarShowScene) {
+          if (ImGui::SliderFloat("Scene Brightness",
+                                 &preferences.radarSceneBrightness, 1.0f, 30.0f,
+                                 "%.1f")) {
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker(
+              "Exposure boost for the top-down scene in the radar. The radar "
+              "skips the normal HDR/bloom tone-map, so crank this up to keep "
+              "the floor plan bright and readable (not realistic).");
+
           if (ImGui::Checkbox("Slice Scene (Top-Down)",
                               &preferences.radarSliceEnabled)) {
             settingsChanged = true;

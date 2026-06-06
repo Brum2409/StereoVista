@@ -25,6 +25,11 @@ namespace Core {
          * @param isStereoMode Whether stereo rendering is active
          * @param rightProjection Right eye projection matrix (used only in stereo mode)
          * @param rightView Right eye view matrix (used only in stereo mode)
+         * @param viewport Scene sub-rectangle (x, topInset, width, height) in window
+         *                 pixels that the projection renders into. When width/height
+         *                 are <= 0 the full window is used (origin 0,0). This is what
+         *                 the NDC->pixel mapping uses, so the OS cursor lands inside
+         *                 the offset viewport instead of the whole window.
          */
         static void synchronizeCursorPosition(
             GLFWwindow* window,
@@ -35,7 +40,8 @@ namespace Core {
             int windowHeight,
             bool isStereoMode = false,
             const glm::mat4& rightProjection = glm::mat4(1.0f),
-            const glm::mat4& rightView = glm::mat4(1.0f)
+            const glm::mat4& rightView = glm::mat4(1.0f),
+            const glm::ivec4& viewport = glm::ivec4(0, 0, 0, 0)
         );
 
         /**
@@ -52,8 +58,7 @@ namespace Core {
             const glm::vec3& worldPos,
             const glm::mat4& projection,
             const glm::mat4& view,
-            int windowWidth,
-            int windowHeight
+            const glm::ivec4& viewport
         );
 
         /**
@@ -75,8 +80,7 @@ namespace Core {
             const glm::mat4& leftView,
             const glm::mat4& rightProjection,
             const glm::mat4& rightView,
-            int windowWidth,
-            int windowHeight
+            const glm::ivec4& viewport
         );
 
         /**

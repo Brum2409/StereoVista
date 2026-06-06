@@ -1572,6 +1572,7 @@ void savePreferences() {
   j["radar"]["sliceEnabled"] = preferences.radarSliceEnabled;
   j["radar"]["sliceOffset"] = preferences.radarSliceOffset;
   j["radar"]["frustumSpread"] = preferences.radarFrustumSpread;
+  j["radar"]["sceneBrightness"] = preferences.radarSceneBrightness;
 
   // Camera settings
   j["camera"]["separation"] = preferences.separation;
@@ -1991,6 +1992,8 @@ void loadPreferences() {
       preferences.radarSliceEnabled = j["radar"].value("sliceEnabled", true);
       preferences.radarSliceOffset = j["radar"].value("sliceOffset", 1.0f);
       preferences.radarFrustumSpread = j["radar"].value("frustumSpread", 0.12f);
+      preferences.radarSceneBrightness =
+          j["radar"].value("sceneBrightness", 8.0f);
     }
 
     // Camera settings
@@ -2771,8 +2774,11 @@ int main() {
       camera.SetOrbitPointDirectly(capturedCursorPos);
       camera.StartOrbiting();
     } else {
-      // For regular double-click centering, set cursor to screen center
-      glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
+      // For regular double-click centering, set cursor to the centre of the
+      // scene viewport (the free area), not the centre of the whole window, so
+      // it doesn't jump by the docked GUI insets.
+      glfwSetCursorPos(window, g_viewportX + g_viewportWidth / 2.0f,
+                       g_viewportTopInset + g_viewportHeight / 2.0f);
     }
   };
 
@@ -2900,10 +2906,12 @@ int main() {
       spaceMouseCamera = camera;
       *spaceMouseCameraPtr = spaceMouseCamera;
 
-      // Center cursor if enabled
+      // Center cursor if enabled (centre of the scene viewport, not the whole
+      // window, so it lands in the free area and not behind the docked panels)
       if (preferences.spaceMouseCenterCursor) {
-        glfwSetCursorPos(Engine::Window::nativeWindow, windowWidth / 2.0,
-                         windowHeight / 2.0);
+        glfwSetCursorPos(Engine::Window::nativeWindow,
+                         g_viewportX + g_viewportWidth / 2.0,
+                         g_viewportTopInset + g_viewportHeight / 2.0);
       }
 
       std::cout << "SpaceMouse navigation started" << std::endl;
@@ -3529,9 +3537,11 @@ int main() {
     // Reset cursor position calculation flag at start of frame
     cursorManager.resetFrameCalculationFlag();
 
-    // Center cursor during SpaceMouse navigation if enabled
+    // Center cursor during SpaceMouse navigation if enabled (centre of the
+    // scene viewport, not the whole window, so it stays in the free area)
     if (spaceMouseInput.IsNavigating() && preferences.spaceMouseCenterCursor) {
-      glfwSetCursorPos(window, windowWidth * 0.5, windowHeight * 0.5);
+      glfwSetCursorPos(window, g_viewportX + g_viewportWidth * 0.5,
+                       g_viewportTopInset + g_viewportHeight * 0.5);
     }
 
     // ---- Shader Selection ----
@@ -5804,6 +5814,11 @@ void DrawRadar(bool isStereoWindow, Camera camera, GLfloat focaldist,
       // Disable shadows for the radar pass so the floor plan is fully lit.
       bool savedShadows = enableShadows;
       enableShadows = false;
+      // Crank the exposure for the radar scene. The radar draws straight to the
+      // back buffer (no HDR/bloom tone-map pass), so the shader tone-maps and
+      // gamma-corrects in-place with this big boost; > 0 selects the radar path.
+      shader->setFloat("radarBrightness",
+                       glm::max(0.001f, preferences.radarSceneBrightness));
       renderModels(shader, radarProj * contentView, /*frustumCulling=*/false);
       enableShadows = savedShadows;
 
@@ -5812,7 +5827,9 @@ void DrawRadar(bool isStereoWindow, Camera camera, GLfloat focaldist,
       glDisable(GL_CLIP_DISTANCE0);
 
       // renderModels rebinds buffers and may switch programs - restore ours.
+      // Reset radarBrightness to 0 so the next (main scene) pass is unaffected.
       shader->use();
+      shader->setFloat("radarBrightness", 0.0f);
       shader->setBool("radarClipEnabled", false);
       shader->setBool("isPointCloud", false);
       shader->setBool("isChunkOutline", true);
@@ -6868,12 +6885,16 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
                 Core::CursorSyncManager::getInstance().getWorldPosition(),
                 camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane,
                                            preferences.farPlane),
-                camera.GetViewMatrix(), windowWidth, windowHeight, false);
+                camera.GetViewMatrix(), windowWidth, windowHeight, false,
+                glm::mat4(1.0f), glm::mat4(1.0f),
+                glm::ivec4(g_viewportX, g_viewportTopInset, g_viewportWidth,
+                           g_viewportHeight));
             Core::CursorSyncManager::getInstance().markSynchronized();
           } else if (orbitFollowsCursor) {
             // Center cursor mode - cursor should be at viewport center after
             // centering animation
-            glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
+            glfwSetCursorPos(window, g_viewportX + g_viewportWidth / 2.0f,
+                             g_viewportTopInset + g_viewportHeight / 2.0f);
             Core::CursorSyncManager::getInstance().markSynchronized();
           } else {
             // This shouldn't happen, but fallback to synchronization
@@ -6884,7 +6905,10 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
                 Core::CursorSyncManager::getInstance().getWorldPosition(),
                 camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane,
                                            preferences.farPlane),
-                camera.GetViewMatrix(), windowWidth, windowHeight, false);
+                camera.GetViewMatrix(), windowWidth, windowHeight, false,
+                glm::mat4(1.0f), glm::mat4(1.0f),
+                glm::ivec4(g_viewportX, g_viewportTopInset, g_viewportWidth,
+                           g_viewportHeight));
             Core::CursorSyncManager::getInstance().markSynchronized();
           }
         } else {
@@ -6903,10 +6927,14 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
                 window, originalCursorPos,
                 camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane,
                                            preferences.farPlane),
-                camera.GetViewMatrix(), windowWidth, windowHeight, false);
+                camera.GetViewMatrix(), windowWidth, windowHeight, false,
+                glm::mat4(1.0f), glm::mat4(1.0f),
+                glm::ivec4(g_viewportX, g_viewportTopInset, g_viewportWidth,
+                           g_viewportHeight));
           } else {
-            // No valid cursor position - fallback to screen center
-            glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
+            // No valid cursor position - fallback to viewport center
+            glfwSetCursorPos(window, g_viewportX + g_viewportWidth / 2.0f,
+                             g_viewportTopInset + g_viewportHeight / 2.0f);
           }
         }
       } else {
@@ -7192,7 +7220,8 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
 
       // First, try to use the current cursor position if valid
       if (cursorManager.isCursorPositionValid()) {
-        glfwSetCursorPos(window, windowWidth / 2, windowHeight / 2);
+        glfwSetCursorPos(window, g_viewportX + g_viewportWidth / 2.0,
+                         g_viewportTopInset + g_viewportHeight / 2.0);
         camera.StartCenteringAnimation(cursorManager.getCursorPosition());
         std::cout << "Centering on cursor position" << std::endl;
         return;
@@ -7212,12 +7241,14 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
       if (objectCount > 0) {
         centerPoint /= objectCount;
         camera.StartCenteringAnimation(centerPoint);
-        glfwSetCursorPos(window, windowWidth / 2, windowHeight / 2);
+        glfwSetCursorPos(window, g_viewportX + g_viewportWidth / 2.0,
+                         g_viewportTopInset + g_viewportHeight / 2.0);
         std::cout << "Centering on scene midpoint" << std::endl;
       } else {
         // If no objects, center on the world origin
         camera.StartCenteringAnimation(glm::vec3(0.0f));
-        glfwSetCursorPos(window, windowWidth / 2, windowHeight / 2);
+        glfwSetCursorPos(window, g_viewportX + g_viewportWidth / 2.0,
+                         g_viewportTopInset + g_viewportHeight / 2.0);
         std::cout << "Centering on world origin" << std::endl;
       }
     } break;

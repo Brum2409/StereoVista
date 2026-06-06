@@ -257,6 +257,11 @@ struct ApplicationPreferences {
   bool radarSliceEnabled = true; // clip geometry above the camera (top-down slice)
   float radarSliceOffset = 1.0f; // slice height above the camera (world units)
   float radarFrustumSpread = 0.12f; // exaggerate eye baseline (0 = true-to-life)
+  // Exposure boost for the top-down scene drawn in the radar. The radar renders
+  // straight to the back buffer, bypassing the HDR/bloom tone-map, so without a
+  // boost the linear-lit scene looks almost black. High by design - the radar
+  // should read as a bright floor plan, not a realistic exposure.
+  float radarSceneBrightness = 8.0f;
 
   bool showZeroPlane = false;
 

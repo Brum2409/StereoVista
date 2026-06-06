@@ -206,6 +206,10 @@ uniform bool isChunkOutline;
 uniform vec4 outlineColor;
 uniform int selectedMeshIndex;
 uniform bool isMeshSelected;
+// Radar top-down pass. When > 0 the scene is drawn straight to the back buffer
+// (no HDR/bloom tone-map), so tone-map + gamma in-place using this value as the
+// exposure so the radar floor plan stays bright. 0 = normal (non-radar) output.
+uniform float radarBrightness;
 
 // ---- HELPER FUNCTIONS ----
 // Returns true if a world position is inside the voxel grid
@@ -1811,8 +1815,15 @@ void main() {
         BrightColor = vec4(0.0, 0.0, 0.0, 1.0);
     }
     
+    // Radar top-down pass: no post-process downstream, so tone-map + gamma here
+    // with a big exposure boost so the floor plan reads bright (not realistic).
+    if (radarBrightness > 0.0) {
+        vec3 radarColor = acesToneMapping(result, radarBrightness);
+        radarColor = pow(radarColor, vec3(1.0 / 2.2));
+        FragColor = vec4(radarColor, 1.0);
+    }
     // For HDR rendering, output raw HDR color (tone mapping happens in bloom renderer)
-    if (hdrSettings.enabled) {
+    else if (hdrSettings.enabled) {
         FragColor = vec4(result, 1.0);
     } else {
         // Apply tone mapping and gamma correction for non-HDR rendering

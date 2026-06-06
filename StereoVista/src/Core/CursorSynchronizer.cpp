@@ -35,27 +35,38 @@ void CursorSynchronizer::synchronizeCursorPosition(
     int windowHeight,
     bool isStereoMode,
     const glm::mat4& rightProjection,
-    const glm::mat4& rightView
+    const glm::mat4& rightView,
+    const glm::ivec4& viewport
 ) {
     CURSOR_PERF_START();
-    
+
     CURSOR_DEBUG_LOG("Starting cursor synchronization");
     CURSOR_DEBUG_LOG("World position: (" << worldCursorPos.x << ", " << worldCursorPos.y << ", " << worldCursorPos.z << ")");
     CURSOR_DEBUG_LOG("Window size: " << windowWidth << "x" << windowHeight);
     CURSOR_DEBUG_LOG("Stereo mode: " << (isStereoMode ? "enabled" : "disabled"));
-    
+
     // Validate input parameters
     if (!window || windowWidth <= 0 || windowHeight <= 0) {
-        std::cerr << "[CursorSync Error] Invalid window parameters - window: " << window 
+        std::cerr << "[CursorSync Error] Invalid window parameters - window: " << window
                   << ", size: " << windowWidth << "x" << windowHeight << std::endl;
         return;
     }
-    
+
+    // Resolve the scene viewport. The projection renders into this sub-rectangle
+    // (offset by the docked GUI insets), so NDC must map back into it rather than
+    // the full window. A non-positive size means "use the whole window".
+    glm::ivec4 vp = viewport;
+    if (vp.z <= 0 || vp.w <= 0) {
+        vp = glm::ivec4(0, 0, windowWidth, windowHeight);
+    }
+    const double viewportCenterX = vp.x + vp.z * 0.5;
+    const double viewportCenterY = vp.y + vp.w * 0.5;
+
     // Validate world cursor position
     if (!std::isfinite(worldCursorPos.x) || !std::isfinite(worldCursorPos.y) || !std::isfinite(worldCursorPos.z)) {
-        std::cerr << "[CursorSync Error] Invalid world cursor position (NaN or infinite): (" 
+        std::cerr << "[CursorSync Error] Invalid world cursor position (NaN or infinite): ("
                   << worldCursorPos.x << ", " << worldCursorPos.y << ", " << worldCursorPos.z << ")" << std::endl;
-        glfwSetCursorPos(window, windowWidth / 2.0, windowHeight / 2.0);
+        glfwSetCursorPos(window, viewportCenterX, viewportCenterY);
         CURSOR_DEBUG_LOG("Fallback: Cursor centered on screen");
         return;
     }
@@ -63,12 +74,12 @@ void CursorSynchronizer::synchronizeCursorPosition(
     // Validate matrices
     if (!validateMatrices(projection, view)) {
         std::cerr << "[CursorSync Error] Invalid projection or view matrix" << std::endl;
-        // Fallback to screen center
-        glfwSetCursorPos(window, windowWidth / 2.0, windowHeight / 2.0);
+        // Fallback to viewport center
+        glfwSetCursorPos(window, viewportCenterX, viewportCenterY);
         CURSOR_DEBUG_LOG("Fallback: Cursor centered due to invalid matrices");
         return;
     }
-    
+
     // Additional validation for stereo mode
     if (isStereoMode && (!validateMatrices(rightProjection, rightView))) {
         std::cerr << "[CursorSync Warning] Invalid stereo matrices, falling back to mono mode" << std::endl;
@@ -79,7 +90,7 @@ void CursorSynchronizer::synchronizeCursorPosition(
     // Check if cursor is behind camera
     if (isBehindCamera(worldCursorPos, view)) {
         CURSOR_DEBUG_LOG("Cursor is behind camera, centering on screen");
-        glfwSetCursorPos(window, windowWidth / 2.0, windowHeight / 2.0);
+        glfwSetCursorPos(window, viewportCenterX, viewportCenterY);
         CURSOR_PERF_END("cursor synchronization (behind camera)");
         return;
     }
@@ -88,25 +99,32 @@ void CursorSynchronizer::synchronizeCursorPosition(
     glm::vec2 screenPos;
     if (isStereoMode) {
         CURSOR_DEBUG_LOG("Using stereo projection");
-        screenPos = worldToScreenStereo(worldCursorPos, projection, view, rightProjection, rightView, windowWidth, windowHeight);
+        screenPos = worldToScreenStereo(worldCursorPos, projection, view, rightProjection, rightView, vp);
     } else {
         CURSOR_DEBUG_LOG("Using mono projection");
-        screenPos = worldToScreen(worldCursorPos, projection, view, windowWidth, windowHeight);
+        screenPos = worldToScreen(worldCursorPos, projection, view, vp);
     }
-    
+
     CURSOR_DEBUG_LOG("Projected screen position: (" << screenPos.x << ", " << screenPos.y << ")");
 
-    // Check if projected position is within viewport
-    if (!isWithinViewport(screenPos, windowWidth, windowHeight)) {
-        CURSOR_DEBUG_LOG("Projected cursor outside viewport, clamping to bounds");
-        CURSOR_DEBUG_LOG("Original position: (" << screenPos.x << ", " << screenPos.y << ")");
-        
-        // Clamp to viewport boundaries with margin
+    // Clamp the projected position to the viewport boundaries (with a margin) so
+    // the OS cursor never lands behind the docked panels or off-screen.
+    {
         float margin = 50.0f;
-        screenPos.x = glm::clamp(screenPos.x, margin, static_cast<float>(windowWidth) - margin);
-        screenPos.y = glm::clamp(screenPos.y, margin, static_cast<float>(windowHeight) - margin);
-        
-        CURSOR_DEBUG_LOG("Clamped position: (" << screenPos.x << ", " << screenPos.y << ")");
+        float minX = static_cast<float>(vp.x) + margin;
+        float maxX = static_cast<float>(vp.x + vp.z) - margin;
+        float minY = static_cast<float>(vp.y) + margin;
+        float maxY = static_cast<float>(vp.y + vp.w) - margin;
+        // Guard against a viewport smaller than 2*margin.
+        if (minX > maxX) { minX = maxX = static_cast<float>(viewportCenterX); }
+        if (minY > maxY) { minY = maxY = static_cast<float>(viewportCenterY); }
+        if (screenPos.x < minX || screenPos.x > maxX ||
+            screenPos.y < minY || screenPos.y > maxY) {
+            CURSOR_DEBUG_LOG("Projected cursor outside viewport, clamping to bounds");
+            screenPos.x = glm::clamp(screenPos.x, minX, maxX);
+            screenPos.y = glm::clamp(screenPos.y, minY, maxY);
+            CURSOR_DEBUG_LOG("Clamped position: (" << screenPos.x << ", " << screenPos.y << ")");
+        }
     }
 
     // Set the Windows cursor position
@@ -120,33 +138,34 @@ glm::vec2 CursorSynchronizer::worldToScreen(
     const glm::vec3& worldPos,
     const glm::mat4& projection,
     const glm::mat4& view,
-    int windowWidth,
-    int windowHeight
+    const glm::ivec4& viewport
 ) {
     CURSOR_DEBUG_LOG("WorldToScreen - Input world pos: (" << worldPos.x << ", " << worldPos.y << ", " << worldPos.z << ")");
-    
+
     // Transform world position to clip space
     glm::vec4 clipSpacePos = projection * view * glm::vec4(worldPos, 1.0f);
-    
+
     CURSOR_DEBUG_LOG("WorldToScreen - Clip space pos: (" << clipSpacePos.x << ", " << clipSpacePos.y << ", " << clipSpacePos.z << ", " << clipSpacePos.w << ")");
-    
+
     // Perform perspective divide to get normalized device coordinates (NDC)
     if (clipSpacePos.w == 0.0f) {
-        std::cerr << "[CursorSync Warning] Division by zero in perspective divide, using screen center" << std::endl;
-        return glm::vec2(windowWidth / 2.0f, windowHeight / 2.0f);
+        std::cerr << "[CursorSync Warning] Division by zero in perspective divide, using viewport center" << std::endl;
+        return glm::vec2(viewport.x + viewport.z * 0.5f, viewport.y + viewport.w * 0.5f);
     }
-    
+
     glm::vec3 ndcPos = glm::vec3(clipSpacePos) / clipSpacePos.w;
-    
+
     CURSOR_DEBUG_LOG("WorldToScreen - NDC pos: (" << ndcPos.x << ", " << ndcPos.y << ", " << ndcPos.z << ")");
-    
-    // Convert NDC to screen coordinates
-    // NDC range is [-1, 1], screen coordinates are [0, width] and [0, height]
-    float screenX = (ndcPos.x + 1.0f) * 0.5f * windowWidth;
-    float screenY = (1.0f - ndcPos.y) * 0.5f * windowHeight; // Flip Y axis for screen coordinates
-    
+
+    // Convert NDC to window pixels within the scene viewport sub-rectangle.
+    // NDC range is [-1, 1]; the viewport spans [x, x+width] x [y, y+height]
+    // (top-left origin), so the projection lands in the same offset area the
+    // scene is actually rendered into rather than the whole window.
+    float screenX = static_cast<float>(viewport.x) + (ndcPos.x + 1.0f) * 0.5f * viewport.z;
+    float screenY = static_cast<float>(viewport.y) + (1.0f - ndcPos.y) * 0.5f * viewport.w; // Flip Y axis for screen coordinates
+
     CURSOR_DEBUG_LOG("WorldToScreen - Final screen pos: (" << screenX << ", " << screenY << ")");
-    
+
     return glm::vec2(screenX, screenY);
 }
 
@@ -194,17 +213,16 @@ glm::vec2 CursorSynchronizer::worldToScreenStereo(
     const glm::mat4& leftView,
     const glm::mat4& rightProjection,
     const glm::mat4& rightView,
-    int windowWidth,
-    int windowHeight
+    const glm::ivec4& viewport
 ) {
     CURSOR_DEBUG_LOG("StereoProjection - Processing world pos: (" << worldPos.x << ", " << worldPos.y << ", " << worldPos.z << ")");
-    
+
     // Project to both left and right eye screen coordinates
     CURSOR_DEBUG_LOG("StereoProjection - Projecting left eye");
-    glm::vec2 leftScreenPos = worldToScreen(worldPos, leftProjection, leftView, windowWidth, windowHeight);
-    
+    glm::vec2 leftScreenPos = worldToScreen(worldPos, leftProjection, leftView, viewport);
+
     CURSOR_DEBUG_LOG("StereoProjection - Projecting right eye");
-    glm::vec2 rightScreenPos = worldToScreen(worldPos, rightProjection, rightView, windowWidth, windowHeight);
+    glm::vec2 rightScreenPos = worldToScreen(worldPos, rightProjection, rightView, viewport);
     
     // Check if both projections are valid (not behind camera)
     bool leftValid = !isBehindCamera(worldPos, leftView);
@@ -228,9 +246,9 @@ glm::vec2 CursorSynchronizer::worldToScreenStereo(
         CURSOR_DEBUG_LOG("StereoProjection - Using right eye only");
         return rightScreenPos;
     } else {
-        // Both behind camera, return screen center
-        CURSOR_DEBUG_LOG("StereoProjection - Both eyes invalid, using screen center");
-        return glm::vec2(windowWidth / 2.0f, windowHeight / 2.0f);
+        // Both behind camera, return viewport center
+        CURSOR_DEBUG_LOG("StereoProjection - Both eyes invalid, using viewport center");
+        return glm::vec2(viewport.x + viewport.z * 0.5f, viewport.y + viewport.w * 0.5f);
     }
 }
 
