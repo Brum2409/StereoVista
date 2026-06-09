@@ -63,6 +63,16 @@ void BloomRenderer::cleanup() {
     m_settings.depthTexture = 0;
   }
 
+  // FXAA intermediate LDR target
+  if (m_settings.ldrFBO != 0) {
+    glDeleteFramebuffers(1, &m_settings.ldrFBO);
+    m_settings.ldrFBO = 0;
+  }
+  if (m_settings.ldrColorBuffer != 0) {
+    glDeleteTextures(1, &m_settings.ldrColorBuffer);
+    m_settings.ldrColorBuffer = 0;
+  }
+
   if (m_settings.quadVAO != 0) {
     glDeleteVertexArrays(1, &m_settings.quadVAO);
     glDeleteBuffers(1, &m_settings.quadVBO);
@@ -77,6 +87,11 @@ void BloomRenderer::cleanup() {
   if (m_settings.finalShader) {
     delete m_settings.finalShader;
     m_settings.finalShader = nullptr;
+  }
+
+  if (m_settings.fxaaShader) {
+    delete m_settings.fxaaShader;
+    m_settings.fxaaShader = nullptr;
   }
 
   m_initialized = false;
@@ -100,6 +115,14 @@ void BloomRenderer::resize(int width, int height) {
       if (m_settings.depthTexture != 0) {
         glDeleteTextures(1, &m_settings.depthTexture);
         m_settings.depthTexture = 0;
+      }
+      if (m_settings.ldrFBO != 0) {
+        glDeleteFramebuffers(1, &m_settings.ldrFBO);
+        m_settings.ldrFBO = 0;
+      }
+      if (m_settings.ldrColorBuffer != 0) {
+        glDeleteTextures(1, &m_settings.ldrColorBuffer);
+        m_settings.ldrColorBuffer = 0;
       }
     }
 
@@ -247,6 +270,30 @@ bool BloomRenderer::setupFramebuffers() {
     }
   }
 
+  // FXAA intermediate target: holds the tone-mapped + gamma-encoded LDR image.
+  // RGBA8 is exactly what FXAA expects (non-linear, 8-bit). LINEAR filtering is
+  // required because the FXAA resolve samples at sub-texel offsets.
+  glGenFramebuffers(1, &m_settings.ldrFBO);
+  glBindFramebuffer(GL_FRAMEBUFFER, m_settings.ldrFBO);
+
+  glGenTextures(1, &m_settings.ldrColorBuffer);
+  glBindTexture(GL_TEXTURE_2D, m_settings.ldrColorBuffer);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, m_width, m_height, 0, GL_RGBA,
+               GL_UNSIGNED_BYTE, NULL);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                         m_settings.ldrColorBuffer, 0);
+
+  status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+  if (status != GL_FRAMEBUFFER_COMPLETE) {
+    std::cerr << "FXAA LDR Framebuffer not complete! Status: " << status
+              << std::endl;
+    return false;
+  }
+
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
   return true;
 }
@@ -335,6 +382,19 @@ bool BloomRenderer::loadShaders() {
     // Schütz Phase 1: EDL uniforms – texture unit 3 for depth, off by default
     m_settings.finalShader->setInt("depthTexture", 3);
     m_settings.finalShader->setBool("enableEDL", false);
+
+    // FXAA resolve shader (reuses the fullscreen-quad vertex shader). Optional:
+    // if it fails to load, FXAA is simply unavailable and the pipeline presents
+    // the composite directly.
+    m_settings.fxaaShader =
+        Engine::loadShader("bloom/final.vert", "bloom/fxaa.frag");
+    if (!m_settings.fxaaShader) {
+      std::cerr << "Warning: failed to load FXAA shader; FXAA disabled"
+                << std::endl;
+    } else {
+      m_settings.fxaaShader->use();
+      m_settings.fxaaShader->setInt("screenTexture", 0);
+    }
 
     return true;
   } catch (const std::exception &e) {
@@ -446,13 +506,25 @@ void BloomRenderer::applyBloom(GLuint sceneTexture,
     }
   }
 
+  // FXAA active when requested and the shader + LDR target are available. When
+  // active, the tone-mapped composite is rendered to the offscreen LDR buffer
+  // (full resolution, origin 0,0) and an FXAA pass below resolves it to the
+  // screen sub-rectangle. When inactive, the composite presents directly.
+  bool fxaaActive = settings.fxaaEnabled && m_settings.fxaaShader != nullptr &&
+                    m_settings.ldrFBO != 0;
+
   // Final composition. Present into the requested sub-rectangle so the image
   // lands in the free area beside the docked GUI panels (offsets default to 0,
   // i.e. full-window present). The clear still affects the whole eye buffer so
   // the reserved strips are a clean color behind the (opaque) GUI panels.
-  glBindFramebuffer(GL_FRAMEBUFFER, 0);
-  glDrawBuffer(drawBuffer); // Set the target draw buffer for stereo support
-  glViewport(presentOffsetX, presentOffsetY, m_width, m_height);
+  if (fxaaActive) {
+    glBindFramebuffer(GL_FRAMEBUFFER, m_settings.ldrFBO);
+    glViewport(0, 0, m_width, m_height);
+  } else {
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDrawBuffer(drawBuffer); // Set the target draw buffer for stereo support
+    glViewport(presentOffsetX, presentOffsetY, m_width, m_height);
+  }
   glClear(GL_COLOR_BUFFER_BIT);
 
   if (m_settings.finalShader) {
@@ -531,6 +603,32 @@ void BloomRenderer::applyBloom(GLuint sceneTexture,
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+  }
+
+  // FXAA resolve: sample the tone-mapped LDR buffer and present the
+  // anti-aliased result into the screen sub-rectangle. Runs only when the
+  // composite above targeted the offscreen LDR buffer.
+  if (fxaaActive && m_settings.finalShader) {
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDrawBuffer(drawBuffer); // restore stereo draw buffer for the present
+    glViewport(presentOffsetX, presentOffsetY, m_width, m_height);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    m_settings.fxaaShader->use();
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, m_settings.ldrColorBuffer);
+    m_settings.fxaaShader->setInt("screenTexture", 0);
+    m_settings.fxaaShader->setVec2(
+        "inverseScreenSize",
+        glm::vec2(1.0f / static_cast<float>(m_width),
+                  1.0f / static_cast<float>(m_height)));
+    m_settings.fxaaShader->setFloat("fxaaSubpixel", settings.fxaaSubpixel);
+    m_settings.fxaaShader->setFloat("fxaaEdgeThreshold",
+                                    settings.fxaaEdgeThreshold);
+
+    renderQuad();
+
     glBindTexture(GL_TEXTURE_2D, 0);
   }
 

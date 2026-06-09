@@ -2,7 +2,7 @@
     "camera": {
         "alwaysShowOrbitCenter": false,
         "autoConvergence": true,
-        "convergence": 8.254927635192871,
+        "convergence": 9.20367431640625,
         "convergenceCapMax": 39.0,
         "convergenceCapMin": 0.800000011920929,
         "convergenceDistanceFactor": 1.2999999523162842,
@@ -45,8 +45,11 @@
         "bloomIntensity": 0.1770000010728836,
         "bloomThreshold": 0.33000001311302185,
         "enableBloom": false,
+        "enableFXAA": true,
         "enabled": true,
         "exposure": 1.8600000143051147,
+        "fxaaEdgeThreshold": 0.11999999731779099,
+        "fxaaSubpixel": 0.7099999785423279,
         "toneMapOperator": 3
     },
     "lighting": {
@@ -100,13 +103,13 @@
         "bvhDebugMaxDepth": 8,
         "bvhDebugRenderMode": 0,
         "ddgiDepthSharpness": 50,
-        "ddgiGIIntensity": 0.0989999994635582,
+        "ddgiGIIntensity": 0.210999995470047,
         "ddgiHysteresis": 0.9900000095367432,
         "ddgiNormalBias": 1.0,
         "ddgiProbeCountX": 24,
         "ddgiProbeCountY": 24,
         "ddgiProbeCountZ": 24,
-        "ddgiRaysPerProbe": 24,
+        "ddgiRaysPerProbe": 28,
         "ddgiShowProbes": false,
         "ddgiVisibilityStrength": 0.800000011920929,
         "emissiveIntensity": 1.2899999618530273,
@@ -128,12 +131,12 @@
     "shadows": {
         "cascadeSplitLambda": 0.5,
         "enableCascades": false,
-        "enableIndirectLighting": false,
+        "enableIndirectLighting": true,
         "enablePCSS": false,
         "lightSize": 0.03400000184774399,
         "numCascades": 4,
         "pcfKernelSize": 7,
-        "shadowSoftness": 11.34000015258789
+        "shadowSoftness": 0.5600000023841858
     },
     "skybox": {
         "exposure": 0.05999999865889549,
@@ -179,11 +182,11 @@
         "translationSensitivity": 1.0
     },
     "ssao": {
-        "bias": 0.01899999938905239,
-        "enabled": false,
+        "bias": 0.024000000208616257,
+        "enabled": true,
         "kernelSize": 64,
-        "power": 1.2999999523162842,
-        "radius": 0.28999999165534973
+        "power": 0.699999988079071,
+        "radius": 0.23999999463558197
     },
     "startup": {
         "loadScene": false,

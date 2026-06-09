@@ -14,6 +14,13 @@ struct BloomSettings {
   float exposure = 1.0f;   // HDR exposure
   int toneMapOperator = 0; // 0=Reinhard, 1=ACES, 2=Filmic
 
+  // FXAA (post-tonemap anti-aliasing). When enabled the final composite is
+  // rendered to an offscreen LDR buffer and resolved to the screen by an FXAA
+  // pass; when disabled the composite is presented directly (no extra cost).
+  bool fxaaEnabled = true;
+  float fxaaSubpixel = 0.75f;       // sub-pixel aliasing removal [0..1]
+  float fxaaEdgeThreshold = 0.166f; // relative edge threshold (~0.063..0.333)
+
   // Framebuffer objects
   GLuint hdrFBO = 0;
   GLuint bloomFBO[2] = {0, 0}; // Ping-pong framebuffers
@@ -22,10 +29,14 @@ struct BloomSettings {
   GLuint bloomColorBuffers[2] = {0, 0};
   // Schütz Phase 1: depth stored as a texture so the EDL pass can sample it
   GLuint depthTexture = 0;
+  // FXAA intermediate: tone-mapped LDR result, sampled by the FXAA resolve pass
+  GLuint ldrFBO = 0;
+  GLuint ldrColorBuffer = 0;
 
   // Shaders
   Shader *blurShader = nullptr;
   Shader *finalShader = nullptr;
+  Shader *fxaaShader = nullptr;
 
   // Screen quad for post-processing
   GLuint quadVAO = 0;

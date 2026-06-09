@@ -2237,6 +2237,36 @@ void renderSettingsWindow() {
             ImGui::SameLine();
             DrawHelpMarker("Strength of the bloom effect");
           }
+
+          ImGui::Spacing();
+          if (ImGui::Checkbox("Enable FXAA",
+                              &preferences.hdrSettings.enableFXAA)) {
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker(
+              "Fast Approximate Anti-Aliasing. A cheap post-process pass that "
+              "smooths jagged edges after tone mapping.");
+
+          if (preferences.hdrSettings.enableFXAA) {
+            if (ImGui::SliderFloat("FXAA Sub-pixel",
+                                   &preferences.hdrSettings.fxaaSubpixel, 0.0f,
+                                   1.0f, "%.2f")) {
+              settingsChanged = true;
+            }
+            ImGui::SameLine();
+            DrawHelpMarker("Amount of sub-pixel aliasing removal. Higher = "
+                           "softer, lower = sharper.");
+
+            if (ImGui::SliderFloat("FXAA Edge Threshold",
+                                   &preferences.hdrSettings.fxaaEdgeThreshold,
+                                   0.063f, 0.333f, "%.3f")) {
+              settingsChanged = true;
+            }
+            ImGui::SameLine();
+            DrawHelpMarker("Minimum contrast treated as an edge. Lower = more "
+                           "edges smoothed (higher quality, slower).");
+          }
         }
 
         ImGui::Spacing();

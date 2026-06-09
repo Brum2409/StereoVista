@@ -1677,6 +1677,9 @@ void savePreferences() {
   j["hdr"]["bloomIntensity"] = preferences.hdrSettings.bloomIntensity;
   j["hdr"]["toneMapOperator"] = preferences.hdrSettings.toneMapOperator;
   j["hdr"]["enableBloom"] = preferences.hdrSettings.enableBloom;
+  j["hdr"]["enableFXAA"] = preferences.hdrSettings.enableFXAA;
+  j["hdr"]["fxaaSubpixel"] = preferences.hdrSettings.fxaaSubpixel;
+  j["hdr"]["fxaaEdgeThreshold"] = preferences.hdrSettings.fxaaEdgeThreshold;
 
   // Save SSAO settings
   j["ssao"]["enabled"] = preferences.ssaoSettings.enabled;
@@ -2177,6 +2180,12 @@ void loadPreferences() {
           j["hdr"].value("toneMapOperator", 0);
       preferences.hdrSettings.enableBloom =
           j["hdr"].value("enableBloom", false);
+      preferences.hdrSettings.enableFXAA =
+          j["hdr"].value("enableFXAA", true);
+      preferences.hdrSettings.fxaaSubpixel =
+          j["hdr"].value("fxaaSubpixel", 0.75f);
+      preferences.hdrSettings.fxaaEdgeThreshold =
+          j["hdr"].value("fxaaEdgeThreshold", 0.166f);
     }
 
     // SSAO settings
@@ -3595,6 +3604,10 @@ int main() {
       bloomSettings.intensity = preferences.hdrSettings.bloomIntensity;
       bloomSettings.exposure = preferences.hdrSettings.exposure;
       bloomSettings.toneMapOperator = preferences.hdrSettings.toneMapOperator;
+      bloomSettings.fxaaEnabled = preferences.hdrSettings.enableFXAA;
+      bloomSettings.fxaaSubpixel = preferences.hdrSettings.fxaaSubpixel;
+      bloomSettings.fxaaEdgeThreshold =
+          preferences.hdrSettings.fxaaEdgeThreshold;
 
       // Set SSAO texture for final composition
       if (ssaoRenderer && ssaoRenderer->isInitialized() &&

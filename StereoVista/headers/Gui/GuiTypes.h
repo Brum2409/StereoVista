@@ -138,6 +138,10 @@ struct ApplicationPreferences {
     float bloomIntensity = 0.04f;
     int toneMapOperator = 0; // 0=Reinhard, 1=ACES, 2=Filmic
     bool enableBloom = false;
+    // FXAA post-process anti-aliasing (applied after tone mapping)
+    bool enableFXAA = true;
+    float fxaaSubpixel = 0.75f;       // sub-pixel aliasing removal [0..1]
+    float fxaaEdgeThreshold = 0.166f; // edge threshold (~0.063 hi .. 0.333 lo)
   } hdrSettings;
 
   // SSAO settings
