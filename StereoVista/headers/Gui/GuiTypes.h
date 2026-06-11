@@ -91,14 +91,6 @@ struct FragmentShaderCursorSettings {
   glm::vec4 innerColor = glm::vec4(1.0f, 1.0f, 1.0f, 0.5f);
 };
 
-struct PlaneCursor {
-  GLuint VAO, VBO, EBO;
-  glm::vec4 color = glm::vec4(0.0f, 1.0f, 0.0f, 0.7f);
-  float diameter = 0.5f;
-  bool show = false;
-  Engine::Shader *shader = nullptr;
-};
-
 struct ApplicationPreferences {
   bool isDarkTheme = true;
   float guiScaleFactor =
@@ -136,7 +128,8 @@ struct ApplicationPreferences {
     float exposure = 1.0f;
     float bloomThreshold = 1.0f;
     float bloomIntensity = 0.04f;
-    int toneMapOperator = 0; // 0=Reinhard, 1=ACES, 2=Filmic
+    int toneMapOperator = 0; // 0=Reinhard 1=ACES 2=Uncharted2 3=AgX
+                             // 4=KhronosPBRNeutral 5=TonyMcMapface
     bool enableBloom = false;
     // FXAA post-process anti-aliasing (applied after tone mapping)
     bool enableFXAA = true;
@@ -249,8 +242,6 @@ struct ApplicationPreferences {
   bool alwaysShowOrbitCenter = false;
   glm::vec4 orbitCenterColor = glm::vec4(0.0f, 1.0f, 0.0f, 0.7f);
   float orbitCenterSphereRadius = 0.2f;
-
-  bool showStereoVisualization = true;
 
   bool radarEnabled = false;
   glm::vec2 radarPos = glm::vec2(0.8f, -0.8f);

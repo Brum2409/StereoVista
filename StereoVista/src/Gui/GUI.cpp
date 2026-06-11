@@ -12,6 +12,7 @@
 #include "imgui/IconsFontAwesome5.h"
 #include "imgui/imgui_sytle.h"
 #include "libs/portable-file-dialogs.h"
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -37,7 +38,6 @@ extern Camera camera;
 extern bool showGui;
 extern bool showFPS;
 extern bool isDarkTheme;
-extern bool showInfoWindow;
 extern bool showSettingsWindow;
 extern bool show3DCursor;
 extern bool showCursorSettingsWindow;
@@ -111,20 +111,19 @@ extern const int MAX_LIGHTS;
 // Redesigned GUI: navigation state + reusable modern widgets
 // ===========================================================================
 
-// Categories for the redesigned, sidebar-navigated Settings window. Declared at
-// file scope so the main menu bar can deep-link straight to a category (e.g.
-// the "AI Assistant" shortcut).
+// Categories for the sidebar-navigated Settings window. Declared at file scope
+// so menus could deep-link straight to a category if needed.
 enum SettingsCategory {
-  SETTINGS_CAT_AI = 0,
-  SETTINGS_CAT_RENDERING,
+  SETTINGS_CAT_RENDERING = 0,
   SETTINGS_CAT_CAMERA,
+  SETTINGS_CAT_STEREO,
   SETTINGS_CAT_ENVIRONMENT,
-  SETTINGS_CAT_DISPLAY,
-  SETTINGS_CAT_INPUT,
+  SETTINGS_CAT_INTERFACE,
+  SETTINGS_CAT_SPACEMOUSE,
   SETTINGS_CAT_IMPORT,
   SETTINGS_CAT_SHORTCUTS
 };
-static int g_settingsCategory = SETTINGS_CAT_AI;
+static int g_settingsCategory = SETTINGS_CAT_RENDERING;
 
 // Docked-region insets published to the render loop (see Gui.h). Updated each
 // frame in renderGUI so the 3D viewport can be sized to the free area.
@@ -255,6 +254,18 @@ static bool DrawToggleSwitch(const char *label, bool *v) {
   return changed;
 }
 
+// Case-insensitive substring match used by the Scene Hierarchy search box.
+static bool MatchesSearch(const std::string &name, const char *query) {
+  if (!query || query[0] == '\0')
+    return true;
+  std::string lowerName = name, lowerQuery = query;
+  std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(),
+                 ::tolower);
+  std::transform(lowerQuery.begin(), lowerQuery.end(), lowerQuery.begin(),
+                 ::tolower);
+  return lowerName.find(lowerQuery) != std::string::npos;
+}
+
 // Helper function for help markers (tooltips)
 static void DrawHelpMarker(const char *desc) {
   ImGui::TextDisabled("(?)");
@@ -265,165 +276,6 @@ static void DrawHelpMarker(const char *desc) {
     ImGui::PopTextWrapPos();
     ImGui::EndTooltip();
   }
-}
-
-// Comprehensive icon test window
-static void ShowIconTestWindow() {
-  ImGui::Begin("Icon Test Window", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
-
-  ImGui::Text("=== FontAwesome Icon Tests ===");
-
-  // Test 1: Direct icon display with current font
-  ImGui::Separator();
-  ImGui::Text("Test 1: Current font");
-  ImGui::Text("Lightbulb: %s", ICON_FA_LIGHTBULB);
-  ImGui::Text("Star: %s", ICON_FA_STAR);
-  ImGui::Text("Home: %s", ICON_FA_HOME);
-  ImGui::Text("Cog: %s", ICON_FA_COG);
-  ImGui::Text("Heart: %s", ICON_FA_HEART);
-
-  // Test 2: With explicit regular font
-  ImGui::Separator();
-  ImGui::Text("Test 2: With regular font");
-  if (g_Fonts.regular) {
-    ImGui::PushFont(g_Fonts.regular);
-    ImGui::Text("Lightbulb: %s", ICON_FA_LIGHTBULB);
-    ImGui::Text("Star: %s", ICON_FA_STAR);
-    ImGui::Text("Home: %s", ICON_FA_HOME);
-    ImGui::Text("Cog: %s", ICON_FA_COG);
-    ImGui::Text("Heart: %s", ICON_FA_HEART);
-    ImGui::PopFont();
-  } else {
-    ImGui::Text("Regular font not available");
-  }
-
-  // Test 3: Raw UTF-8 sequences
-  ImGui::Separator();
-  ImGui::Text("Test 3: Raw UTF-8 sequences");
-  ImGui::Text("Lightbulb raw: \uf0eb");
-  ImGui::Text("Star raw: \uf005");
-  ImGui::Text("Home raw: \uf015");
-
-  // Test 4: Different character codes
-  ImGui::Separator();
-  ImGui::Text("Test 4: Character codes");
-  char lightbulb_utf8[5];
-  ImTextCharToUtf8(lightbulb_utf8, 0xf0eb);
-  ImGui::Text("Lightbulb from code: %s", lightbulb_utf8);
-
-  // Test 5: Font diagnostic
-  ImGui::Separator();
-  ImGui::Text("Test 5: Font Diagnostic");
-  ImFont *currentFont = ImGui::GetFont();
-  ImGui::Text("Current font: %p", currentFont);
-  if (currentFont) {
-    ImGui::Text("Font size: %.1f", currentFont->FontSize);
-    ImGui::Text("Glyph count: %d", currentFont->Glyphs.Size);
-
-    // Check specific glyphs
-    const ImFontGlyph *lightbulb_glyph = currentFont->FindGlyph(0xf0eb);
-    const ImFontGlyph *star_glyph = currentFont->FindGlyph(0xf005);
-    const ImFontGlyph *home_glyph = currentFont->FindGlyph(0xf015);
-
-    ImGui::Text("Lightbulb glyph: %s", lightbulb_glyph ? "FOUND" : "MISSING");
-    ImGui::Text("Star glyph: %s", star_glyph ? "FOUND" : "MISSING");
-    ImGui::Text("Home glyph: %s", home_glyph ? "FOUND" : "MISSING");
-
-    if (lightbulb_glyph) {
-      ImGui::Text("Lightbulb advance: %.2f", lightbulb_glyph->AdvanceX);
-      ImGui::Text("Lightbulb visible: %s",
-                  lightbulb_glyph->Visible ? "YES" : "NO");
-    }
-  }
-
-  // Test 6: All available fonts
-  ImGui::Separator();
-  ImGui::Text("Test 6: All Fonts");
-  ImGuiIO &io = ImGui::GetIO();
-  ImGui::Text("Total fonts loaded: %d", io.Fonts->Fonts.Size);
-
-  for (int i = 0; i < io.Fonts->Fonts.Size; i++) {
-    ImFont *font = io.Fonts->Fonts[i];
-    if (ImGui::TreeNode((void *)(intptr_t)i, "Font %d (%p) - Size: %.1f", i,
-                        font, font->FontSize)) {
-      ImGui::PushFont(font);
-
-      // Test basic glyphs
-      const ImFontGlyph *glyph_A = font->FindGlyph('A');
-      const ImFontGlyph *glyph_lightbulb = font->FindGlyph(0xf0eb);
-
-      ImGui::Text("Has 'A': %s", glyph_A ? "YES" : "NO");
-      ImGui::Text("Has lightbulb: %s", glyph_lightbulb ? "YES" : "NO");
-      ImGui::Text("Regular text: Hello World");
-      ImGui::Text("Icon test: %s %s %s", ICON_FA_LIGHTBULB, ICON_FA_STAR,
-                  ICON_FA_HOME);
-
-      ImGui::PopFont();
-      ImGui::TreePop();
-    }
-  }
-
-  // Test 7: Manual button test
-  ImGui::Separator();
-  ImGui::Text("Test 7: Interactive Test");
-  if (ImGui::Button(ICON_FA_LIGHTBULB " Click Me")) {
-    // Test button with icon
-  }
-
-  // Test 8: Hex dump of icon strings
-  ImGui::Separator();
-  ImGui::Text("Test 8: Icon String Analysis");
-  const char *lightbulb_str = ICON_FA_LIGHTBULB;
-  ImGui::Text("ICON_FA_LIGHTBULB length: %d", strlen(lightbulb_str));
-  ImGui::Text("Hex bytes:");
-  for (int i = 0; i < strlen(lightbulb_str) && i < 8; i++) {
-    ImGui::SameLine();
-    ImGui::Text("%02X", (unsigned char)lightbulb_str[i]);
-  }
-
-  // Test 9: Try different lightbulb icons
-  ImGui::Separator();
-  ImGui::Text("Test 9: Alternative Icons");
-  ImGui::Text("Try different codes:");
-
-  // Test with manual UTF-8 encoding of 0xF0EB
-  char manual_lightbulb[4] = {(char)0xEF, (char)0x83, (char)0xAB,
-                              0x00}; // UTF-8 encoding of U+F0EB
-  ImGui::Text("Manual UTF-8 lightbulb: %s", manual_lightbulb);
-
-  // Test with other manual codes
-  char manual_star[4] = {(char)0xEF, (char)0x80, (char)0x85,
-                         0x00}; // UTF-8 encoding of U+F005
-  ImGui::Text("Manual UTF-8 star: %s", manual_star);
-
-  // Test with known working characters
-  ImGui::Text("ASCII test: ABC123");
-  ImGui::Text("Extended ASCII: ÄÖÜ");
-
-  // Test 10: Force use Font 0 (which has the lightbulb)
-  ImGui::Separator();
-  ImGui::Text("Test 10: Force Font 0");
-  io = ImGui::GetIO();
-  if (io.Fonts->Fonts.Size > 0) {
-    ImFont *font0 = io.Fonts->Fonts[0];
-    ImGui::PushFont(font0);
-    ImGui::Text("With Font 0: %s Lightbulb Test", ICON_FA_LIGHTBULB);
-    ImGui::Text("With Font 0: %s Star Test", ICON_FA_STAR);
-    ImGui::Text("With Font 0: %s Home Test", ICON_FA_HOME);
-    ImGui::PopFont();
-  }
-
-  // Test 11: Manual font switching
-  ImGui::Separator();
-  ImGui::Text("Test 11: Try All Fonts");
-  for (int i = 0; i < io.Fonts->Fonts.Size; i++) {
-    ImFont *font = io.Fonts->Fonts[i];
-    ImGui::PushFont(font);
-    ImGui::Text("Font %d: %s", i, ICON_FA_LIGHTBULB);
-    ImGui::PopFont();
-  }
-
-  ImGui::End();
 }
 
 bool InitializeGUI(GLFWwindow *window, bool isDarkTheme) {
@@ -836,7 +688,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       // Hint about settings
       ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
       ImGui::TextWrapped("Tip: You can set a default behavior in Settings > "
-                         "Display > Scene Loading");
+                         "Interface > Scene Loading");
       ImGui::PopStyleColor();
 
       ImGui::EndPopup();
@@ -983,162 +835,90 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       ImGui::EndMenu();
     }
 
-    // Camera Menu
-    if (ImGui::BeginMenu("Camera")) {
-      DrawSectionHeader("Movement");
+    // Tools Menu: 3D cursor configuration and the brush tool. Camera
+    // tuning lives in Settings > Camera; quick view toggles live in View.
+    if (ImGui::BeginMenu("Tools")) {
+      if (ImGui::BeginMenu("3D Cursor")) {
+        auto *sphereCursor = cursorManager.getSphereCursor();
+        auto *fragmentCursor = cursorManager.getFragmentCursor();
+        auto *planeCursor = cursorManager.getPlaneCursor();
 
-      if (ImGui::SliderFloat("Speed", &camera.speedFactor, 0.1f, 5.0f,
-                             "%.1fx")) {
-        preferences.cameraSpeedFactor = camera.speedFactor;
-        savePreferences();
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Multiplies camera movement speed");
-
-      if (ImGui::SliderFloat("Sensitivity", &camera.MouseSensitivity, 0.01f,
-                             0.08f, "%.3f")) {
-        preferences.mouseSensitivity = camera.MouseSensitivity;
-        savePreferences();
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Mouse rotation sensitivity");
-
-      DrawSectionHeader("Zoom Behavior");
-
-      if (ImGui::MenuItem("Zoom to Cursor", nullptr, &camera.zoomToCursor)) {
-        preferences.zoomToCursor = camera.zoomToCursor;
-        savePreferences();
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Scroll zooms toward cursor position");
-
-      DrawSectionHeader("Orbit Mode");
-
-      bool standardOrbit = !camera.orbitAroundCursor && !orbitFollowsCursor;
-      if (ImGui::RadioButton("Standard", standardOrbit)) {
-        camera.orbitAroundCursor = false;
-        orbitFollowsCursor = false;
-        preferences.orbitAroundCursor = false;
-        preferences.orbitFollowsCursor = false;
-        savePreferences();
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Orbit around viewport center");
-
-      bool orbitAroundCursorOption = camera.orbitAroundCursor;
-      if (ImGui::RadioButton("Around Cursor", orbitAroundCursorOption)) {
-        camera.orbitAroundCursor = true;
-        orbitFollowsCursor = false;
-        preferences.orbitAroundCursor = true;
-        preferences.orbitFollowsCursor = false;
-        savePreferences();
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Orbit around cursor position");
-
-      bool orbitFollowsCursorOption = orbitFollowsCursor;
-      if (ImGui::RadioButton("Follow Cursor", orbitFollowsCursorOption)) {
-        camera.orbitAroundCursor = false;
-        orbitFollowsCursor = true;
-        preferences.orbitAroundCursor = false;
-        preferences.orbitFollowsCursor = true;
-        savePreferences();
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Center view on cursor, then orbit");
-
-      ImGui::EndMenu();
-    }
-
-    // Cursor Menu
-    if (ImGui::BeginMenu("Cursor")) {
-      auto *sphereCursor = cursorManager.getSphereCursor();
-      auto *fragmentCursor = cursorManager.getFragmentCursor();
-      auto *planeCursor = cursorManager.getPlaneCursor();
-
-      DrawSectionHeader("Cursor Types");
-
-      bool showSphereCursor = sphereCursor->isVisible();
-      if (ImGui::MenuItem("3D Sphere", nullptr, &showSphereCursor)) {
-        sphereCursor->setVisible(showSphereCursor);
-      }
-
-      bool showFragmentCursor = fragmentCursor->isVisible();
-      if (ImGui::MenuItem("2D Circle", nullptr, &showFragmentCursor)) {
-        fragmentCursor->setVisible(showFragmentCursor);
-      }
-
-      bool showPlaneCursor = planeCursor->isVisible();
-      if (ImGui::MenuItem("Surface Plane", nullptr, &showPlaneCursor)) {
-        planeCursor->setVisible(showPlaneCursor);
-      }
-
-      ImGui::Separator();
-
-      if (ImGui::BeginMenu("Quick Presets")) {
-        std::vector<std::string> presetNames =
-            Engine::CursorPresetManager::getPresetNames();
-        for (const auto &name : presetNames) {
-          if (ImGui::MenuItem(name.c_str(), nullptr,
-                              currentPresetName == name)) {
-            currentPresetName = name;
-            Engine::CursorPreset loadedPreset =
-                Engine::CursorPresetManager::applyCursorPreset(name);
-
-            sphereCursor->setVisible(loadedPreset.showSphereCursor);
-            sphereCursor->setScalingMode(static_cast<GUI::CursorScalingMode>(
-                loadedPreset.sphereScalingMode));
-            sphereCursor->setFixedRadius(loadedPreset.sphereFixedRadius);
-            sphereCursor->setTransparency(loadedPreset.sphereTransparency);
-            sphereCursor->setShowInnerSphere(loadedPreset.showInnerSphere);
-            sphereCursor->setColor(loadedPreset.cursorColor);
-            sphereCursor->setInnerSphereColor(loadedPreset.innerSphereColor);
-            sphereCursor->setInnerSphereFactor(loadedPreset.innerSphereFactor);
-            sphereCursor->setEdgeSoftness(loadedPreset.cursorEdgeSoftness);
-            sphereCursor->setCenterTransparency(
-                loadedPreset.cursorCenterTransparency);
-
-            fragmentCursor->setVisible(loadedPreset.showFragmentCursor);
-            fragmentCursor->setBaseInnerRadius(
-                loadedPreset.fragmentBaseInnerRadius);
-
-            planeCursor->setVisible(loadedPreset.showPlaneCursor);
-            planeCursor->setDiameter(loadedPreset.planeDiameter);
-            planeCursor->setColor(loadedPreset.planeColor);
-
-            preferences.currentPresetName = currentPresetName;
-            savePreferences();
-          }
+        bool showSphereCursor = sphereCursor->isVisible();
+        if (ImGui::MenuItem("3D Sphere", nullptr, &showSphereCursor)) {
+          sphereCursor->setVisible(showSphereCursor);
         }
+
+        bool showFragmentCursor = fragmentCursor->isVisible();
+        if (ImGui::MenuItem("2D Circle", nullptr, &showFragmentCursor)) {
+          fragmentCursor->setVisible(showFragmentCursor);
+        }
+
+        bool showPlaneCursor = planeCursor->isVisible();
+        if (ImGui::MenuItem("Surface Plane", nullptr, &showPlaneCursor)) {
+          planeCursor->setVisible(showPlaneCursor);
+        }
+
+        ImGui::Separator();
+
+        if (ImGui::BeginMenu("Presets")) {
+          std::vector<std::string> presetNames =
+              Engine::CursorPresetManager::getPresetNames();
+          for (const auto &name : presetNames) {
+            if (ImGui::MenuItem(name.c_str(), nullptr,
+                                currentPresetName == name)) {
+              currentPresetName = name;
+              Engine::CursorPreset loadedPreset =
+                  Engine::CursorPresetManager::applyCursorPreset(name);
+
+              sphereCursor->setVisible(loadedPreset.showSphereCursor);
+              sphereCursor->setScalingMode(static_cast<GUI::CursorScalingMode>(
+                  loadedPreset.sphereScalingMode));
+              sphereCursor->setFixedRadius(loadedPreset.sphereFixedRadius);
+              sphereCursor->setTransparency(loadedPreset.sphereTransparency);
+              sphereCursor->setShowInnerSphere(loadedPreset.showInnerSphere);
+              sphereCursor->setColor(loadedPreset.cursorColor);
+              sphereCursor->setInnerSphereColor(loadedPreset.innerSphereColor);
+              sphereCursor->setInnerSphereFactor(
+                  loadedPreset.innerSphereFactor);
+              sphereCursor->setEdgeSoftness(loadedPreset.cursorEdgeSoftness);
+              sphereCursor->setCenterTransparency(
+                  loadedPreset.cursorCenterTransparency);
+
+              fragmentCursor->setVisible(loadedPreset.showFragmentCursor);
+              fragmentCursor->setBaseInnerRadius(
+                  loadedPreset.fragmentBaseInnerRadius);
+
+              planeCursor->setVisible(loadedPreset.showPlaneCursor);
+              planeCursor->setDiameter(loadedPreset.planeDiameter);
+              planeCursor->setColor(loadedPreset.planeColor);
+
+              preferences.currentPresetName = currentPresetName;
+              savePreferences();
+            }
+          }
+          ImGui::EndMenu();
+        }
+
+        ImGui::Separator();
+
+        if (ImGui::MenuItem("Cursor Settings...")) {
+          showCursorSettingsWindow = true;
+        }
+
         ImGui::EndMenu();
       }
 
-      ImGui::Separator();
-
-      if (ImGui::MenuItem("Advanced Settings...")) {
-        showCursorSettingsWindow = true;
+      if (ImGui::MenuItem("Brush Tool...")) {
+        showBrushToolWindow = true;
       }
 
       ImGui::EndMenu();
     }
 
-    // Settings Menu
+    // Settings window
     if (ImGui::MenuItem("Settings")) {
       showSettingsWindow = true;
     }
-
-    // Brush Tool Menu
-    if (ImGui::MenuItem("Brush Tool")) {
-      showBrushToolWindow = true;
-    }
-
-    // AI Assistant quick access (accent-highlighted, deep-links into Settings)
-    ImGui::PushStyleColor(ImGuiCol_Text, g_StyleColors.accent);
-    if (ImGui::MenuItem("AI Assistant")) {
-      showSettingsWindow = true;
-      g_settingsCategory = SETTINGS_CAT_AI;
-    }
-    ImGui::PopStyleColor();
 
     ImGui::EndMainMenuBar();
   }
@@ -1244,8 +1024,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
     // Helper lambda to render a model
     auto renderModel = [&](int i) {
       std::string modelName = currentScene.models[i].name;
-      if (strlen(searchBuffer) > 0 &&
-          modelName.find(searchBuffer) == std::string::npos)
+      if (!MatchesSearch(modelName, searchBuffer))
         return;
 
       ImGui::PushID(i);
@@ -1341,8 +1120,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
     // Helper lambda to render a point cloud
     auto renderPointCloud = [&](int i) {
       std::string pcName = currentScene.pointClouds[i].name;
-      if (strlen(searchBuffer) > 0 &&
-          pcName.find(searchBuffer) == std::string::npos)
+      if (!MatchesSearch(pcName, searchBuffer))
         return;
 
       ImGui::PushID(i + currentScene.models.size());
@@ -1405,6 +1183,10 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       ImGui::PushID(i + currentScene.models.size() + 2000);
       bool isSelected = (currentSelectedIndex == i &&
                          currentSelectedType == SelectedType::SpotLight);
+
+      ImGui::AlignTextToFramePadding();
+      ImGui::Text(""); // No visibility checkbox for lights
+      ImGui::NextColumn();
 
       ImGui::AlignTextToFramePadding();
       if (g_Fonts.icons) {
@@ -1638,8 +1420,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         continue;
 
       std::string clusterName = cluster->name;
-      if (strlen(searchBuffer) > 0 &&
-          clusterName.find(searchBuffer) == std::string::npos)
+      if (!MatchesSearch(clusterName, searchBuffer))
         continue;
 
       ImGui::PushID(i + currentScene.models.size() +
@@ -1806,7 +1587,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
     renderBrushToolWindow();
   }
 
-  // FPS Counter (always in top-right corner)
+  // FPS Counter (bottom-right corner)
   if (showFPS) {
     ImGui::SetNextWindowPos(ImVec2(windowWidth - 120, windowHeight - 60));
     ImGui::Begin("FPS", nullptr,
@@ -1925,12 +1706,12 @@ void renderSettingsWindow() {
     const char *label;
   };
   static const SettingsNavEntry kNavEntries[] = {
-      {SETTINGS_CAT_AI, ICON_FA_ROBOT, "AI Assistant"},
       {SETTINGS_CAT_RENDERING, ICON_FA_LIGHTBULB, "Rendering"},
-      {SETTINGS_CAT_CAMERA, ICON_FA_VIDEO, "Camera & 3D"},
+      {SETTINGS_CAT_CAMERA, ICON_FA_VIDEO, "Camera"},
+      {SETTINGS_CAT_STEREO, ICON_FA_EYE, "Stereo 3D"},
       {SETTINGS_CAT_ENVIRONMENT, ICON_FA_MOUNTAIN, "Environment"},
-      {SETTINGS_CAT_DISPLAY, ICON_FA_DESKTOP, "Display"},
-      {SETTINGS_CAT_INPUT, ICON_FA_MOUSE, "Input & Devices"},
+      {SETTINGS_CAT_INTERFACE, ICON_FA_DESKTOP, "Interface"},
+      {SETTINGS_CAT_SPACEMOUSE, ICON_FA_MOUSE, "SpaceMouse"},
       {SETTINGS_CAT_IMPORT, ICON_FA_FILE_IMPORT, "Import"},
       {SETTINGS_CAT_SHORTCUTS, ICON_FA_KEYBOARD, "Shortcuts"},
   };
@@ -1958,176 +1739,6 @@ void renderSettingsWindow() {
   ImGui::BeginChild("##SettingsContent", ImVec2(0, 0), false);
 
   // ===========================
-  // AI ASSISTANT TAB (scaffold)
-  // ===========================
-  if (g_settingsCategory == SETTINGS_CAT_AI) {
-    ImGui::PushID("AITab");
-
-    DrawInlineIcon(ICON_FA_ROBOT, g_StyleColors.accent);
-    ImGui::TextUnformatted("AI Assistant");
-    ImGui::PushStyleColor(ImGuiCol_Text,
-                          ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-    ImGui::TextWrapped(
-        "Describe what you want in plain language and the assistant will "
-        "adjust your scene and settings for you — change the lighting, "
-        "add objects, tune the look, and more.");
-    ImGui::PopStyleColor();
-    ImGui::Spacing();
-
-    // Connection state (scaffold-only: no network transport yet).
-    static bool aiConnected = false;
-    static char aiApiKey[256] = "";
-    static char aiModel[128] = "claude-opus-4-8";
-    static char aiEndpoint[256] = "https://api.anthropic.com/v1/messages";
-    static int aiProvider = 0;
-    static std::vector<std::pair<bool, std::string>> aiHistory; // {isUser,text}
-    static char aiInput[1024] = "";
-
-    // Status banner
-    {
-      ImVec4 col = aiConnected ? g_StyleColors.success : g_StyleColors.warning;
-      ImGui::PushStyleColor(ImGuiCol_ChildBg,
-                            ImVec4(col.x, col.y, col.z, 0.12f));
-      ImGui::BeginChild("##aistatus", ImVec2(0, ImGui::GetFrameHeight() * 2.2f),
-                        true);
-      DrawInlineIcon(aiConnected ? ICON_FA_CHECK : ICON_FA_EXCLAMATION_TRIANGLE,
-                     col);
-      ImGui::AlignTextToFramePadding();
-      ImGui::TextWrapped(
-          "%s",
-          aiConnected
-              ? "Connected. The assistant can read and modify your scene."
-              : "Not connected. Add an API key under Connection to enable "
-                "live requests.");
-      ImGui::EndChild();
-      ImGui::PopStyleColor();
-    }
-
-    ImGui::Spacing();
-    DrawSectionHeader("Conversation");
-
-    // Chat transcript
-    ImGui::BeginChild("##aichat", ImVec2(0, 260 * scale), true);
-    if (aiHistory.empty()) {
-      ImGui::PushStyleColor(ImGuiCol_Text,
-                            ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-      ImGui::Spacing();
-      ImGui::TextWrapped("No messages yet. Try one of the suggestions below, "
-                         "or type your own request.");
-      ImGui::PopStyleColor();
-    } else {
-      for (const auto &msg : aiHistory) {
-        const bool isUser = msg.first;
-        ImGui::PushStyleColor(
-            ImGuiCol_Text,
-            isUser ? ImGui::GetStyleColorVec4(ImGuiCol_Text)
-                   : g_StyleColors.accent);
-        DrawInlineIcon(isUser ? ICON_FA_COMMENT : ICON_FA_ROBOT,
-                       isUser ? ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled)
-                              : g_StyleColors.accent);
-        ImGui::TextUnformatted(isUser ? "You" : "Assistant");
-        ImGui::PopStyleColor();
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextWrapped("%s", msg.second.c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-      }
-      ImGui::SetScrollHereY(1.0f);
-    }
-    ImGui::EndChild();
-
-    // Lambda to "submit" a prompt. Scaffold only: echoes the prompt and an
-    // honest placeholder until a transport + apply layer is wired up.
-    auto submitPrompt = [&](const std::string &prompt) {
-      if (prompt.empty())
-        return;
-      aiHistory.emplace_back(true, prompt);
-      aiHistory.emplace_back(
-          false,
-          aiConnected
-              ? "(Live requests are not wired up in this build yet.)"
-              : "I can't act on this yet — add an API key under "
-                "Connection to enable live requests. Once connected I'll be "
-                "able to apply changes like this directly to your scene.");
-      aiInput[0] = '\0';
-    };
-
-    // Suggestion chips
-    ImGui::Spacing();
-    const char *suggestions[] = {"Make the lighting warmer",
-                                 "Add a cube to the scene",
-                                 "Enable soft shadows",
-                                 "Switch to a sunset sky"};
-    const float rightEdge =
-        ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
-    const float spacing = ImGui::GetStyle().ItemSpacing.x;
-    for (int i = 0; i < IM_ARRAYSIZE(suggestions); ++i) {
-      // Keep the chip on the current row only if it actually fits.
-      if (i > 0) {
-        float chipW = ImGui::CalcTextSize(suggestions[i]).x +
-                      ImGui::GetStyle().FramePadding.x * 2.0f;
-        float nextX = ImGui::GetItemRectMax().x + spacing + chipW;
-        if (nextX < rightEdge)
-          ImGui::SameLine();
-      }
-      if (ImGui::Button(suggestions[i]))
-        submitPrompt(suggestions[i]);
-    }
-
-    // Input row
-    ImGui::Spacing();
-    float sendW = 90.0f * scale;
-    ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - sendW -
-                         ImGui::GetStyle().ItemSpacing.x);
-    bool entered = ImGui::InputTextWithHint(
-        "##aiinput", "Ask the assistant to change your scene…", aiInput,
-        sizeof(aiInput), ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::PopItemWidth();
-    ImGui::SameLine();
-    bool sendClicked = ImGui::Button("Send", ImVec2(sendW, 0));
-    if (entered || sendClicked)
-      submitPrompt(std::string(aiInput));
-
-    if (!aiHistory.empty()) {
-      if (ImGui::SmallButton("Clear conversation"))
-        aiHistory.clear();
-    }
-
-    // Connection / configuration
-    ImGui::Spacing();
-    if (ImGui::CollapsingHeader("Connection")) {
-      DrawToggleSwitch("Enable live requests", &aiConnected);
-      ImGui::SameLine();
-      DrawHelpMarker("When connected, the assistant sends your prompts to the "
-                     "configured provider. Networking is not implemented in "
-                     "this build — this is the UI scaffold.");
-
-      const char *providers[] = {"Anthropic (Claude)", "OpenAI", "Custom"};
-      ImGui::Combo("Provider", &aiProvider, providers,
-                   IM_ARRAYSIZE(providers));
-
-      ImGui::InputText("API Key", aiApiKey, sizeof(aiApiKey),
-                       ImGuiInputTextFlags_Password);
-      ImGui::SameLine();
-      DrawHelpMarker("Stored only for this session in this scaffold build.");
-
-      ImGui::InputText("Model", aiModel, sizeof(aiModel));
-      ImGui::InputText("Endpoint", aiEndpoint, sizeof(aiEndpoint));
-    }
-
-    if (ImGui::CollapsingHeader("What the assistant can do")) {
-      ImGui::BulletText("Adjust rendering, camera and environment settings");
-      ImGui::BulletText("Create primitives and lights");
-      ImGui::BulletText("Tune materials and the overall look");
-      ImGui::BulletText("Explain what each setting does");
-    }
-
-    ImGui::PopID();
-  }
-
-  // ===========================
   // RENDERING TAB
   // ===========================
   if (g_settingsCategory == SETTINGS_CAT_RENDERING) {
@@ -2147,26 +1758,12 @@ void renderSettingsWindow() {
       DrawHelpMarker("Shadow Mapping: Traditional shadows\nVoxel Cone Tracing: "
                      "Global illumination\nRadiance: Ray-traced lighting");
 
-      // Wireframe mode setting
-      if (ImGui::Checkbox("Wireframe Mode", &camera.wireframe)) {
-        settingsChanged = true;
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Renders objects as wireframes instead of solid surfaces");
-
-      if (ImGui::Checkbox("Enable Spawn Animation",
-                          &preferences.enableSpawnAnimation)) {
-        settingsChanged = true;
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Animate models when they are created or imported");
-
       // Mode-specific settings
       if (preferences.lightingMode == GUI::LIGHTING_SHADOW_MAPPING) {
         ImGui::Spacing();
         DrawSectionHeader("Shadow Mapping Settings");
 
-        if (ImGui::Checkbox("Enable Shadows", &preferences.enableShadows)) {
+        if (DrawToggleSwitch("Enable Shadows", &preferences.enableShadows)) {
           ::enableShadows = preferences.enableShadows;
           settingsChanged = true;
         }
@@ -2176,7 +1773,7 @@ void renderSettingsWindow() {
         ImGui::Spacing();
         DrawSectionHeader("HDR Rendering");
 
-        if (ImGui::Checkbox("Enable HDR", &preferences.hdrSettings.enabled)) {
+        if (DrawToggleSwitch("Enable HDR", &preferences.hdrSettings.enabled)) {
           settingsChanged = true;
         }
         ImGui::SameLine();
@@ -2213,8 +1810,8 @@ void renderSettingsWindow() {
           DrawHelpMarker(
               toneMapDescriptions[preferences.hdrSettings.toneMapOperator]);
 
-          if (ImGui::Checkbox("Enable Bloom",
-                              &preferences.hdrSettings.enableBloom)) {
+          if (DrawToggleSwitch("Enable Bloom",
+                               &preferences.hdrSettings.enableBloom)) {
             settingsChanged = true;
           }
           ImGui::SameLine();
@@ -2239,8 +1836,8 @@ void renderSettingsWindow() {
           }
 
           ImGui::Spacing();
-          if (ImGui::Checkbox("Enable FXAA",
-                              &preferences.hdrSettings.enableFXAA)) {
+          if (DrawToggleSwitch("Enable FXAA",
+                               &preferences.hdrSettings.enableFXAA)) {
             settingsChanged = true;
           }
           ImGui::SameLine();
@@ -2272,7 +1869,7 @@ void renderSettingsWindow() {
         ImGui::Spacing();
         DrawSectionHeader("Screen Space Ambient Occlusion");
 
-        if (ImGui::Checkbox("Enable SSAO", &preferences.ssaoSettings.enabled)) {
+        if (DrawToggleSwitch("Enable SSAO", &preferences.ssaoSettings.enabled)) {
           settingsChanged = true;
         }
         ImGui::SameLine();
@@ -2322,66 +1919,6 @@ void renderSettingsWindow() {
           ImGui::SameLine();
           DrawHelpMarker("Power curve to control occlusion intensity. Higher "
                          "values = stronger darkening");
-        }
-
-        // ---- Eye-Dome Lighting ----
-        ImGui::Spacing();
-        DrawSectionHeader("Eye-Dome Lighting");
-
-        if (ImGui::Checkbox("Enable EDL", &preferences.edlSettings.enabled)) {
-          settingsChanged = true;
-        }
-        ImGui::SameLine();
-        DrawHelpMarker(
-            "Eye-Dome Lighting adds depth cues to point clouds by darkening "
-            "depth discontinuities."
-            "rendering. "
-            "Requires HDR to be enabled.");
-
-        if (preferences.edlSettings.enabled) {
-          if (ImGui::SliderFloat("EDL Strength",
-                                 &preferences.edlSettings.strength, 0.1f, 5.0f,
-                                 "%.2f")) {
-            settingsChanged = true;
-          }
-          ImGui::SameLine();
-          DrawHelpMarker("Controls how strongly depth edges are darkened. "
-                         "1.0 = default Potree strength.");
-
-          if (ImGui::SliderFloat("EDL Radius", &preferences.edlSettings.radius,
-                                 0.5f, 5.0f, "%.1f")) {
-            settingsChanged = true;
-          }
-          ImGui::SameLine();
-          DrawHelpMarker("Neighbourhood sampling radius in pixels. "
-                         "Larger values detect wider depth transitions.");
-        }
-
-        // ---- Point Splatting (close-up / sparse density) ----
-        ImGui::Spacing();
-        DrawSectionHeader("Point Splatting");
-
-        if (ImGui::Checkbox("Enable Splatting",
-                            &preferences.pointSplatSettings.enabled)) {
-          settingsChanged = true;
-        }
-        ImGui::SameLine();
-        DrawHelpMarker(
-            "Widens each point into a small round splat sized from its on-screen "
-            "spacing, filling the gaps that appear when you view the cloud close "
-            "up or in a sparse area. Distant / dense views collapse back to "
-            "single pixels, so the cost is paid only where it's needed.");
-
-        if (preferences.pointSplatSettings.enabled) {
-          if (ImGui::SliderInt("Max Splat Radius",
-                               &preferences.pointSplatSettings.maxRadius, 1, 8,
-                               "%d px")) {
-            settingsChanged = true;
-          }
-          ImGui::SameLine();
-          DrawHelpMarker("Upper limit on the splat radius in pixels. Higher = "
-                         "fills larger gaps when extremely close, but costs more "
-                         "atomic writes. 3-4 is a good balance.");
         }
 
         ImGui::Spacing();
@@ -2449,12 +1986,36 @@ void renderSettingsWindow() {
         ImGui::Spacing();
         DrawSectionHeader("Material Enhancement");
 
-        if (ImGui::Checkbox("Enable PBR Materials",
-                            &preferences.materialSettings.enablePBR)) {
+        if (DrawToggleSwitch("Enable PBR Materials",
+                             &preferences.materialSettings.enablePBR)) {
           settingsChanged = true;
         }
         ImGui::SameLine();
         DrawHelpMarker("Physically Based Rendering for realistic materials");
+
+        if (ImGui::Checkbox("Ambient Occlusion Maps",
+                            &preferences.materialSettings.enableAO)) {
+          settingsChanged = true;
+        }
+        ImGui::SameLine();
+        DrawHelpMarker(
+            "Use ambient occlusion textures when a model provides them");
+
+        if (ImGui::Checkbox("Normal Mapping",
+                            &preferences.materialSettings.enableNormalMapping)) {
+          settingsChanged = true;
+        }
+        ImGui::SameLine();
+        DrawHelpMarker("Use normal-map textures for fine surface detail");
+
+        if (ImGui::Checkbox(
+                "Parallax Mapping",
+                &preferences.materialSettings.enableParallaxMapping)) {
+          settingsChanged = true;
+        }
+        ImGui::SameLine();
+        DrawHelpMarker("Use height-map textures to fake surface depth "
+                       "(requires a height map on the model)");
 
       } else if (preferences.lightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
         ImGui::Spacing();
@@ -2667,8 +2228,8 @@ void renderSettingsWindow() {
         ImGui::Spacing();
         DrawSectionHeader("Raytracing Settings");
 
-        if (ImGui::Checkbox("Enable Raytracing",
-                            &preferences.radianceSettings.enableRaytracing)) {
+        if (DrawToggleSwitch("Enable Raytracing",
+                             &preferences.radianceSettings.enableRaytracing)) {
           ::radianceSettings.enableRaytracing =
               preferences.radianceSettings.enableRaytracing;
           settingsChanged = true;
@@ -2856,8 +2417,8 @@ void renderSettingsWindow() {
         ImGui::Separator();
         DrawSectionHeader("Dynamic Diffuse GI (DDGI)");
 
-        if (ImGui::Checkbox("Enable DDGI",
-                            &preferences.radianceSettings.enableDDGI)) {
+        if (DrawToggleSwitch("Enable DDGI",
+                             &preferences.radianceSettings.enableDDGI)) {
           ::radianceSettings.enableDDGI =
               preferences.radianceSettings.enableDDGI;
           settingsChanged = true;
@@ -2870,6 +2431,71 @@ void renderSettingsWindow() {
         if (preferences.radianceSettings.enableDDGI) {
           drawDDGISettings();
         }
+      }
+
+      // ---- Point cloud rendering (applies in every lighting mode) ----
+      ImGui::Spacing();
+      DrawSectionHeader("Point Clouds");
+
+      if (ImGui::SliderFloat("Point Radius", &preferences.pointCloudBaseSize,
+                             0.001f, 0.2f, "%.3f m",
+                             ImGuiSliderFlags_Logarithmic)) {
+        settingsChanged = true;
+      }
+      ImGui::SameLine();
+      DrawHelpMarker("World-space radius of each point in metres. On-screen "
+                     "size follows perspective (closer points appear larger).");
+
+      ImGui::Spacing();
+      if (DrawToggleSwitch("Enable EDL", &preferences.edlSettings.enabled)) {
+        settingsChanged = true;
+      }
+      ImGui::SameLine();
+      DrawHelpMarker(
+          "Eye-Dome Lighting adds depth cues to point clouds by darkening "
+          "depth discontinuities. Requires HDR to be enabled.");
+
+      if (preferences.edlSettings.enabled) {
+        if (ImGui::SliderFloat("EDL Strength",
+                               &preferences.edlSettings.strength, 0.1f, 5.0f,
+                               "%.2f")) {
+          settingsChanged = true;
+        }
+        ImGui::SameLine();
+        DrawHelpMarker("Controls how strongly depth edges are darkened. "
+                       "1.0 = default Potree strength.");
+
+        if (ImGui::SliderFloat("EDL Radius", &preferences.edlSettings.radius,
+                               0.5f, 5.0f, "%.1f")) {
+          settingsChanged = true;
+        }
+        ImGui::SameLine();
+        DrawHelpMarker("Neighbourhood sampling radius in pixels. "
+                       "Larger values detect wider depth transitions.");
+      }
+
+      ImGui::Spacing();
+      if (DrawToggleSwitch("Enable Splatting",
+                           &preferences.pointSplatSettings.enabled)) {
+        settingsChanged = true;
+      }
+      ImGui::SameLine();
+      DrawHelpMarker(
+          "Widens each point into a small round splat sized from its on-screen "
+          "spacing, filling the gaps that appear when you view the cloud close "
+          "up or in a sparse area. Distant / dense views collapse back to "
+          "single pixels, so the cost is paid only where it's needed.");
+
+      if (preferences.pointSplatSettings.enabled) {
+        if (ImGui::SliderInt("Max Splat Radius",
+                             &preferences.pointSplatSettings.maxRadius, 1, 8,
+                             "%d px")) {
+          settingsChanged = true;
+        }
+        ImGui::SameLine();
+        DrawHelpMarker("Upper limit on the splat radius in pixels. Higher = "
+                       "fills larger gaps when extremely close, but costs more "
+                       "atomic writes. 3-4 is a good balance.");
       }
 
       ImGui::PopID();
@@ -2907,7 +2533,129 @@ void renderSettingsWindow() {
       DrawHelpMarker("Maximum visible distance from camera. Higher values may "
                      "impact performance");
 
-      DrawSectionHeader("Stereoscopic 3D");
+      DrawSectionHeader("Movement");
+
+      if (ImGui::SliderFloat("Mouse Sensitivity", &camera.MouseSensitivity,
+                             0.01f, 0.08f, "%.3f")) {
+        preferences.mouseSensitivity = camera.MouseSensitivity;
+        settingsChanged = true;
+      }
+      ImGui::SameLine();
+      DrawHelpMarker("Adjusts how quickly the camera rotates in response to "
+                     "mouse movement");
+
+      if (ImGui::SliderFloat("Smoothing", &mouseSmoothingFactor, 0.1f, 1.0f,
+                             "%.1f")) {
+        preferences.mouseSmoothingFactor = mouseSmoothingFactor;
+        settingsChanged = true;
+      }
+      ImGui::SameLine();
+      DrawHelpMarker("Controls smoothness of mouse movement. Lower values = "
+                     "smoother, higher values = more responsive");
+
+      if (ImGui::SliderFloat("Speed Multiplier", &camera.speedFactor, 0.1f,
+                             5.0f, "%.1fx")) {
+        preferences.cameraSpeedFactor = camera.speedFactor;
+        settingsChanged = true;
+      }
+      ImGui::SameLine();
+      DrawHelpMarker("Multiplies base movement speed. Useful for navigating "
+                     "larger scenes");
+
+      if (ImGui::Checkbox("Zoom to Cursor", &camera.zoomToCursor)) {
+        preferences.zoomToCursor = camera.zoomToCursor;
+        settingsChanged = true;
+      }
+      ImGui::SameLine();
+      DrawHelpMarker("When enabled, scrolling zooms toward the cursor position "
+                     "(including background areas)");
+
+      DrawSectionHeader("Orbit Behavior");
+
+      bool standardOrbit = !camera.orbitAroundCursor && !orbitFollowsCursor;
+      bool orbitAroundCursorOption = camera.orbitAroundCursor;
+      bool orbitFollowsCursorOption = orbitFollowsCursor;
+
+      if (ImGui::RadioButton("Standard Orbit", standardOrbit)) {
+        camera.orbitAroundCursor = false;
+        orbitFollowsCursor = false;
+        preferences.orbitAroundCursor = false;
+        preferences.orbitFollowsCursor = false;
+        settingsChanged = true;
+      }
+      ImGui::SameLine();
+      DrawHelpMarker("Orbits around the viewport center at cursor depth");
+
+      if (ImGui::RadioButton("Orbit Around Cursor", orbitAroundCursorOption)) {
+        camera.orbitAroundCursor = true;
+        orbitFollowsCursor = false;
+        preferences.orbitAroundCursor = true;
+        preferences.orbitFollowsCursor = false;
+        settingsChanged = true;
+      }
+      ImGui::SameLine();
+      DrawHelpMarker("Orbits around the 3D position of the cursor without "
+                     "centering the view");
+
+      if (ImGui::RadioButton("Orbit Follows Cursor (Center)",
+                             orbitFollowsCursorOption)) {
+        camera.orbitAroundCursor = false;
+        orbitFollowsCursor = true;
+        preferences.orbitAroundCursor = false;
+        preferences.orbitFollowsCursor = true;
+        settingsChanged = true;
+      }
+      ImGui::SameLine();
+      DrawHelpMarker("Centers the view on cursor position before orbiting");
+
+      DrawSectionHeader("Smooth Scrolling");
+
+      if (DrawToggleSwitch("Enable Smooth Scrolling",
+                           &camera.useSmoothScrolling)) {
+        preferences.useSmoothScrolling = camera.useSmoothScrolling;
+        settingsChanged = true;
+      }
+      ImGui::SameLine();
+      DrawHelpMarker("Enable physics-based smooth scrolling");
+
+      if (camera.useSmoothScrolling) {
+        ImGui::Indent();
+        if (ImGui::SliderFloat("Momentum", &camera.scrollMomentum, 0.0f, 1.0f,
+                               "%.2f")) {
+          preferences.scrollMomentum = camera.scrollMomentum;
+          settingsChanged = true;
+        }
+        ImGui::SameLine();
+        DrawHelpMarker(
+            "Controls how much scrolling 'carries' (higher = more momentum)");
+
+        if (ImGui::SliderFloat("Max Speed", &camera.maxScrollVelocity, 0.5f,
+                               10.0f, "%.1f")) {
+          preferences.maxScrollVelocity = camera.maxScrollVelocity;
+          settingsChanged = true;
+        }
+        ImGui::SameLine();
+        DrawHelpMarker("Maximum scroll speed");
+
+        if (ImGui::SliderFloat("Deceleration", &camera.scrollDeceleration, 1.0f,
+                               20.0f, "%.1f")) {
+          preferences.scrollDeceleration = camera.scrollDeceleration;
+          settingsChanged = true;
+        }
+        ImGui::SameLine();
+        DrawHelpMarker("How quickly scrolling slows down");
+        ImGui::Unindent();
+      }
+
+      ImGui::PopID();
+  }
+
+    // ===========================
+    // STEREO 3D TAB
+    // ===========================
+  if (g_settingsCategory == SETTINGS_CAT_STEREO) {
+      ImGui::PushID("StereoTab");
+      DrawSectionHeader("Depth & Convergence");
 
       if (ImGui::SliderFloat("Eye Separation", &preferences.separation, 0.01f,
                              2.0f, "%.2f")) {
@@ -2917,7 +2665,7 @@ void renderSettingsWindow() {
       DrawHelpMarker("Adjusts the distance between stereo views. Higher values "
                      "increase 3D effect");
 
-      if (ImGui::Checkbox("Auto Convergence", &preferences.autoConvergence)) {
+      if (DrawToggleSwitch("Auto Convergence", &preferences.autoConvergence)) {
         settingsChanged = true;
       }
       ImGui::SameLine();
@@ -3004,119 +2752,110 @@ void renderSettingsWindow() {
       DrawHelpMarker(
           "Swaps the left and right eye views for stereoscopic display");
 
-      DrawSectionHeader("Movement");
+      DrawSectionHeader("Stereo Overlays");
 
-      if (ImGui::SliderFloat("Mouse Sensitivity", &camera.MouseSensitivity,
-                             0.01f, 0.08f, "%.3f")) {
-        preferences.mouseSensitivity = camera.MouseSensitivity;
+      if (DrawToggleSwitch("Show Radar", &preferences.radarEnabled)) {
         settingsChanged = true;
       }
       ImGui::SameLine();
-      DrawHelpMarker("Adjusts how quickly the camera rotates in response to "
-                     "mouse movement");
+      DrawHelpMarker("Show a radar overlay with the camera frustum");
 
-      if (ImGui::SliderFloat("Smoothing", &mouseSmoothingFactor, 0.1f, 1.0f,
-                             "%.1f")) {
-        preferences.mouseSmoothingFactor = mouseSmoothingFactor;
-        settingsChanged = true;
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Controls smoothness of mouse movement. Lower values = "
-                     "smoother, higher values = more responsive");
-
-      if (ImGui::SliderFloat("Speed Multiplier", &camera.speedFactor, 0.1f,
-                             5.0f, "%.1fx")) {
-        preferences.cameraSpeedFactor = camera.speedFactor;
-        settingsChanged = true;
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Multiplies base movement speed. Useful for navigating "
-                     "larger scenes");
-
-      if (ImGui::Checkbox("Zoom to Cursor", &camera.zoomToCursor)) {
-        preferences.zoomToCursor = camera.zoomToCursor;
-        settingsChanged = true;
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("When enabled, scrolling zooms toward the cursor position "
-                     "(including background areas)");
-
-      DrawSectionHeader("Orbit Behavior");
-
-      bool standardOrbit = !camera.orbitAroundCursor && !orbitFollowsCursor;
-      bool orbitAroundCursorOption = camera.orbitAroundCursor;
-      bool orbitFollowsCursorOption = orbitFollowsCursor;
-
-      if (ImGui::RadioButton("Standard Orbit", standardOrbit)) {
-        camera.orbitAroundCursor = false;
-        orbitFollowsCursor = false;
-        preferences.orbitAroundCursor = false;
-        preferences.orbitFollowsCursor = false;
-        settingsChanged = true;
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Orbits around the viewport center at cursor depth");
-
-      if (ImGui::RadioButton("Orbit Around Cursor", orbitAroundCursorOption)) {
-        camera.orbitAroundCursor = true;
-        orbitFollowsCursor = false;
-        preferences.orbitAroundCursor = true;
-        preferences.orbitFollowsCursor = false;
-        settingsChanged = true;
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Orbits around the 3D position of the cursor without "
-                     "centering the view");
-
-      if (ImGui::RadioButton("Orbit Follows Cursor (Center)",
-                             orbitFollowsCursorOption)) {
-        camera.orbitAroundCursor = false;
-        orbitFollowsCursor = true;
-        preferences.orbitAroundCursor = false;
-        preferences.orbitFollowsCursor = true;
-        settingsChanged = true;
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Centers the view on cursor position before orbiting");
-
-      DrawSectionHeader("Smooth Scrolling");
-
-      if (ImGui::Checkbox("Enable Smooth Scrolling",
-                          &camera.useSmoothScrolling)) {
-        preferences.useSmoothScrolling = camera.useSmoothScrolling;
-        settingsChanged = true;
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Enable physics-based smooth scrolling");
-
-      if (camera.useSmoothScrolling) {
+      if (preferences.radarEnabled) {
         ImGui::Indent();
-        if (ImGui::SliderFloat("Momentum", &camera.scrollMomentum, 0.0f, 1.0f,
-                               "%.2f")) {
-          preferences.scrollMomentum = camera.scrollMomentum;
+        if (ImGui::SliderFloat2("Position",
+                                glm::value_ptr(preferences.radarPos), -1.0f,
+                                1.0f, "%.2f")) {
           settingsChanged = true;
         }
         ImGui::SameLine();
         DrawHelpMarker(
-            "Controls how much scrolling 'carries' (higher = more momentum)");
+            "Horizontal and vertical position of the radar (-1 to 1)");
 
-        if (ImGui::SliderFloat("Max Speed", &camera.maxScrollVelocity, 0.5f,
-                               10.0f, "%.1f")) {
-          preferences.maxScrollVelocity = camera.maxScrollVelocity;
+        if (ImGui::SliderFloat("Size", &preferences.radarRadius, 0.05f, 0.5f,
+                               "%.2f")) {
           settingsChanged = true;
         }
         ImGui::SameLine();
-        DrawHelpMarker("Maximum scroll speed");
+        DrawHelpMarker("On-screen radius of the radar scope");
 
-        if (ImGui::SliderFloat("Deceleration", &camera.scrollDeceleration, 1.0f,
-                               20.0f, "%.1f")) {
-          preferences.scrollDeceleration = camera.scrollDeceleration;
+        if (ImGui::Checkbox("Auto-fit to Convergence",
+                            &preferences.radarAutoFit)) {
           settingsChanged = true;
         }
         ImGui::SameLine();
-        DrawHelpMarker("How quickly scrolling slows down");
+        DrawHelpMarker(
+            "Automatically scale the radar so the convergence plane (green "
+            "line) always sits inside the scope. Turn off for manual zoom.");
+
+        if (!preferences.radarAutoFit) {
+          if (ImGui::SliderFloat("Zoom", &preferences.radarScale, 0.001f, 0.5f,
+                                 "%.3f")) {
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker(
+              "How much of the scene fits inside the scope (world units to "
+              "radar units). Lower zooms out to show more of the scene.");
+        }
+
+        if (ImGui::SliderFloat("Frustum Separation",
+                               &preferences.radarFrustumSpread, 0.0f, 0.4f,
+                               "%.2f")) {
+          settingsChanged = true;
+        }
+        ImGui::SameLine();
+        DrawHelpMarker(
+            "Exaggerate the gap between the left/right eye frustums so they "
+            "are distinguishable at comfortable separations. The convergence "
+            "crossing stays accurate. 0 = true-to-life.");
+
+        if (ImGui::Checkbox("Show Scene in Radar",
+                            &preferences.radarShowScene)) {
+          settingsChanged = true;
+        }
+        ImGui::SameLine();
+        DrawHelpMarker("Show the scene models in the radar view");
+
+        if (preferences.radarShowScene) {
+          if (ImGui::SliderFloat("Scene Brightness",
+                                 &preferences.radarSceneBrightness, 1.0f, 30.0f,
+                                 "%.1f")) {
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker(
+              "Exposure boost for the top-down scene in the radar. The radar "
+              "skips the normal HDR/bloom tone-map, so crank this up to keep "
+              "the floor plan bright and readable (not realistic).");
+
+          if (ImGui::Checkbox("Slice Scene (Top-Down)",
+                              &preferences.radarSliceEnabled)) {
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker(
+              "Cut away geometry above the camera so building interiors are "
+              "visible from above instead of just the roof.");
+
+          if (preferences.radarSliceEnabled) {
+            if (ImGui::SliderFloat("Slice Height", &preferences.radarSliceOffset,
+                                   -2.0f, 10.0f, "%.2f")) {
+              settingsChanged = true;
+            }
+            ImGui::SameLine();
+            DrawHelpMarker(
+                "Height of the slice plane above the camera (world units). "
+                "Lower values cut closer to the floor.");
+          }
+        }
         ImGui::Unindent();
       }
+
+      if (DrawToggleSwitch("Show Zero Plane", &preferences.showZeroPlane)) {
+        settingsChanged = true;
+      }
+      ImGui::SameLine();
+      DrawHelpMarker("Display the zero plane in the visualization");
 
       ImGui::PopID();
   }
@@ -3259,77 +2998,21 @@ void renderSettingsWindow() {
       DrawHelpMarker("Controls how much the skybox illuminates the scene. "
                      "Higher values create brighter ambient lighting");
 
-      DrawSectionHeader("Sun Light");
-
-      settingsChanged |= ImGui::Checkbox("Enable Sun", &sun.enabled);
-      ImGui::SameLine();
-      DrawHelpMarker("Toggles sun lighting on/off");
-
-      settingsChanged |=
-          ImGui::ColorEdit3("Sun Color", glm::value_ptr(sun.color));
-      ImGui::SameLine();
-      DrawHelpMarker("Sets the color of sunlight in the scene");
-
-      settingsChanged |= ImGui::SliderFloat("Sun Intensity", &sun.intensity,
-                                            0.0f, 1.0f, "%.2f");
-      ImGui::SameLine();
-      DrawHelpMarker("Controls the brightness of sunlight");
-
-      static glm::vec3 sunAngles = glm::vec3(-45.0f, -45.0f, 0.0f);
-      if (ImGui::DragFloat3("Sun Direction", glm::value_ptr(sunAngles), 1.0f,
-                            -180.0f, 180.0f, "%.0f°")) {
-        glm::mat4 rotationMatrix = glm::mat4(1.0f);
-        rotationMatrix = glm::rotate(rotationMatrix, glm::radians(sunAngles.x),
-                                     glm::vec3(1, 0, 0));
-        rotationMatrix = glm::rotate(rotationMatrix, glm::radians(sunAngles.y),
-                                     glm::vec3(0, 1, 0));
-        rotationMatrix = glm::rotate(rotationMatrix, glm::radians(sunAngles.z),
-                                     glm::vec3(0, 0, 1));
-        sun.direction =
-            glm::normalize(glm::vec3(rotationMatrix * glm::vec4(0, -1, 0, 0)));
-        settingsChanged = true;
-      }
-      ImGui::SameLine();
-      DrawHelpMarker(
-          "Sets the direction of sunlight. Affects shadows and lighting");
-
-      DrawSectionHeader("Default Material Properties");
-
-      static float diffuseReflectivity = 0.8f;
-      if (ImGui::SliderFloat("Diffuse Reflectivity", &diffuseReflectivity, 0.0f,
-                             1.0f, "%.2f")) {
-        // Update default material property
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Default diffuse reflectivity for new objects");
-
-      static float specularReflectivity = 0.0f;
-      if (ImGui::SliderFloat("Specular Reflectivity", &specularReflectivity,
-                             0.0f, 1.0f, "%.2f")) {
-        // Update default material property
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Default specular reflectivity for new objects");
-
-      static float specularDiffusion = 0.5f;
-      if (ImGui::SliderFloat("Specular Diffusion", &specularDiffusion, 0.0f,
-                             1.0f, "%.2f")) {
-        // Update default material property
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Default specular diffusion for new objects");
+      ImGui::Spacing();
+      ImGui::TextDisabled("Tip: select \"Sun\" in the Scene Hierarchy to edit "
+                          "sun light direction, color and intensity.");
 
       ImGui::PopID();
   }
 
     // ===========================
-    // DISPLAY TAB
+    // INTERFACE TAB
     // ===========================
-  if (g_settingsCategory == SETTINGS_CAT_DISPLAY) {
-      ImGui::PushID("DisplayTab");
+  if (g_settingsCategory == SETTINGS_CAT_INTERFACE) {
+      ImGui::PushID("InterfaceTab");
       DrawSectionHeader("Interface");
 
-      if (ImGui::Checkbox("Dark Theme", &isDarkTheme)) {
+      if (DrawToggleSwitch("Dark Theme", &isDarkTheme)) {
         SetupImGuiStyle(isDarkTheme, 1.0f);
         preferences.isDarkTheme = isDarkTheme;
         settingsChanged = true;
@@ -3338,18 +3021,18 @@ void renderSettingsWindow() {
       DrawHelpMarker(
           "Switches between light and dark color themes for the interface");
 
-      if (ImGui::Checkbox("Show FPS", &showFPS)) {
+      if (DrawToggleSwitch("Show FPS", &showFPS)) {
         preferences.showFPS = showFPS;
         settingsChanged = true;
       }
       ImGui::SameLine();
-      DrawHelpMarker("Shows/hides the FPS counter in the top-right corner");
+      DrawHelpMarker("Shows/hides the FPS counter in the bottom-right corner");
 
-      if (ImGui::Checkbox("Show GUI", &showGui)) {
+      if (DrawToggleSwitch("Spawn Animation", &preferences.enableSpawnAnimation)) {
         settingsChanged = true;
       }
       ImGui::SameLine();
-      DrawHelpMarker("Toggle the entire GUI interface on/off (also 'G' key)");
+      DrawHelpMarker("Animate models when they are created or imported");
 
       ImGui::Spacing();
       DrawSectionHeader("GUI Scale");
@@ -3390,115 +3073,11 @@ void renderSettingsWindow() {
       ImGui::SameLine();
       DrawHelpMarker("Reset GUI scale factor to default (1.0x)");
 
-      DrawSectionHeader("Radar Overlay");
-
-      if (ImGui::Checkbox("Show Radar", &preferences.radarEnabled)) {
-        settingsChanged = true;
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Show a radar overlay with the camera frustum");
-
-      if (preferences.radarEnabled) {
-        ImGui::Indent();
-        if (ImGui::SliderFloat2("Position",
-                                glm::value_ptr(preferences.radarPos), -1.0f,
-                                1.0f, "%.2f")) {
-          settingsChanged = true;
-        }
-        ImGui::SameLine();
-        DrawHelpMarker(
-            "Horizontal and vertical position of the radar (-1 to 1)");
-
-        if (ImGui::SliderFloat("Size", &preferences.radarRadius, 0.05f, 0.5f,
-                               "%.2f")) {
-          settingsChanged = true;
-        }
-        ImGui::SameLine();
-        DrawHelpMarker("On-screen radius of the radar scope");
-
-        if (ImGui::Checkbox("Auto-fit to Convergence",
-                            &preferences.radarAutoFit)) {
-          settingsChanged = true;
-        }
-        ImGui::SameLine();
-        DrawHelpMarker(
-            "Automatically scale the radar so the convergence plane (green "
-            "line) always sits inside the scope. Turn off for manual zoom.");
-
-        if (!preferences.radarAutoFit) {
-          if (ImGui::SliderFloat("Zoom", &preferences.radarScale, 0.001f, 0.5f,
-                                 "%.3f")) {
-            settingsChanged = true;
-          }
-          ImGui::SameLine();
-          DrawHelpMarker(
-              "How much of the scene fits inside the scope (world units to "
-              "radar units). Lower zooms out to show more of the scene.");
-        }
-
-        if (ImGui::SliderFloat("Frustum Separation",
-                               &preferences.radarFrustumSpread, 0.0f, 0.4f,
-                               "%.2f")) {
-          settingsChanged = true;
-        }
-        ImGui::SameLine();
-        DrawHelpMarker(
-            "Exaggerate the gap between the left/right eye frustums so they "
-            "are distinguishable at comfortable separations. The convergence "
-            "crossing stays accurate. 0 = true-to-life.");
-
-        if (ImGui::Checkbox("Show Scene in Radar",
-                            &preferences.radarShowScene)) {
-          settingsChanged = true;
-        }
-        ImGui::SameLine();
-        DrawHelpMarker("Show the scene models in the radar view");
-
-        if (preferences.radarShowScene) {
-          if (ImGui::SliderFloat("Scene Brightness",
-                                 &preferences.radarSceneBrightness, 1.0f, 30.0f,
-                                 "%.1f")) {
-            settingsChanged = true;
-          }
-          ImGui::SameLine();
-          DrawHelpMarker(
-              "Exposure boost for the top-down scene in the radar. The radar "
-              "skips the normal HDR/bloom tone-map, so crank this up to keep "
-              "the floor plan bright and readable (not realistic).");
-
-          if (ImGui::Checkbox("Slice Scene (Top-Down)",
-                              &preferences.radarSliceEnabled)) {
-            settingsChanged = true;
-          }
-          ImGui::SameLine();
-          DrawHelpMarker(
-              "Cut away geometry above the camera so building interiors are "
-              "visible from above instead of just the roof.");
-
-          if (preferences.radarSliceEnabled) {
-            if (ImGui::SliderFloat("Slice Height", &preferences.radarSliceOffset,
-                                   -2.0f, 10.0f, "%.2f")) {
-              settingsChanged = true;
-            }
-            ImGui::SameLine();
-            DrawHelpMarker(
-                "Height of the slice plane above the camera (world units). "
-                "Lower values cut closer to the floor.");
-          }
-        }
-        ImGui::Unindent();
-      }
-
-      if (ImGui::Checkbox("Show Zero Plane", &preferences.showZeroPlane)) {
-        settingsChanged = true;
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Display the zero plane in the visualization");
 
       DrawSectionHeader("Startup");
 
-      if (ImGui::Checkbox("Load Scene on Start",
-                          &preferences.loadStartupScene)) {
+      if (DrawToggleSwitch("Load Scene on Start",
+                           &preferences.loadStartupScene)) {
         settingsChanged = true;
       }
       ImGui::SameLine();
@@ -3562,126 +3141,15 @@ void renderSettingsWindow() {
   }
 
     // ===========================
-    // INPUT TAB
+    // SPACEMOUSE TAB
     // ===========================
-  if (g_settingsCategory == SETTINGS_CAT_INPUT) {
-      ImGui::PushID("InputTab");
-      DrawSectionHeader("Mouse Settings");
-
-      if (ImGui::SliderFloat("Mouse Sensitivity", &camera.MouseSensitivity,
-                             0.01f, 0.08f, "%.3f")) {
-        preferences.mouseSensitivity = camera.MouseSensitivity;
-        settingsChanged = true;
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Adjusts how quickly the camera rotates in response to "
-                     "mouse movement");
-
-      if (ImGui::SliderFloat("Mouse Smoothing", &mouseSmoothingFactor, 0.1f,
-                             1.0f, "%.1f")) {
-        preferences.mouseSmoothingFactor = mouseSmoothingFactor;
-        settingsChanged = true;
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Controls smoothness of mouse movement. Lower values = "
-                     "smoother, higher values = more responsive");
-
-      if (ImGui::SliderFloat("Speed Multiplier", &camera.speedFactor, 0.1f,
-                             5.0f, "%.1fx")) {
-        preferences.cameraSpeedFactor = camera.speedFactor;
-        settingsChanged = true;
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Multiplies base movement speed. Useful for navigating "
-                     "larger scenes");
-
-      if (ImGui::Checkbox("Zoom to Cursor", &camera.zoomToCursor)) {
-        preferences.zoomToCursor = camera.zoomToCursor;
-        settingsChanged = true;
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("When enabled, scrolling zooms toward or away from the 3D "
-                     "cursor position");
-
-      DrawSectionHeader("Camera Behavior");
-
-      bool standardOrbit = !camera.orbitAroundCursor && !orbitFollowsCursor;
-      bool orbitAroundCursorOption = camera.orbitAroundCursor;
-      bool orbitFollowsCursorOption = orbitFollowsCursor;
-
-      if (ImGui::RadioButton("Standard Orbit", standardOrbit)) {
-        camera.orbitAroundCursor = false;
-        orbitFollowsCursor = false;
-        preferences.orbitAroundCursor = false;
-        preferences.orbitFollowsCursor = false;
-        settingsChanged = true;
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Orbits around the viewport center at cursor depth");
-
-      if (ImGui::RadioButton("Orbit Around Cursor", orbitAroundCursorOption)) {
-        camera.orbitAroundCursor = true;
-        orbitFollowsCursor = false;
-        preferences.orbitAroundCursor = true;
-        preferences.orbitFollowsCursor = false;
-        settingsChanged = true;
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Orbits around the 3D position of the cursor without "
-                     "centering the view");
-
-      if (ImGui::RadioButton("Orbit Follows Cursor (Center)",
-                             orbitFollowsCursorOption)) {
-        camera.orbitAroundCursor = false;
-        orbitFollowsCursor = true;
-        preferences.orbitAroundCursor = false;
-        preferences.orbitFollowsCursor = true;
-        settingsChanged = true;
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Centers the view on cursor position before orbiting");
-
-      if (ImGui::Checkbox("Smooth Scrolling", &camera.useSmoothScrolling)) {
-        preferences.useSmoothScrolling = camera.useSmoothScrolling;
-        settingsChanged = true;
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Enable physics-based smooth scrolling");
-
-      if (camera.useSmoothScrolling) {
-        ImGui::Indent();
-        if (ImGui::SliderFloat("Momentum", &camera.scrollMomentum, 0.0f, 1.0f,
-                               "%.2f")) {
-          preferences.scrollMomentum = camera.scrollMomentum;
-          settingsChanged = true;
-        }
-        ImGui::SameLine();
-        DrawHelpMarker(
-            "Controls how much scrolling 'carries' (higher = more momentum)");
-
-        if (ImGui::SliderFloat("Max Velocity", &camera.maxScrollVelocity, 0.5f,
-                               10.0f, "%.1f")) {
-          preferences.maxScrollVelocity = camera.maxScrollVelocity;
-          settingsChanged = true;
-        }
-        ImGui::SameLine();
-        DrawHelpMarker("Maximum scroll speed");
-
-        if (ImGui::SliderFloat("Deceleration", &camera.scrollDeceleration, 1.0f,
-                               20.0f, "%.1f")) {
-          preferences.scrollDeceleration = camera.scrollDeceleration;
-          settingsChanged = true;
-        }
-        ImGui::SameLine();
-        DrawHelpMarker("How quickly scrolling slows down");
-        ImGui::Unindent();
-      }
-
+  if (g_settingsCategory == SETTINGS_CAT_SPACEMOUSE) {
+      ImGui::PushID("SpaceMouseTab");
       DrawSectionHeader("3DConnexion SpaceMouse");
 
       if (spaceMouseInitialized) {
-        if (ImGui::Checkbox("Enable SpaceMouse",
-                            &preferences.spaceMouseEnabled)) {
+        if (DrawToggleSwitch("Enable SpaceMouse",
+                             &preferences.spaceMouseEnabled)) {
           spaceMouseInput.SetEnabled(preferences.spaceMouseEnabled);
           settingsChanged = true;
         }
@@ -3689,14 +3157,6 @@ void renderSettingsWindow() {
         DrawHelpMarker("Enable or disable 3DConnexion SpaceMouse input");
 
         if (preferences.spaceMouseEnabled) {
-          ImGui::Spacing();
-          ImGui::Text("Navigation Mode: CAD (Pivot)");
-          ImGui::SameLine();
-          DrawHelpMarker("Pivot-based navigation: rotate around a pivot point. "
-                         "Best for inspecting 3D models.");
-
-          ImGui::Spacing();
-          ImGui::Separator();
           ImGui::Spacing();
 
           if (ImGui::SliderFloat("Deadzone", &preferences.spaceMouseDeadzone,
@@ -3935,118 +3395,6 @@ void renderSettingsWindow() {
             "Connect a 3Dconnexion SpaceMouse device to enable 3D navigation.");
       }
 
-      DrawSectionHeader("Keyboard Shortcuts");
-
-      if (ImGui::CollapsingHeader("Keybind Reference")) {
-        ImGui::Columns(2, "keybinds");
-        ImGui::SetColumnWidth(0, 150);
-
-        ImGui::Text("Camera Controls");
-        ImGui::Separator();
-
-        ImGui::Text("W/S");
-        ImGui::NextColumn();
-        ImGui::Text("Move forward/backward");
-        ImGui::NextColumn();
-
-        ImGui::Text("A/D");
-        ImGui::NextColumn();
-        ImGui::Text("Move left/right");
-        ImGui::NextColumn();
-
-        ImGui::Text("Space/Shift");
-        ImGui::NextColumn();
-        ImGui::Text("Move up/down");
-        ImGui::NextColumn();
-
-        ImGui::Text("Left Mouse + Drag");
-        ImGui::NextColumn();
-        ImGui::Text("Orbit around the viewport center at cursor depth");
-        ImGui::NextColumn();
-
-        ImGui::Text("Right Mouse + Drag");
-        ImGui::NextColumn();
-        ImGui::Text("Rotate the camera");
-        ImGui::NextColumn();
-
-        ImGui::Text("Middle Mouse + Drag");
-        ImGui::NextColumn();
-        ImGui::Text("Pan camera");
-        ImGui::NextColumn();
-
-        ImGui::Text("Mouse Wheel");
-        ImGui::NextColumn();
-        ImGui::Text("Zoom in/out");
-        ImGui::NextColumn();
-
-        ImGui::Text("Double Click");
-        ImGui::NextColumn();
-        ImGui::Text("Center on cursor");
-        ImGui::NextColumn();
-
-        ImGui::Spacing();
-        ImGui::NextColumn();
-        ImGui::Spacing();
-        ImGui::NextColumn();
-
-        ImGui::Text("Other Controls");
-        ImGui::Separator();
-
-        // Dynamically display shortcuts from shortcut manager
-        const StereoVista::ShortcutProfile *activeProfile =
-            shortcutManager.getActiveProfile();
-        if (activeProfile) {
-          // Helper lambda to display a shortcut action
-          auto displayAction = [&](StereoVista::ShortcutAction action) {
-            const std::vector<StereoVista::KeyBinding> &bindings =
-                activeProfile->getBindings(action);
-            std::string bindingText = "Unbound";
-
-            if (!bindings.empty() && bindings[0].isValid()) {
-              bindingText = bindings[0].toString();
-              // If there's a secondary binding, add it
-              if (bindings.size() > 1 && bindings[1].isValid()) {
-                bindingText += " / " + bindings[1].toString();
-              }
-            }
-
-            ImGui::Text("%s", bindingText.c_str());
-            ImGui::NextColumn();
-            ImGui::Text(
-                "%s", StereoVista::ShortcutManager::getActionDescription(action)
-                          .c_str());
-            ImGui::NextColumn();
-          };
-
-          // Display all customizable shortcuts
-          displayAction(StereoVista::ShortcutAction::ToggleGUI);
-
-          ImGui::Text("Ctrl + Click");
-          ImGui::NextColumn();
-          ImGui::Text("Select object");
-          ImGui::NextColumn();
-
-          ImGui::Text("Ctrl + Click + Drag");
-          ImGui::NextColumn();
-          ImGui::Text("Move selected object");
-          ImGui::NextColumn();
-
-          displayAction(StereoVista::ShortcutAction::DeleteObject);
-          displayAction(StereoVista::ShortcutAction::CenterView);
-          displayAction(StereoVista::ShortcutAction::CycleLighting);
-          displayAction(StereoVista::ShortcutAction::ToggleShadows);
-          displayAction(StereoVista::ShortcutAction::ToggleVoxelViz);
-        }
-
-        // Hardcoded non-customizable shortcut
-        ImGui::Text("Esc");
-        ImGui::NextColumn();
-        ImGui::Text("Exit application");
-        ImGui::NextColumn();
-
-        ImGui::Columns(1);
-      }
-
       ImGui::PopID();
   }
 
@@ -4156,7 +3504,7 @@ void renderSettingsWindow() {
 
       DrawSectionHeader("Auto-Scaling");
 
-      if (ImGui::Checkbox(
+      if (DrawToggleSwitch(
               "Auto-scale Large Models",
               &preferences.modelImportSettings.autoScaleLargeModels)) {
         settingsChanged = true;
@@ -4630,6 +3978,81 @@ void renderSettingsWindow() {
         }
       }
 
+      DrawSectionHeader("Built-in Controls");
+
+      if (ImGui::CollapsingHeader("Mouse & Keyboard Reference")) {
+        ImGui::Columns(2, "keybinds");
+        ImGui::SetColumnWidth(0, 150);
+
+        ImGui::Text("Camera Controls");
+        ImGui::Separator();
+
+        ImGui::Text("W/S");
+        ImGui::NextColumn();
+        ImGui::Text("Move forward/backward");
+        ImGui::NextColumn();
+
+        ImGui::Text("A/D");
+        ImGui::NextColumn();
+        ImGui::Text("Move left/right");
+        ImGui::NextColumn();
+
+        ImGui::Text("Space/Shift");
+        ImGui::NextColumn();
+        ImGui::Text("Move up/down");
+        ImGui::NextColumn();
+
+        ImGui::Text("Left Mouse + Drag");
+        ImGui::NextColumn();
+        ImGui::Text("Orbit around the viewport center at cursor depth");
+        ImGui::NextColumn();
+
+        ImGui::Text("Right Mouse + Drag");
+        ImGui::NextColumn();
+        ImGui::Text("Rotate the camera");
+        ImGui::NextColumn();
+
+        ImGui::Text("Middle Mouse + Drag");
+        ImGui::NextColumn();
+        ImGui::Text("Pan camera");
+        ImGui::NextColumn();
+
+        ImGui::Text("Mouse Wheel");
+        ImGui::NextColumn();
+        ImGui::Text("Zoom in/out");
+        ImGui::NextColumn();
+
+        ImGui::Text("Double Click");
+        ImGui::NextColumn();
+        ImGui::Text("Center on cursor");
+        ImGui::NextColumn();
+
+        ImGui::Spacing();
+        ImGui::NextColumn();
+        ImGui::Spacing();
+        ImGui::NextColumn();
+
+        ImGui::Text("Other Controls");
+        ImGui::Separator();
+
+        ImGui::Text("Ctrl + Click");
+        ImGui::NextColumn();
+        ImGui::Text("Select object");
+        ImGui::NextColumn();
+
+        ImGui::Text("Ctrl + Click + Drag");
+        ImGui::NextColumn();
+        ImGui::Text("Move selected object");
+        ImGui::NextColumn();
+
+        ImGui::Text("Esc");
+        ImGui::NextColumn();
+        ImGui::Text("Exit application");
+        ImGui::NextColumn();
+
+        ImGui::Columns(1);
+      }
+
       ImGui::PopID();
   }
 
@@ -4645,6 +4068,31 @@ void renderSettingsWindow() {
 }
 
 void renderCursorSettingsWindow() {
+  // Push the synced 3DConnexion settings (including pivot visibility derived
+  // from the orbit-center preferences) to the 3DxWare driver XML.
+  auto syncTdxPivotVisibility = [&]() {
+    if (!tdxSync.IsConnected())
+      return;
+    ThreeDConnexionSync::TdxSettings ws;
+    ws.motionModel = preferences.tdxSettings.motionModel;
+    ws.autoPivot = preferences.tdxSettings.autoPivot;
+    ws.lockHorizon = preferences.tdxSettings.lockHorizon;
+    ws.suspendInput = preferences.tdxSettings.suspendInput;
+    ws.lockTo3dViews = preferences.tdxSettings.lockTo3dViews;
+    ws.moveObjects = preferences.tdxSettings.moveObjects;
+    ws.autokeyAnimation = preferences.tdxSettings.autokeyAnimation;
+    ws.selectionFollower = preferences.tdxSettings.selectionFollower;
+    ws.firstPersonEaseOut = preferences.tdxSettings.firstPersonEaseOut;
+    ws.floorQueryRate = preferences.tdxSettings.floorQueryRate;
+    ws.lockSketchPlane = preferences.tdxSettings.lockSketchPlane;
+    ws.pivotVisibility =
+        preferences.showOrbitCenter
+            ? (preferences.alwaysShowOrbitCenter ? "ShowPivot"
+                                                 : "ShowMovingPivot")
+            : "HidePivot";
+    tdxSync.WriteSettings(ws);
+  };
+
   auto *sphereCursor = cursorManager.getSphereCursor();
   auto *fragmentCursor = cursorManager.getFragmentCursor();
   auto *planeCursor = cursorManager.getPlaneCursor();
@@ -4809,7 +4257,8 @@ void renderCursorSettingsWindow() {
 
     // Display the preview image
     ImGui::Text("Current Cursor on Cube:");
-    ImVec2 previewSize(200, 200);
+    float previewDim = 200.0f * g_GuiScale.currentScale;
+    ImVec2 previewSize(previewDim, previewDim);
     ImGui::Image((void *)(intptr_t)cursorPreview3D.getTextureID(), previewSize);
 
     // Handle mouse interaction for rotation
@@ -5041,28 +4490,7 @@ void renderCursorSettingsWindow() {
         cursorManager.setShowOrbitCenter(showOrbitCenter);
         preferences.showOrbitCenter = showOrbitCenter;
         savePreferences();
-        // Sync pivot visibility to 3DConnexion XML
-        if (tdxSync.IsConnected()) {
-          auto s = tdxSync.GetSettings();
-          ThreeDConnexionSync::TdxSettings ws = s;
-          ws.motionModel = preferences.tdxSettings.motionModel;
-          ws.autoPivot = preferences.tdxSettings.autoPivot;
-          ws.lockHorizon = preferences.tdxSettings.lockHorizon;
-          ws.suspendInput = preferences.tdxSettings.suspendInput;
-          ws.lockTo3dViews = preferences.tdxSettings.lockTo3dViews;
-          ws.moveObjects = preferences.tdxSettings.moveObjects;
-          ws.autokeyAnimation = preferences.tdxSettings.autokeyAnimation;
-          ws.selectionFollower = preferences.tdxSettings.selectionFollower;
-          ws.firstPersonEaseOut = preferences.tdxSettings.firstPersonEaseOut;
-          ws.floorQueryRate = preferences.tdxSettings.floorQueryRate;
-          ws.lockSketchPlane = preferences.tdxSettings.lockSketchPlane;
-          ws.pivotVisibility =
-              showOrbitCenter
-                  ? (preferences.alwaysShowOrbitCenter ? "ShowPivot"
-                                                       : "ShowMovingPivot")
-                  : "HidePivot";
-          tdxSync.WriteSettings(ws);
-        }
+        syncTdxPivotVisibility();
       }
       ImGui::SameLine();
       DrawHelpMarker("Display a marker at the camera's orbit pivot point");
@@ -5074,24 +4502,7 @@ void renderCursorSettingsWindow() {
           cursorManager.setAlwaysShowOrbitCenter(alwaysShowOrbitCenter);
           preferences.alwaysShowOrbitCenter = alwaysShowOrbitCenter;
           savePreferences();
-          // Sync pivot visibility to 3DConnexion XML
-          if (tdxSync.IsConnected()) {
-            ThreeDConnexionSync::TdxSettings ws = tdxSync.GetSettings();
-            ws.motionModel = preferences.tdxSettings.motionModel;
-            ws.autoPivot = preferences.tdxSettings.autoPivot;
-            ws.lockHorizon = preferences.tdxSettings.lockHorizon;
-            ws.suspendInput = preferences.tdxSettings.suspendInput;
-            ws.lockTo3dViews = preferences.tdxSettings.lockTo3dViews;
-            ws.moveObjects = preferences.tdxSettings.moveObjects;
-            ws.autokeyAnimation = preferences.tdxSettings.autokeyAnimation;
-            ws.selectionFollower = preferences.tdxSettings.selectionFollower;
-            ws.firstPersonEaseOut = preferences.tdxSettings.firstPersonEaseOut;
-            ws.floorQueryRate = preferences.tdxSettings.floorQueryRate;
-            ws.lockSketchPlane = preferences.tdxSettings.lockSketchPlane;
-            ws.pivotVisibility =
-                alwaysShowOrbitCenter ? "ShowPivot" : "ShowMovingPivot";
-            tdxSync.WriteSettings(ws);
-          }
+          syncTdxPivotVisibility();
         }
         ImGui::SameLine();
         DrawHelpMarker("Keep the orbit center visible even when not orbiting");
@@ -5139,16 +4550,17 @@ void renderBrushToolWindow() {
   ImGui::SetNextWindowSize(ImVec2(450, 650), ImGuiCond_FirstUseEver);
   ImGui::Begin("Brush Tool", &showBrushToolWindow);
 
-  DrawSectionHeader("Brush Tool Settings");
+  DrawSectionHeader("Brush Tool");
 
-  // Enable/Disable brush tool
-  if (ImGui::Checkbox("Enable Brush Tool",
-                      &preferences.brushToolSettings.enabled)) {
-    // Will be handled in main.cpp
-  }
+  // Enable/Disable brush tool (consumed by the paint handler in main.cpp)
+  DrawToggleSwitch("Enable Brush Tool", &preferences.brushToolSettings.enabled);
 
   if (!preferences.brushToolSettings.enabled) {
-    ImGui::TextDisabled("Enable the brush tool to start painting");
+    ImGui::Spacing();
+    ImGui::TextDisabled("Enable the brush tool to start painting.");
+    ImGui::TextWrapped("Painting places instances of a model onto surfaces. "
+                       "Create a cluster, then hold the left mouse button and "
+                       "drag over geometry in the viewport.");
     ImGui::End();
     return;
   }
@@ -5362,7 +4774,13 @@ void renderSunManipulationPanel() {
 
 void renderModelManipulationPanel(Engine::Model &model,
                                   Engine::Shader *shader) {
-  ImGui::Text("📦 %s", model.name.c_str());
+  if (g_Fonts.icons) {
+    ImGui::PushFont(g_Fonts.icons);
+    ImGui::Text(ICON_FA_CUBE);
+    ImGui::PopFont();
+    ImGui::SameLine();
+  }
+  ImGui::Text("%s", model.name.c_str());
   ImGui::Separator();
 
   if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -5537,7 +4955,13 @@ void renderMeshManipulationPanel(Engine::Model &model, int meshIndex,
                                  Engine::Shader *shader) {
   auto &mesh = model.getMeshes()[meshIndex];
 
-  ImGui::Text("📦 %s - Mesh %d", model.name.c_str(), meshIndex + 1);
+  if (g_Fonts.icons) {
+    ImGui::PushFont(g_Fonts.icons);
+    ImGui::Text(ICON_FA_CUBE);
+    ImGui::PopFont();
+    ImGui::SameLine();
+  }
+  ImGui::Text("%s - Mesh %d", model.name.c_str(), meshIndex + 1);
   ImGui::Separator();
 
   ImGui::Checkbox("Visible", &mesh.visible);
@@ -5549,49 +4973,10 @@ void renderMeshManipulationPanel(Engine::Model &model, int meshIndex,
     ImGui::SliderFloat("Emissive", &mesh.emissive, 0.0f, 1.0f);
 
     if (preferences.materialSettings.enablePBR) {
-      DrawSectionHeader("PBR Properties");
-
-      // Add metallic and roughness sliders for this mesh
-      static float meshMetallic = preferences.materialSettings.metallicFactor;
-      static float meshRoughness = preferences.materialSettings.roughnessFactor;
-
-      if (ImGui::SliderFloat("Metallic", &meshMetallic, 0.0f, 1.0f, "%.2f")) {
-        // Update mesh metallic property (would need to be added to mesh
-        // structure)
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("0 = Dielectric (plastic, wood), 1 = Metal");
-
-      if (ImGui::SliderFloat("Roughness", &meshRoughness, 0.0f, 1.0f, "%.2f")) {
-        // Update mesh roughness property (would need to be added to mesh
-        // structure)
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("0 = Mirror-like, 1 = Completely rough");
-    }
-
-    if (preferences.materialSettings.enableNormalMapping) {
-      DrawSectionHeader("Normal Mapping");
-      static float normalScale = preferences.materialSettings.normalScale;
-      if (ImGui::SliderFloat("Normal Intensity", &normalScale, 0.0f, 2.0f,
-                             "%.2f")) {
-        preferences.materialSettings.normalScale = normalScale;
-        savePreferences();
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Strength of normal map effect");
-    }
-
-    if (preferences.materialSettings.enableParallaxMapping) {
-      DrawSectionHeader("Parallax Mapping");
-      static float heightScale = preferences.materialSettings.heightScale;
-      if (ImGui::SliderFloat("Height Scale", &heightScale, 0.0f, 0.1f,
-                             "%.4f")) {
-        preferences.materialSettings.heightScale = heightScale;
-        savePreferences();
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Depth of parallax displacement");
+      ImGui::Spacing();
+      ImGui::TextDisabled(
+          "PBR properties (metallic, roughness, normals) are per-model.\n"
+          "Select the parent model to edit them.");
     }
 
     if (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) {
@@ -5696,7 +5081,13 @@ void renderMeshManipulationPanel(Engine::Model &model, int meshIndex,
 }
 
 void renderPointCloudManipulationPanel(Engine::PointCloud &pointCloud) {
-  ImGui::Text("☁ %s", pointCloud.name.c_str());
+  if (g_Fonts.icons) {
+    ImGui::PushFont(g_Fonts.icons);
+    ImGui::Text(ICON_FA_CLOUD);
+    ImGui::PopFont();
+    ImGui::SameLine();
+  }
+  ImGui::Text("%s", pointCloud.name.c_str());
 
   // isLoaded() returns true when compute SSBOs are ready (numBatches > 0)
   // or when a legacy CPU-side points vector is still populated.
@@ -5918,7 +5309,13 @@ void renderSpotLightManipulationPanel() {
 
   auto &light = spotLights[currentSelectedIndex];
 
-  ImGui::Text("🔦 Spot Light %d", currentSelectedIndex + 1);
+  if (g_Fonts.icons) {
+    ImGui::PushFont(g_Fonts.icons);
+    ImGui::Text(ICON_FA_BULLSEYE);
+    ImGui::PopFont();
+    ImGui::SameLine();
+  }
+  ImGui::Text("Spot Light %d", currentSelectedIndex + 1);
   ImGui::Separator();
 
   if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {

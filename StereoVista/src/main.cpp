@@ -188,7 +188,6 @@ bool firstMouse = true;
 bool showGui = true;
 bool showFPS = true;
 bool isDarkTheme = true;
-bool showInfoWindow = false;
 bool showSettingsWindow = false;
 bool show3DCursor = true;
 bool showCursorSettingsWindow = false;
