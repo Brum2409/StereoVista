@@ -152,9 +152,29 @@ void CursorManager::updateCursorPosition(
   auto worldPos = worldPosH / worldPosH.w;
   auto isHit = depth < DEPTH_THRESHOLD;
 
+  const bool anyCursorVisible = m_sphereCursor->isVisible() ||
+                                m_fragmentCursor->isVisible() ||
+                                m_planeCursor->isVisible();
+
+  if (isHit) {
+    // Remember the depth of the last geometry hit so the cursor can stay at
+    // this depth while the mouse passes over the background (sparse point
+    // clouds would otherwise make it flicker between 2D and 3D).
+    m_lastValidDepth = depth;
+    m_hasLastValidDepth = true;
+  } else if (m_keepLastDepthOnBackground && m_hasLastValidDepth &&
+             anyCursorVisible) {
+    // Over background: re-project the mouse position at the cached depth so
+    // the 3D cursor keeps following the mouse at the last known distance from
+    // the camera until it hits geometry again.
+    ndc.z = m_lastValidDepth * 2.0f - 1.0f;
+    worldPosH = vpInv * ndc;
+    worldPos = worldPosH / worldPosH.w;
+    isHit = true;
+  }
+
   // Update cursor properties based on whether it hit geometry
-  if (isHit && (m_sphereCursor->isVisible() || m_fragmentCursor->isVisible() ||
-                m_planeCursor->isVisible())) {
+  if (isHit && anyCursorVisible) {
     m_cursorPositionValid = true;
     m_cursorPosition = glm::vec3(worldPos);
 
