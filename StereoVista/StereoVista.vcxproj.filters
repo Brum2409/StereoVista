@@ -140,7 +140,7 @@
     <ClInclude Include="headers\engine\window.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="headers\engine\shader.h">
+    <ClInclude Include="headers\Engine\Shader.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\engine\input.h">

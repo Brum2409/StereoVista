@@ -296,29 +296,29 @@ namespace Engine {
 
             // Load textures for this specific mesh
             std::vector<Texture> diffuseMaps = loadMaterialTextures(material,
-                aiTextureType_DIFFUSE, "texture_diffuse");
+                aiTextureType_DIFFUSE, "texture_diffuse", scene);
             textures.insert(textures.end(), diffuseMaps.begin(), diffuseMaps.end());
 
             std::vector<Texture> specularMaps = loadMaterialTextures(material,
-                aiTextureType_SPECULAR, "texture_specular");
+                aiTextureType_SPECULAR, "texture_specular", scene);
             textures.insert(textures.end(), specularMaps.begin(), specularMaps.end());
 
             // Try both HEIGHT and NORMALS for normal maps (different formats use different types)
             // HEIGHT is used by .obj files, NORMALS is used by other formats
             // Try NORMALS first (proper normal map type)
             std::vector<Texture> normalMaps = loadMaterialTextures(material,
-                aiTextureType_NORMALS, "texture_normal");
+                aiTextureType_NORMALS, "texture_normal", scene);
 
             // Only try HEIGHT if NORMALS didn't find anything (prevents duplicates)
             if (normalMaps.empty()) {
                 normalMaps = loadMaterialTextures(material,
-                    aiTextureType_HEIGHT, "texture_normal");
+                    aiTextureType_HEIGHT, "texture_normal", scene);
             }
 
             textures.insert(textures.end(), normalMaps.begin(), normalMaps.end());
 
             std::vector<Texture> aoMaps = loadMaterialTextures(material,
-                aiTextureType_AMBIENT_OCCLUSION, "texture_ao");
+                aiTextureType_AMBIENT_OCCLUSION, "texture_ao", scene);
             textures.insert(textures.end(), aoMaps.begin(), aoMaps.end());
 
             // Store material properties
@@ -354,7 +354,7 @@ namespace Engine {
         return result;
     }
 
-    std::vector<Texture> Model::loadMaterialTextures(aiMaterial* mat, aiTextureType type, const std::string& typeName) {
+    std::vector<Texture> Model::loadMaterialTextures(aiMaterial* mat, aiTextureType type, const std::string& typeName, const aiScene* scene) {
         std::vector<Texture> textures;
         unsigned int textureCount = mat->GetTextureCount(type);
 
@@ -407,9 +407,9 @@ namespace Engine {
 
                 // Check if this is an embedded texture (starts with '*')
                 std::string pathStr = texturePath.C_Str();
-                if (pathStr[0] == '*') {
+                if (!pathStr.empty() && pathStr[0] == '*') {
                     // Handle embedded texture
-                    texture.id = loadEmbeddedTexture(pathStr, texture.fullPath);
+                    texture.id = loadEmbeddedTexture(pathStr, texture.fullPath, scene);
                 } else {
                     // Handle file texture with flip setting
                     texture.id = TextureFromFile(texturePath.C_Str(), directory, texture.fullPath, shouldFlip);
@@ -609,30 +609,52 @@ namespace Engine {
         }
     }
 
-    GLuint Model::loadEmbeddedTexture(const std::string& embeddedPath, std::string& outFullPath) {
-        // Extract the index from the embedded path (e.g., "*0", "*1", etc.)
-        int textureIndex = std::stoi(embeddedPath.substr(1));
-        
-        std::cout << "Loading embedded texture with index: " << textureIndex << std::endl;
-        
-        // For now, return a placeholder texture since we don't have the scene context here
-        // In a complete implementation, you'd need to pass the aiScene* to access embedded textures
-        outFullPath = "embedded_texture_" + std::to_string(textureIndex);
-        
-        // Create a placeholder colored texture to indicate missing embedded texture support
-        GLuint textureID;
+    GLuint Model::loadEmbeddedTexture(const std::string& embeddedPath, std::string& outFullPath, const aiScene* scene) {
+        outFullPath = "embedded:" + embeddedPath;
+
+        // Resolves both index references ("*0", "*1", ...) and named references
+        const aiTexture* embedded = scene ? scene->GetEmbeddedTexture(embeddedPath.c_str()) : nullptr;
+        if (!embedded) {
+            std::cerr << "Failed to resolve embedded texture '" << embeddedPath << "'" << std::endl;
+            return 0;
+        }
+
+        GLuint textureID = 0;
         glGenTextures(1, &textureID);
         glBindTexture(GL_TEXTURE_2D, textureID);
-        
-        unsigned char defaultColor[] = { 255, 255, 0, 255 };  // Yellow for embedded textures
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, defaultColor);
+
+        if (embedded->mHeight == 0) {
+            // Compressed image data (PNG/JPG/...): mWidth is the byte size
+            // Embedded textures (FBX/GLB) use top-left UV origin handled by
+            // assimp, so no vertical flip here.
+            stbi_set_flip_vertically_on_load(false);
+            int width = 0, height = 0, channels = 0;
+            unsigned char* data = stbi_load_from_memory(
+                reinterpret_cast<const unsigned char*>(embedded->pcData),
+                static_cast<int>(embedded->mWidth), &width, &height, &channels, 4);
+            if (!data) {
+                std::cerr << "Failed to decode embedded texture '" << embeddedPath
+                          << "': " << stbi_failure_reason() << std::endl;
+                glDeleteTextures(1, &textureID);
+                return 0;
+            }
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+            stbi_image_free(data);
+        } else {
+            // Uncompressed aiTexel array (BGRA8888, mWidth x mHeight)
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, embedded->mWidth, embedded->mHeight,
+                         0, GL_BGRA, GL_UNSIGNED_BYTE, embedded->pcData);
+        }
+
+        glGenerateMipmap(GL_TEXTURE_2D);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        
-        std::cout << "Warning: Embedded texture support not fully implemented. Using placeholder." << std::endl;
-        
+
+        std::cout << "Loaded embedded texture '" << embeddedPath << "' ("
+                  << (embedded->mHeight == 0 ? "compressed" : "raw BGRA") << ")" << std::endl;
+
         return textureID;
     }
 

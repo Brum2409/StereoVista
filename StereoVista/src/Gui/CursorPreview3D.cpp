@@ -773,6 +773,18 @@ void CursorPreview3D::cleanup() {
         glDeleteBuffers(1, &m_planeEBO);
         m_planeEBO = 0;
     }
+    if (m_cubeShader) {
+        delete m_cubeShader;
+        m_cubeShader = nullptr;
+    }
+    if (m_sphereShader) {
+        delete m_sphereShader;
+        m_sphereShader = nullptr;
+    }
+    if (m_planeShader) {
+        delete m_planeShader;
+        m_planeShader = nullptr;
+    }
 
     m_initialized = false;
 }

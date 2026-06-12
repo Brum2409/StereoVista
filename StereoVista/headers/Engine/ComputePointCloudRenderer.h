@@ -12,7 +12,7 @@
 //      rasterised into the uint64_t framebuffer via atomicMin.
 //   3. endFrame() – GL_ALL_BARRIER_BITS, fullscreen-quad resolve pass, then
 //      clears the framebuffer for the next frame while the GPU is idle.
-#include "shader.h"
+#include "Shader.h"
 #include <glm/glm.hpp>
 #include <glad/glad.h>
 #include <cstdint>
