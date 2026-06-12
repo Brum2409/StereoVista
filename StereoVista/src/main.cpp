@@ -1563,6 +1563,8 @@ void savePreferences() {
   j["ui"]["darkTheme"] = preferences.isDarkTheme;
   j["ui"]["showFPS"] = preferences.showFPS;
   j["ui"]["show3DCursor"] = preferences.show3DCursor;
+  j["ui"]["cursorKeepLastDepthOnBackground"] =
+      preferences.cursorKeepLastDepthOnBackground;
   j["ui"]["enableSpawnAnimation"] = preferences.enableSpawnAnimation;
   j["ui"]["guiScaleFactor"] = preferences.guiScaleFactor;
 
@@ -1843,6 +1845,8 @@ void applyPreferencesToProgram() {
   SetupImGuiStyle(isDarkTheme, 1.0f);
   showFPS = preferences.showFPS;
   show3DCursor = preferences.show3DCursor;
+  cursorManager.setKeepLastDepthOnBackground(
+      preferences.cursorKeepLastDepthOnBackground);
   g_GuiScale.userScaleFactor = preferences.guiScaleFactor;
 
   // Apply radiance/BVH preferences to the globals the renderer reads.
@@ -2006,6 +2010,8 @@ void loadPreferences() {
       preferences.isDarkTheme = j["ui"].value("darkTheme", true);
       preferences.showFPS = j["ui"].value("showFPS", true);
       preferences.show3DCursor = j["ui"].value("show3DCursor", true);
+      preferences.cursorKeepLastDepthOnBackground =
+          j["ui"].value("cursorKeepLastDepthOnBackground", false);
       preferences.enableSpawnAnimation =
           j["ui"].value("enableSpawnAnimation", true);
       preferences.guiScaleFactor = j["ui"].value("guiScaleFactor", 1.0f);

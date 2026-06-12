@@ -4786,6 +4786,28 @@ void renderCursorSettingsWindow() {
   ImGui::Separator();
   ImGui::Spacing();
 
+  // Behavior Section
+  DrawSectionHeader("Behavior");
+
+  bool keepLastDepth = cursorManager.isKeepLastDepthOnBackground();
+  if (ImGui::Checkbox("Keep Cursor At Last Depth Over Background",
+                      &keepLastDepth)) {
+    cursorManager.setKeepLastDepthOnBackground(keepLastDepth);
+    preferences.cursorKeepLastDepthOnBackground = keepLastDepth;
+    savePreferences();
+  }
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip(
+        "Instead of switching to the Windows cursor over the background,\n"
+        "the 3D cursor stays at the last valid depth and follows the mouse\n"
+        "at that distance until it hits geometry again.\n"
+        "Useful for sparse point clouds.");
+  }
+
+  ImGui::Spacing();
+  ImGui::Separator();
+  ImGui::Spacing();
+
   // 3D Preview Section
   DrawSectionHeader("3D Preview");
 

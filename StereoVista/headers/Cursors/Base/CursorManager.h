@@ -118,6 +118,20 @@ public:
   void setPositionLocked(bool locked) { m_positionLocked = locked; }
   bool isPositionLocked() const { return m_positionLocked; }
 
+  // When enabled, the 3D cursor does not fall back to the Windows cursor over
+  // the background. Instead it stays at the last valid depth and follows the
+  // mouse at that depth until geometry is hit again. Useful for sparse point
+  // clouds where the cursor would otherwise flicker between 2D and 3D.
+  void setKeepLastDepthOnBackground(bool keep) {
+    m_keepLastDepthOnBackground = keep;
+    if (!keep) {
+      m_hasLastValidDepth = false;
+    }
+  }
+  bool isKeepLastDepthOnBackground() const {
+    return m_keepLastDepthOnBackground;
+  }
+
 private:
   std::unique_ptr<SphereCursor> m_sphereCursor;
   std::unique_ptr<FragmentCursor> m_fragmentCursor;
@@ -160,6 +174,11 @@ private:
 
   // Position locking
   bool m_positionLocked;
+
+  // Last-known-depth caching (see setKeepLastDepthOnBackground)
+  bool m_keepLastDepthOnBackground = false;
+  float m_lastValidDepth = 0.5f; // depth buffer value of the last geometry hit
+  bool m_hasLastValidDepth = false;
 
   // Helper function to calculate background cursor position
   glm::vec3 calculateBackgroundCursorPosition(GLFWwindow *window,

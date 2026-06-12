@@ -111,6 +111,10 @@ struct ApplicationPreferences {
   float cameraSpeedFactor = 1.0f;
   bool showFPS = true;
   bool show3DCursor = true;
+  // Keep the 3D cursor at the last valid depth when the mouse is over the
+  // background instead of switching to the Windows cursor (helps with sparse
+  // point clouds).
+  bool cursorKeepLastDepthOnBackground = false;
   bool useNewStereoMethod = true;
   float fov = 45.0f;
 
