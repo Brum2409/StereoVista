@@ -20,6 +20,7 @@ namespace Tools {
 
     BrushTool::~BrushTool() {
         clearAllInstances();
+        cleanupIndicatorResources();
     }
 
     void BrushTool::enable() {
@@ -454,12 +455,92 @@ namespace Tools {
         // The actual attribute setup is done in renderInstances
     }
 
+    namespace {
+        const char* kIndicatorVertexSrc = R"(
+#version 330 core
+layout (location = 0) in vec3 aPos;
+
+uniform mat4 uViewProj;
+
+void main() {
+    gl_Position = uViewProj * vec4(aPos, 1.0);
+}
+)";
+
+        const char* kIndicatorFragmentSrc = R"(
+#version 330 core
+out vec4 FragColor;
+
+uniform vec4 uColor;
+
+void main() {
+    FragColor = uColor;
+}
+)";
+    }
+
+    void BrushTool::ensureIndicatorResources() {
+        if (m_indicatorVAO != 0) return;
+
+        glGenVertexArrays(1, &m_indicatorVAO);
+        glGenBuffers(1, &m_indicatorVBO);
+        glBindVertexArray(m_indicatorVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, m_indicatorVBO);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)0);
+        glEnableVertexAttribArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glBindVertexArray(0);
+
+        auto compile = [](GLenum type, const char* src) -> GLuint {
+            GLuint shader = glCreateShader(type);
+            glShaderSource(shader, 1, &src, nullptr);
+            glCompileShader(shader);
+            GLint ok = GL_FALSE;
+            glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
+            if (!ok) {
+                char log[1024];
+                glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
+                std::cerr << "[BrushTool] indicator shader compile error: " << log << std::endl;
+            }
+            return shader;
+        };
+
+        GLuint vs = compile(GL_VERTEX_SHADER, kIndicatorVertexSrc);
+        GLuint fs = compile(GL_FRAGMENT_SHADER, kIndicatorFragmentSrc);
+        m_indicatorProgram = glCreateProgram();
+        glAttachShader(m_indicatorProgram, vs);
+        glAttachShader(m_indicatorProgram, fs);
+        glLinkProgram(m_indicatorProgram);
+        glDeleteShader(vs);
+        glDeleteShader(fs);
+
+        GLint ok = GL_FALSE;
+        glGetProgramiv(m_indicatorProgram, GL_LINK_STATUS, &ok);
+        if (!ok) {
+            char log[1024];
+            glGetProgramInfoLog(m_indicatorProgram, sizeof(log), nullptr, log);
+            std::cerr << "[BrushTool] indicator program link error: " << log << std::endl;
+            glDeleteProgram(m_indicatorProgram);
+            m_indicatorProgram = 0;
+        }
+    }
+
+    void BrushTool::cleanupIndicatorResources() {
+        if (m_indicatorVAO) { glDeleteVertexArrays(1, &m_indicatorVAO); m_indicatorVAO = 0; }
+        if (m_indicatorVBO) { glDeleteBuffers(1, &m_indicatorVBO); m_indicatorVBO = 0; }
+        if (m_indicatorProgram) { glDeleteProgram(m_indicatorProgram); m_indicatorProgram = 0; }
+    }
+
     void BrushTool::renderBrushIndicator(const glm::mat4& projection, const glm::mat4& view, const glm::vec3& cursorPos, const glm::vec3& cursorNormal) {
         if (!m_enabled) return;
+
+        ensureIndicatorResources();
+        if (m_indicatorProgram == 0) return;
 
         // Create a circle of vertices around the cursor position
         const int segments = 64;
         std::vector<glm::vec3> circleVertices;
+        circleVertices.reserve(segments);
 
         // Build an orthonormal basis from the cursor normal (same as instance alignment)
         glm::vec3 normalizedNormal = glm::normalize(cursorNormal);
@@ -469,7 +550,7 @@ namespace Tools {
         glm::vec3 bitangent = glm::normalize(glm::cross(normalizedNormal, tangent));
 
         // Generate circle vertices
-        for (int i = 0; i <= segments; i++) {
+        for (int i = 0; i < segments; i++) {
             float angle = (float)i / (float)segments * glm::two_pi<float>();
             float x = cos(angle) * m_brushRadius;
             float y = sin(angle) * m_brushRadius;
@@ -480,12 +561,50 @@ namespace Tools {
             circleVertices.push_back(vertex);
         }
 
-        // Render the circle as a line loop
-        glDisable(GL_DEPTH_TEST);
+        // Save the GL state we touch
+        GLint prevDepthFunc = GL_LESS;
+        glGetIntegerv(GL_DEPTH_FUNC, &prevDepthFunc);
+        GLboolean prevDepthMask = GL_TRUE;
+        glGetBooleanv(GL_DEPTH_WRITEMASK, &prevDepthMask);
+        const GLboolean prevBlend = glIsEnabled(GL_BLEND);
+
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDepthMask(GL_FALSE);
+        glDepthFunc(GL_LEQUAL);
         glLineWidth(3.0f);
 
-        glEnable(GL_DEPTH_TEST);
+        const glm::mat4 viewProj = projection * view;
+        glUseProgram(m_indicatorProgram);
+        glUniformMatrix4fv(glGetUniformLocation(m_indicatorProgram, "uViewProj"),
+                           1, GL_FALSE, &viewProj[0][0]);
+
+        glBindVertexArray(m_indicatorVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, m_indicatorVBO);
+        glBufferData(GL_ARRAY_BUFFER,
+                     static_cast<GLsizeiptr>(circleVertices.size() * sizeof(glm::vec3)),
+                     circleVertices.data(), GL_DYNAMIC_DRAW);
+
+        // Pass 1: depth-tested, opaque
+        glUniform4f(glGetUniformLocation(m_indicatorProgram, "uColor"),
+                    1.0f, 0.6f, 0.1f, 0.9f);
+        glDrawArrays(GL_LINE_LOOP, 0, static_cast<GLsizei>(circleVertices.size()));
+
+        // Pass 2: faint through-geometry hint so the brush stays visible
+        glDepthFunc(GL_ALWAYS);
+        glUniform4f(glGetUniformLocation(m_indicatorProgram, "uColor"),
+                    1.0f, 0.6f, 0.1f, 0.25f);
+        glDrawArrays(GL_LINE_LOOP, 0, static_cast<GLsizei>(circleVertices.size()));
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glBindVertexArray(0);
+        glUseProgram(0);
+
+        // Restore state
         glLineWidth(1.0f);
+        glDepthFunc(prevDepthFunc);
+        glDepthMask(prevDepthMask);
+        if (!prevBlend) glDisable(GL_BLEND);
     }
 
 } // namespace Tools

@@ -598,7 +598,8 @@ namespace Engine {
 
         // Density-aware point size scaling
         float nodeVolume = (node->bounds.x * 2.0f) * (node->bounds.y * 2.0f) * (node->bounds.z * 2.0f);
-        float pointDensity = static_cast<float>(node->points.size()) / nodeVolume;
+        // points may have been unloaded after VBO upload; totalPointCount survives
+        float pointDensity = static_cast<float>(node->totalPointCount) / nodeVolume;
 
         // Base LOD scaling
         float lodMultiplier = 1.0f + (lodLevel) * 1.2f;

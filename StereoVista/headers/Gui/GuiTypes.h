@@ -128,6 +128,7 @@ struct ApplicationPreferences {
   // Lighting settings
   LightingMode lightingMode = LIGHTING_SHADOW_MAPPING;
   bool enableShadows = true;
+  float ambientStrengthFromSkybox = 0.1f;
   VCTSettings vctSettings;
 
   // HDR rendering settings

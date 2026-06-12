@@ -7,7 +7,7 @@
 #include "Engine/ShortcutManager.h"
 #include "Engine/SpaceMouseInput.h"
 #include "Engine/ThreeDConnexionSync.h"
-#include "Gui/GUITypes.h"
+#include "Gui/GuiTypes.h"
 #include "Tools/BrushTool.h"
 #include "Tools/MeasurementTool.h"
 #include "imgui/IconsFontAwesome5.h"
@@ -3280,6 +3280,7 @@ void renderSettingsWindow() {
 
       if (ImGui::SliderFloat("Ambient Light", &ambientStrengthFromSkybox, 0.0f,
                              1.0f, "%.2f")) {
+        preferences.ambientStrengthFromSkybox = ambientStrengthFromSkybox;
         settingsChanged = true;
       }
       ImGui::SameLine();
@@ -3319,32 +3320,6 @@ void renderSettingsWindow() {
       ImGui::SameLine();
       DrawHelpMarker(
           "Sets the direction of sunlight. Affects shadows and lighting");
-
-      DrawSectionHeader("Default Material Properties");
-
-      static float diffuseReflectivity = 0.8f;
-      if (ImGui::SliderFloat("Diffuse Reflectivity", &diffuseReflectivity, 0.0f,
-                             1.0f, "%.2f")) {
-        // Update default material property
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Default diffuse reflectivity for new objects");
-
-      static float specularReflectivity = 0.0f;
-      if (ImGui::SliderFloat("Specular Reflectivity", &specularReflectivity,
-                             0.0f, 1.0f, "%.2f")) {
-        // Update default material property
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Default specular reflectivity for new objects");
-
-      static float specularDiffusion = 0.5f;
-      if (ImGui::SliderFloat("Specular Diffusion", &specularDiffusion, 0.0f,
-                             1.0f, "%.2f")) {
-        // Update default material property
-      }
-      ImGui::SameLine();
-      DrawHelpMarker("Default specular diffusion for new objects");
 
       ImGui::PopID();
   }

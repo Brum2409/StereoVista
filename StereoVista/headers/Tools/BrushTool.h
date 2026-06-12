@@ -141,6 +141,13 @@ namespace Tools {
         std::mt19937 m_rng;
         std::uniform_real_distribution<float> m_dist;
 
+        // Brush indicator rendering resources (created lazily, requires GL context)
+        GLuint m_indicatorVAO = 0;
+        GLuint m_indicatorVBO = 0;
+        GLuint m_indicatorProgram = 0;
+        void ensureIndicatorResources();
+        void cleanupIndicatorResources();
+
         // Helper functions
         PaintedModelGroup* findOrCreateGroup(int modelIndex);
         glm::mat4 createInstanceTransform(const glm::vec3& position, const glm::vec3& normal, const glm::vec3& cameraPos, const glm::vec3& sourceModelScale, const BrushCluster* cluster);

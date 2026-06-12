@@ -2,7 +2,7 @@
 
 #include <glm/glm.hpp>
 #include <vector>
-#include "../engine/shader.h"
+#include "Shader.h"
 #include "BVH.h"
 
 namespace Engine {

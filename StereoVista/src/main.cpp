@@ -1674,6 +1674,7 @@ void savePreferences() {
   // Save lighting settings
   j["lighting"]["mode"] = static_cast<int>(preferences.lightingMode);
   j["lighting"]["enableShadows"] = preferences.enableShadows;
+  j["lighting"]["ambientStrength"] = preferences.ambientStrengthFromSkybox;
 
   // Save HDR settings
   j["hdr"]["enabled"] = preferences.hdrSettings.enabled;
@@ -1753,6 +1754,20 @@ void savePreferences() {
   j["modelImport"]["maxModelRadius"] =
       preferences.modelImportSettings.maxModelRadius;
 
+  // Save VCT settings (loaded from the "vct" section in loadPreferences)
+  j["vct"]["indirectSpecularLight"] =
+      preferences.vctSettings.indirectSpecularLight;
+  j["vct"]["indirectDiffuseLight"] =
+      preferences.vctSettings.indirectDiffuseLight;
+  j["vct"]["directLight"] = preferences.vctSettings.directLight;
+  j["vct"]["shadows"] = preferences.vctSettings.shadows;
+  j["vct"]["voxelSize"] = preferences.vctSettings.voxelSize;
+  j["vct"]["diffuseConeCount"] = preferences.vctSettings.diffuseConeCount;
+  j["vct"]["tracingMaxDistance"] = preferences.vctSettings.tracingMaxDistance;
+  j["vct"]["shadowSampleCount"] = preferences.vctSettings.shadowSampleCount;
+  j["vct"]["shadowStepMultiplier"] =
+      preferences.vctSettings.shadowStepMultiplier;
+
   // Save radiance settings
   j["radiance"]["enableRaytracing"] =
       preferences.radianceSettings.enableRaytracing;
@@ -1829,6 +1844,14 @@ void applyPreferencesToProgram() {
   showFPS = preferences.showFPS;
   show3DCursor = preferences.show3DCursor;
   g_GuiScale.userScaleFactor = preferences.guiScaleFactor;
+
+  // Apply radiance/BVH preferences to the globals the renderer reads.
+  // Without this, loaded settings only take effect once a GUI control is
+  // touched (the GUI syncs these on change).
+  radianceSettings = preferences.radianceSettings;
+  enableBVH = preferences.radianceSettings.enableBVH;
+  showBVHDebug = preferences.radianceSettings.showBVHDebug;
+  ambientStrengthFromSkybox = preferences.ambientStrengthFromSkybox;
 
   // Apply camera preferences
   convergenceSmoothingSpeed = preferences.convergenceSmoothingSpeed;
@@ -2167,6 +2190,8 @@ void loadPreferences() {
           static_cast<GUI::LightingMode>(j["lighting"].value(
               "mode", static_cast<int>(GUI::LIGHTING_SHADOW_MAPPING)));
       preferences.enableShadows = j["lighting"].value("enableShadows", true);
+      preferences.ambientStrengthFromSkybox =
+          j["lighting"].value("ambientStrength", 0.1f);
 
       // Update the global lighting mode
       currentLightingMode = preferences.lightingMode;
@@ -7468,6 +7493,8 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
     case StereoVista::ShortcutAction::ToggleRaytracing:
       preferences.radianceSettings.enableRaytracing =
           !preferences.radianceSettings.enableRaytracing;
+      radianceSettings.enableRaytracing =
+          preferences.radianceSettings.enableRaytracing;
       std::cout << "Raytracing "
                 << (preferences.radianceSettings.enableRaytracing ? "enabled"
                                                                   : "disabled")
@@ -7478,6 +7505,8 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
     case StereoVista::ShortcutAction::ToggleIndirectLighting:
       preferences.radianceSettings.enableIndirectLighting =
           !preferences.radianceSettings.enableIndirectLighting;
+      radianceSettings.enableIndirectLighting =
+          preferences.radianceSettings.enableIndirectLighting;
       std::cout << "Indirect lighting "
                 << (preferences.radianceSettings.enableIndirectLighting
                         ? "enabled"
@@ -7489,6 +7518,8 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
     case StereoVista::ShortcutAction::ToggleEmissiveLighting:
       preferences.radianceSettings.enableEmissiveLighting =
           !preferences.radianceSettings.enableEmissiveLighting;
+      radianceSettings.enableEmissiveLighting =
+          preferences.radianceSettings.enableEmissiveLighting;
       std::cout << "Emissive lighting "
                 << (preferences.radianceSettings.enableEmissiveLighting
                         ? "enabled"
@@ -7500,6 +7531,8 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
     case StereoVista::ShortcutAction::ToggleBVH:
       preferences.radianceSettings.enableBVH =
           !preferences.radianceSettings.enableBVH;
+      radianceSettings.enableBVH = preferences.radianceSettings.enableBVH;
+      enableBVH = preferences.radianceSettings.enableBVH;
       std::cout << "BVH acceleration "
                 << (preferences.radianceSettings.enableBVH ? "enabled"
                                                            : "disabled")
