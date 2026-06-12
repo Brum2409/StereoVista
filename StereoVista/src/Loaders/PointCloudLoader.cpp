@@ -158,7 +158,10 @@ namespace Engine {
             const uint32_t r8 = static_cast<uint32_t>(glm::clamp(c.r,0.f,1.f)*255.f+0.5f);
             const uint32_t g8 = static_cast<uint32_t>(glm::clamp(c.g,0.f,1.f)*255.f+0.5f);
             const uint32_t b8 = static_cast<uint32_t>(glm::clamp(c.b,0.f,1.f)*255.f+0.5f);
-            rgba[i] = (0xFFu<<24)|(b8<<16)|(g8<<8)|r8;
+            // The resolve shader ignores the alpha byte, so it is repurposed to
+            // carry the point intensity (8-bit, [0,1]) for GPU readback/export.
+            const uint32_t a8 = static_cast<uint32_t>(glm::clamp(pts[i].intensity,0.f,1.f)*255.f+0.5f);
+            rgba[i] = (a8<<24)|(b8<<16)|(g8<<8)|r8;
         }
 
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, pc.computeBatchSSBO);
@@ -466,75 +469,213 @@ namespace Engine {
         return std::move(pointCloud);
     }
 
-    bool PointCloudLoader::exportToXYZ(const PointCloud& pointCloud, const std::string& filePath) {
+    // Build the local→world matrix from a cloud's transform fields (identity
+    // when applyTransform is false, i.e. when exporting local-space data).
+    static glm::mat4 pointCloudTransform(const PointCloud& pointCloud, bool applyTransform) {
+        if (!applyTransform) return glm::mat4(1.0f);
+        glm::mat4 transform = glm::mat4(1.0f);
+        transform = glm::translate(transform, pointCloud.position);
+        transform = glm::rotate(transform, glm::radians(pointCloud.rotation.x), glm::vec3(1, 0, 0));
+        transform = glm::rotate(transform, glm::radians(pointCloud.rotation.y), glm::vec3(0, 1, 0));
+        transform = glm::rotate(transform, glm::radians(pointCloud.rotation.z), glm::vec3(0, 0, 1));
+        transform = glm::scale(transform, pointCloud.scale);
+        return transform;
+    }
+
+    bool PointCloudLoader::forEachPointBatch(const PointCloud& pointCloud,
+        const std::function<void(const PointCloudPoint*, size_t)>& callback)
+    {
+        // Legacy path: CPU vector still populated (loader hasn't streamed yet).
+        if (!pointCloud.points.empty()) {
+            const size_t batchSz = PointCloud::kComputeBatchSize;
+            for (size_t first = 0; first < pointCloud.points.size(); first += batchSz) {
+                const size_t count = std::min(batchSz, pointCloud.points.size() - first);
+                callback(pointCloud.points.data() + first, count);
+            }
+            return true;
+        }
+
+        if (pointCloud.numBatches == 0 || pointCloud.totalPointCount == 0 ||
+            pointCloud.computeBatchSSBO == 0 || pointCloud.computeXyz4bSSBO == 0 ||
+            pointCloud.computeXyz8bSSBO == 0 || pointCloud.computeXyz12bSSBO == 0 ||
+            pointCloud.computeRGBASSBO == 0) {
+            std::cerr << "[PCExport] Point cloud '" << pointCloud.name
+                      << "' has no point data to read back\n";
+            return false;
+        }
+
+        // Read the batch descriptors once (32 bytes per batch).
+        std::vector<ComputeBatch> batches(pointCloud.numBatches);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, pointCloud.computeBatchSSBO);
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                           static_cast<GLsizeiptr>(batches.size() * sizeof(ComputeBatch)),
+                           batches.data());
+
+        constexpr double   STEPS_30BIT = 1073741824.0; // 2^30
+        constexpr uint32_t MASK_10BIT  = 1023u;
+
+        std::vector<uint32_t> xyz4b, xyz8b, xyz12b, rgba;
+        std::vector<PointCloudPoint> decoded;
+
+        for (const ComputeBatch& batch : batches) {
+            if (batch.numPoints <= 0) continue;
+            const size_t count = static_cast<size_t>(batch.numPoints);
+
+            xyz4b.resize(count); xyz8b.resize(count); xyz12b.resize(count); rgba.resize(count);
+            const GLintptr   off = static_cast<GLintptr>(batch.firstPoint) * sizeof(uint32_t);
+            const GLsizeiptr byt = static_cast<GLsizeiptr>(count) * sizeof(uint32_t);
+
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, pointCloud.computeXyz4bSSBO);
+            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, off, byt, xyz4b.data());
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, pointCloud.computeXyz8bSSBO);
+            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, off, byt, xyz8b.data());
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, pointCloud.computeXyz12bSSBO);
+            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, off, byt, xyz12b.data());
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, pointCloud.computeRGBASSBO);
+            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, off, byt, rgba.data());
+
+            // Decode the 30-bit quantised coordinates back to floats using the
+            // batch bounds (inverse of uploadComputeBatch). +0.5 centres the
+            // value inside its quantisation step to minimise round-trip error.
+            const glm::dvec3 bMin(batch.min_x, batch.min_y, batch.min_z);
+            const glm::dvec3 bSize(
+                std::max(static_cast<double>(batch.max_x) - bMin.x, 1e-6),
+                std::max(static_cast<double>(batch.max_y) - bMin.y, 1e-6),
+                std::max(static_cast<double>(batch.max_z) - bMin.z, 1e-6));
+
+            decoded.resize(count);
+            for (size_t i = 0; i < count; i++) {
+                const uint32_t X = ((xyz4b[i]      ) & MASK_10BIT) << 20 |
+                                   ((xyz8b[i]      ) & MASK_10BIT) << 10 |
+                                   ((xyz12b[i]     ) & MASK_10BIT);
+                const uint32_t Y = ((xyz4b[i] >> 10) & MASK_10BIT) << 20 |
+                                   ((xyz8b[i] >> 10) & MASK_10BIT) << 10 |
+                                   ((xyz12b[i]>> 10) & MASK_10BIT);
+                const uint32_t Z = ((xyz4b[i] >> 20) & MASK_10BIT) << 20 |
+                                   ((xyz8b[i] >> 20) & MASK_10BIT) << 10 |
+                                   ((xyz12b[i]>> 20) & MASK_10BIT);
+
+                PointCloudPoint& pt = decoded[i];
+                pt.position = glm::vec3(
+                    static_cast<float>(bMin.x + (X + 0.5) / STEPS_30BIT * bSize.x),
+                    static_cast<float>(bMin.y + (Y + 0.5) / STEPS_30BIT * bSize.y),
+                    static_cast<float>(bMin.z + (Z + 0.5) / STEPS_30BIT * bSize.z));
+                pt.color = glm::vec3(( rgba[i]        & 0xFFu) / 255.0f,
+                                     ((rgba[i] >>  8) & 0xFFu) / 255.0f,
+                                     ((rgba[i] >> 16) & 0xFFu) / 255.0f);
+                pt.intensity = ((rgba[i] >> 24) & 0xFFu) / 255.0f;
+            }
+
+            callback(decoded.data(), count);
+        }
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        return true;
+    }
+
+    bool PointCloudLoader::exportToXYZ(const PointCloud& pointCloud, const std::string& filePath,
+                                       bool applyTransform) {
         std::ofstream file(filePath);
         if (!file.is_open()) {
             std::cerr << "Failed to open file for writing: " << filePath << std::endl;
             return false;
         }
 
-        // Create transformation matrix
-        glm::mat4 transform = glm::mat4(1.0f);
-        transform = glm::translate(transform, pointCloud.position);
-        transform = glm::rotate(transform, glm::radians(pointCloud.rotation.x), glm::vec3(1, 0, 0));
-        transform = glm::rotate(transform, glm::radians(pointCloud.rotation.y), glm::vec3(0, 1, 0));
-        transform = glm::rotate(transform, glm::radians(pointCloud.rotation.z), glm::vec3(0, 0, 1));
-        transform = glm::scale(transform, pointCloud.scale);
+        const glm::mat4 transform = pointCloudTransform(pointCloud, applyTransform);
 
-        for (const auto& point : pointCloud.points) {
-            // Apply transformation
-            glm::vec4 transformedPos = transform * glm::vec4(point.position, 1.0f);
+        size_t written = 0;
+        const bool ok = forEachPointBatch(pointCloud,
+            [&](const PointCloudPoint* pts, size_t count) {
+                for (size_t i = 0; i < count; i++) {
+                    const glm::vec3 pos = applyTransform
+                        ? glm::vec3(transform * glm::vec4(pts[i].position, 1.0f))
+                        : pts[i].position;
 
-            file << std::fixed << std::setprecision(3)
-                << transformedPos.x << " "
-                << transformedPos.y << " "
-                << transformedPos.z << " "
-                << static_cast<int>(point.intensity * 1000) << " "
-                << static_cast<int>(point.color.r * 255) << " "
-                << static_cast<int>(point.color.g * 255) << " "
-                << static_cast<int>(point.color.b * 255) << "\n";
-        }
+                    // x y z intensity r g b — intensity written as a float so
+                    // the text loader round-trips it unchanged.
+                    file << std::fixed << std::setprecision(4)
+                        << pos.x << " " << pos.y << " " << pos.z << " "
+                        << pts[i].intensity << " "
+                        << static_cast<int>(glm::clamp(pts[i].color.r, 0.0f, 1.0f) * 255.0f + 0.5f) << " "
+                        << static_cast<int>(glm::clamp(pts[i].color.g, 0.0f, 1.0f) * 255.0f + 0.5f) << " "
+                        << static_cast<int>(glm::clamp(pts[i].color.b, 0.0f, 1.0f) * 255.0f + 0.5f) << "\n";
+                }
+                written += count;
+            });
 
         file.close();
+        if (!ok || written == 0) {
+            std::cerr << "[PCExport] XYZ export failed — no point data written to "
+                      << filePath << std::endl;
+            std::error_code ec;
+            std::filesystem::remove(filePath, ec); // don't leave an empty stub behind
+            return false;
+        }
+        std::cout << "[PCExport] Wrote " << written << " points to " << filePath << std::endl;
         return true;
     }
 
-    bool PointCloudLoader::exportToBinary(const PointCloud& pointCloud, const std::string& filePath) {
+    bool PointCloudLoader::exportToBinary(const PointCloud& pointCloud, const std::string& filePath,
+                                          bool applyTransform) {
         std::ofstream file(filePath, std::ios::binary);
         if (!file.is_open()) {
             std::cerr << "Failed to open file for writing: " << filePath << std::endl;
             return false;
         }
 
-        // Create transformation matrix
-        glm::mat4 transform = glm::mat4(1.0f);
-        transform = glm::translate(transform, pointCloud.position);
-        transform = glm::rotate(transform, glm::radians(pointCloud.rotation.x), glm::vec3(1, 0, 0));
-        transform = glm::rotate(transform, glm::radians(pointCloud.rotation.y), glm::vec3(0, 1, 0));
-        transform = glm::rotate(transform, glm::radians(pointCloud.rotation.z), glm::vec3(0, 0, 1));
-        transform = glm::scale(transform, pointCloud.scale);
+        const glm::mat4 transform = pointCloudTransform(pointCloud, applyTransform);
 
-        // Write header
+        // Write header. The point count is patched after streaming in case a
+        // batch read fails partway through.
         file.write(BINARY_MAGIC_NUMBER, 4);
-        uint32_t numPoints = pointCloud.points.size();
+        uint32_t numPoints = 0;
         file.write(reinterpret_cast<const char*>(&numPoints), sizeof(numPoints));
 
-        // Write point data
-        for (const auto& point : pointCloud.points) {
-            // Apply transformation
-            glm::vec4 transformedPos = transform * glm::vec4(point.position, 1.0f);
-            glm::vec3 finalPos(transformedPos);
+        // Per-point record: vec3 position | uint32 intensity*1000 | u8vec3 color
+        constexpr size_t PT_SIZE = sizeof(glm::vec3) + sizeof(uint32_t) + sizeof(glm::u8vec3);
+        std::vector<char> recordBuf;
 
-            file.write(reinterpret_cast<const char*>(&finalPos), sizeof(finalPos));
+        size_t written = 0;
+        const bool ok = forEachPointBatch(pointCloud,
+            [&](const PointCloudPoint* pts, size_t count) {
+                recordBuf.resize(count * PT_SIZE);
+                char* dst = recordBuf.data();
+                for (size_t i = 0; i < count; i++) {
+                    const glm::vec3 pos = applyTransform
+                        ? glm::vec3(transform * glm::vec4(pts[i].position, 1.0f))
+                        : pts[i].position;
+                    std::memcpy(dst, &pos, sizeof(pos));
+                    dst += sizeof(pos);
 
-            uint32_t intensity = static_cast<uint32_t>(point.intensity * 1000);
-            file.write(reinterpret_cast<const char*>(&intensity), sizeof(intensity));
+                    const uint32_t intensity = static_cast<uint32_t>(
+                        glm::max(pts[i].intensity, 0.0f) * 1000.0f);
+                    std::memcpy(dst, &intensity, sizeof(intensity));
+                    dst += sizeof(intensity);
 
-            glm::u8vec3 color = glm::u8vec3(point.color * 255.0f);
-            file.write(reinterpret_cast<const char*>(&color), sizeof(color));
+                    const glm::u8vec3 color(glm::clamp(pts[i].color, 0.0f, 1.0f) * 255.0f);
+                    std::memcpy(dst, &color, sizeof(color));
+                    dst += sizeof(color);
+                }
+                file.write(recordBuf.data(), static_cast<std::streamsize>(recordBuf.size()));
+                written += count;
+            });
+
+        if (!ok || written == 0) {
+            file.close();
+            std::cerr << "[PCExport] Binary export failed — no point data written to "
+                      << filePath << std::endl;
+            std::error_code ec;
+            std::filesystem::remove(filePath, ec); // don't leave an empty stub behind
+            return false;
         }
 
+        // Patch the header with the actual point count.
+        numPoints = static_cast<uint32_t>(written);
+        file.seekp(4, std::ios::beg);
+        file.write(reinterpret_cast<const char*>(&numPoints), sizeof(numPoints));
         file.close();
+
+        std::cout << "[PCExport] Wrote " << written << " points to " << filePath << std::endl;
         return true;
     }
 
@@ -1466,13 +1607,23 @@ namespace Engine {
         return std::move(pointCloud);
     }
 
-    bool PointCloudLoader::exportToHDF5(const PointCloud& pointCloud, const std::string& filePath) {
+    bool PointCloudLoader::exportToHDF5(const PointCloud& pointCloud, const std::string& filePath,
+                                        bool applyTransform) {
         try {
             std::cout << "Exporting point cloud to HDF5: " << filePath << std::endl;
-            
+
+            const size_t totalPoints = !pointCloud.points.empty()
+                                     ? pointCloud.points.size()
+                                     : static_cast<size_t>(pointCloud.totalPointCount);
+            if (totalPoints == 0) {
+                std::cerr << "[PCExport] HDF5 export failed — point cloud '"
+                          << pointCloud.name << "' has no point data\n";
+                return false;
+            }
+
             // Create the HDF5 file
             H5File file(filePath, H5F_ACC_TRUNC);
-            
+
             // Define the HDF5 compound type for PointCloudPoint
             CompType pointType(sizeof(PointCloudPoint));
             pointType.insertMember("position_x", HOFFSET(PointCloudPoint, position.x), PredType::NATIVE_FLOAT);
@@ -1483,37 +1634,47 @@ namespace Engine {
             pointType.insertMember("color_g", HOFFSET(PointCloudPoint, color.g), PredType::NATIVE_FLOAT);
             pointType.insertMember("color_b", HOFFSET(PointCloudPoint, color.b), PredType::NATIVE_FLOAT);
 
-            // Create transformation matrix
-            glm::mat4 transform = glm::mat4(1.0f);
-            transform = glm::translate(transform, pointCloud.position);
-            transform = glm::rotate(transform, glm::radians(pointCloud.rotation.x), glm::vec3(1, 0, 0));
-            transform = glm::rotate(transform, glm::radians(pointCloud.rotation.y), glm::vec3(0, 1, 0));
-            transform = glm::rotate(transform, glm::radians(pointCloud.rotation.z), glm::vec3(0, 0, 1));
-            transform = glm::scale(transform, pointCloud.scale);
+            const glm::mat4 transform = pointCloudTransform(pointCloud, applyTransform);
 
-            // Apply transformations to points if needed
-            std::vector<PointCloudPoint> transformedPoints = pointCloud.points;
-            for (auto& point : transformedPoints) {
-                glm::vec4 transformedPos = transform * glm::vec4(point.position, 1.0f);
-                point.position = glm::vec3(transformedPos);
+            // Create dataspace and dataset sized for the full cloud, then
+            // stream the points into it one decoded batch (hyperslab) at a
+            // time — peak CPU RAM stays at one batch regardless of cloud size.
+            hsize_t dims[1] = { static_cast<hsize_t>(totalPoints) };
+            DataSpace dataspace(1, dims);
+            DataSet dataset = file.createDataSet("points", pointType, dataspace);
+
+            std::vector<PointCloudPoint> chunkBuf;
+            hsize_t writeOffset = 0;
+            const bool ok = forEachPointBatch(pointCloud,
+                [&](const PointCloudPoint* pts, size_t count) {
+                    chunkBuf.assign(pts, pts + count);
+                    if (applyTransform) {
+                        for (auto& point : chunkBuf) {
+                            point.position = glm::vec3(transform * glm::vec4(point.position, 1.0f));
+                        }
+                    }
+
+                    hsize_t start[1] = { writeOffset };
+                    hsize_t cnt[1]   = { static_cast<hsize_t>(count) };
+                    DataSpace memspace(1, cnt);
+                    DataSpace filespace = dataset.getSpace();
+                    filespace.selectHyperslab(H5S_SELECT_SET, cnt, start);
+                    dataset.write(chunkBuf.data(), pointType, memspace, filespace);
+                    writeOffset += count;
+                });
+
+            if (!ok || writeOffset == 0) {
+                std::cerr << "[PCExport] HDF5 export failed — no point data written to "
+                          << filePath << std::endl;
+                return false;
             }
 
-            // Create dataspace
-            hsize_t dims[1] = { transformedPoints.size() };
-            DataSpace dataspace(1, dims);
-            
-            // Create dataset
-            DataSet dataset = file.createDataSet("points", pointType, dataspace);
-            
-            // Write data
-            dataset.write(transformedPoints.data(), pointType);
-            
             // Add metadata attributes
             DataSpace scalarSpace(H5S_SCALAR);
-            
+
             // Add point count attribute
             Attribute pointCountAttr = dataset.createAttribute("point_count", PredType::NATIVE_HSIZE, scalarSpace);
-            hsize_t pointCount = transformedPoints.size();
+            hsize_t pointCount = writeOffset;
             pointCountAttr.write(PredType::NATIVE_HSIZE, &pointCount);
             
             // Add name attribute
@@ -1536,8 +1697,8 @@ namespace Engine {
             timeAttr.write(timeStringType, timeStr.c_str());
 
             file.close();
-            
-            std::cout << "Successfully exported " << transformedPoints.size() 
+
+            std::cout << "Successfully exported " << writeOffset
                      << " points to HDF5 file: " << filePath << std::endl;
             return true;
 

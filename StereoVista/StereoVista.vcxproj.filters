@@ -123,6 +123,9 @@
     <ClCompile Include="src\Tools\BrushTool.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\Tools\MeasurementTool.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\Engine\DDGIVolume.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -471,6 +474,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\Tools\BrushTool.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Tools\MeasurementTool.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\Loaders\ModelLoader.h">

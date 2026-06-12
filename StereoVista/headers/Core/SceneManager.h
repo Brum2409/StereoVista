@@ -14,6 +14,7 @@ namespace Engine {
         std::vector<PointCloud> pointClouds;
         std::vector<PointLight> pointLights;
         std::vector<SpotLight> spotLights;
+        std::vector<Measurement> measurements;
         Camera::CameraState cameraState;
         
         // Default constructor with default camera state

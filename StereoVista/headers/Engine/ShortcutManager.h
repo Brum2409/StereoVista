@@ -56,9 +56,10 @@ enum class ShortcutAction {
   TogglePlaneCursor,  // Toggle surface plane cursor
 
   // Window Management
-  OpenSettings,       // Open settings window
-  OpenCursorSettings, // Open cursor settings
-  OpenBrushTool,      // Open brush tool window
+  OpenSettings,        // Open settings window
+  OpenCursorSettings,  // Open cursor settings
+  OpenBrushTool,       // Open brush tool window
+  OpenMeasurementTool, // Open measurement tool window
 
   // File Operations
   ImportModel,      // Open import model dialog
