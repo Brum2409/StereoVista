@@ -92,6 +92,7 @@ All cursor types are managed by a unified **Cursor Manager** that:
 * Easily toggle between lighting techniques with the **L** key
 
 ### 🔧 Additional Features
+* **Undo/Redo System** - Universal edit history (Ctrl+Z / Ctrl+Y) covering object add/delete, transforms, material edits, and light changes
 * **Complete Scene Management** - Save and load entire scenes including models and point clouds
 * **Dynamic Lighting System** - Emissive materials automatically generate point lights with customizable intensity caps
 * **Skybox & Environment Mapping** - Multiple skybox modes (cubemap, solid color, gradient)
@@ -156,6 +157,8 @@ All user preferences are automatically saved to `preferences.json` and restored 
 | **Ctrl + Left Mouse** | Select model or point cloud under cursor |
 | **Ctrl + Left Mouse** drag | Move selected model in the view plane |
 | **Delete** | Remove selected model or point cloud from scene |
+| **Ctrl + Z** | Undo last action (edits, moves, add/delete) |
+| **Ctrl + Y / Ctrl + Shift + Z** | Redo last undone action |
 
 > **Note:** When releasing the Ctrl key after moving a model, the cursor remains at its current position rather than resetting to the center of the window, allowing for more intuitive model manipulation.
 

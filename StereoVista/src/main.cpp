@@ -17,6 +17,7 @@
 #include "Core/CursorSyncState.h"
 #include "Core/CursorSynchronizer.h"
 #include "Core/SceneManager.h"
+#include "Core/UndoManager.h"
 #include "Core/Voxalizer.h"
 #include "Cursors/Base/CursorManager.h"
 #include "Cursors/CursorPresets.h"
@@ -2653,6 +2654,46 @@ int main() {
 
   voxelizer = new Engine::Voxelizer(128);
 
+  // ---- Initialize Undo/Redo ----
+  // After every undo/redo, resynchronize the systems that depend on scene
+  // structure and make sure the selection still points at a valid object.
+  UndoManager::instance().setSceneChangedCallback([]() {
+    if (voxelizer) {
+      voxelizer->markDirty();
+    }
+    updateSpaceMouseBounds();
+
+    int objectCount = -1;
+    switch (currentSelectedType) {
+    case SelectedType::Model:
+      objectCount = static_cast<int>(currentScene.models.size());
+      break;
+    case SelectedType::PointCloud:
+      objectCount = static_cast<int>(currentScene.pointClouds.size());
+      break;
+    case SelectedType::PointLight:
+      objectCount = static_cast<int>(pointLights.size());
+      break;
+    case SelectedType::SpotLight:
+      objectCount = static_cast<int>(spotLights.size());
+      break;
+    default:
+      break;
+    }
+    if (objectCount >= 0 &&
+        (currentSelectedIndex < 0 || currentSelectedIndex >= objectCount)) {
+      currentSelectedType = SelectedType::None;
+      currentSelectedIndex = -1;
+      currentSelectedMeshIndex = -1;
+    }
+    if (currentSelectedType == SelectedType::Model &&
+        currentSelectedMeshIndex >=
+            static_cast<int>(
+                currentScene.models[currentSelectedIndex].getMeshes().size())) {
+      currentSelectedMeshIndex = -1;
+    }
+  });
+
   // ---- Initialize Shadow Mapping Shader ----
   try {
     shadowMappingShader =
@@ -3897,6 +3938,10 @@ void cleanup() {
 
   // Clean up measurement tool GL resources while the context is still valid
   measurementTool.cleanup();
+
+  // Drop undo history while the context is still valid - undo entries for
+  // deleted objects own GL resources that are freed on destruction
+  UndoManager::instance().clear();
 
   // Clean up GUI before destroying window (ImGui needs valid OpenGL context)
   CleanupGUI();
@@ -6543,6 +6588,54 @@ void scroll_callback(GLFWwindow *window, double xoffset, double yoffset) {
   }
 }
 
+// ---- Drag-Move Undo Tracking ----
+// Captures the dragged object's position when a Ctrl/Alt+drag starts so the
+// whole drag is recorded as a single undo entry on mouse release.
+static bool dragUndoActive = false;
+static SelectedType dragUndoType = SelectedType::None;
+static int dragUndoIndex = -1;
+static glm::vec3 dragUndoStartPosition(0.0f);
+
+static void beginDragUndo() {
+  dragUndoActive = false;
+  dragUndoType = currentSelectedType;
+  dragUndoIndex = currentSelectedIndex;
+
+  if (dragUndoType == SelectedType::Model && dragUndoIndex >= 0 &&
+      dragUndoIndex < static_cast<int>(currentScene.models.size())) {
+    dragUndoStartPosition = currentScene.models[dragUndoIndex].position;
+    dragUndoActive = true;
+  } else if (dragUndoType == SelectedType::PointLight && dragUndoIndex >= 0 &&
+             dragUndoIndex < static_cast<int>(pointLights.size())) {
+    dragUndoStartPosition = pointLights[dragUndoIndex].position;
+    dragUndoActive = true;
+  } else if (dragUndoType == SelectedType::SpotLight && dragUndoIndex >= 0 &&
+             dragUndoIndex < static_cast<int>(spotLights.size())) {
+    dragUndoStartPosition = spotLights[dragUndoIndex].position;
+    dragUndoActive = true;
+  }
+}
+
+static void endDragUndo() {
+  if (!dragUndoActive)
+    return;
+  dragUndoActive = false;
+
+  if (dragUndoType == SelectedType::Model && dragUndoIndex >= 0 &&
+      dragUndoIndex < static_cast<int>(currentScene.models.size())) {
+    Undo::recordModelMoved(dragUndoIndex, dragUndoStartPosition,
+                           currentScene.models[dragUndoIndex].position);
+  } else if (dragUndoType == SelectedType::PointLight && dragUndoIndex >= 0 &&
+             dragUndoIndex < static_cast<int>(pointLights.size())) {
+    Undo::recordPointLightMoved(dragUndoIndex, dragUndoStartPosition,
+                                pointLights[dragUndoIndex].position);
+  } else if (dragUndoType == SelectedType::SpotLight && dragUndoIndex >= 0 &&
+             dragUndoIndex < static_cast<int>(spotLights.size())) {
+    Undo::recordSpotLightMoved(dragUndoIndex, dragUndoStartPosition,
+                               spotLights[dragUndoIndex].position);
+  }
+}
+
 void mouse_button_callback(GLFWwindow *window, int button, int action,
                            int mods) {
   if (ImGui::GetIO().WantCaptureMouse) {
@@ -6701,6 +6794,8 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
                 currentScene.models[closestModelIndex];
             duplicatedModel.name += "_Copy";
             currentScene.models.push_back(duplicatedModel);
+            Undo::recordModelAdded(
+                static_cast<int>(currentScene.models.size()) - 1);
 
             // Select the new duplicated model for moving
             currentSelectedIndex = currentScene.models.size() - 1;
@@ -6728,6 +6823,7 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
           if (ctrlPressed || altPressed) {
             selectionMode = true;
             isMovingModel = true;
+            beginDragUndo();
 
             // Calculate and store the grab point on the model
             // This is the world-space position where the ray intersects the
@@ -6762,6 +6858,7 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
           if (ctrlPressed || altPressed) {
             selectionMode = true;
             isMovingModel = true;
+            beginDragUndo();
           }
         } else if (closestSpotLightIndex != -1) {
           currentSelectedType = SelectedType::SpotLight;
@@ -6777,6 +6874,7 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
           if (ctrlPressed || altPressed) {
             selectionMode = true;
             isMovingModel = true;
+            beginDragUndo();
           }
         } else if (closestPointCloudIndex != -1) {
           currentSelectedType = SelectedType::PointCloud;
@@ -7046,6 +7144,11 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
             lastY = screenY;
           }
         }
+      }
+
+      // Record the completed drag as one undo entry
+      if (wasMovingModel) {
+        endDragUndo();
       }
 
       // Reset model grab point tracking
@@ -7643,9 +7746,8 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
                   << currentScene.models[currentSelectedIndex].name
                   << std::endl;
 
-        // Remove the selected model from the scene
-        currentScene.models.erase(currentScene.models.begin() +
-                                  currentSelectedIndex);
+        // Remove the selected model from the scene (undoable)
+        Undo::deleteModel(currentSelectedIndex);
 
         // Adjust selection indices after deletion
         if (currentScene.models.empty()) {
@@ -7667,6 +7769,24 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
                   << currentScene.models.size() << std::endl;
       } else {
         std::cout << "No model selected or invalid selection" << std::endl;
+      }
+      break;
+
+    // Edit History
+    case StereoVista::ShortcutAction::Undo:
+      // Let ImGui text fields keep their own Ctrl+Z handling
+      if (!ImGui::GetIO().WantTextInput) {
+        if (!UndoManager::instance().undo()) {
+          std::cout << "Nothing to undo" << std::endl;
+        }
+      }
+      break;
+
+    case StereoVista::ShortcutAction::Redo:
+      if (!ImGui::GetIO().WantTextInput) {
+        if (!UndoManager::instance().redo()) {
+          std::cout << "Nothing to redo" << std::endl;
+        }
       }
       break;
 

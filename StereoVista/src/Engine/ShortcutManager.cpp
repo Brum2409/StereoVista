@@ -434,6 +434,11 @@ ShortcutProfile ShortcutManager::createDefaultProfile() {
   profile.setBinding(ShortcutAction::ResetCamera, KeyBinding(GLFW_KEY_HOME), 0);
   profile.setBinding(ShortcutAction::OpenMeasurementTool, KeyBinding(GLFW_KEY_M),
                      0);
+  profile.setBinding(ShortcutAction::Undo, KeyBinding(GLFW_KEY_Z, true), 0);
+  profile.setBinding(ShortcutAction::Redo, KeyBinding(GLFW_KEY_Y, true), 0);
+  profile.setBinding(ShortcutAction::Redo,
+                     KeyBinding(GLFW_KEY_Z, true, false, true),
+                     1); // Ctrl+Shift+Z
 
   // New actions start unbound - users can assign keys as needed
 
@@ -631,6 +636,12 @@ std::string ShortcutManager::getActionName(ShortcutAction action) {
   case ShortcutAction::DeleteObject:
     return "DeleteObject";
 
+  // Edit History
+  case ShortcutAction::Undo:
+    return "Undo";
+  case ShortcutAction::Redo:
+    return "Redo";
+
   default:
     return "Unknown";
   }
@@ -736,6 +747,12 @@ std::string ShortcutManager::getActionDescription(ShortcutAction action) {
   case ShortcutAction::DeleteObject:
     return "Delete Selected Object";
 
+  // Edit History
+  case ShortcutAction::Undo:
+    return "Undo Last Action";
+  case ShortcutAction::Redo:
+    return "Redo Last Undone Action";
+
   default:
     return "Unknown Action";
   }
@@ -796,6 +813,34 @@ bool ShortcutManager::loadFromFile(const std::string &filepath) {
     // If no profiles loaded, create default
     if (profiles.empty()) {
       profiles.push_back(createDefaultProfile());
+    }
+
+    // Backfill default bindings for actions added after this shortcuts file
+    // was written (e.g. Undo/Redo) so new features stay reachable. Default
+    // bindings that would conflict with the user's existing bindings are
+    // skipped.
+    ShortcutProfile defaults = createDefaultProfile();
+    for (auto &profile : profiles) {
+      for (const auto &[action, defaultBindings] : defaults.bindings) {
+        bool hasValidBinding = false;
+        for (const auto &binding : profile.getBindings(action)) {
+          if (binding.isValid()) {
+            hasValidBinding = true;
+            break;
+          }
+        }
+        if (hasValidBinding)
+          continue;
+
+        int slot = 0;
+        for (const auto &binding : defaultBindings) {
+          if (binding.isValid() && slot < 2 &&
+              !profile.findConflict(binding, action).has_value()) {
+            profile.setBinding(action, binding, slot);
+            slot++;
+          }
+        }
+      }
     }
 
     // Set active profile

@@ -1,5 +1,6 @@
 #include "Gui/Gui.h"
 #include "Core/Camera.h"
+#include "Core/UndoManager.h"
 #include "Core/Voxalizer.h"
 #include "Cursors/Base/CursorManager.h"
 #include "Engine/BVHDebug.h"
@@ -144,6 +145,52 @@ static int g_settingsCategory = SETTINGS_CAT_AI;
 // frame in renderGUI so the 3D viewport can be sized to the free area.
 float g_dockLeftWidth = 0.0f;
 float g_dockTopHeight = 0.0f;
+
+// ===========================================================================
+// Undo integration: per-panel edit gesture tracking
+// ===========================================================================
+
+// Records one undo entry per ImGui edit gesture (slider drag, color pick,
+// checkbox click, text input) instead of one per frame. A manipulation panel
+// calls update() after its widgets, passing the object state captured before
+// the widgets ran this frame (preFrame) and the state now (current). When a
+// gesture ends, record() is invoked once with the state from before the
+// gesture began and the final state; the record functions themselves discard
+// no-op edits, so spurious gestures (e.g. clicking a button) record nothing.
+template <typename State> struct PanelEditTracker {
+  bool editing = false;
+  int objectIndex = -1;
+  State preEdit{};
+
+  template <typename RecordFn>
+  void update(int index, const State &preFrame, const State &current,
+              RecordFn record) {
+    const bool activeNow = ImGui::IsAnyItemActive();
+    if (!editing) {
+      if (activeNow) {
+        editing = true;
+        objectIndex = index;
+        preEdit = preFrame;
+      }
+    } else if (!activeNow) {
+      if (objectIndex == index) {
+        record(index, preEdit, current);
+      }
+      editing = false;
+      objectIndex = -1;
+    } else if (objectIndex != index) {
+      // Selection changed mid-gesture - restart tracking on the new object.
+      objectIndex = index;
+      preEdit = preFrame;
+    }
+  }
+};
+
+static PanelEditTracker<Engine::Undo::ModelEditState> s_modelEditTracker;
+static PanelEditTracker<Engine::Undo::PointCloudEditState> s_pointCloudEditTracker;
+static PanelEditTracker<Engine::PointLight> s_pointLightEditTracker;
+static PanelEditTracker<Engine::SpotLight> s_spotLightEditTracker;
+static PanelEditTracker<Engine::Sun> s_sunEditTracker;
 
 // Draw a FontAwesome glyph inline using the dedicated icon font (the icon font
 // is always guaranteed to contain the glyph, unlike the merged regular font),
@@ -500,6 +547,10 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
   // Helper lambda to load and replace scene
   auto loadAndReplaceScene = [&](const std::string &sceneFile) {
     try {
+      // Recorded undo entries reference objects by index, which no longer
+      // match once a scene file replaces the containers
+      Engine::UndoManager::instance().clear();
+
       // Clear all existing objects
       currentScene.models.clear();
       currentScene.pointClouds.clear();
@@ -538,6 +589,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
   // Helper lambda to load and merge scene
   auto loadAndMergeScene = [&](const std::string &sceneFile) {
     try {
+      // Bulk merges are not tracked, so drop the index-based undo history
+      Engine::UndoManager::instance().clear();
+
       // Load new scene and merge with existing
       Engine::Scene newScene = Engine::loadScene(sceneFile, camera);
 
@@ -579,6 +633,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
 
   // Helper lambda to load scene (first load or based on preference)
   auto loadSceneWithPreference = [&](const std::string &sceneFile) {
+    Engine::UndoManager::instance().clear();
     currentScene = Engine::loadScene(sceneFile, camera);
     pointLights = currentScene.pointLights;
     for (auto &pl : pointLights) {
@@ -629,6 +684,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
                 newModel.startSpawnAnimation(targetScale, 1.1f);
               }
               currentScene.models.push_back(newModel);
+              Engine::Undo::recordModelAdded(
+                  static_cast<int>(currentScene.models.size()) - 1);
               currentSelectedIndex = currentScene.models.size() - 1;
               currentSelectedType = SelectedType::Model;
               updateSpaceMouseBounds();
@@ -677,6 +734,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
               auto clouds = Engine::PointCloudLoader::loadFromLASMultiple(lasFiles);
               for (auto& pc : clouds) {
                 currentScene.pointClouds.emplace_back(std::move(pc));
+                Engine::Undo::recordPointCloudAdded(
+                    static_cast<int>(currentScene.pointClouds.size()) - 1);
               }
               updateSpaceMouseBounds();
             }
@@ -693,6 +752,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
                     Engine::PointCloudLoader::loadPointCloudFile(filePath));
                 newPointCloud.filePath = filePath;
                 currentScene.pointClouds.emplace_back(std::move(newPointCloud));
+                Engine::Undo::recordPointCloudAdded(
+                    static_cast<int>(currentScene.pointClouds.size()) - 1);
                 updateSpaceMouseBounds();
               } else if (extension == ".pcb") {
                 Engine::PointCloud newPointCloud =
@@ -702,6 +763,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
                   newPointCloud.name =
                       std::filesystem::path(filePath).stem().string();
                   currentScene.pointClouds.emplace_back(std::move(newPointCloud));
+                  Engine::Undo::recordPointCloudAdded(
+                      static_cast<int>(currentScene.pointClouds.size()) - 1);
                   updateSpaceMouseBounds();
                 }
               } else if (extension == ".h5" || extension == ".hdf5" ||
@@ -713,6 +776,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
                   newPointCloud.name =
                       std::filesystem::path(filePath).stem().string();
                   currentScene.pointClouds.emplace_back(std::move(newPointCloud));
+                  Engine::Undo::recordPointCloudAdded(
+                      static_cast<int>(currentScene.pointClouds.size()) - 1);
                   updateSpaceMouseBounds();
                 }
               }
@@ -856,6 +921,49 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       ImGui::EndPopup();
     }
 
+    // Edit Menu (undo/redo history)
+    if (ImGui::BeginMenu("Edit")) {
+      Engine::UndoManager &undoManager = Engine::UndoManager::instance();
+
+      // Show the active profile's binding next to the menu entry
+      auto bindingLabel = [](StereoVista::ShortcutAction action,
+                             const char *fallback) -> std::string {
+        const StereoVista::ShortcutProfile *profile =
+            shortcutManager.getActiveProfile();
+        if (profile) {
+          const auto &bindings = profile->getBindings(action);
+          if (!bindings.empty() && bindings[0].isValid()) {
+            return bindings[0].toString();
+          }
+        }
+        return fallback;
+      };
+
+      std::string undoLabel = "Undo";
+      if (undoManager.canUndo()) {
+        undoLabel += " " + undoManager.undoDescription();
+      }
+      if (ImGui::MenuItem(
+              undoLabel.c_str(),
+              bindingLabel(StereoVista::ShortcutAction::Undo, "Ctrl+Z").c_str(),
+              false, undoManager.canUndo())) {
+        undoManager.undo();
+      }
+
+      std::string redoLabel = "Redo";
+      if (undoManager.canRedo()) {
+        redoLabel += " " + undoManager.redoDescription();
+      }
+      if (ImGui::MenuItem(
+              redoLabel.c_str(),
+              bindingLabel(StereoVista::ShortcutAction::Redo, "Ctrl+Y").c_str(),
+              false, undoManager.canRedo())) {
+        undoManager.redo();
+      }
+
+      ImGui::EndMenu();
+    }
+
     // Create Menu
     if (ImGui::BeginMenu("Create")) {
       // Use non-collapsible headers instead of dropdowns
@@ -871,6 +979,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
           newCube.scale = targetScale;
         }
         currentScene.models.push_back(newCube);
+        Engine::Undo::recordModelAdded(
+            static_cast<int>(currentScene.models.size()) - 1);
         currentSelectedIndex = currentScene.models.size() - 1;
         currentSelectedType = SelectedType::Model;
         updateSpaceMouseBounds();
@@ -889,6 +999,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
           newSphere.scale = targetScale;
         }
         currentScene.models.push_back(newSphere);
+        Engine::Undo::recordModelAdded(
+            static_cast<int>(currentScene.models.size()) - 1);
         currentSelectedIndex = currentScene.models.size() - 1;
         currentSelectedType = SelectedType::Model;
         updateSpaceMouseBounds();
@@ -907,6 +1019,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
           newCylinder.scale = targetScale;
         }
         currentScene.models.push_back(newCylinder);
+        Engine::Undo::recordModelAdded(
+            static_cast<int>(currentScene.models.size()) - 1);
         currentSelectedIndex = currentScene.models.size() - 1;
         currentSelectedType = SelectedType::Model;
         updateSpaceMouseBounds();
@@ -925,6 +1039,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
           newPlane.scale = targetScale;
         }
         currentScene.models.push_back(newPlane);
+        Engine::Undo::recordModelAdded(
+            static_cast<int>(currentScene.models.size()) - 1);
         currentSelectedIndex = currentScene.models.size() - 1;
         currentSelectedType = SelectedType::Model;
         updateSpaceMouseBounds();
@@ -943,6 +1059,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
           newTorus.scale = targetScale;
         }
         currentScene.models.push_back(newTorus);
+        Engine::Undo::recordModelAdded(
+            static_cast<int>(currentScene.models.size()) - 1);
         currentSelectedIndex = currentScene.models.size() - 1;
         currentSelectedType = SelectedType::Model;
         updateSpaceMouseBounds();
@@ -962,6 +1080,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         newPointLight.lightSpaceMatrix = glm::mat4(1.0f);
         newPointLight.castShadows = true; // default: cast shadows
         pointLights.push_back(newPointLight);
+        Engine::Undo::recordPointLightAdded(
+            static_cast<int>(pointLights.size()) - 1);
         currentSelectedIndex = pointLights.size() - 1;
         currentSelectedType = SelectedType::PointLight;
       }
@@ -976,6 +1096,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         newSpotLight.outerCutOff = glm::cos(glm::radians(17.5f));
         newSpotLight.lightSpaceMatrix = glm::mat4(1.0f);
         spotLights.push_back(newSpotLight);
+        Engine::Undo::recordSpotLightAdded(
+            static_cast<int>(spotLights.size()) - 1);
         currentSelectedIndex = spotLights.size() - 1;
         currentSelectedType = SelectedType::SpotLight;
       }
@@ -1583,26 +1705,10 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
             spotLightsToDelete = sceneSpotLights[scenePath];
           }
 
-          // Sort in descending order to avoid index issues
-          std::sort(modelsToDelete.rbegin(), modelsToDelete.rend());
-          std::sort(pointCloudsToDelete.rbegin(), pointCloudsToDelete.rend());
-          std::sort(pointLightsToDelete.rbegin(), pointLightsToDelete.rend());
-          std::sort(spotLightsToDelete.rbegin(), spotLightsToDelete.rend());
-
-          // Delete objects
-          for (int idx : modelsToDelete) {
-            currentScene.models.erase(currentScene.models.begin() + idx);
-          }
-          for (int idx : pointCloudsToDelete) {
-            currentScene.pointClouds.erase(currentScene.pointClouds.begin() +
-                                           idx);
-          }
-          for (int idx : pointLightsToDelete) {
-            pointLights.erase(pointLights.begin() + idx);
-          }
-          for (int idx : spotLightsToDelete) {
-            spotLights.erase(spotLights.begin() + idx);
-          }
+          // Delete all objects in the group as a single undoable action
+          Engine::Undo::deleteSceneGroup(modelsToDelete, pointCloudsToDelete,
+                                         pointLightsToDelete,
+                                         spotLightsToDelete);
 
           // Mark voxelizer dirty if models were deleted
           if (!modelsToDelete.empty() && voxelizer) {
@@ -4034,6 +4140,8 @@ void renderSettingsWindow() {
           ImGui::NextColumn();
 
           displayAction(StereoVista::ShortcutAction::DeleteObject);
+          displayAction(StereoVista::ShortcutAction::Undo);
+          displayAction(StereoVista::ShortcutAction::Redo);
           displayAction(StereoVista::ShortcutAction::CenterView);
           displayAction(StereoVista::ShortcutAction::CycleLighting);
           displayAction(StereoVista::ShortcutAction::ToggleShadows);
@@ -4548,6 +4656,18 @@ void renderSettingsWindow() {
           ImGui::SetColumnWidth(2, 200);
 
           renderAction(StereoVista::ShortcutAction::DeleteObject);
+        }
+
+        // GROUP: Edit History
+        ImGui::Columns(1);
+        if (ImGui::CollapsingHeader("Edit History")) {
+          ImGui::Columns(3, "shortcutcolumns");
+          ImGui::SetColumnWidth(0, 250);
+          ImGui::SetColumnWidth(1, 200);
+          ImGui::SetColumnWidth(2, 200);
+
+          renderAction(StereoVista::ShortcutAction::Undo);
+          renderAction(StereoVista::ShortcutAction::Redo);
         }
 
         ImGui::Columns(1);
@@ -5617,6 +5737,8 @@ static void drawMeasurementLabels() {
 }
 
 void renderSunManipulationPanel() {
+  const Engine::Sun sunPreFrame = sun;
+
   DrawSectionHeader("Sun Light");
 
   ImGui::Checkbox("Enabled", &sun.enabled);
@@ -5641,10 +5763,19 @@ void renderSunManipulationPanel() {
 
   ImGui::Text("Direction Vector: (%.2f, %.2f, %.2f)", sun.direction.x,
               sun.direction.y, sun.direction.z);
+
+  s_sunEditTracker.update(0, sunPreFrame, sun,
+                          [](int, const Engine::Sun &before,
+                             const Engine::Sun &after) {
+                            Engine::Undo::recordSunEdit(before, after);
+                          });
 }
 
 void renderModelManipulationPanel(Engine::Model &model,
                                   Engine::Shader *shader) {
+  const Engine::Undo::ModelEditState modelStatePreFrame =
+      Engine::Undo::ModelEditState::capture(model);
+
   ImGui::Text("📦 %s", model.name.c_str());
   ImGui::Separator();
 
@@ -5789,6 +5920,16 @@ void renderModelManipulationPanel(Engine::Model &model,
     }
   }
 
+  // Record property edits made above as one undo entry per gesture. Must run
+  // before the delete handling below, which can invalidate `model`.
+  s_modelEditTracker.update(
+      currentSelectedIndex, modelStatePreFrame,
+      Engine::Undo::ModelEditState::capture(model),
+      [](int index, const Engine::Undo::ModelEditState &before,
+         const Engine::Undo::ModelEditState &after) {
+        Engine::Undo::recordModelEdit(index, before, after);
+      });
+
   ImGui::Spacing();
   ImGui::Separator();
   ImGui::Spacing();
@@ -5800,7 +5941,7 @@ void renderModelManipulationPanel(Engine::Model &model,
   if (ImGui::BeginPopupModal("Delete Model?", NULL,
                              ImGuiWindowFlags_AlwaysAutoResize)) {
     ImGui::Text("Delete '%s'?", model.name.c_str());
-    ImGui::Text("This cannot be undone!");
+    ImGui::TextDisabled("This can be undone with Ctrl+Z.");
     ImGui::Separator();
 
     if (ImGui::Button("Delete", ImVec2(120, 0))) {
@@ -5819,6 +5960,12 @@ void renderModelManipulationPanel(Engine::Model &model,
 void renderMeshManipulationPanel(Engine::Model &model, int meshIndex,
                                  Engine::Shader *shader) {
   auto &mesh = model.getMeshes()[meshIndex];
+
+  // Mesh materials are part of the model edit snapshot, so mesh-panel edits
+  // share the model edit tracker (only one of the two panels is open at a
+  // time).
+  const Engine::Undo::ModelEditState modelStatePreFrame =
+      Engine::Undo::ModelEditState::capture(model);
 
   ImGui::Text("📦 %s - Mesh %d", model.name.c_str(), meshIndex + 1);
   ImGui::Separator();
@@ -5937,6 +6084,14 @@ void renderMeshManipulationPanel(Engine::Model &model, int meshIndex,
     }
   }
 
+  s_modelEditTracker.update(
+      currentSelectedIndex, modelStatePreFrame,
+      Engine::Undo::ModelEditState::capture(model),
+      [](int index, const Engine::Undo::ModelEditState &before,
+         const Engine::Undo::ModelEditState &after) {
+        Engine::Undo::recordModelEdit(index, before, after);
+      });
+
   ImGui::Spacing();
   ImGui::Separator();
   ImGui::Spacing();
@@ -5952,11 +6107,11 @@ void renderMeshManipulationPanel(Engine::Model &model, int meshIndex,
   if (ImGui::BeginPopupModal("Delete Mesh?", NULL,
                              ImGuiWindowFlags_AlwaysAutoResize)) {
     ImGui::Text("Delete this mesh?");
-    ImGui::Text("This cannot be undone!");
+    ImGui::TextDisabled("This can be undone with Ctrl+Z.");
     ImGui::Separator();
 
     if (ImGui::Button("Delete", ImVec2(120, 0))) {
-      model.getMeshes().erase(model.getMeshes().begin() + meshIndex);
+      Engine::Undo::deleteMesh(currentSelectedIndex, meshIndex);
       currentSelectedMeshIndex = -1;
       ImGui::CloseCurrentPopup();
     }
@@ -5987,6 +6142,9 @@ void renderPointCloudManipulationPanel(Engine::PointCloud &pointCloud) {
     ImGui::TextDisabled("Point cloud is empty");
     return;
   }
+
+  const Engine::Undo::PointCloudEditState pointCloudStatePreFrame =
+      Engine::Undo::PointCloudEditState::capture(pointCloud);
 
   ImGui::Separator();
 
@@ -6092,6 +6250,14 @@ void renderPointCloudManipulationPanel(Engine::PointCloud &pointCloud) {
     }
   }
 
+  s_pointCloudEditTracker.update(
+      currentSelectedIndex, pointCloudStatePreFrame,
+      Engine::Undo::PointCloudEditState::capture(pointCloud),
+      [](int index, const Engine::Undo::PointCloudEditState &before,
+         const Engine::Undo::PointCloudEditState &after) {
+        Engine::Undo::recordPointCloudEdit(index, before, after);
+      });
+
   ImGui::Spacing();
   ImGui::Separator();
   ImGui::Spacing();
@@ -6103,7 +6269,7 @@ void renderPointCloudManipulationPanel(Engine::PointCloud &pointCloud) {
   if (ImGui::BeginPopupModal("Delete Point Cloud?", NULL,
                              ImGuiWindowFlags_AlwaysAutoResize)) {
     ImGui::Text("Delete '%s'?", pointCloud.name.c_str());
-    ImGui::Text("This cannot be undone!");
+    ImGui::TextDisabled("This can be undone with Ctrl+Z.");
     ImGui::Separator();
 
     if (ImGui::Button("Delete", ImVec2(120, 0))) {
@@ -6122,8 +6288,7 @@ void renderPointCloudManipulationPanel(Engine::PointCloud &pointCloud) {
 void deleteSelectedModel() {
   if (currentSelectedType == SelectedType::Model && currentSelectedIndex >= 0 &&
       currentSelectedIndex < currentScene.models.size()) {
-    currentScene.models.erase(currentScene.models.begin() +
-                              currentSelectedIndex);
+    Engine::Undo::deleteModel(currentSelectedIndex);
     currentSelectedIndex = -1;
     currentSelectedType = SelectedType::None;
     updateSpaceMouseBounds();
@@ -6139,11 +6304,9 @@ void deleteSelectedPointCloud() {
   if (currentSelectedType == SelectedType::PointCloud &&
       currentSelectedIndex >= 0 &&
       currentSelectedIndex < currentScene.pointClouds.size()) {
-    glDeleteVertexArrays(1,
-                         &currentScene.pointClouds[currentSelectedIndex].vao);
-    glDeleteBuffers(1, &currentScene.pointClouds[currentSelectedIndex].vbo);
-    currentScene.pointClouds.erase(currentScene.pointClouds.begin() +
-                                   currentSelectedIndex);
+    // The cloud (including its GL buffers) is kept alive by the undo entry
+    // and freed when the entry is discarded from the history
+    Engine::Undo::deletePointCloud(currentSelectedIndex);
     currentSelectedIndex = -1;
     currentSelectedType = SelectedType::None;
     updateSpaceMouseBounds();
@@ -6157,6 +6320,7 @@ void renderPointLightManipulationPanel() {
   }
 
   auto &light = pointLights[currentSelectedIndex];
+  const Engine::PointLight lightStatePreFrame = light;
 
   // Render icon and text with PushFont/PopFont approach
   if (g_Fonts.icons) {
@@ -6191,6 +6355,13 @@ void renderPointLightManipulationPanel() {
         "If enabled, this light renders a depth cubemap and casts shadows");
   }
 
+  s_pointLightEditTracker.update(
+      currentSelectedIndex, lightStatePreFrame, light,
+      [](int index, const Engine::PointLight &before,
+         const Engine::PointLight &after) {
+        Engine::Undo::recordPointLightEdit(index, before, after);
+      });
+
   ImGui::Spacing();
   ImGui::Separator();
   ImGui::Spacing();
@@ -6202,11 +6373,11 @@ void renderPointLightManipulationPanel() {
   if (ImGui::BeginPopupModal("Delete Light?", NULL,
                              ImGuiWindowFlags_AlwaysAutoResize)) {
     ImGui::Text("Delete this point light?");
-    ImGui::Text("This cannot be undone!");
+    ImGui::TextDisabled("This can be undone with Ctrl+Z.");
     ImGui::Separator();
 
     if (ImGui::Button("Delete", ImVec2(120, 0))) {
-      pointLights.erase(pointLights.begin() + currentSelectedIndex);
+      Engine::Undo::deletePointLight(currentSelectedIndex);
       currentSelectedIndex = -1;
       currentSelectedType = SelectedType::None;
       ImGui::CloseCurrentPopup();
@@ -6227,6 +6398,7 @@ void renderSpotLightManipulationPanel() {
   }
 
   auto &light = spotLights[currentSelectedIndex];
+  const Engine::SpotLight lightStatePreFrame = light;
 
   ImGui::Text("🔦 Spot Light %d", currentSelectedIndex + 1);
   ImGui::Separator();
@@ -6281,6 +6453,13 @@ void renderSpotLightManipulationPanel() {
         "Toggle whether this spot light should cast shadows (when supported)");
   }
 
+  s_spotLightEditTracker.update(
+      currentSelectedIndex, lightStatePreFrame, light,
+      [](int index, const Engine::SpotLight &before,
+         const Engine::SpotLight &after) {
+        Engine::Undo::recordSpotLightEdit(index, before, after);
+      });
+
   ImGui::Spacing();
   ImGui::Separator();
   ImGui::Spacing();
@@ -6292,11 +6471,11 @@ void renderSpotLightManipulationPanel() {
   if (ImGui::BeginPopupModal("Delete Light?", NULL,
                              ImGuiWindowFlags_AlwaysAutoResize)) {
     ImGui::Text("Delete this spot light?");
-    ImGui::Text("This cannot be undone!");
+    ImGui::TextDisabled("This can be undone with Ctrl+Z.");
     ImGui::Separator();
 
     if (ImGui::Button("Delete", ImVec2(120, 0))) {
-      spotLights.erase(spotLights.begin() + currentSelectedIndex);
+      Engine::Undo::deleteSpotLight(currentSelectedIndex);
       currentSelectedIndex = -1;
       currentSelectedType = SelectedType::None;
       ImGui::CloseCurrentPopup();
