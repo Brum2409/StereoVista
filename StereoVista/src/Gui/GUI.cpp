@@ -5400,7 +5400,7 @@ void renderMeasurementToolWindow() {
     ImGui::Spacing();
     DrawSectionHeader("In Progress");
     const auto &active = measurementTool.getActive();
-    ImGui::Text("%s — %d point(s)", active.name.c_str(),
+    ImGui::Text("%s - %d point(s)", active.name.c_str(),
                 static_cast<int>(active.points.size()));
     if (active.type == Engine::Measurement::Type::Distance &&
         active.points.size() >= 2) {

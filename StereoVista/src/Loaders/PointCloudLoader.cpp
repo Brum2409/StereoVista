@@ -605,7 +605,7 @@ namespace Engine {
 
         file.close();
         if (!ok || written == 0) {
-            std::cerr << "[PCExport] XYZ export failed — no point data written to "
+            std::cerr << "[PCExport] XYZ export failed - no point data written to "
                       << filePath << std::endl;
             std::error_code ec;
             std::filesystem::remove(filePath, ec); // don't leave an empty stub behind
@@ -662,7 +662,7 @@ namespace Engine {
 
         if (!ok || written == 0) {
             file.close();
-            std::cerr << "[PCExport] Binary export failed — no point data written to "
+            std::cerr << "[PCExport] Binary export failed - no point data written to "
                       << filePath << std::endl;
             std::error_code ec;
             std::filesystem::remove(filePath, ec); // don't leave an empty stub behind
@@ -1616,7 +1616,7 @@ namespace Engine {
                                      ? pointCloud.points.size()
                                      : static_cast<size_t>(pointCloud.totalPointCount);
             if (totalPoints == 0) {
-                std::cerr << "[PCExport] HDF5 export failed — point cloud '"
+                std::cerr << "[PCExport] HDF5 export failed - point cloud '"
                           << pointCloud.name << "' has no point data\n";
                 return false;
             }
@@ -1664,7 +1664,7 @@ namespace Engine {
                 });
 
             if (!ok || writeOffset == 0) {
-                std::cerr << "[PCExport] HDF5 export failed — no point data written to "
+                std::cerr << "[PCExport] HDF5 export failed - no point data written to "
                           << filePath << std::endl;
                 return false;
             }

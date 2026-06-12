@@ -227,7 +227,7 @@ namespace Engine {
                 std::filesystem::path pcPath = sceneDir / "pointClouds" / pcFilename;
                 if (!Engine::PointCloudLoader::exportToBinary(pointCloud, pcPath.string(), false)) {
                     std::cerr << "Warning: failed to write point cloud data for '"
-                              << pointCloud.name << "' — it will be missing from the scene"
+                              << pointCloud.name << "' - it will be missing from the scene"
                               << std::endl;
                     continue;
                 }
