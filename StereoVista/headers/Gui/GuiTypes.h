@@ -110,6 +110,10 @@ struct ApplicationPreferences {
   std::string currentPresetName = "Sphere";
   float cameraSpeedFactor = 1.0f;
   bool showFPS = true;
+  // Sync buffer swaps to the display refresh rate (eliminates tearing at the
+  // cost of capping the frame rate). Off by default to preserve the
+  // historical uncapped behavior.
+  bool vsyncEnabled = false;
   bool show3DCursor = true;
   // Keep the 3D cursor at the last valid depth when the mouse is over the
   // background instead of switching to the Windows cursor (helps with sparse

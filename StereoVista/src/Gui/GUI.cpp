@@ -117,6 +117,9 @@ extern GUI::CursorPreview3D cursorPreview3D;
 // Shortcut manager
 extern StereoVista::ShortcutManager shortcutManager;
 
+// Files dropped onto the window (queued by the GLFW drop callback in main.cpp)
+extern std::vector<std::string> g_droppedFiles;
+
 // External function declarations
 extern void savePreferences();
 extern void updateSkybox();
@@ -739,6 +742,152 @@ static void renderPerformanceOverlay() {
   ImGui::PopStyleVar();
 }
 
+// ---------------------------------------------------------------------------
+// Empty-scene hint: a subtle centered prompt shown while nothing is loaded
+// ---------------------------------------------------------------------------
+static void renderEmptySceneHint() {
+  if (!currentScene.models.empty() || !currentScene.pointClouds.empty())
+    return;
+
+  // Center over the 3D viewport (falls back to the window center before the
+  // viewport rectangle is first published)
+  float centerX = windowWidth * 0.5f;
+  float centerY = windowHeight * 0.5f;
+  if (g_viewportWidth > 0 && g_viewportHeight > 0) {
+    centerX = g_viewportX + g_viewportWidth * 0.5f;
+    centerY = g_viewportTopInset + g_viewportHeight * 0.5f;
+  }
+
+  auto centeredText = [](const char *text) {
+    float textWidth = ImGui::CalcTextSize(text).x;
+    float indent = (ImGui::GetWindowSize().x -
+                    ImGui::GetStyle().WindowPadding.x * 2.0f - textWidth) *
+                   0.5f;
+    if (indent > 0.0f) {
+      ImGui::SetCursorPosX(ImGui::GetStyle().WindowPadding.x + indent);
+    }
+    ImGui::TextDisabled("%s", text);
+  };
+
+  ImGui::SetNextWindowPos(ImVec2(centerX, centerY), ImGuiCond_Always,
+                          ImVec2(0.5f, 0.5f));
+  ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.75f);
+  ImGui::Begin("EmptySceneHint", nullptr,
+               ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                   ImGuiWindowFlags_AlwaysAutoResize |
+                   ImGuiWindowFlags_NoSavedSettings |
+                   ImGuiWindowFlags_NoFocusOnAppearing |
+                   ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBackground);
+
+  if (g_Fonts.icons) {
+    ImGui::PushFont(g_Fonts.icons);
+    centeredText(ICON_FA_CUBE);
+    ImGui::PopFont();
+    ImGui::Spacing();
+  }
+  if (g_Fonts.header)
+    ImGui::PushFont(g_Fonts.header);
+  centeredText("Scene is empty");
+  if (g_Fonts.header)
+    ImGui::PopFont();
+  ImGui::Spacing();
+  centeredText("Drag & drop 3D models, point clouds or scene files here");
+  centeredText("or use File > Import");
+
+  ImGui::End();
+  ImGui::PopStyleVar();
+}
+
+// ---------------------------------------------------------------------------
+// File import helpers shared by the File menu and window drag-and-drop
+// ---------------------------------------------------------------------------
+
+// Imports a single 3D model file into the scene and selects it.
+static void importModelFile(const std::string &filePath) {
+  try {
+    Engine::Model newModel = *Engine::loadModel(filePath);
+    glm::vec3 targetScale = newModel.scale;
+    if (preferences.enableSpawnAnimation) {
+      newModel.startSpawnAnimation(targetScale, 1.1f);
+    }
+    currentScene.models.push_back(newModel);
+    Engine::Undo::recordModelAdded(
+        static_cast<int>(currentScene.models.size()) - 1);
+    currentSelectedIndex = currentScene.models.size() - 1;
+    currentSelectedType = SelectedType::Model;
+    updateSpaceMouseBounds();
+
+    // Mark voxelizer dirty for re-voxelization
+    if (voxelizer) {
+      voxelizer->markDirty();
+    }
+
+    GUI::ShowToast("Model imported: " +
+                       std::filesystem::path(filePath).filename().string(),
+                   GUI::ToastType::Success);
+  } catch (const std::exception &e) {
+    std::cerr << "Failed to load model: " << e.what() << std::endl;
+    GUI::ShowToast(std::string("Failed to import model: ") + e.what(),
+                   GUI::ToastType::Error);
+  }
+}
+
+// Imports a single point cloud file of any supported format except LAS/LAZ
+// (those are loaded in batches via importLASFiles so tiles share a global
+// center).
+static void importPointCloudFile(const std::string &filePath) {
+  std::string extension = std::filesystem::path(filePath).extension().string();
+  std::transform(extension.begin(), extension.end(), extension.begin(),
+                 ::tolower);
+
+  if (extension == ".txt" || extension == ".xyz" || extension == ".ply") {
+    Engine::PointCloud newPointCloud =
+        std::move(Engine::PointCloudLoader::loadPointCloudFile(filePath));
+    newPointCloud.filePath = filePath;
+    currentScene.pointClouds.emplace_back(std::move(newPointCloud));
+    Engine::Undo::recordPointCloudAdded(
+        static_cast<int>(currentScene.pointClouds.size()) - 1);
+    updateSpaceMouseBounds();
+  } else if (extension == ".pcb") {
+    Engine::PointCloud newPointCloud =
+        std::move(Engine::PointCloudLoader::loadFromBinary(filePath));
+    if (newPointCloud.isLoaded()) {
+      newPointCloud.filePath = filePath;
+      newPointCloud.name = std::filesystem::path(filePath).stem().string();
+      currentScene.pointClouds.emplace_back(std::move(newPointCloud));
+      Engine::Undo::recordPointCloudAdded(
+          static_cast<int>(currentScene.pointClouds.size()) - 1);
+      updateSpaceMouseBounds();
+    }
+  } else if (extension == ".h5" || extension == ".hdf5" ||
+             extension == ".f5") {
+    Engine::PointCloud newPointCloud =
+        std::move(Engine::PointCloudLoader::loadPointCloudFile(filePath));
+    if (newPointCloud.isLoaded()) {
+      newPointCloud.filePath = filePath;
+      newPointCloud.name = std::filesystem::path(filePath).stem().string();
+      currentScene.pointClouds.emplace_back(std::move(newPointCloud));
+      Engine::Undo::recordPointCloudAdded(
+          static_cast<int>(currentScene.pointClouds.size()) - 1);
+      updateSpaceMouseBounds();
+    }
+  }
+}
+
+// Imports LAS/LAZ tiles together so they share a global center and remain
+// correctly positioned relative to each other.
+static void importLASFiles(const std::vector<std::string> &lasFiles) {
+  if (lasFiles.empty())
+    return;
+  auto clouds = Engine::PointCloudLoader::loadFromLASMultiple(lasFiles);
+  for (auto &pc : clouds) {
+    currentScene.pointClouds.emplace_back(std::move(pc));
+    Engine::Undo::recordPointCloudAdded(
+        static_cast<int>(currentScene.pointClouds.size()) - 1);
+  }
+  updateSpaceMouseBounds();
+}
+
 void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
                ImGuiWindowFlags windowFlags, Engine::Shader *shader) {
   if (!isLeftEye) {
@@ -754,9 +903,16 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
   ImGui::NewFrame();
 
   if (!showGui) {
+    // Files dropped while the GUI is hidden: bring the GUI back so the
+    // import (and any scene-load dialog) runs on the next frame.
+    if (!g_droppedFiles.empty()) {
+      showGui = true;
+    }
+
     // GUI hidden: the viewport fills the whole window.
     g_dockLeftWidth = 0.0f;
     g_dockTopHeight = 0.0f;
+    renderEmptySceneHint();
     if (showFPS) {
       renderPerformanceOverlay();
     }
@@ -905,6 +1061,70 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
                    GUI::ToastType::Success);
   };
 
+  // Import any files dropped onto the window (queued by the GLFW drop
+  // callback). Scene files follow the same replace/merge/ask flow as
+  // File > Load Scene; models and point clouds import directly.
+  if (!g_droppedFiles.empty()) {
+    std::vector<std::string> droppedFiles;
+    droppedFiles.swap(g_droppedFiles);
+
+    std::vector<std::string> lasFiles;
+    size_t cloudCountBefore = currentScene.pointClouds.size();
+
+    for (const auto &filePath : droppedFiles) {
+      std::string ext = std::filesystem::path(filePath).extension().string();
+      std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+
+      if (ext == ".scene") {
+        bool hasExistingObjects = !currentScene.models.empty() ||
+                                  !currentScene.pointClouds.empty() ||
+                                  !pointLights.empty() || !spotLights.empty();
+        if (!hasExistingObjects) {
+          try {
+            loadSceneWithPreference(filePath);
+          } catch (const std::exception &e) {
+            std::cerr << "Failed to load scene: " << e.what() << std::endl;
+            GUI::ShowToast(std::string("Failed to load scene: ") + e.what(),
+                           GUI::ToastType::Error);
+          }
+        } else if (preferences.sceneLoadingBehavior ==
+                   GUI::SCENE_LOAD_ALWAYS_REPLACE) {
+          loadAndReplaceScene(filePath);
+        } else if (preferences.sceneLoadingBehavior ==
+                   GUI::SCENE_LOAD_ALWAYS_MERGE) {
+          loadAndMergeScene(filePath);
+        } else {
+          pendingSceneToLoad = filePath;
+          showLoadSceneDialog = true;
+        }
+      } else if (ext == ".obj" || ext == ".fbx" || ext == ".3ds" ||
+                 ext == ".gltf" || ext == ".glb") {
+        importModelFile(filePath);
+      } else if (ext == ".las" || ext == ".laz") {
+        lasFiles.push_back(filePath);
+      } else if (ext == ".txt" || ext == ".xyz" || ext == ".ply" ||
+                 ext == ".pcb" || ext == ".h5" || ext == ".hdf5" ||
+                 ext == ".f5") {
+        importPointCloudFile(filePath);
+      } else {
+        GUI::ShowToast("Unsupported file type: " +
+                           std::filesystem::path(filePath).filename().string(),
+                       GUI::ToastType::Warning);
+      }
+    }
+
+    importLASFiles(lasFiles);
+
+    size_t cloudsImported =
+        currentScene.pointClouds.size() - cloudCountBefore;
+    if (cloudsImported > 0) {
+      GUI::ShowToast("Imported " + std::to_string(cloudsImported) +
+                         (cloudsImported == 1 ? " point cloud"
+                                              : " point clouds"),
+                     GUI::ToastType::Success);
+    }
+  }
+
   if (ImGui::BeginMainMenuBar()) {
     // File Menu
     if (ImGui::BeginMenu("File")) {
@@ -925,35 +1145,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
                   .result();
 
           if (!selection.empty()) {
-            std::string filePath = selection[0];
-            try {
-              Engine::Model newModel = *Engine::loadModel(filePath);
-              glm::vec3 targetScale = newModel.scale;
-              if (preferences.enableSpawnAnimation) {
-                newModel.startSpawnAnimation(targetScale, 1.1f);
-              }
-              currentScene.models.push_back(newModel);
-              Engine::Undo::recordModelAdded(
-                  static_cast<int>(currentScene.models.size()) - 1);
-              currentSelectedIndex = currentScene.models.size() - 1;
-              currentSelectedType = SelectedType::Model;
-              updateSpaceMouseBounds();
-
-              // Mark voxelizer dirty for re-voxelization
-              if (voxelizer) {
-                voxelizer->markDirty();
-              }
-
-              GUI::ShowToast(
-                  "Model imported: " +
-                      std::filesystem::path(filePath).filename().string(),
-                  GUI::ToastType::Success);
-            } catch (const std::exception &e) {
-              std::cerr << "Failed to load model: " << e.what() << std::endl;
-              GUI::ShowToast(std::string("Failed to import model: ") +
-                                 e.what(),
-                             GUI::ToastType::Error);
-            }
+            importModelFile(selection[0]);
           }
         }
 
@@ -989,57 +1181,10 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
               else otherFiles.push_back(path);
             }
 
-            if (!lasFiles.empty()) {
-              auto clouds = Engine::PointCloudLoader::loadFromLASMultiple(lasFiles);
-              for (auto& pc : clouds) {
-                currentScene.pointClouds.emplace_back(std::move(pc));
-                Engine::Undo::recordPointCloudAdded(
-                    static_cast<int>(currentScene.pointClouds.size()) - 1);
-              }
-              updateSpaceMouseBounds();
-            }
+            importLASFiles(lasFiles);
 
             for (const auto& filePath : otherFiles) {
-              std::string extension =
-                  std::filesystem::path(filePath).extension().string();
-              std::transform(extension.begin(), extension.end(),
-                             extension.begin(), ::tolower);
-
-              if (extension == ".txt" || extension == ".xyz" ||
-                  extension == ".ply") {
-                Engine::PointCloud newPointCloud = std::move(
-                    Engine::PointCloudLoader::loadPointCloudFile(filePath));
-                newPointCloud.filePath = filePath;
-                currentScene.pointClouds.emplace_back(std::move(newPointCloud));
-                Engine::Undo::recordPointCloudAdded(
-                    static_cast<int>(currentScene.pointClouds.size()) - 1);
-                updateSpaceMouseBounds();
-              } else if (extension == ".pcb") {
-                Engine::PointCloud newPointCloud =
-                    std::move(Engine::PointCloudLoader::loadFromBinary(filePath));
-                if (newPointCloud.isLoaded()) {
-                  newPointCloud.filePath = filePath;
-                  newPointCloud.name =
-                      std::filesystem::path(filePath).stem().string();
-                  currentScene.pointClouds.emplace_back(std::move(newPointCloud));
-                  Engine::Undo::recordPointCloudAdded(
-                      static_cast<int>(currentScene.pointClouds.size()) - 1);
-                  updateSpaceMouseBounds();
-                }
-              } else if (extension == ".h5" || extension == ".hdf5" ||
-                         extension == ".f5") {
-                Engine::PointCloud newPointCloud = std::move(
-                    Engine::PointCloudLoader::loadPointCloudFile(filePath));
-                if (newPointCloud.isLoaded()) {
-                  newPointCloud.filePath = filePath;
-                  newPointCloud.name =
-                      std::filesystem::path(filePath).stem().string();
-                  currentScene.pointClouds.emplace_back(std::move(newPointCloud));
-                  Engine::Undo::recordPointCloudAdded(
-                      static_cast<int>(currentScene.pointClouds.size()) - 1);
-                  updateSpaceMouseBounds();
-                }
-              }
+              importPointCloudFile(filePath);
             }
 
             size_t cloudsImported =
@@ -2218,6 +2363,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
   // Screen-space measurement labels (distances/angles/coordinates) projected
   // from the world-space measurement overlay
   drawMeasurementLabels();
+
+  // Centered hint while nothing is loaded yet
+  renderEmptySceneHint();
 
   // Performance overlay (bottom-right corner)
   if (showFPS) {
@@ -3795,6 +3943,14 @@ void renderSettingsWindow() {
       ImGui::SameLine();
       DrawHelpMarker("Shows/hides the performance overlay (FPS, frame-time "
                      "graph and scene statistics) in the bottom-right corner");
+
+      if (ImGui::Checkbox("VSync", &preferences.vsyncEnabled)) {
+        glfwSwapInterval(preferences.vsyncEnabled ? 1 : 0);
+        settingsChanged = true;
+      }
+      ImGui::SameLine();
+      DrawHelpMarker("Synchronizes rendering with the display refresh rate. "
+                     "Eliminates tearing but caps the frame rate.");
 
       if (ImGui::Checkbox("Show GUI", &showGui)) {
         settingsChanged = true;
