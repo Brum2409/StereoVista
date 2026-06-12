@@ -70,6 +70,10 @@ enum class ShortcutAction {
   // Object Manipulation
   DeleteObject, // Delete - Delete selected object
 
+  // Edit History
+  Undo, // Ctrl+Z - Undo last action
+  Redo, // Ctrl+Y - Redo last undone action
+
   // Reserved for future actions
   ACTION_COUNT
 };

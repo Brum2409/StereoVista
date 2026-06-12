@@ -90,6 +90,9 @@
     <ClCompile Include="src\Core\SceneManager.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\Core\UndoManager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\Engine\StbImageImpl.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -450,6 +453,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\Core\SceneManager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Core\UndoManager.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\Core\CursorSynchronizer.h">
