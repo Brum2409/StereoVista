@@ -25,6 +25,22 @@ class Voxelizer;
 void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
                ImGuiWindowFlags windowFlags, Engine::Shader *shader);
 
+namespace GUI {
+
+// Toast notifications: transient, non-interactive status messages stacked at
+// the bottom-center of the window (e.g. "Scene saved", import failures).
+// Safe to call from anywhere after the ImGui context exists; calls made
+// before that are silently ignored.
+enum class ToastType { Success, Info, Warning, Error };
+void ShowToast(const std::string &message, ToastType type = ToastType::Info);
+
+// Reflect the loaded scene file in the OS window title (pass an empty string
+// to restore the plain application title). Preserves the mono-fallback
+// marker chosen at window creation.
+void UpdateWindowTitleForScene(const std::string &scenePath);
+
+} // namespace GUI
+
 // UI Windows
 void renderSettingsWindow();
 void renderCursorSettingsWindow();

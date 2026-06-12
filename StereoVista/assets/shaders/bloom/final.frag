@@ -12,6 +12,14 @@ uniform float bloomIntensity;
 uniform float exposure;
 uniform int toneMapOperator; // 0=Reinhard, 1=ACES, 2=Uncharted2, 3=AgX, 4=Khronos PBR Neutral, 5=Tony McMapface
 
+// ---- Color grading (applied after tone mapping, before gamma) ----
+uniform float cgContrast;   // 1.0 = neutral
+uniform float cgSaturation; // 1.0 = neutral, 0.0 = grayscale
+uniform bool  enableVignette;
+uniform float vignetteIntensity; // corner darkening amount [0..1]
+uniform float vignetteRadius;    // distance (0=center, 1=corner) where falloff starts
+uniform float vignetteSoftness;  // falloff width
+
 // ---- Schütz Phase 1: Eye-Dome Lighting uniforms ----
 uniform sampler2D depthTexture;
 uniform bool  enableEDL;
@@ -237,8 +245,23 @@ void main()
         result = acesToneMapping(hdrColor, exposure); // Default to ACES (industry standard)
     }
     
+    // Color grading: saturation and contrast in tone-mapped [0,1] space.
+    // Defaults (1.0 / 1.0) leave the image untouched.
+    result = mix(vec3(luminance(result)), result, cgSaturation);
+    result = clamp(mix(vec3(0.5), result, cgContrast), 0.0, 1.0);
+
+    // Vignette: smooth radial darkening towards the corners
+    if (enableVignette) {
+        // Normalize distance so 0 = screen center, 1 = corner
+        float dist = length(TexCoords - 0.5) * 1.41421356;
+        float falloff = smoothstep(vignetteRadius,
+                                   vignetteRadius + max(vignetteSoftness, 1e-4),
+                                   dist);
+        result *= 1.0 - falloff * vignetteIntensity;
+    }
+
     // Gamma correction (sRGB conversion)
     result = linearToSRGB(result);
-    
+
     FragColor = vec4(result, 1.0);
 }

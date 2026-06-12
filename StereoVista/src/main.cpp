@@ -1689,6 +1689,12 @@ void savePreferences() {
   j["hdr"]["enableFXAA"] = preferences.hdrSettings.enableFXAA;
   j["hdr"]["fxaaSubpixel"] = preferences.hdrSettings.fxaaSubpixel;
   j["hdr"]["fxaaEdgeThreshold"] = preferences.hdrSettings.fxaaEdgeThreshold;
+  j["hdr"]["contrast"] = preferences.hdrSettings.contrast;
+  j["hdr"]["saturation"] = preferences.hdrSettings.saturation;
+  j["hdr"]["enableVignette"] = preferences.hdrSettings.enableVignette;
+  j["hdr"]["vignetteIntensity"] = preferences.hdrSettings.vignetteIntensity;
+  j["hdr"]["vignetteRadius"] = preferences.hdrSettings.vignetteRadius;
+  j["hdr"]["vignetteSoftness"] = preferences.hdrSettings.vignetteSoftness;
 
   // Save SSAO settings
   j["ssao"]["enabled"] = preferences.ssaoSettings.enabled;
@@ -2214,7 +2220,7 @@ void loadPreferences() {
       preferences.hdrSettings.bloomIntensity =
           j["hdr"].value("bloomIntensity", 0.04f);
       preferences.hdrSettings.toneMapOperator =
-          j["hdr"].value("toneMapOperator", 0);
+          j["hdr"].value("toneMapOperator", 1);
       preferences.hdrSettings.enableBloom =
           j["hdr"].value("enableBloom", false);
       preferences.hdrSettings.enableFXAA =
@@ -2223,6 +2229,16 @@ void loadPreferences() {
           j["hdr"].value("fxaaSubpixel", 0.75f);
       preferences.hdrSettings.fxaaEdgeThreshold =
           j["hdr"].value("fxaaEdgeThreshold", 0.166f);
+      preferences.hdrSettings.contrast = j["hdr"].value("contrast", 1.0f);
+      preferences.hdrSettings.saturation = j["hdr"].value("saturation", 1.0f);
+      preferences.hdrSettings.enableVignette =
+          j["hdr"].value("enableVignette", false);
+      preferences.hdrSettings.vignetteIntensity =
+          j["hdr"].value("vignetteIntensity", 0.35f);
+      preferences.hdrSettings.vignetteRadius =
+          j["hdr"].value("vignetteRadius", 0.55f);
+      preferences.hdrSettings.vignetteSoftness =
+          j["hdr"].value("vignetteSoftness", 0.45f);
     }
 
     // SSAO settings
@@ -2950,6 +2966,13 @@ int main() {
       }
       currentModelIndex = currentScene.models.empty() ? -1 : 0;
       updateSpaceMouseBounds();
+      GUI::UpdateWindowTitleForScene(preferences.startupScenePath);
+      GUI::ShowToast(
+          "Scene loaded: " +
+              std::filesystem::path(preferences.startupScenePath)
+                  .filename()
+                  .string(),
+          GUI::ToastType::Success);
       std::cout << "Startup scene loaded successfully" << std::endl;
     } catch (const std::exception &e) {
       std::cerr << "Failed to load startup scene '"
@@ -3691,6 +3714,14 @@ int main() {
       bloomSettings.fxaaSubpixel = preferences.hdrSettings.fxaaSubpixel;
       bloomSettings.fxaaEdgeThreshold =
           preferences.hdrSettings.fxaaEdgeThreshold;
+      bloomSettings.contrast = preferences.hdrSettings.contrast;
+      bloomSettings.saturation = preferences.hdrSettings.saturation;
+      bloomSettings.vignetteEnabled = preferences.hdrSettings.enableVignette;
+      bloomSettings.vignetteIntensity =
+          preferences.hdrSettings.vignetteIntensity;
+      bloomSettings.vignetteRadius = preferences.hdrSettings.vignetteRadius;
+      bloomSettings.vignetteSoftness =
+          preferences.hdrSettings.vignetteSoftness;
 
       // Set SSAO texture for final composition
       if (ssaoRenderer && ssaoRenderer->isInitialized() &&
