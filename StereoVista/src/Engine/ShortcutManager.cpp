@@ -432,6 +432,8 @@ ShortcutProfile ShortcutManager::createDefaultProfile() {
                      KeyBinding(GLFW_KEY_I, true, false, true),
                      0); // Ctrl+Shift+I
   profile.setBinding(ShortcutAction::ResetCamera, KeyBinding(GLFW_KEY_HOME), 0);
+  profile.setBinding(ShortcutAction::OpenMeasurementTool, KeyBinding(GLFW_KEY_M),
+                     0);
 
   // New actions start unbound - users can assign keys as needed
 
@@ -612,6 +614,8 @@ std::string ShortcutManager::getActionName(ShortcutAction action) {
     return "OpenCursorSettings";
   case ShortcutAction::OpenBrushTool:
     return "OpenBrushTool";
+  case ShortcutAction::OpenMeasurementTool:
+    return "OpenMeasurementTool";
 
   // File Operations
   case ShortcutAction::ImportModel:
@@ -715,6 +719,8 @@ std::string ShortcutManager::getActionDescription(ShortcutAction action) {
     return "Open Cursor Settings";
   case ShortcutAction::OpenBrushTool:
     return "Open Brush Tool Window";
+  case ShortcutAction::OpenMeasurementTool:
+    return "Open Measurement Tool Window";
 
   // File Operations
   case ShortcutAction::ImportModel:

@@ -321,6 +321,41 @@ namespace Engine {
 
 
 
+    // A single measurement annotation created with the measurement tool.
+    // Points are stored in world space; measurements are part of the scene and
+    // serialized to/from scene files by SceneManager.
+    struct Measurement {
+        enum class Type {
+            Distance = 0, // polyline: per-segment + total length
+            Angle    = 1, // exactly 3 points: angle at the middle point
+            Point    = 2  // single point: world-coordinate annotation
+        };
+
+        Type type = Type::Distance;
+        std::string name;
+        std::vector<glm::vec3> points;
+        glm::vec3 color = glm::vec3(1.0f, 0.76f, 0.03f);
+        bool visible = true;
+
+        float totalLength() const {
+            float len = 0.0f;
+            for (size_t i = 1; i < points.size(); i++)
+                len += glm::length(points[i] - points[i - 1]);
+            return len;
+        }
+
+        // Angle (degrees) at the middle point of a 3-point measurement.
+        float angleDegrees() const {
+            if (points.size() < 3) return 0.0f;
+            const glm::vec3 a = points[0] - points[1];
+            const glm::vec3 b = points[2] - points[1];
+            const float la = glm::length(a), lb = glm::length(b);
+            if (la < 1e-6f || lb < 1e-6f) return 0.0f;
+            const float c = glm::clamp(glm::dot(a, b) / (la * lb), -1.0f, 1.0f);
+            return glm::degrees(glm::acos(c));
+        }
+    };
+
     struct Sun {
         glm::vec3 direction;
         glm::vec3 color;

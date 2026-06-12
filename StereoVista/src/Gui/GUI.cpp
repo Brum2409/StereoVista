@@ -9,9 +9,11 @@
 #include "Engine/ThreeDConnexionSync.h"
 #include "Gui/GUITypes.h"
 #include "Tools/BrushTool.h"
+#include "Tools/MeasurementTool.h"
 #include "imgui/IconsFontAwesome5.h"
 #include "imgui/imgui_sytle.h"
 #include "libs/portable-file-dialogs.h"
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -28,6 +30,7 @@ void updateSpaceMouseBounds();
 void updateSpaceMouseCursorAnchor();
 void renderPointLightManipulationPanel();
 void renderSpotLightManipulationPanel();
+static void drawMeasurementLabels();
 
 // Application globals used throughout the GUI system
 extern int windowWidth;
@@ -59,6 +62,17 @@ extern Cursor::CursorManager cursorManager;
 
 // Brush tool
 extern Tools::BrushTool brushTool;
+
+// Measurement tool
+extern Tools::MeasurementTool measurementTool;
+extern bool showMeasurementToolWindow;
+
+// 3D viewport rectangle (window pixels) — used to project measurement labels
+extern int g_viewportX;
+extern int g_viewportTopInset;
+extern int g_viewportWidth;
+extern int g_viewportHeight;
+extern float aspectRatio;
 
 extern GUI::LightingMode currentLightingMode;
 extern bool enableShadows;
@@ -1132,6 +1146,11 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       showBrushToolWindow = true;
     }
 
+    // Measurement Tool Menu
+    if (ImGui::MenuItem("Measure")) {
+      showMeasurementToolWindow = true;
+    }
+
     // AI Assistant quick access (accent-highlighted, deep-links into Settings)
     ImGui::PushStyleColor(ImGuiCol_Text, g_StyleColors.accent);
     if (ImGui::MenuItem("AI Assistant")) {
@@ -1805,6 +1824,14 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
   if (showBrushToolWindow) {
     renderBrushToolWindow();
   }
+
+  if (showMeasurementToolWindow) {
+    renderMeasurementToolWindow();
+  }
+
+  // Screen-space measurement labels (distances/angles/coordinates) projected
+  // from the world-space measurement overlay
+  drawMeasurementLabels();
 
   // FPS Counter (always in top-right corner)
   if (showFPS) {
@@ -4520,6 +4547,7 @@ void renderSettingsWindow() {
           renderAction(StereoVista::ShortcutAction::OpenSettings);
           renderAction(StereoVista::ShortcutAction::OpenCursorSettings);
           renderAction(StereoVista::ShortcutAction::OpenBrushTool);
+          renderAction(StereoVista::ShortcutAction::OpenMeasurementTool);
         }
 
         // GROUP: File Operations
@@ -5144,7 +5172,11 @@ void renderBrushToolWindow() {
   // Enable/Disable brush tool
   if (ImGui::Checkbox("Enable Brush Tool",
                       &preferences.brushToolSettings.enabled)) {
-    // Will be handled in main.cpp
+    // Enabling/disabling is handled in main.cpp; just keep the measurement
+    // tool exclusive since both consume left clicks.
+    if (preferences.brushToolSettings.enabled) {
+      measurementTool.setEnabled(false);
+    }
   }
 
   if (!preferences.brushToolSettings.enabled) {
@@ -5331,6 +5363,260 @@ void renderBrushToolWindow() {
       "4. Hold LEFT MOUSE BUTTON and drag over surfaces to paint");
 
   ImGui::End();
+}
+
+void renderMeasurementToolWindow() {
+  ImGui::SetNextWindowSize(ImVec2(430, 580), ImGuiCond_FirstUseEver);
+  ImGui::Begin("Measurement Tool", &showMeasurementToolWindow);
+
+  DrawSectionHeader("Measurement Tool");
+
+  bool enabled = measurementTool.isEnabled();
+  if (ImGui::Checkbox("Enable Measuring", &enabled)) {
+    measurementTool.setEnabled(enabled);
+    if (enabled) {
+      // Measuring and brush painting both consume left clicks — keep them
+      // mutually exclusive.
+      preferences.brushToolSettings.enabled = false;
+    }
+  }
+  ImGui::SameLine();
+  DrawHelpMarker("While enabled, LEFT CLICK places a measurement point at the "
+                 "3D cursor. RIGHT CLICK or ENTER finishes a polyline, "
+                 "BACKSPACE removes the last point, DELETE cancels.");
+
+  int mode = static_cast<int>(measurementTool.getMode());
+  const char *modeNames[] = {"Distance (polyline)", "Angle (3 points)",
+                             "Point (coordinates)"};
+  if (ImGui::Combo("Mode", &mode, modeNames, IM_ARRAYSIZE(modeNames))) {
+    measurementTool.setMode(static_cast<Engine::Measurement::Type>(mode));
+  }
+
+  ImGui::ColorEdit3("New Measurement Color",
+                    glm::value_ptr(measurementTool.nextColor));
+
+  // In-progress measurement status + controls
+  if (measurementTool.hasActive()) {
+    ImGui::Spacing();
+    DrawSectionHeader("In Progress");
+    const auto &active = measurementTool.getActive();
+    ImGui::Text("%s - %d point(s)", active.name.c_str(),
+                static_cast<int>(active.points.size()));
+    if (active.type == Engine::Measurement::Type::Distance &&
+        active.points.size() >= 2) {
+      ImGui::Text("Length so far: %s",
+                  measurementTool.formatLength(active.totalLength()).c_str());
+    }
+    if (ImGui::Button("Finish", ImVec2(100, 0))) {
+      measurementTool.finishActive();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Undo Point", ImVec2(100, 0))) {
+      measurementTool.undoLastPoint();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(100, 0))) {
+      measurementTool.cancelActive();
+    }
+  }
+
+  ImGui::Spacing();
+  DrawSectionHeader("Display");
+
+  ImGui::Checkbox("Show Labels", &measurementTool.showLabels);
+  ImGui::SameLine();
+  ImGui::Checkbox("Segment Labels", &measurementTool.showSegmentLabels);
+  ImGui::SameLine();
+  DrawHelpMarker("Show a length label on every segment of a polyline, not "
+                 "just the total");
+  ImGui::Checkbox("X-Ray", &measurementTool.xRay);
+  ImGui::SameLine();
+  DrawHelpMarker("Ghost-render measurement lines that are hidden behind "
+                 "geometry");
+  ImGui::SliderFloat("Line Width", &measurementTool.lineWidth, 1.0f, 8.0f,
+                     "%.1f");
+
+  // Unit selection: world units are treated as meters
+  static const char *unitNames[] = {"m", "dm", "cm", "mm", "km", "ft", "in"};
+  static const float unitScales[] = {1.0f,    10.0f,    100.0f, 1000.0f,
+                                     0.001f,  3.28084f, 39.3701f};
+  static int unitIndex = 0;
+  if (ImGui::Combo("Units", &unitIndex, unitNames, IM_ARRAYSIZE(unitNames))) {
+    measurementTool.unitScale = unitScales[unitIndex];
+    measurementTool.unitSuffix = unitNames[unitIndex];
+  }
+
+  ImGui::Spacing();
+  DrawSectionHeader("Measurements");
+
+  auto *measurements = measurementTool.getMeasurements();
+  if (!measurements || measurements->empty()) {
+    ImGui::TextDisabled("No measurements yet");
+  } else {
+    int deleteIndex = -1;
+    for (int i = 0; i < static_cast<int>(measurements->size()); i++) {
+      auto &m = (*measurements)[i];
+      ImGui::PushID(i);
+
+      ImGui::Checkbox("##visible", &m.visible);
+      ImGui::SameLine();
+      ImGui::ColorEdit3("##color", glm::value_ptr(m.color),
+                        ImGuiColorEditFlags_NoInputs |
+                            ImGuiColorEditFlags_NoLabel);
+      ImGui::SameLine();
+
+      std::string value;
+      switch (m.type) {
+      case Engine::Measurement::Type::Angle:
+        value = std::to_string(m.angleDegrees());
+        value = value.substr(0, value.find('.') + 2) + " deg";
+        break;
+      case Engine::Measurement::Type::Point:
+        if (!m.points.empty()) {
+          char buf[96];
+          snprintf(buf, sizeof(buf), "(%.2f, %.2f, %.2f)", m.points[0].x,
+                   m.points[0].y, m.points[0].z);
+          value = buf;
+        }
+        break;
+      case Engine::Measurement::Type::Distance:
+      default:
+        value = measurementTool.formatLength(m.totalLength());
+        break;
+      }
+      ImGui::Text("%s: %s", m.name.c_str(), value.c_str());
+
+      ImGui::SameLine(ImGui::GetWindowWidth() - 40 * g_GuiScale.currentScale);
+      if (ImGui::SmallButton("X")) {
+        deleteIndex = i;
+      }
+
+      ImGui::PopID();
+    }
+    if (deleteIndex >= 0) {
+      measurementTool.deleteMeasurement(deleteIndex);
+    }
+
+    ImGui::Spacing();
+    if (ImGui::Button("Clear All Measurements", ImVec2(-1, 0))) {
+      measurementTool.clearAll();
+    }
+  }
+
+  ImGui::Spacing();
+  ImGui::TextDisabled("Measurements are saved with the scene file.");
+
+  ImGui::End();
+}
+
+// Projects measurement values (segment lengths, angles, coordinates) into
+// screen space and draws them as labels on the foreground draw list.
+static void drawMeasurementLabels() {
+  if (!measurementTool.showLabels)
+    return;
+  auto *measurements = measurementTool.getMeasurements();
+
+  const glm::mat4 viewProj =
+      camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane,
+                                 preferences.farPlane) *
+      camera.GetViewMatrix();
+  ImDrawList *drawList = ImGui::GetForegroundDrawList();
+
+  auto project = [&](const glm::vec3 &world, ImVec2 &out) -> bool {
+    glm::vec4 clip = viewProj * glm::vec4(world, 1.0f);
+    if (clip.w <= 1e-4f)
+      return false;
+    const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+    if (ndc.x < -1.1f || ndc.x > 1.1f || ndc.y < -1.1f || ndc.y > 1.1f)
+      return false;
+    out = ImVec2(static_cast<float>(g_viewportX) +
+                     (ndc.x + 1.0f) * 0.5f * static_cast<float>(g_viewportWidth),
+                 static_cast<float>(g_viewportTopInset) +
+                     (1.0f - ndc.y) * 0.5f *
+                         static_cast<float>(g_viewportHeight));
+    return true;
+  };
+
+  auto drawLabel = [&](const glm::vec3 &world, const std::string &text,
+                       ImU32 color) {
+    ImVec2 px;
+    if (!project(world, px))
+      return;
+    const ImVec2 size = ImGui::CalcTextSize(text.c_str());
+    const ImVec2 p0(px.x - size.x * 0.5f - 4.0f, px.y - size.y - 10.0f);
+    const ImVec2 p1(p0.x + size.x + 8.0f, p0.y + size.y + 4.0f);
+    drawList->AddRectFilled(p0, p1, IM_COL32(15, 15, 15, 200), 4.0f);
+    drawList->AddText(ImVec2(p0.x + 4.0f, p0.y + 2.0f), color, text.c_str());
+  };
+
+  auto drawForMeasurement = [&](const Engine::Measurement &m) {
+    const ImU32 color = ImGui::ColorConvertFloat4ToU32(
+        ImVec4(m.color.r, m.color.g, m.color.b, 1.0f));
+    char buf[96];
+    switch (m.type) {
+    case Engine::Measurement::Type::Angle:
+      if (m.points.size() >= 3) {
+        snprintf(buf, sizeof(buf), "%.1f\xC2\xB0", m.angleDegrees());
+        drawLabel(m.points[1], buf, color);
+      }
+      break;
+    case Engine::Measurement::Type::Point:
+      if (!m.points.empty()) {
+        snprintf(buf, sizeof(buf), "(%.2f, %.2f, %.2f)", m.points[0].x,
+                 m.points[0].y, m.points[0].z);
+        drawLabel(m.points[0], buf, color);
+      }
+      break;
+    case Engine::Measurement::Type::Distance:
+    default: {
+      const size_t segments = m.points.size() >= 2 ? m.points.size() - 1 : 0;
+      if (measurementTool.showSegmentLabels || segments == 1) {
+        for (size_t i = 1; i < m.points.size(); i++) {
+          const float len = glm::length(m.points[i] - m.points[i - 1]);
+          drawLabel((m.points[i - 1] + m.points[i]) * 0.5f,
+                    measurementTool.formatLength(len), color);
+        }
+      }
+      if (segments > 1) {
+        drawLabel(m.points.back(),
+                  "Total " + measurementTool.formatLength(m.totalLength()),
+                  color);
+      }
+      break;
+    }
+    }
+  };
+
+  if (measurements) {
+    for (const auto &m : *measurements) {
+      if (m.visible)
+        drawForMeasurement(m);
+    }
+  }
+
+  // In-progress measurement: same labels plus a live readout to the cursor
+  if (measurementTool.hasActive()) {
+    const auto &active = measurementTool.getActive();
+    drawForMeasurement(active);
+
+    glm::vec3 preview;
+    if (measurementTool.getPreviewPoint(preview) && !active.points.empty()) {
+      const ImU32 liveColor = IM_COL32(255, 255, 255, 230);
+      if (active.type == Engine::Measurement::Type::Angle &&
+          active.points.size() == 2) {
+        // Live angle preview with the cursor as the third point
+        Engine::Measurement tmp = active;
+        tmp.points.push_back(preview);
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.1f\xC2\xB0", tmp.angleDegrees());
+        drawLabel(tmp.points[1], buf, liveColor);
+      } else if (active.type == Engine::Measurement::Type::Distance) {
+        const float len = glm::length(preview - active.points.back());
+        drawLabel((active.points.back() + preview) * 0.5f,
+                  measurementTool.formatLength(len), liveColor);
+      }
+    }
+  }
 }
 
 void renderSunManipulationPanel() {
@@ -5750,12 +6036,25 @@ void renderPointCloudManipulationPanel(Engine::PointCloud &pointCloud) {
 
   if (ImGui::CollapsingHeader("Export")) {
     static int exportFormat = 0;
-    ImGui::RadioButton("XYZ Format", &exportFormat, 0);
+    ImGui::RadioButton("XYZ", &exportFormat, 0);
     ImGui::SameLine();
-    ImGui::RadioButton("Binary Format", &exportFormat, 1);
+    ImGui::RadioButton("Binary (.pcb)", &exportFormat, 1);
+    ImGui::SameLine();
+    ImGui::RadioButton("HDF5", &exportFormat, 2);
+
+    static bool exportApplyTransform = true;
+    ImGui::Checkbox("Apply transform", &exportApplyTransform);
+    ImGui::SameLine();
+    DrawHelpMarker("Bake the cloud's position/rotation/scale into the "
+                   "exported coordinates. Disable to export the raw "
+                   "local-space points.");
+
+    static std::string lastExportStatus;
+    static bool lastExportOk = false;
 
     if (ImGui::Button("Export Point Cloud...", ImVec2(-1, 0))) {
-      std::string defaultExt = (exportFormat == 0) ? ".xyz" : ".pcb";
+      std::string defaultExt =
+          (exportFormat == 0) ? ".xyz" : (exportFormat == 1) ? ".pcb" : ".h5";
       auto destination = pfd::save_file("Export point cloud", ".",
                                         {"Point Cloud Files", "*" + defaultExt,
                                          "All Files", "*"})
@@ -5764,21 +6063,35 @@ void renderPointCloudManipulationPanel(Engine::PointCloud &pointCloud) {
       if (!destination.empty()) {
         bool success = false;
         if (exportFormat == 0) {
-          success =
-              Engine::PointCloudLoader::exportToXYZ(pointCloud, destination);
+          success = Engine::PointCloudLoader::exportToXYZ(
+              pointCloud, destination, exportApplyTransform);
+        } else if (exportFormat == 1) {
+          success = Engine::PointCloudLoader::exportToBinary(
+              pointCloud, destination, exportApplyTransform);
         } else {
-          success =
-              Engine::PointCloudLoader::exportToBinary(pointCloud, destination);
+          success = Engine::PointCloudLoader::exportToHDF5(
+              pointCloud, destination, exportApplyTransform);
         }
 
+        lastExportOk = success;
         if (success) {
+          lastExportStatus = "Exported to " + destination;
           std::cout << "Point cloud exported successfully to " << destination
                     << std::endl;
         } else {
+          lastExportStatus = "Export FAILED (see console)";
           std::cerr << "Failed to export point cloud to " << destination
                     << std::endl;
         }
       }
+    }
+
+    if (!lastExportStatus.empty()) {
+      ImGui::PushStyleColor(ImGuiCol_Text,
+                            lastExportOk ? ImVec4(0.4f, 0.9f, 0.4f, 1.0f)
+                                         : ImVec4(0.95f, 0.4f, 0.4f, 1.0f));
+      ImGui::TextWrapped("%s", lastExportStatus.c_str());
+      ImGui::PopStyleColor();
     }
   }
 

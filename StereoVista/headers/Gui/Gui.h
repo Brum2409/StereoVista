@@ -29,6 +29,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
 void renderSettingsWindow();
 void renderCursorSettingsWindow();
 void renderBrushToolWindow();
+void renderMeasurementToolWindow();
 void renderSunManipulationPanel();
 void renderModelManipulationPanel(Engine::Model &model, Engine::Shader *shader);
 void renderMeshManipulationPanel(Engine::Model &model, int meshIndex,

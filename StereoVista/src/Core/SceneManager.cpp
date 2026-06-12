@@ -193,21 +193,66 @@ namespace Engine {
 
             // Save point clouds
             json pointCloudsJson = json::array();
+            int pcIndex = 0;
+            std::unordered_set<std::string> usedPcFilenames;
             for (const auto& pointCloud : scene.pointClouds) {
                 json pointCloudJson;
                 pointCloudJson["name"] = pointCloud.name;
                 pointCloudJson["position"] = { pointCloud.position.x, pointCloud.position.y, pointCloud.position.z };
                 pointCloudJson["rotation"] = { pointCloud.rotation.x, pointCloud.rotation.y, pointCloud.rotation.z };
                 pointCloudJson["scale"] = { pointCloud.scale.x, pointCloud.scale.y, pointCloud.scale.z };
+                pointCloudJson["visible"] = pointCloud.visible;
+                pointCloudJson["basePointSize"] = pointCloud.basePointSize;
 
-                std::string pcFilename = pointCloud.name + ".pcb";
+                // Cloud names can contain path-hostile characters (they default
+                // to the source filename) and may collide — sanitize and dedupe.
+                std::string baseName = pointCloud.name.empty()
+                    ? ("pointCloud_" + std::to_string(pcIndex)) : pointCloud.name;
+                for (char& c : baseName) {
+                    if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' ||
+                        c == '"' || c == '<' || c == '>' || c == '|') {
+                        c = '_';
+                    }
+                }
+                std::string pcFilename = baseName + ".pcb";
+                while (!usedPcFilenames.insert(pcFilename).second) {
+                    pcFilename = baseName + "_" + std::to_string(pcIndex) + ".pcb";
+                    baseName += "_";
+                }
+                pcIndex++;
+
+                // Export in LOCAL space (applyTransform = false): the transform
+                // is stored in the JSON above and re-applied on load. Baking it
+                // into the points as well would apply it twice.
                 std::filesystem::path pcPath = sceneDir / "pointClouds" / pcFilename;
-                Engine::PointCloudLoader::exportToBinary(pointCloud, pcPath.string());
+                if (!Engine::PointCloudLoader::exportToBinary(pointCloud, pcPath.string(), false)) {
+                    std::cerr << "Warning: failed to write point cloud data for '"
+                              << pointCloud.name << "' - it will be missing from the scene"
+                              << std::endl;
+                    continue;
+                }
 
                 pointCloudJson["dataPath"] = "pointClouds/" + pcFilename;
                 pointCloudsJson.push_back(pointCloudJson);
             }
             sceneJson["pointClouds"] = pointCloudsJson;
+
+            // Save measurements (world-space annotation points)
+            json measurementsJson = json::array();
+            for (const auto& measurement : scene.measurements) {
+                json measurementJson;
+                measurementJson["type"] = static_cast<int>(measurement.type);
+                measurementJson["name"] = measurement.name;
+                measurementJson["color"] = { measurement.color.r, measurement.color.g, measurement.color.b };
+                measurementJson["visible"] = measurement.visible;
+                json pointsJson = json::array();
+                for (const auto& p : measurement.points) {
+                    pointsJson.push_back({ p.x, p.y, p.z });
+                }
+                measurementJson["points"] = pointsJson;
+                measurementsJson.push_back(measurementJson);
+            }
+            sceneJson["measurements"] = measurementsJson;
 
             // Save point lights
             json pointLightsJson = json::array();
@@ -613,14 +658,62 @@ namespace Engine {
                             pointCloudJson["scale"][1].get<float>(),
                             pointCloudJson["scale"][2].get<float>()
                         );
+                        pointCloud.visible = pointCloudJson.value("visible", true);
+                        pointCloud.basePointSize = pointCloudJson.value("basePointSize", 2.0f);
+                        pointCloud.filePath = pcPath.string();
 
                         // Set source scene path for grouping in GUI
                         pointCloud.sourceScenePath = filename;
+
+                        if (!pointCloud.isLoaded()) {
+                            std::cerr << "Warning: point cloud '" << pointCloud.name
+                                      << "' loaded with no points (data file: " << pcPath << ")"
+                                      << std::endl;
+                        }
 
                         scene.pointClouds.push_back(std::move(pointCloud));
                     }
                     catch (const std::exception& e) {
                         std::cerr << "Failed to load point cloud: " << e.what() << std::endl;
+                    }
+                }
+            }
+
+            // Load measurements
+            if (sceneJson.contains("measurements")) {
+                for (const auto& measurementJson : sceneJson["measurements"]) {
+                    try {
+                        Measurement measurement;
+                        measurement.type = static_cast<Measurement::Type>(
+                            measurementJson.value("type", 0));
+                        measurement.name = measurementJson.value("name", std::string("Measurement"));
+                        measurement.visible = measurementJson.value("visible", true);
+                        if (measurementJson.contains("color") &&
+                            measurementJson["color"].is_array() &&
+                            measurementJson["color"].size() == 3) {
+                            measurement.color = glm::vec3(
+                                measurementJson["color"][0].get<float>(),
+                                measurementJson["color"][1].get<float>(),
+                                measurementJson["color"][2].get<float>()
+                            );
+                        }
+                        if (measurementJson.contains("points") &&
+                            measurementJson["points"].is_array()) {
+                            for (const auto& pointJson : measurementJson["points"]) {
+                                if (pointJson.is_array() && pointJson.size() == 3) {
+                                    measurement.points.emplace_back(
+                                        pointJson[0].get<float>(),
+                                        pointJson[1].get<float>(),
+                                        pointJson[2].get<float>());
+                                }
+                            }
+                        }
+                        if (!measurement.points.empty()) {
+                            scene.measurements.push_back(std::move(measurement));
+                        }
+                    }
+                    catch (const std::exception& e) {
+                        std::cerr << "Failed to load measurement: " << e.what() << std::endl;
                     }
                 }
             }

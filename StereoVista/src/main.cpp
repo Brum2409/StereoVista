@@ -30,6 +30,7 @@
 #include "Loaders/ModelLoader.h"
 #include "Loaders/PointCloudLoader.h"
 #include "Tools/BrushTool.h"
+#include "Tools/MeasurementTool.h"
 
 
 // ---- GUI and Dialog ----
@@ -193,6 +194,7 @@ bool showSettingsWindow = false;
 bool show3DCursor = true;
 bool showCursorSettingsWindow = false;
 bool showBrushToolWindow = false;
+bool showMeasurementToolWindow = false;
 enum class SelectedType {
   None,
   Model,
@@ -280,6 +282,9 @@ bool orbitFollowsCursor = false;
 
 // ---- Brush Tool ----
 Tools::BrushTool brushTool;
+
+// ---- Measurement Tool ----
+Tools::MeasurementTool measurementTool;
 
 // ---- Window Configuration ----
 int windowWidth = 1920;
@@ -3113,6 +3118,12 @@ int main() {
       brushTool.disable();
     }
 
+    // ---- Measurement Tool ----
+    // Keep the tool bound to the current scene's measurement storage
+    // (idempotent; the scene object is a global, so the pointer stays valid
+    // across scene loads).
+    measurementTool.setMeasurements(&currentScene.measurements);
+
     // ---- Update Model Depth Movement Physics ----
     // Apply smooth scrolling physics to model depth movement when dragging
     if (isMovingModel && currentSelectedType == SelectedType::Model &&
@@ -3852,6 +3863,9 @@ void cleanup() {
 
   // Clean up cursor preview before GUI shutdown
   cursorPreview3D.cleanup();
+
+  // Clean up measurement tool GL resources while the context is still valid
+  measurementTool.cleanup();
 
   // Clean up GUI before destroying window (ImGui needs valid OpenGL context)
   CleanupGUI();
@@ -5146,6 +5160,18 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
 
   if (camera.IsPanning == false) {
     cursorManager.renderCursors(projection, view);
+  }
+
+  // Render measurement overlay (committed measurements always; rubber-band
+  // preview only while the tool is active and the cursor is on geometry)
+  {
+    glm::vec3 measurePreviewPos;
+    const glm::vec3 *measurePreview = nullptr;
+    if (measurementTool.isEnabled() && cursorManager.isCursorPositionValid()) {
+      measurePreviewPos = cursorManager.getCursorPosition();
+      measurePreview = &measurePreviewPos;
+    }
+    measurementTool.render(projection, view, measurePreview);
   }
 
   // Render brush tool indicator
@@ -6499,6 +6525,16 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
       bool ctrlPressed = (mods & GLFW_MOD_CONTROL);
       bool altPressed = (mods & GLFW_MOD_ALT);
 
+      // Measurement tool: place a point at the 3D cursor position and consume
+      // the click (no orbiting/selection while measuring). Ctrl/Alt clicks
+      // still fall through to object selection.
+      if (!ctrlPressed && !altPressed && measurementTool.isEnabled()) {
+        if (cursorManager.isCursorPositionValid()) {
+          measurementTool.addPoint(cursorManager.getCursorPosition());
+        }
+        return;
+      }
+
       // Handle brush tool painting (when enabled and no modifiers pressed)
       if (!ctrlPressed && !altPressed &&
           preferences.brushToolSettings.enabled &&
@@ -7031,6 +7067,13 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
     }
   } else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
     if (action == GLFW_PRESS) {
+      // Measurement tool: right-click finishes the in-progress polyline
+      // instead of starting a camera rotation.
+      if (measurementTool.isEnabled() && measurementTool.hasActive()) {
+        measurementTool.finishActive();
+        return;
+      }
+
       rightMousePressed = true;
 
       // Capture cursor state for synchronization before starting rotation
@@ -7161,6 +7204,24 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
 
   if (action != GLFW_PRESS) {
     return; // Only handle PRESS actions below for other keys
+  }
+
+  // Measurement tool editing keys (only while a measurement is in progress).
+  // Note: Escape can't be used to cancel — Input::handleKeyInput closes the
+  // application on Escape.
+  if (measurementTool.isEnabled() && measurementTool.hasActive()) {
+    if (key == GLFW_KEY_ENTER || key == GLFW_KEY_KP_ENTER) {
+      measurementTool.finishActive();
+      return;
+    }
+    if (key == GLFW_KEY_DELETE) {
+      measurementTool.cancelActive();
+      return;
+    }
+    if (key == GLFW_KEY_BACKSPACE) {
+      measurementTool.undoLastPoint();
+      return;
+    }
   }
 
   // Check if this key press matches any shortcut action
@@ -7501,6 +7562,11 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
     case StereoVista::ShortcutAction::OpenBrushTool:
       showBrushToolWindow = true;
       std::cout << "Opening brush tool window" << std::endl;
+      break;
+
+    case StereoVista::ShortcutAction::OpenMeasurementTool:
+      showMeasurementToolWindow = true;
+      std::cout << "Opening measurement tool window" << std::endl;
       break;
 
     // File Operations - these will trigger file dialogs through GUI
