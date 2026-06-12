@@ -593,6 +593,16 @@ void BloomRenderer::applyBloom(GLuint sceneTexture,
     m_settings.finalShader->setFloat("exposure", settings.exposure);
     m_settings.finalShader->setInt("toneMapOperator", settings.toneMapOperator);
 
+    // Color grading
+    m_settings.finalShader->setFloat("cgContrast", settings.contrast);
+    m_settings.finalShader->setFloat("cgSaturation", settings.saturation);
+    m_settings.finalShader->setBool("enableVignette", settings.vignetteEnabled);
+    m_settings.finalShader->setFloat("vignetteIntensity",
+                                     settings.vignetteIntensity);
+    m_settings.finalShader->setFloat("vignetteRadius", settings.vignetteRadius);
+    m_settings.finalShader->setFloat("vignetteSoftness",
+                                     settings.vignetteSoftness);
+
     renderQuad();
 
     // Unbind textures to avoid state issues

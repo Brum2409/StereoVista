@@ -21,6 +21,15 @@ struct BloomSettings {
   float fxaaSubpixel = 0.75f;       // sub-pixel aliasing removal [0..1]
   float fxaaEdgeThreshold = 0.166f; // relative edge threshold (~0.063..0.333)
 
+  // Color grading, applied in the final composite after tone mapping.
+  // Defaults are neutral (no visual change).
+  float contrast = 1.0f;           // 1 = neutral
+  float saturation = 1.0f;         // 1 = neutral, 0 = grayscale
+  bool vignetteEnabled = false;
+  float vignetteIntensity = 0.35f; // corner darkening amount [0..1]
+  float vignetteRadius = 0.55f;    // where falloff starts (0=center, 1=corner)
+  float vignetteSoftness = 0.45f;  // falloff width
+
   // Framebuffer objects
   GLuint hdrFBO = 0;
   GLuint bloomFBO[2] = {0, 0}; // Ping-pong framebuffers

@@ -77,6 +77,7 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
 void mouse_callback(GLFWwindow *window, double xpos, double ypos);
 void framebuffer_size_callback(GLFWwindow *window, int width, int height);
 void cursor_enter_callback(GLFWwindow *window, int entered);
+void drop_callback(GLFWwindow *window, int count, const char **paths);
 
 // ---- Rendering Functions ----
 void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
@@ -292,6 +293,11 @@ int windowWidth = 1920;
 int windowHeight = 1080;
 bool isStereoWindow = false;
 
+// ---- Drag & Drop ----
+// Files dropped onto the window, queued by drop_callback and imported by the
+// GUI on the next frame (where the scene-load dialog and import flow live).
+std::vector<std::string> g_droppedFiles;
+
 // ---- 3D Viewport (free area not covered by the docked GUI panels) ----
 // The scene renders into this sub-rectangle of the window instead of the whole
 // window, so it no longer draws behind the left Scene Hierarchy panel or the
@@ -494,6 +500,14 @@ void cursor_enter_callback(GLFWwindow *window, int entered) {
     cursorManager.getSphereCursor()->setPositionValid(false);
     cursorManager.getFragmentCursor()->setPositionValid(false);
     cursorManager.getPlaneCursor()->setPositionValid(false);
+  }
+}
+
+void drop_callback(GLFWwindow *window, int count, const char **paths) {
+  // Queue only; the import runs inside the GUI frame so dropped scene files
+  // can go through the regular replace/merge/ask flow.
+  for (int i = 0; i < count; i++) {
+    g_droppedFiles.push_back(paths[i]);
   }
 }
 
@@ -1563,6 +1577,7 @@ void savePreferences() {
   // UI preferences
   j["ui"]["darkTheme"] = preferences.isDarkTheme;
   j["ui"]["showFPS"] = preferences.showFPS;
+  j["ui"]["vsync"] = preferences.vsyncEnabled;
   j["ui"]["show3DCursor"] = preferences.show3DCursor;
   j["ui"]["cursorKeepLastDepthOnBackground"] =
       preferences.cursorKeepLastDepthOnBackground;
@@ -1689,6 +1704,12 @@ void savePreferences() {
   j["hdr"]["enableFXAA"] = preferences.hdrSettings.enableFXAA;
   j["hdr"]["fxaaSubpixel"] = preferences.hdrSettings.fxaaSubpixel;
   j["hdr"]["fxaaEdgeThreshold"] = preferences.hdrSettings.fxaaEdgeThreshold;
+  j["hdr"]["contrast"] = preferences.hdrSettings.contrast;
+  j["hdr"]["saturation"] = preferences.hdrSettings.saturation;
+  j["hdr"]["enableVignette"] = preferences.hdrSettings.enableVignette;
+  j["hdr"]["vignetteIntensity"] = preferences.hdrSettings.vignetteIntensity;
+  j["hdr"]["vignetteRadius"] = preferences.hdrSettings.vignetteRadius;
+  j["hdr"]["vignetteSoftness"] = preferences.hdrSettings.vignetteSoftness;
 
   // Save SSAO settings
   j["ssao"]["enabled"] = preferences.ssaoSettings.enabled;
@@ -2010,6 +2031,7 @@ void loadPreferences() {
     if (j.contains("ui")) {
       preferences.isDarkTheme = j["ui"].value("darkTheme", true);
       preferences.showFPS = j["ui"].value("showFPS", true);
+      preferences.vsyncEnabled = j["ui"].value("vsync", false);
       preferences.show3DCursor = j["ui"].value("show3DCursor", true);
       preferences.cursorKeepLastDepthOnBackground =
           j["ui"].value("cursorKeepLastDepthOnBackground", false);
@@ -2214,7 +2236,7 @@ void loadPreferences() {
       preferences.hdrSettings.bloomIntensity =
           j["hdr"].value("bloomIntensity", 0.04f);
       preferences.hdrSettings.toneMapOperator =
-          j["hdr"].value("toneMapOperator", 0);
+          j["hdr"].value("toneMapOperator", 1);
       preferences.hdrSettings.enableBloom =
           j["hdr"].value("enableBloom", false);
       preferences.hdrSettings.enableFXAA =
@@ -2223,6 +2245,16 @@ void loadPreferences() {
           j["hdr"].value("fxaaSubpixel", 0.75f);
       preferences.hdrSettings.fxaaEdgeThreshold =
           j["hdr"].value("fxaaEdgeThreshold", 0.166f);
+      preferences.hdrSettings.contrast = j["hdr"].value("contrast", 1.0f);
+      preferences.hdrSettings.saturation = j["hdr"].value("saturation", 1.0f);
+      preferences.hdrSettings.enableVignette =
+          j["hdr"].value("enableVignette", false);
+      preferences.hdrSettings.vignetteIntensity =
+          j["hdr"].value("vignetteIntensity", 0.35f);
+      preferences.hdrSettings.vignetteRadius =
+          j["hdr"].value("vignetteRadius", 0.55f);
+      preferences.hdrSettings.vignetteSoftness =
+          j["hdr"].value("vignetteSoftness", 0.45f);
     }
 
     // SSAO settings
@@ -2651,6 +2683,7 @@ int main() {
   glfwSetMouseButtonCallback(window, mouse_button_callback);
   glfwSetWindowFocusCallback(window, window_focus_callback);
   glfwSetCursorEnterCallback(window, cursor_enter_callback);
+  glfwSetDropCallback(window, drop_callback);
 
   voxelizer = new Engine::Voxelizer(128);
 
@@ -2950,6 +2983,13 @@ int main() {
       }
       currentModelIndex = currentScene.models.empty() ? -1 : 0;
       updateSpaceMouseBounds();
+      GUI::UpdateWindowTitleForScene(preferences.startupScenePath);
+      GUI::ShowToast(
+          "Scene loaded: " +
+              std::filesystem::path(preferences.startupScenePath)
+                  .filename()
+                  .string(),
+          GUI::ToastType::Success);
       std::cout << "Startup scene loaded successfully" << std::endl;
     } catch (const std::exception &e) {
       std::cerr << "Failed to load startup scene '"
@@ -3101,7 +3141,7 @@ int main() {
   // ---- OpenGL Settings ----
   glEnable(GL_DEPTH_TEST);
   glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-  glfwSwapInterval(0); // Enable vsync
+  glfwSwapInterval(preferences.vsyncEnabled ? 1 : 0);
 
   // ---- Main Loop ----
   while (!glfwWindowShouldClose(window)) {
@@ -3691,6 +3731,14 @@ int main() {
       bloomSettings.fxaaSubpixel = preferences.hdrSettings.fxaaSubpixel;
       bloomSettings.fxaaEdgeThreshold =
           preferences.hdrSettings.fxaaEdgeThreshold;
+      bloomSettings.contrast = preferences.hdrSettings.contrast;
+      bloomSettings.saturation = preferences.hdrSettings.saturation;
+      bloomSettings.vignetteEnabled = preferences.hdrSettings.enableVignette;
+      bloomSettings.vignetteIntensity =
+          preferences.hdrSettings.vignetteIntensity;
+      bloomSettings.vignetteRadius = preferences.hdrSettings.vignetteRadius;
+      bloomSettings.vignetteSoftness =
+          preferences.hdrSettings.vignetteSoftness;
 
       // Set SSAO texture for final composition
       if (ssaoRenderer && ssaoRenderer->isInitialized() &&
@@ -7314,6 +7362,14 @@ void mouse_callback(GLFWwindow *window, double xposIn, double yposIn) {
   // No need for an 'else' here, if not captured, we just don't accumulate.
 }
 
+// Reports a shortcut-driven toggle through both the console and a GUI toast,
+// so keyboard changes are visible without watching the console.
+static void reportToggle(const char *name, bool enabled) {
+  std::cout << name << " " << (enabled ? "enabled" : "disabled") << std::endl;
+  GUI::ShowToast(std::string(name) + (enabled ? " enabled" : " disabled"),
+                 GUI::ToastType::Info);
+}
+
 void key_callback(GLFWwindow *window, int key, int scancode, int action,
                   int mods) {
   // Note: This handles special keys like GUI toggle, lighting mode changes
@@ -7404,21 +7460,27 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
       // Update preferences
       preferences.lightingMode = currentLightingMode;
       savePreferences();
+
+      GUI::ShowToast(
+          std::string("Lighting mode: ") +
+              (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING
+                   ? "Shadow Mapping"
+                   : currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING
+                         ? "Voxel Cone Tracing"
+                         : "Radiance"),
+          GUI::ToastType::Info);
       break;
 
     case StereoVista::ShortcutAction::ToggleShadows:
       enableShadows = !enableShadows;
-      std::cout << "Shadows " << (enableShadows ? "enabled" : "disabled")
-                << std::endl;
+      reportToggle("Shadows", enableShadows);
       preferences.enableShadows = enableShadows;
       savePreferences();
       break;
 
     case StereoVista::ShortcutAction::ToggleVoxelViz:
       voxelizer->showDebugVisualization = !voxelizer->showDebugVisualization;
-      std::cout << "Voxel visualization "
-                << (voxelizer->showDebugVisualization ? "enabled" : "disabled")
-                << std::endl;
+      reportToggle("Voxel visualization", voxelizer->showDebugVisualization);
       break;
 
     case StereoVista::ShortcutAction::CenterView: {
@@ -7464,44 +7526,35 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
     // View/Display Controls
     case StereoVista::ShortcutAction::ToggleFPS:
       showFPS = !showFPS;
-      std::cout << "FPS counter " << (showFPS ? "enabled" : "disabled")
-                << std::endl;
+      reportToggle("Performance overlay", showFPS);
       break;
 
     case StereoVista::ShortcutAction::ToggleWireframe:
       camera.wireframe = !camera.wireframe;
-      std::cout << "Wireframe mode "
-                << (camera.wireframe ? "enabled" : "disabled") << std::endl;
+      reportToggle("Wireframe mode", camera.wireframe);
       break;
 
     case StereoVista::ShortcutAction::ToggleRadar:
       preferences.radarEnabled = !preferences.radarEnabled;
-      std::cout << "Radar "
-                << (preferences.radarEnabled ? "enabled" : "disabled")
-                << std::endl;
+      reportToggle("Radar", preferences.radarEnabled);
       savePreferences();
       break;
 
     case StereoVista::ShortcutAction::ToggleZeroPlane:
       preferences.showZeroPlane = !preferences.showZeroPlane;
-      std::cout << "Zero plane "
-                << (preferences.showZeroPlane ? "enabled" : "disabled")
-                << std::endl;
+      reportToggle("Zero plane", preferences.showZeroPlane);
       savePreferences();
       break;
 
     // Camera Controls
     case StereoVista::ShortcutAction::ToggleZoomToCursor:
       camera.zoomToCursor = !camera.zoomToCursor;
-      std::cout << "Zoom to cursor "
-                << (camera.zoomToCursor ? "enabled" : "disabled") << std::endl;
+      reportToggle("Zoom to cursor", camera.zoomToCursor);
       break;
 
     case StereoVista::ShortcutAction::ToggleOrbitAroundCursor:
       camera.orbitAroundCursor = !camera.orbitAroundCursor;
-      std::cout << "Orbit around cursor "
-                << (camera.orbitAroundCursor ? "enabled" : "disabled")
-                << std::endl;
+      reportToggle("Orbit around cursor", camera.orbitAroundCursor);
       break;
 
     case StereoVista::ShortcutAction::ToggleSpaceMouseMode:
@@ -7516,46 +7569,34 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
     // Lighting
     case StereoVista::ShortcutAction::ToggleHDR:
       preferences.hdrSettings.enabled = !preferences.hdrSettings.enabled;
-      std::cout << "HDR "
-                << (preferences.hdrSettings.enabled ? "enabled" : "disabled")
-                << std::endl;
+      reportToggle("HDR", preferences.hdrSettings.enabled);
       savePreferences();
       break;
 
     case StereoVista::ShortcutAction::ToggleBloom:
       preferences.hdrSettings.enableBloom =
           !preferences.hdrSettings.enableBloom;
-      std::cout << "Bloom "
-                << (preferences.hdrSettings.enableBloom ? "enabled"
-                                                        : "disabled")
-                << std::endl;
+      reportToggle("Bloom", preferences.hdrSettings.enableBloom);
       savePreferences();
       break;
 
     case StereoVista::ShortcutAction::TogglePCSS:
       preferences.shadowSettings.enablePCSS =
           !preferences.shadowSettings.enablePCSS;
-      std::cout << "PCSS (soft shadows) "
-                << (preferences.shadowSettings.enablePCSS ? "enabled"
-                                                          : "disabled")
-                << std::endl;
+      reportToggle("PCSS (soft shadows)", preferences.shadowSettings.enablePCSS);
       savePreferences();
       break;
 
     case StereoVista::ShortcutAction::ToggleSunLight:
       sun.enabled = !sun.enabled;
-      std::cout << "Sun light " << (sun.enabled ? "enabled" : "disabled")
-                << std::endl;
+      reportToggle("Sun light", sun.enabled);
       break;
 
     // Materials & Rendering
     case StereoVista::ShortcutAction::TogglePBR:
       preferences.materialSettings.enablePBR =
           !preferences.materialSettings.enablePBR;
-      std::cout << "PBR materials "
-                << (preferences.materialSettings.enablePBR ? "enabled"
-                                                           : "disabled")
-                << std::endl;
+      reportToggle("PBR materials", preferences.materialSettings.enablePBR);
       savePreferences();
       break;
 
@@ -7563,38 +7604,29 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
     case StereoVista::ShortcutAction::ToggleVCTIndirectDiffuse:
       preferences.vctSettings.indirectDiffuseLight =
           !preferences.vctSettings.indirectDiffuseLight;
-      std::cout << "VCT indirect diffuse "
-                << (preferences.vctSettings.indirectDiffuseLight ? "enabled"
-                                                                 : "disabled")
-                << std::endl;
+      reportToggle("VCT indirect diffuse",
+                   preferences.vctSettings.indirectDiffuseLight);
       savePreferences();
       break;
 
     case StereoVista::ShortcutAction::ToggleVCTIndirectSpecular:
       preferences.vctSettings.indirectSpecularLight =
           !preferences.vctSettings.indirectSpecularLight;
-      std::cout << "VCT indirect specular "
-                << (preferences.vctSettings.indirectSpecularLight ? "enabled"
-                                                                  : "disabled")
-                << std::endl;
+      reportToggle("VCT indirect specular",
+                   preferences.vctSettings.indirectSpecularLight);
       savePreferences();
       break;
 
     case StereoVista::ShortcutAction::ToggleVCTDirectLight:
       preferences.vctSettings.directLight =
           !preferences.vctSettings.directLight;
-      std::cout << "VCT direct lighting "
-                << (preferences.vctSettings.directLight ? "enabled"
-                                                        : "disabled")
-                << std::endl;
+      reportToggle("VCT direct lighting", preferences.vctSettings.directLight);
       savePreferences();
       break;
 
     case StereoVista::ShortcutAction::ToggleVCTSoftShadows:
       preferences.vctSettings.shadows = !preferences.vctSettings.shadows;
-      std::cout << "VCT soft shadows "
-                << (preferences.vctSettings.shadows ? "enabled" : "disabled")
-                << std::endl;
+      reportToggle("VCT soft shadows", preferences.vctSettings.shadows);
       savePreferences();
       break;
 
@@ -7604,10 +7636,7 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
           !preferences.radianceSettings.enableRaytracing;
       radianceSettings.enableRaytracing =
           preferences.radianceSettings.enableRaytracing;
-      std::cout << "Raytracing "
-                << (preferences.radianceSettings.enableRaytracing ? "enabled"
-                                                                  : "disabled")
-                << std::endl;
+      reportToggle("Raytracing", preferences.radianceSettings.enableRaytracing);
       savePreferences();
       break;
 
@@ -7616,11 +7645,8 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
           !preferences.radianceSettings.enableIndirectLighting;
       radianceSettings.enableIndirectLighting =
           preferences.radianceSettings.enableIndirectLighting;
-      std::cout << "Indirect lighting "
-                << (preferences.radianceSettings.enableIndirectLighting
-                        ? "enabled"
-                        : "disabled")
-                << std::endl;
+      reportToggle("Indirect lighting",
+                   preferences.radianceSettings.enableIndirectLighting);
       savePreferences();
       break;
 
@@ -7629,11 +7655,8 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
           !preferences.radianceSettings.enableEmissiveLighting;
       radianceSettings.enableEmissiveLighting =
           preferences.radianceSettings.enableEmissiveLighting;
-      std::cout << "Emissive lighting "
-                << (preferences.radianceSettings.enableEmissiveLighting
-                        ? "enabled"
-                        : "disabled")
-                << std::endl;
+      reportToggle("Emissive lighting",
+                   preferences.radianceSettings.enableEmissiveLighting);
       savePreferences();
       break;
 
@@ -7642,10 +7665,7 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
           !preferences.radianceSettings.enableBVH;
       radianceSettings.enableBVH = preferences.radianceSettings.enableBVH;
       enableBVH = preferences.radianceSettings.enableBVH;
-      std::cout << "BVH acceleration "
-                << (preferences.radianceSettings.enableBVH ? "enabled"
-                                                           : "disabled")
-                << std::endl;
+      reportToggle("BVH acceleration", preferences.radianceSettings.enableBVH);
       savePreferences();
       break;
 
@@ -7654,8 +7674,10 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
         ddgiVolume->clear();
         std::cout << "DDGI probes reset - will reconverge over the next frames"
                   << std::endl;
+        GUI::ShowToast("DDGI probes reset", GUI::ToastType::Info);
       } else {
         std::cout << "DDGI volume not initialized" << std::endl;
+        GUI::ShowToast("DDGI volume not initialized", GUI::ToastType::Warning);
       }
       break;
 

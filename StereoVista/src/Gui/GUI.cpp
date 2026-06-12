@@ -14,6 +14,7 @@
 #include "imgui/IconsFontAwesome5.h"
 #include "imgui/imgui_sytle.h"
 #include "libs/portable-file-dialogs.h"
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -41,6 +42,7 @@ extern Camera camera;
 extern bool showGui;
 extern bool showFPS;
 extern bool isDarkTheme;
+extern bool isStereoWindow;
 extern bool showInfoWindow;
 extern bool showSettingsWindow;
 extern bool show3DCursor;
@@ -114,6 +116,9 @@ extern GUI::CursorPreview3D cursorPreview3D;
 
 // Shortcut manager
 extern StereoVista::ShortcutManager shortcutManager;
+
+// Files dropped onto the window (queued by the GLFW drop callback in main.cpp)
+extern std::vector<std::string> g_droppedFiles;
 
 // External function declarations
 extern void savePreferences();
@@ -503,6 +508,386 @@ void CleanupGUI() {
   // ImGui::DestroyContext();
 }
 
+// ---------------------------------------------------------------------------
+// Toast notifications
+// ---------------------------------------------------------------------------
+
+namespace {
+
+struct ToastMessage {
+  std::string text;
+  GUI::ToastType type;
+  double createdAt;
+};
+
+std::vector<ToastMessage> g_toasts;
+
+constexpr double kToastLifetime = 4.0; // seconds on screen
+constexpr double kToastFadeIn = 0.15;
+constexpr double kToastFadeOut = 0.4;
+
+} // namespace
+
+void GUI::ShowToast(const std::string &message, GUI::ToastType type) {
+  if (ImGui::GetCurrentContext() == nullptr)
+    return;
+  // Keep the stack short; the oldest message gives way to new ones
+  if (g_toasts.size() >= 4)
+    g_toasts.erase(g_toasts.begin());
+  g_toasts.push_back({message, type, ImGui::GetTime()});
+}
+
+void GUI::UpdateWindowTitleForScene(const std::string &scenePath) {
+  std::string title = "StereoVista";
+  if (!scenePath.empty()) {
+    std::string stem = std::filesystem::path(scenePath).stem().string();
+    if (!stem.empty()) {
+      title = stem + " - StereoVista";
+    }
+  }
+  if (!isStereoWindow) {
+    title += " (Monoviewer)";
+  }
+  if (Engine::Window::nativeWindow) {
+    glfwSetWindowTitle(Engine::Window::nativeWindow, title.c_str());
+  }
+}
+
+// Draws the active toasts stacked above the bottom edge, newest at the
+// bottom. Called every frame from renderGUI (in both the visible and the
+// hidden-GUI paths).
+static void renderToasts() {
+  if (g_toasts.empty())
+    return;
+
+  double now = ImGui::GetTime();
+  g_toasts.erase(std::remove_if(g_toasts.begin(), g_toasts.end(),
+                                [now](const ToastMessage &t) {
+                                  return now - t.createdAt > kToastLifetime;
+                                }),
+                 g_toasts.end());
+
+  float scale = g_GuiScale.currentScale;
+  float y = windowHeight - 24.0f * scale;
+
+  for (int i = static_cast<int>(g_toasts.size()) - 1; i >= 0; --i) {
+    const ToastMessage &toast = g_toasts[i];
+    double age = now - toast.createdAt;
+
+    // Fade in quickly, hold, then fade out
+    float alpha = 1.0f;
+    if (age < kToastFadeIn) {
+      alpha = static_cast<float>(age / kToastFadeIn);
+    } else if (age > kToastLifetime - kToastFadeOut) {
+      alpha = static_cast<float>((kToastLifetime - age) / kToastFadeOut);
+    }
+    alpha = std::clamp(alpha, 0.0f, 1.0f);
+
+    const char *icon = ICON_FA_INFO_CIRCLE;
+    ImVec4 accent = g_StyleColors.info;
+    switch (toast.type) {
+    case GUI::ToastType::Success:
+      icon = ICON_FA_CHECK_CIRCLE;
+      accent = g_StyleColors.success;
+      break;
+    case GUI::ToastType::Warning:
+      icon = ICON_FA_EXCLAMATION_TRIANGLE;
+      accent = g_StyleColors.warning;
+      break;
+    case GUI::ToastType::Error:
+      icon = ICON_FA_EXCLAMATION_CIRCLE;
+      accent = g_StyleColors.danger;
+      break;
+    default:
+      break;
+    }
+
+    ImGui::SetNextWindowPos(ImVec2(windowWidth * 0.5f, y), ImGuiCond_Always,
+                            ImVec2(0.5f, 1.0f));
+    ImGui::SetNextWindowBgAlpha(0.92f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f * scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+                        ImVec2(14.0f * scale, 10.0f * scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
+
+    char windowName[32];
+    snprintf(windowName, sizeof(windowName), "##toast%d", i);
+    ImGui::Begin(windowName, nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                     ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoFocusOnAppearing |
+                     ImGuiWindowFlags_NoNav);
+
+    if (g_Fonts.icons) {
+      ImGui::PushFont(g_Fonts.icons);
+      ImGui::TextColored(accent, "%s", icon);
+      ImGui::PopFont();
+      ImGui::SameLine();
+    }
+    ImGui::TextUnformatted(toast.text.c_str());
+
+    y -= ImGui::GetWindowSize().y + 8.0f * scale;
+    ImGui::End();
+    ImGui::PopStyleVar(3);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Performance overlay: FPS, frame time, a frame-time graph and scene
+// statistics in a translucent click-through widget (bottom-right corner).
+// ---------------------------------------------------------------------------
+
+// Formats large counts compactly ("950", "12.4K", "1.2M")
+static void formatCount(char *buffer, size_t bufferSize, size_t count) {
+  if (count >= 1000000) {
+    snprintf(buffer, bufferSize, "%.1fM", count / 1000000.0);
+  } else if (count >= 10000) {
+    snprintf(buffer, bufferSize, "%.1fK", count / 1000.0);
+  } else {
+    snprintf(buffer, bufferSize, "%zu", count);
+  }
+}
+
+static void renderPerformanceOverlay() {
+  ImGuiIO &io = ImGui::GetIO();
+  float scale = g_GuiScale.currentScale;
+
+  // Rolling frame-time history (~2 s at 60 fps)
+  static float frameTimes[120] = {};
+  static int frameTimeOffset = 0;
+  frameTimes[frameTimeOffset] = io.DeltaTime * 1000.0f;
+  frameTimeOffset = (frameTimeOffset + 1) % IM_ARRAYSIZE(frameTimes);
+
+  // GPU name (driver-owned string, valid for the lifetime of the GL context)
+  static const char *gpuName = nullptr;
+  if (gpuName == nullptr) {
+    const GLubyte *renderer = glGetString(GL_RENDERER);
+    gpuName =
+        renderer ? reinterpret_cast<const char *>(renderer) : "Unknown GPU";
+  }
+
+  float fps = io.Framerate;
+  float frameMs = fps > 0.0f ? 1000.0f / fps : 0.0f;
+
+  ImGui::SetNextWindowPos(
+      ImVec2(windowWidth - 12.0f * scale, windowHeight - 12.0f * scale),
+      ImGuiCond_Always, ImVec2(1.0f, 1.0f));
+  ImGui::SetNextWindowBgAlpha(0.6f);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f * scale);
+  ImGui::Begin("PerformanceOverlay", nullptr,
+               ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                   ImGuiWindowFlags_AlwaysAutoResize |
+                   ImGuiWindowFlags_NoSavedSettings |
+                   ImGuiWindowFlags_NoFocusOnAppearing |
+                   ImGuiWindowFlags_NoNav);
+
+  // FPS readout colored by performance budget (green >= 59, yellow >= 29)
+  ImVec4 fpsColor = fps >= 59.0f   ? g_StyleColors.success
+                    : fps >= 29.0f ? g_StyleColors.warning
+                                   : g_StyleColors.danger;
+  if (g_Fonts.header)
+    ImGui::PushFont(g_Fonts.header);
+  ImGui::TextColored(fpsColor, "%.0f", fps);
+  if (g_Fonts.header)
+    ImGui::PopFont();
+  ImGui::SameLine();
+  ImGui::Text("FPS");
+  ImGui::SameLine();
+  ImGui::TextDisabled("%.2f ms", frameMs);
+
+  // Frame-time graph. The scale floors at the 30 fps budget so a steady
+  // 60 fps draws as a calm low line and spikes stand out.
+  float graphMax = 33.3f;
+  for (float t : frameTimes) {
+    if (t > graphMax)
+      graphMax = t;
+  }
+  ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.0f, 0.0f, 0.0f, 0.25f));
+  ImGui::PlotLines("##frametimes", frameTimes, IM_ARRAYSIZE(frameTimes),
+                   frameTimeOffset, nullptr, 0.0f, graphMax,
+                   ImVec2(180.0f * scale, 40.0f * scale));
+  ImGui::PopStyleColor();
+
+  // Scene statistics
+  size_t triangles = 0;
+  for (const auto &model : currentScene.models) {
+    for (const auto &mesh : model.getMeshes()) {
+      triangles += mesh.indices.size() / 3;
+    }
+  }
+  size_t points = 0;
+  for (const auto &pc : currentScene.pointClouds) {
+    points += pc.totalPointCount;
+  }
+
+  if (g_Fonts.small)
+    ImGui::PushFont(g_Fonts.small);
+  char countBuffer[32];
+  if (triangles > 0 || !currentScene.models.empty()) {
+    formatCount(countBuffer, sizeof(countBuffer), triangles);
+    ImGui::TextDisabled("%zu models | %s tris", currentScene.models.size(),
+                        countBuffer);
+  }
+  if (points > 0 || !currentScene.pointClouds.empty()) {
+    formatCount(countBuffer, sizeof(countBuffer), points);
+    ImGui::TextDisabled("%zu clouds | %s pts",
+                        currentScene.pointClouds.size(), countBuffer);
+  }
+  ImGui::TextDisabled("%s", gpuName);
+  if (g_Fonts.small)
+    ImGui::PopFont();
+
+  ImGui::End();
+  ImGui::PopStyleVar();
+}
+
+// ---------------------------------------------------------------------------
+// Empty-scene hint: a subtle centered prompt shown while nothing is loaded
+// ---------------------------------------------------------------------------
+static void renderEmptySceneHint() {
+  if (!currentScene.models.empty() || !currentScene.pointClouds.empty())
+    return;
+
+  // Center over the 3D viewport (falls back to the window center before the
+  // viewport rectangle is first published)
+  float centerX = windowWidth * 0.5f;
+  float centerY = windowHeight * 0.5f;
+  if (g_viewportWidth > 0 && g_viewportHeight > 0) {
+    centerX = g_viewportX + g_viewportWidth * 0.5f;
+    centerY = g_viewportTopInset + g_viewportHeight * 0.5f;
+  }
+
+  auto centeredText = [](const char *text) {
+    float textWidth = ImGui::CalcTextSize(text).x;
+    float indent = (ImGui::GetWindowSize().x -
+                    ImGui::GetStyle().WindowPadding.x * 2.0f - textWidth) *
+                   0.5f;
+    if (indent > 0.0f) {
+      ImGui::SetCursorPosX(ImGui::GetStyle().WindowPadding.x + indent);
+    }
+    ImGui::TextDisabled("%s", text);
+  };
+
+  ImGui::SetNextWindowPos(ImVec2(centerX, centerY), ImGuiCond_Always,
+                          ImVec2(0.5f, 0.5f));
+  ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.75f);
+  ImGui::Begin("EmptySceneHint", nullptr,
+               ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                   ImGuiWindowFlags_AlwaysAutoResize |
+                   ImGuiWindowFlags_NoSavedSettings |
+                   ImGuiWindowFlags_NoFocusOnAppearing |
+                   ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBackground);
+
+  if (g_Fonts.icons) {
+    ImGui::PushFont(g_Fonts.icons);
+    centeredText(ICON_FA_CUBE);
+    ImGui::PopFont();
+    ImGui::Spacing();
+  }
+  if (g_Fonts.header)
+    ImGui::PushFont(g_Fonts.header);
+  centeredText("Scene is empty");
+  if (g_Fonts.header)
+    ImGui::PopFont();
+  ImGui::Spacing();
+  centeredText("Drag & drop 3D models, point clouds or scene files here");
+  centeredText("or use File > Import");
+
+  ImGui::End();
+  ImGui::PopStyleVar();
+}
+
+// ---------------------------------------------------------------------------
+// File import helpers shared by the File menu and window drag-and-drop
+// ---------------------------------------------------------------------------
+
+// Imports a single 3D model file into the scene and selects it.
+static void importModelFile(const std::string &filePath) {
+  try {
+    Engine::Model newModel = *Engine::loadModel(filePath);
+    glm::vec3 targetScale = newModel.scale;
+    if (preferences.enableSpawnAnimation) {
+      newModel.startSpawnAnimation(targetScale, 1.1f);
+    }
+    currentScene.models.push_back(newModel);
+    Engine::Undo::recordModelAdded(
+        static_cast<int>(currentScene.models.size()) - 1);
+    currentSelectedIndex = currentScene.models.size() - 1;
+    currentSelectedType = SelectedType::Model;
+    updateSpaceMouseBounds();
+
+    // Mark voxelizer dirty for re-voxelization
+    if (voxelizer) {
+      voxelizer->markDirty();
+    }
+
+    GUI::ShowToast("Model imported: " +
+                       std::filesystem::path(filePath).filename().string(),
+                   GUI::ToastType::Success);
+  } catch (const std::exception &e) {
+    std::cerr << "Failed to load model: " << e.what() << std::endl;
+    GUI::ShowToast(std::string("Failed to import model: ") + e.what(),
+                   GUI::ToastType::Error);
+  }
+}
+
+// Imports a single point cloud file of any supported format except LAS/LAZ
+// (those are loaded in batches via importLASFiles so tiles share a global
+// center).
+static void importPointCloudFile(const std::string &filePath) {
+  std::string extension = std::filesystem::path(filePath).extension().string();
+  std::transform(extension.begin(), extension.end(), extension.begin(),
+                 ::tolower);
+
+  if (extension == ".txt" || extension == ".xyz" || extension == ".ply") {
+    Engine::PointCloud newPointCloud =
+        std::move(Engine::PointCloudLoader::loadPointCloudFile(filePath));
+    newPointCloud.filePath = filePath;
+    currentScene.pointClouds.emplace_back(std::move(newPointCloud));
+    Engine::Undo::recordPointCloudAdded(
+        static_cast<int>(currentScene.pointClouds.size()) - 1);
+    updateSpaceMouseBounds();
+  } else if (extension == ".pcb") {
+    Engine::PointCloud newPointCloud =
+        std::move(Engine::PointCloudLoader::loadFromBinary(filePath));
+    if (newPointCloud.isLoaded()) {
+      newPointCloud.filePath = filePath;
+      newPointCloud.name = std::filesystem::path(filePath).stem().string();
+      currentScene.pointClouds.emplace_back(std::move(newPointCloud));
+      Engine::Undo::recordPointCloudAdded(
+          static_cast<int>(currentScene.pointClouds.size()) - 1);
+      updateSpaceMouseBounds();
+    }
+  } else if (extension == ".h5" || extension == ".hdf5" ||
+             extension == ".f5") {
+    Engine::PointCloud newPointCloud =
+        std::move(Engine::PointCloudLoader::loadPointCloudFile(filePath));
+    if (newPointCloud.isLoaded()) {
+      newPointCloud.filePath = filePath;
+      newPointCloud.name = std::filesystem::path(filePath).stem().string();
+      currentScene.pointClouds.emplace_back(std::move(newPointCloud));
+      Engine::Undo::recordPointCloudAdded(
+          static_cast<int>(currentScene.pointClouds.size()) - 1);
+      updateSpaceMouseBounds();
+    }
+  }
+}
+
+// Imports LAS/LAZ tiles together so they share a global center and remain
+// correctly positioned relative to each other.
+static void importLASFiles(const std::vector<std::string> &lasFiles) {
+  if (lasFiles.empty())
+    return;
+  auto clouds = Engine::PointCloudLoader::loadFromLASMultiple(lasFiles);
+  for (auto &pc : clouds) {
+    currentScene.pointClouds.emplace_back(std::move(pc));
+    Engine::Undo::recordPointCloudAdded(
+        static_cast<int>(currentScene.pointClouds.size()) - 1);
+  }
+  updateSpaceMouseBounds();
+}
+
 void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
                ImGuiWindowFlags windowFlags, Engine::Shader *shader) {
   if (!isLeftEye) {
@@ -518,18 +903,20 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
   ImGui::NewFrame();
 
   if (!showGui) {
+    // Files dropped while the GUI is hidden: bring the GUI back so the
+    // import (and any scene-load dialog) runs on the next frame.
+    if (!g_droppedFiles.empty()) {
+      showGui = true;
+    }
+
     // GUI hidden: the viewport fills the whole window.
     g_dockLeftWidth = 0.0f;
     g_dockTopHeight = 0.0f;
+    renderEmptySceneHint();
     if (showFPS) {
-      ImGui::SetNextWindowPos(ImVec2(windowWidth - 120, windowHeight - 60));
-      ImGui::Begin("FPS Counter", nullptr,
-                   ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
-                       ImGuiWindowFlags_AlwaysAutoResize |
-                       ImGuiWindowFlags_NoBackground);
-      ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
-      ImGui::End();
+      renderPerformanceOverlay();
     }
+    renderToasts();
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     return;
@@ -581,8 +968,15 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       if (voxelizer) {
         voxelizer->markDirty();
       }
+
+      GUI::UpdateWindowTitleForScene(sceneFile);
+      GUI::ShowToast("Scene loaded: " +
+                         std::filesystem::path(sceneFile).filename().string(),
+                     GUI::ToastType::Success);
     } catch (const std::exception &e) {
       std::cerr << "Failed to load scene: " << e.what() << std::endl;
+      GUI::ShowToast(std::string("Failed to load scene: ") + e.what(),
+                     GUI::ToastType::Error);
     }
   };
 
@@ -626,8 +1020,14 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       if (voxelizer) {
         voxelizer->markDirty();
       }
+
+      GUI::ShowToast("Scene merged: " +
+                         std::filesystem::path(sceneFile).filename().string(),
+                     GUI::ToastType::Success);
     } catch (const std::exception &e) {
       std::cerr << "Failed to load scene: " << e.what() << std::endl;
+      GUI::ShowToast(std::string("Failed to merge scene: ") + e.what(),
+                     GUI::ToastType::Error);
     }
   };
 
@@ -654,7 +1054,76 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
     if (voxelizer) {
       voxelizer->markDirty();
     }
+
+    GUI::UpdateWindowTitleForScene(sceneFile);
+    GUI::ShowToast("Scene loaded: " +
+                       std::filesystem::path(sceneFile).filename().string(),
+                   GUI::ToastType::Success);
   };
+
+  // Import any files dropped onto the window (queued by the GLFW drop
+  // callback). Scene files follow the same replace/merge/ask flow as
+  // File > Load Scene; models and point clouds import directly.
+  if (!g_droppedFiles.empty()) {
+    std::vector<std::string> droppedFiles;
+    droppedFiles.swap(g_droppedFiles);
+
+    std::vector<std::string> lasFiles;
+    size_t cloudCountBefore = currentScene.pointClouds.size();
+
+    for (const auto &filePath : droppedFiles) {
+      std::string ext = std::filesystem::path(filePath).extension().string();
+      std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+
+      if (ext == ".scene") {
+        bool hasExistingObjects = !currentScene.models.empty() ||
+                                  !currentScene.pointClouds.empty() ||
+                                  !pointLights.empty() || !spotLights.empty();
+        if (!hasExistingObjects) {
+          try {
+            loadSceneWithPreference(filePath);
+          } catch (const std::exception &e) {
+            std::cerr << "Failed to load scene: " << e.what() << std::endl;
+            GUI::ShowToast(std::string("Failed to load scene: ") + e.what(),
+                           GUI::ToastType::Error);
+          }
+        } else if (preferences.sceneLoadingBehavior ==
+                   GUI::SCENE_LOAD_ALWAYS_REPLACE) {
+          loadAndReplaceScene(filePath);
+        } else if (preferences.sceneLoadingBehavior ==
+                   GUI::SCENE_LOAD_ALWAYS_MERGE) {
+          loadAndMergeScene(filePath);
+        } else {
+          pendingSceneToLoad = filePath;
+          showLoadSceneDialog = true;
+        }
+      } else if (ext == ".obj" || ext == ".fbx" || ext == ".3ds" ||
+                 ext == ".gltf" || ext == ".glb") {
+        importModelFile(filePath);
+      } else if (ext == ".las" || ext == ".laz") {
+        lasFiles.push_back(filePath);
+      } else if (ext == ".txt" || ext == ".xyz" || ext == ".ply" ||
+                 ext == ".pcb" || ext == ".h5" || ext == ".hdf5" ||
+                 ext == ".f5") {
+        importPointCloudFile(filePath);
+      } else {
+        GUI::ShowToast("Unsupported file type: " +
+                           std::filesystem::path(filePath).filename().string(),
+                       GUI::ToastType::Warning);
+      }
+    }
+
+    importLASFiles(lasFiles);
+
+    size_t cloudsImported =
+        currentScene.pointClouds.size() - cloudCountBefore;
+    if (cloudsImported > 0) {
+      GUI::ShowToast("Imported " + std::to_string(cloudsImported) +
+                         (cloudsImported == 1 ? " point cloud"
+                                              : " point clouds"),
+                     GUI::ToastType::Success);
+    }
+  }
 
   if (ImGui::BeginMainMenuBar()) {
     // File Menu
@@ -676,27 +1145,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
                   .result();
 
           if (!selection.empty()) {
-            std::string filePath = selection[0];
-            try {
-              Engine::Model newModel = *Engine::loadModel(filePath);
-              glm::vec3 targetScale = newModel.scale;
-              if (preferences.enableSpawnAnimation) {
-                newModel.startSpawnAnimation(targetScale, 1.1f);
-              }
-              currentScene.models.push_back(newModel);
-              Engine::Undo::recordModelAdded(
-                  static_cast<int>(currentScene.models.size()) - 1);
-              currentSelectedIndex = currentScene.models.size() - 1;
-              currentSelectedType = SelectedType::Model;
-              updateSpaceMouseBounds();
-
-              // Mark voxelizer dirty for re-voxelization
-              if (voxelizer) {
-                voxelizer->markDirty();
-              }
-            } catch (const std::exception &e) {
-              std::cerr << "Failed to load model: " << e.what() << std::endl;
-            }
+            importModelFile(selection[0]);
           }
         }
 
@@ -719,6 +1168,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
                   .result();
 
           if (!selection.empty()) {
+            size_t cloudCountBefore = currentScene.pointClouds.size();
+
             // Separate LAS/LAZ tiles from other formats.  Multiple LAS/LAZ
             // files are loaded together so they share a global centre and
             // remain correctly positioned relative to each other.
@@ -730,57 +1181,22 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
               else otherFiles.push_back(path);
             }
 
-            if (!lasFiles.empty()) {
-              auto clouds = Engine::PointCloudLoader::loadFromLASMultiple(lasFiles);
-              for (auto& pc : clouds) {
-                currentScene.pointClouds.emplace_back(std::move(pc));
-                Engine::Undo::recordPointCloudAdded(
-                    static_cast<int>(currentScene.pointClouds.size()) - 1);
-              }
-              updateSpaceMouseBounds();
-            }
+            importLASFiles(lasFiles);
 
             for (const auto& filePath : otherFiles) {
-              std::string extension =
-                  std::filesystem::path(filePath).extension().string();
-              std::transform(extension.begin(), extension.end(),
-                             extension.begin(), ::tolower);
+              importPointCloudFile(filePath);
+            }
 
-              if (extension == ".txt" || extension == ".xyz" ||
-                  extension == ".ply") {
-                Engine::PointCloud newPointCloud = std::move(
-                    Engine::PointCloudLoader::loadPointCloudFile(filePath));
-                newPointCloud.filePath = filePath;
-                currentScene.pointClouds.emplace_back(std::move(newPointCloud));
-                Engine::Undo::recordPointCloudAdded(
-                    static_cast<int>(currentScene.pointClouds.size()) - 1);
-                updateSpaceMouseBounds();
-              } else if (extension == ".pcb") {
-                Engine::PointCloud newPointCloud =
-                    std::move(Engine::PointCloudLoader::loadFromBinary(filePath));
-                if (newPointCloud.isLoaded()) {
-                  newPointCloud.filePath = filePath;
-                  newPointCloud.name =
-                      std::filesystem::path(filePath).stem().string();
-                  currentScene.pointClouds.emplace_back(std::move(newPointCloud));
-                  Engine::Undo::recordPointCloudAdded(
-                      static_cast<int>(currentScene.pointClouds.size()) - 1);
-                  updateSpaceMouseBounds();
-                }
-              } else if (extension == ".h5" || extension == ".hdf5" ||
-                         extension == ".f5") {
-                Engine::PointCloud newPointCloud = std::move(
-                    Engine::PointCloudLoader::loadPointCloudFile(filePath));
-                if (newPointCloud.isLoaded()) {
-                  newPointCloud.filePath = filePath;
-                  newPointCloud.name =
-                      std::filesystem::path(filePath).stem().string();
-                  currentScene.pointClouds.emplace_back(std::move(newPointCloud));
-                  Engine::Undo::recordPointCloudAdded(
-                      static_cast<int>(currentScene.pointClouds.size()) - 1);
-                  updateSpaceMouseBounds();
-                }
-              }
+            size_t cloudsImported =
+                currentScene.pointClouds.size() - cloudCountBefore;
+            if (cloudsImported > 0) {
+              GUI::ShowToast("Imported " + std::to_string(cloudsImported) +
+                                 (cloudsImported == 1 ? " point cloud"
+                                                      : " point clouds"),
+                             GUI::ToastType::Success);
+            } else {
+              GUI::ShowToast("No point clouds could be imported",
+                             GUI::ToastType::Warning);
             }
           }
         }
@@ -830,6 +1246,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
               loadSceneWithPreference(selection[0]);
             } catch (const std::exception &e) {
               std::cerr << "Failed to load scene: " << e.what() << std::endl;
+              GUI::ShowToast(std::string("Failed to load scene: ") + e.what(),
+                             GUI::ToastType::Error);
             }
           }
         }
@@ -845,8 +1263,15 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
             currentScene.pointLights = pointLights;
             currentScene.spotLights = spotLights;
             Engine::saveScene(destination, currentScene, camera);
+            GUI::UpdateWindowTitleForScene(destination);
+            GUI::ShowToast(
+                "Scene saved: " +
+                    std::filesystem::path(destination).filename().string(),
+                GUI::ToastType::Success);
           } catch (const std::exception &e) {
             std::cerr << "Failed to save scene: " << e.what() << std::endl;
+            GUI::ShowToast(std::string("Failed to save scene: ") + e.what(),
+                           GUI::ToastType::Error);
           }
         }
       }
@@ -1108,7 +1533,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
     // View Menu
     if (ImGui::BeginMenu("View")) {
       ImGui::MenuItem("Show GUI", "G", &showGui);
-      ImGui::MenuItem("Show FPS Counter", nullptr, &showFPS);
+      ImGui::MenuItem("Show Performance Overlay", nullptr, &showFPS);
       ImGui::MenuItem("Wireframe Mode", nullptr, &camera.wireframe);
 
       ImGui::Separator();
@@ -1939,16 +2364,16 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
   // from the world-space measurement overlay
   drawMeasurementLabels();
 
-  // FPS Counter (always in top-right corner)
+  // Centered hint while nothing is loaded yet
+  renderEmptySceneHint();
+
+  // Performance overlay (bottom-right corner)
   if (showFPS) {
-    ImGui::SetNextWindowPos(ImVec2(windowWidth - 120, windowHeight - 60));
-    ImGui::Begin("FPS", nullptr,
-                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
-                     ImGuiWindowFlags_AlwaysAutoResize |
-                     ImGuiWindowFlags_NoBackground);
-    ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
-    ImGui::End();
+    renderPerformanceOverlay();
   }
+
+  // Transient status notifications (bottom-center)
+  renderToasts();
 
   ImGui::Render();
   ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -2399,6 +2824,71 @@ void renderSettingsWindow() {
             ImGui::SameLine();
             DrawHelpMarker("Minimum contrast treated as an edge. Lower = more "
                            "edges smoothed (higher quality, slower).");
+          }
+
+          ImGui::Spacing();
+          DrawSectionHeader("Color Grading");
+
+          if (ImGui::SliderFloat("Contrast",
+                                 &preferences.hdrSettings.contrast, 0.5f, 1.5f,
+                                 "%.2f")) {
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker("Image contrast around mid-gray. 1.00 = neutral.");
+
+          if (ImGui::SliderFloat("Saturation",
+                                 &preferences.hdrSettings.saturation, 0.0f,
+                                 2.0f, "%.2f")) {
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker(
+              "Color intensity. 1.00 = neutral, 0.00 = grayscale.");
+
+          if (ImGui::Checkbox("Vignette",
+                              &preferences.hdrSettings.enableVignette)) {
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker("Subtle darkening towards the screen corners that "
+                         "draws the eye to the center of the frame.");
+
+          if (preferences.hdrSettings.enableVignette) {
+            if (ImGui::SliderFloat("Vignette Intensity",
+                                   &preferences.hdrSettings.vignetteIntensity,
+                                   0.0f, 1.0f, "%.2f")) {
+              settingsChanged = true;
+            }
+            ImGui::SameLine();
+            DrawHelpMarker("How dark the corners get.");
+
+            if (ImGui::SliderFloat("Vignette Radius",
+                                   &preferences.hdrSettings.vignetteRadius,
+                                   0.0f, 1.0f, "%.2f")) {
+              settingsChanged = true;
+            }
+            ImGui::SameLine();
+            DrawHelpMarker("Where the darkening starts. 0 = screen center, "
+                           "1 = corners only.");
+
+            if (ImGui::SliderFloat("Vignette Softness",
+                                   &preferences.hdrSettings.vignetteSoftness,
+                                   0.05f, 1.0f, "%.2f")) {
+              settingsChanged = true;
+            }
+            ImGui::SameLine();
+            DrawHelpMarker("Width of the falloff. Higher = smoother blend.");
+          }
+
+          if (ImGui::Button("Reset Color Grading")) {
+            preferences.hdrSettings.contrast = 1.0f;
+            preferences.hdrSettings.saturation = 1.0f;
+            preferences.hdrSettings.enableVignette = false;
+            preferences.hdrSettings.vignetteIntensity = 0.35f;
+            preferences.hdrSettings.vignetteRadius = 0.55f;
+            preferences.hdrSettings.vignetteSoftness = 0.45f;
+            settingsChanged = true;
           }
         }
 
@@ -3446,12 +3936,21 @@ void renderSettingsWindow() {
       DrawHelpMarker(
           "Switches between light and dark color themes for the interface");
 
-      if (ImGui::Checkbox("Show FPS", &showFPS)) {
+      if (ImGui::Checkbox("Show Performance Overlay", &showFPS)) {
         preferences.showFPS = showFPS;
         settingsChanged = true;
       }
       ImGui::SameLine();
-      DrawHelpMarker("Shows/hides the FPS counter in the top-right corner");
+      DrawHelpMarker("Shows/hides the performance overlay (FPS, frame-time "
+                     "graph and scene statistics) in the bottom-right corner");
+
+      if (ImGui::Checkbox("VSync", &preferences.vsyncEnabled)) {
+        glfwSwapInterval(preferences.vsyncEnabled ? 1 : 0);
+        settingsChanged = true;
+      }
+      ImGui::SameLine();
+      DrawHelpMarker("Synchronizes rendering with the display refresh rate. "
+                     "Eliminates tearing but caps the frame rate.");
 
       if (ImGui::Checkbox("Show GUI", &showGui)) {
         settingsChanged = true;

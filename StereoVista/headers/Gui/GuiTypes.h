@@ -110,6 +110,10 @@ struct ApplicationPreferences {
   std::string currentPresetName = "Sphere";
   float cameraSpeedFactor = 1.0f;
   bool showFPS = true;
+  // Sync buffer swaps to the display refresh rate (eliminates tearing at the
+  // cost of capping the frame rate). Off by default to preserve the
+  // historical uncapped behavior.
+  bool vsyncEnabled = false;
   bool show3DCursor = true;
   // Keep the 3D cursor at the last valid depth when the mouse is over the
   // background instead of switching to the Windows cursor (helps with sparse
@@ -141,12 +145,21 @@ struct ApplicationPreferences {
     float exposure = 1.0f;
     float bloomThreshold = 1.0f;
     float bloomIntensity = 0.04f;
-    int toneMapOperator = 0; // 0=Reinhard, 1=ACES, 2=Filmic
+    // 0=Reinhard, 1=ACES, 2=Uncharted2, 3=AgX, 4=Khronos PBR Neutral,
+    // 5=Tony McMapface. ACES by default for a modern filmic look.
+    int toneMapOperator = 1;
     bool enableBloom = false;
     // FXAA post-process anti-aliasing (applied after tone mapping)
     bool enableFXAA = true;
     float fxaaSubpixel = 0.75f;       // sub-pixel aliasing removal [0..1]
     float fxaaEdgeThreshold = 0.166f; // edge threshold (~0.063 hi .. 0.333 lo)
+    // Color grading (applied after tone mapping; defaults are neutral)
+    float contrast = 1.0f;           // 1 = neutral
+    float saturation = 1.0f;         // 1 = neutral, 0 = grayscale
+    bool enableVignette = false;
+    float vignetteIntensity = 0.35f; // corner darkening amount [0..1]
+    float vignetteRadius = 0.55f;    // where falloff starts (0=center, 1=corner)
+    float vignetteSoftness = 0.45f;  // falloff width
   } hdrSettings;
 
   // SSAO settings
