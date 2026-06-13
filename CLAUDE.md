@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-StereoVista is an OpenGL 4.6 desktop application for interactive 3D visualization with native stereo (quad-buffer) rendering support. It handles 3D models and point clouds with advanced rendering features including PBR, SSAO, bloom, voxel cone tracing (GI), and 3DConnexion SpaceMouse navigation.
+StereoVista is an OpenGL 4.6 desktop application for interactive 3D visualization with native stereo (quad-buffer) rendering support. It handles 3D models and point clouds with advanced rendering features including PBR, SSAO, bloom, three switchable lighting modes (shadow mapping, voxel cone tracing, and BVH ray-traced radiance), DDGI (dynamic diffuse global illumination), and 3DConnexion SpaceMouse navigation.
 
 **Platform:** Windows only (MSVC toolchain)  
 **Language:** C++17 / GLSL  
@@ -27,8 +27,9 @@ Open `StereoVista.sln` in Visual Studio 2019 or newer and build. There is no CMa
 ```
 StereoVista/
 ├── src/                    # C++ implementation files
-│   ├── Core/               # Camera, SceneManager, CursorSynchronizer, Voxalizer
-│   ├── Engine/             # Rendering subsystems (BVH, Bloom, SSAO, shaders, buffers, input)
+│   ├── Core/               # Camera, SceneManager, UndoManager, CursorSynchronizer, Voxalizer
+│   ├── Engine/             # Rendering subsystems (BVH, DDGIVolume, Bloom, SSAO,
+│   │                       #   ComputePointCloudRenderer, Octree, shaders, buffers, input)
 │   ├── Cursors/            # 3D cursor system (base classes, types, presets)
 │   │   ├── Base/
 │   │   └── Types/
@@ -99,9 +100,15 @@ StereoVista/
 
 ### Rendering Pipeline
 
-- Stereo rendering via `renderEye()` — called twice per frame with separate left/right projection matrices
+- Stereo rendering via `renderEye()` — called twice per frame with separate left/right projection matrices (asymmetric-frustum). View-independent passes (sun/point-light shadow maps and the DDGI probe-atlas update) are generated once on the first eye each frame and reused for the second eye, guarded by the per-frame `g_sharedPassesDone` flag in `main.cpp`. Per-eye work (SSAO geometry pass, the main lit draw, and all texture/uniform binding) still runs for both eyes.
 - Configurable convergence point and eye separation for quad-buffer stereo displays
-- Lighting modes: Shadow Mapping and Voxel Cone Tracing (GI)
+- Three lighting modes (`GUI::LightingMode` in `headers/Gui/GuiTypes.h`), cycled at runtime with the **L** key:
+  - **Shadow Mapping** — shadow-mapped direct lighting (directional sun + point-light cubemaps); optional DDGI indirect bounce via the "Enable Indirect Lighting" toggle
+  - **Voxel Cone Tracing (VCT)** — scene voxelized into a 3D texture each frame; single-pass cone tracing for diffuse GI, soft shadows, and reflections
+  - **Radiance** — BVH-accelerated ray-traced lighting (configurable bounces / samples-per-pixel / ray distance) with optional DDGI diffuse GI
+- **DDGI** (`Engine::DDGIVolume`): world-space probe ray tracing against the scene BVH into octahedral irradiance/visibility atlases with temporal hysteresis; shared by both the Radiance and Shadow Mapping modes. The probe grid is sized to the BVH root AABB each frame.
+- **BVH** (`Engine::BVH`): built from scene triangles (triangle + node SSBOs) and consumed by Radiance ray tracing and DDGI probe tracing; rebuilt only when the scene changes.
+- Point clouds: GPU compute-based renderer (`Engine::ComputePointCloudRenderer`) with octree management (`OctreePointCloudManager`) for large clouds, streamed/batch-uploaded by the loader.
 - Post-processing: Bloom/HDR, SSAO, tone mapping
 
 ### Namespaces
@@ -150,4 +157,4 @@ Do not modify these during a running session as changes may be overwritten on ex
 - There is no unit test infrastructure. When making rendering changes, visual verification is required.
 - The project is Windows-only due to Visual Studio project files, MSVC-specific pragmas, and Windows API usage (window handles, DLL loading).
 - 3DConnexion SpaceMouse features require `TDxNavLib.lib` and the 3DConnexion driver installed on the target machine.
-- Point cloud support for HDF5 format requires `libhdf5.lib`; LAZ format requires `laszip64.lib`.
+- Point cloud formats: XYZ/TXT and **ASCII** PLY are read by the generic text parser (`PointCloudLoader::loadPointCloudFile`); LAS/LAZ via LASzip; HDF5 via HighFive; and the native `.pcb` binary format. **Binary PLY is not supported** — the loader detects a binary header and reports a clear error rather than mis-parsing it as text. HDF5 support requires `libhdf5.lib`; LAZ requires `laszip64.lib`.

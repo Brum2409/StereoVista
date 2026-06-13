@@ -83,18 +83,29 @@ All cursor types are managed by a unified **Cursor Manager** that:
   * Adjustable voxel resolution and grid size for performance tuning
   * Single-pass cone tracing for diffuse global illumination and soft shadows
   * Support for transparency, reflections and light bleeding effects
-  
+
 * **Shadow Mapping**:
   * High-resolution shadow maps
-  * Directional light (sun) shadow casting
+  * Directional light (sun) and point-light (cubemap) shadow casting
   * Real-time shadow updates with model manipulation
+  * Optional DDGI indirect bounce via the *Enable Indirect Lighting* toggle
 
-* Easily toggle between lighting techniques with the **L** key
+* **Radiance (BVH Ray Tracing)**:
+  * BVH-accelerated ray-traced lighting with configurable bounce count, samples per pixel, and ray distance
+  * Emissive surfaces act as area light sources
+  * Optional DDGI diffuse global illumination
+
+* **DDGI – Dynamic Diffuse Global Illumination**:
+  * World-space light probes traced against the scene BVH into octahedral irradiance/visibility atlases with temporal accumulation
+  * Adjustable probe grid resolution and rays-per-probe
+  * Shared by both the Radiance and Shadow Mapping modes
+
+* Cycle between the three lighting modes with the **L** key
 
 ### 🔧 Additional Features
 * **Undo/Redo System** - Universal edit history (Ctrl+Z / Ctrl+Y) covering object add/delete, transforms, material edits, and light changes
 * **Complete Scene Management** - Save and load entire scenes including models and point clouds
-* **Dynamic Lighting System** - Emissive materials automatically generate point lights with customizable intensity caps
+* **Flexible Lighting** - Add and configure point lights manually (or load them from scenes); in Radiance and VCT modes, emissive materials additionally act as area light sources for global illumination
 * **Skybox & Environment Mapping** - Multiple skybox modes (cubemap, solid color, gradient)
 * **Radar Overlay** - Miniature camera frustum visualization for improved spatial awareness
 * **Model Manipulation** - Select and transform 3D models with intuitive mouse controls
@@ -115,7 +126,7 @@ StereoVista features a comprehensive ImGui-based interface with multiple windows
   * Stereo settings (separation, convergence, rendering method)
   * Mouse and scroll behavior (sensitivity, smoothing, momentum)
   * Radar configuration (position, size, zoom, visibility)
-  * Lighting mode selection (Shadow Mapping vs. VCT)
+  * Lighting mode selection (Shadow Mapping, Voxel Cone Tracing, Radiance) and DDGI controls
 
 * **3D Cursor Settings**
   * Cursor type selection (Sphere, Fragment, Plane)
@@ -166,7 +177,7 @@ All user preferences are automatically saved to `preferences.json` and restored 
 | Input | Action |
 |-------|--------|
 | **G** | Toggle GUI visibility |
-| **L** | Switch between Shadow Mapping and Voxel Cone Tracing |
+| **L** | Cycle lighting modes (Shadow Mapping → Voxel Cone Tracing → Radiance) |
 | **F** | Frame selected object (center view on it) |
 
 ### Selection System
