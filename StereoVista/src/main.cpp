@@ -394,6 +394,9 @@ Engine::SSAORenderer *ssaoRenderer = nullptr;
 
 GUI::LightingMode currentLightingMode = GUI::LIGHTING_SHADOW_MAPPING;
 bool enableShadows = true;
+// Unlit view mode (albedo only): a view-shading toggle independent of the
+// lighting mode, used by the View toolbar and the ToggleUnlit shortcut.
+bool g_unlitMode = false;
 
 GUI::VCTSettings vctSettings;
 GUI::ApplicationPreferences::RadianceSettings radianceSettings;
@@ -3702,8 +3705,10 @@ int main() {
       rightView = glm::lookAt(rightEyePos, rightEyePos + frontVec, upVec);
     }
     // ---- Update Scene State ----
-    // Set wireframe mode before rendering
-    glPolygonMode(GL_FRONT_AND_BACK, camera.wireframe ? GL_LINE : GL_FILL);
+    // Wireframe is applied per-draw (only around the model geometry pass inside
+    // renderEye) so GL_LINE never leaks into the full-screen post-process /
+    // composite passes — that leak is what broke wireframe under HDR.
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
     // Reset cursor position calculation flag at start of frame
     cursorManager.resetFrameCalculationFlag();
@@ -3725,6 +3730,12 @@ int main() {
       activeShader = voxelConeTracingShader;
     } else if (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING &&
                shadowMappingShader) {
+      activeShader = shadowMappingShader;
+    }
+
+    // Unlit view mode outputs albedo only; force the shadow-mapping shader
+    // (the only one carrying the unlit path) regardless of lighting mode.
+    if (g_unlitMode && shadowMappingShader) {
       activeShader = shadowMappingShader;
     }
 
@@ -4193,7 +4204,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     glDisable(GL_POLYGON_OFFSET_FILL);
 
     // Restore wireframe mode if it was enabled
-    glPolygonMode(GL_FRONT_AND_BACK, camera.wireframe ? GL_LINE : GL_FILL);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL); // wireframe is applied per-draw
   }
 
   // 2.5. Point shadow mapping pass for all point lights. Like the sun shadow
@@ -4259,7 +4270,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     }
 
     // Restore wireframe mode if it was enabled
-    glPolygonMode(GL_FRONT_AND_BACK, camera.wireframe ? GL_LINE : GL_FILL);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL); // wireframe is applied per-draw
   }
 
   // 2.7. SSAO geometry pass - render view-space positions and normals
@@ -4324,7 +4335,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     glEnable(GL_DEPTH_TEST);
 
     // Restore wireframe mode if it was enabled
-    glPolygonMode(GL_FRONT_AND_BACK, camera.wireframe ? GL_LINE : GL_FILL);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL); // wireframe is applied per-draw
   }
 
   // 3. Regular rendering pass
@@ -4378,6 +4389,9 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   // Set lighting mode uniforms - this is always needed
   shader->setInt("lightingMode", static_cast<int>(currentLightingMode));
   shader->setBool("enableShadows", enableShadows);
+  // Unlit view mode (albedo only). Harmless no-op on shaders lacking the
+  // uniform; only the shadow-mapping shader implements the unlit path.
+  shader->setBool("unlitMode", g_unlitMode);
 
   // Set HDR settings uniforms
   shader->setBool("hdrSettings.enabled", preferences.hdrSettings.enabled);
@@ -5128,8 +5142,15 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   // regenerating them.
   g_sharedPassesDone = true;
 
-  // Render scene - cache buffers still bound, fragment shader can read them
+  // Render scene - cache buffers still bound, fragment shader can read them.
+  // Wireframe is scoped to the model pass only: the skybox stays solid and,
+  // crucially, GL_LINE is reset before the post-process/composite passes so it
+  // can't turn the full-screen HDR quads into stray lines.
+  if (camera.wireframe)
+    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
   renderModels(shader, projection * view);
+  if (camera.wireframe)
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
   renderSkybox(projection, view, shader);
   renderPointClouds(shader, view, projection);
 
@@ -7735,6 +7756,11 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
     case StereoVista::ShortcutAction::ToggleWireframe:
       camera.wireframe = !camera.wireframe;
       reportToggle("Wireframe mode", camera.wireframe);
+      break;
+
+    case StereoVista::ShortcutAction::ToggleUnlit:
+      g_unlitMode = !g_unlitMode;
+      reportToggle("Unlit shading", g_unlitMode);
       break;
 
     case StereoVista::ShortcutAction::ToggleRadar:

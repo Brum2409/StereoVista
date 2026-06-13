@@ -34,7 +34,8 @@ enum class ShortcutAction {
   ToggleSunLight, // Toggle sun/directional light
 
   // Materials & Rendering
-  TogglePBR, // Toggle PBR materials
+  TogglePBR,   // Toggle PBR materials
+  ToggleUnlit, // Toggle unlit (albedo-only) view shading
 
   // VCT (Voxel Cone Tracing)
   ToggleVoxelViz,            // V - Toggle voxel visualization

@@ -225,6 +225,84 @@ static void renderGizmoViewportToolbar() {
   ImGui::PopStyleVar(3);
 }
 
+extern bool g_unlitMode;
+
+// Floating "View" toolbar in the top-left of the viewport. Always available
+// (these are global view-shading toggles, independent of selection). Surfaces
+// the rebindable shortcut keys as tooltips.
+static void renderViewModeToolbar() {
+  using SA = StereoVista::ShortcutAction;
+  if (g_viewportWidth <= 0 || g_viewportHeight <= 0)
+    return;
+
+  auto keyFor = [&](SA a) -> std::string {
+    const StereoVista::ShortcutProfile *prof = shortcutManager.getActiveProfile();
+    if (!prof)
+      return "";
+    const std::vector<StereoVista::KeyBinding> &b = prof->getBindings(a);
+    if (b.empty() || b[0].isEmpty())
+      return "";
+    return b[0].toString();
+  };
+
+  const float scale = g_GuiScale.currentScale;
+  const float margin = 12.0f * scale;
+  ImGui::SetNextWindowPos(
+      ImVec2(g_viewportX + margin, g_viewportTopInset + margin),
+      ImGuiCond_Always, ImVec2(0.0f, 0.0f));
+  ImGui::SetNextWindowBgAlpha(0.78f);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f * scale);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+                      ImVec2(6.0f * scale, 6.0f * scale));
+  ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f * scale);
+
+  ImGuiWindowFlags flags =
+      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize |
+      ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing |
+      ImGuiWindowFlags_NoSavedSettings;
+
+  if (ImGui::Begin("##ViewModeToolbar", nullptr, flags)) {
+    const ImVec4 accent = ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive);
+    const ImVec2 btn(0.0f, 26.0f * scale);
+
+    auto toggleBtn = [&](const char *label, bool active, const char *tip,
+                         SA act) {
+      if (active)
+        ImGui::PushStyleColor(ImGuiCol_Button, accent);
+      bool clicked = ImGui::Button(label, btn);
+      if (active)
+        ImGui::PopStyleColor();
+      if (ImGui::IsItemHovered()) {
+        std::string k = keyFor(act);
+        if (k.empty())
+          ImGui::SetTooltip("%s", tip);
+        else
+          ImGui::SetTooltip("%s  [%s]", tip, k.c_str());
+      }
+      return clicked;
+    };
+
+    // Shading: Lit / Unlit (mutually exclusive)
+    if (toggleBtn("Lit", !g_unlitMode, "Lit shading", SA::ToggleUnlit))
+      g_unlitMode = false;
+    ImGui::SameLine();
+    if (toggleBtn("Unlit", g_unlitMode, "Unlit (albedo-only) shading",
+                  SA::ToggleUnlit))
+      g_unlitMode = true;
+    ImGui::SameLine();
+    ImGui::TextUnformatted("|");
+    ImGui::SameLine();
+    // Wireframe overlay toggle (independent of shading)
+    if (toggleBtn("Wireframe", camera.wireframe, "Wireframe (triangle edges)",
+                  SA::ToggleWireframe))
+      camera.wireframe = !camera.wireframe;
+  }
+  ImGui::End();
+  ImGui::PopStyleVar(3);
+}
+
 extern GUI::LightingMode currentLightingMode;
 extern bool enableShadows;
 extern GUI::VCTSettings vctSettings;
@@ -2519,7 +2597,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
   // from the world-space measurement overlay
   drawMeasurementLabels();
 
-  // Floating transform-gizmo mode toolbar (top-right of the viewport)
+  // Floating view-mode toolbar (top-left) and transform-gizmo toolbar
+  // (top-right) of the viewport
+  renderViewModeToolbar();
   renderGizmoViewportToolbar();
 
   // Centered hint while nothing is loaded yet

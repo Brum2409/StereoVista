@@ -440,6 +440,9 @@ ShortcutProfile ShortcutManager::createDefaultProfile() {
                      KeyBinding(GLFW_KEY_Z, true, false, true),
                      1); // Ctrl+Shift+Z
 
+  // View shading
+  profile.setBinding(ShortcutAction::ToggleUnlit, KeyBinding(GLFW_KEY_U), 0);
+
   // Transform gizmo (active while an object is selected)
   profile.setBinding(ShortcutAction::GizmoModeMove, KeyBinding(GLFW_KEY_1), 0);
   profile.setBinding(ShortcutAction::GizmoModeRotate, KeyBinding(GLFW_KEY_2), 0);
@@ -585,6 +588,8 @@ std::string ShortcutManager::getActionName(ShortcutAction action) {
   // Materials & Rendering
   case ShortcutAction::TogglePBR:
     return "TogglePBR";
+  case ShortcutAction::ToggleUnlit:
+    return "ToggleUnlit";
 
   // VCT
   case ShortcutAction::ToggleVoxelViz:
@@ -706,6 +711,8 @@ std::string ShortcutManager::getActionDescription(ShortcutAction action) {
   // Materials & Rendering
   case ShortcutAction::TogglePBR:
     return "Toggle PBR Materials";
+  case ShortcutAction::ToggleUnlit:
+    return "Toggle Unlit (Albedo) Shading";
 
   // VCT
   case ShortcutAction::ToggleVoxelViz:

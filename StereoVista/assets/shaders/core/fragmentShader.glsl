@@ -155,6 +155,8 @@ uniform float emissiveIntensity;
 // Lighting configuration
 uniform int lightingMode;
 uniform bool enableShadows;
+// Unlit view mode: output albedo/base color directly, skipping lighting/GI.
+uniform bool unlitMode;
 
 #define MAX_LIGHTS 16
 uniform PointLight lights[MAX_LIGHTS];
@@ -1894,8 +1896,21 @@ void main() {
     } else {
         baseColor = material.objectColor;
     }
-    
-    float specularStrength = material.hasSpecularMap ? 
+
+    // Unlit view mode: output the albedo directly and skip all lighting,
+    // shadows and GI. Reuses the same HDR-vs-direct output convention as the
+    // lit tail (radar pass is left to its own dedicated path below).
+    if (unlitMode && radarBrightness <= 0.0) {
+        if (hdrSettings.enabled) {
+            FragColor = vec4(baseColor, 1.0); // linear; post does tonemap+gamma
+        } else {
+            FragColor = vec4(pow(baseColor, vec3(1.0 / 2.2)), 1.0);
+        }
+        BrightColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+
+    float specularStrength = material.hasSpecularMap ?
                            texture(material.textures[1], fs_in.TexCoords).r : 0.2;
     
     // Calculate enhanced normal with improved TBN and multi-layer support
