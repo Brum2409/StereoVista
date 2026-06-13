@@ -176,16 +176,6 @@ public:
   // transition)
   void SynchronizeEulerFromQuaternion() { updateEulerFromQuaternion(); }
 
-  // Creates an offset projection matrix for stereo rendering (This version of
-  // stereo is not correct. AsymFrustrum should be used instead)
-  glm::mat4 offsetProjection(glm::mat4 &centerProjection, float separation,
-                             float convergence) const {
-    glm::mat4 o = glm::mat4(centerProjection);
-    o[2][0] = o[2][0] - separation;
-    o[3][0] = o[3][0] - separation * convergence;
-    return o;
-  }
-
   // Extract the 6 normalized frustum planes from a P*V matrix.
   // Call this once per renderModels invocation, then reuse the result per model.
   static std::array<glm::vec4, 6> extractFrustumPlanes(const glm::mat4 &vp) {

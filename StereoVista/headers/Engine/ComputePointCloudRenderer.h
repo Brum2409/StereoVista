@@ -102,7 +102,6 @@ private:
     // Shaders (no clear shader – cleared via glClearNamedBufferSubData)
     Shader* m_rasterShader        = nullptr;  // pointcloud_rasterize.comp   – software rasterize
     Shader* m_colorLookupShader   = nullptr;  // pointcloud_color_lookup.comp – per-pixel scatter
-    Shader* m_depthStencilShader  = nullptr;  // pointcloud_depth_stencil.frag (unused, kept for ref)
     Shader* m_resolveShader       = nullptr;  // pointcloud_resolve.vert/frag  – depth+colour write
 
     // Fullscreen quad for the resolve pass
@@ -121,9 +120,6 @@ private:
     // Cached color-lookup compute shader uniform location
     GLint m_locColorLookupImageSize  = -1;
     GLint m_locLookupCloudID         = -1;   // uLookupCloudID in the color-lookup shader
-
-    // Cached depth-stencil shader (pass 1, unused) uniform location
-    GLint m_locDepthStencilImageSize = -1;
 
     // Cached resolve-shader (pass 2) uniform locations
     GLint m_locResolveImageSize  = -1;

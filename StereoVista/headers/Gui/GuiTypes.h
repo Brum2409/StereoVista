@@ -198,9 +198,6 @@ struct ApplicationPreferences {
     bool enablePCSS = false;
     float lightSize = 0.1f;      // For PCSS calculations
     float shadowSoftness = 1.0f; // Softness multiplier for shadow filtering
-    bool enableCascades = false;
-    int numCascades = 4;
-    float cascadeSplitLambda = 0.5f;
     bool enableIndirectLighting =
         false; // Enable voxel-based indirect lighting in shadow mapping mode
   } shadowSettings;

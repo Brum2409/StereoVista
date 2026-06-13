@@ -92,9 +92,6 @@ struct ShadowSettings {
     bool enablePCSS;
     float lightSize; // For PCSS calculations
     float shadowSoftness; // Softness multiplier for shadow filtering
-    bool enableCascades;
-    int numCascades;
-    float cascadeSplitLambda;
 };
 
 // ---- MATERIAL SETTINGS ----

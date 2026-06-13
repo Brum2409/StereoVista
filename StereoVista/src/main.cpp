@@ -107,7 +107,6 @@ void DrawRadar(bool isStereoWindow, Camera camera, GLfloat focaldist,
 glm::vec4 divw(glm::vec4 vec);
 
 // ---- Update Functions ----
-void updatePointLights();
 void updateSpaceMouseBounds();
 void updateSpaceMouseCursorAnchor();
 
@@ -426,6 +425,13 @@ Engine::Shader *ddgiUpdateDistanceShader = nullptr;   // depth/visibility probe 
 Engine::Shader *ddgiBorderIrradianceShader = nullptr; // irradiance border copy
 Engine::Shader *ddgiBorderDistanceShader = nullptr;   // depth border copy
 bool g_ddgiResetRequested = false; // set by the GUI "Reset DDGI" button
+
+// View-independent passes (shadow maps, DDGI probe update) write to textures /
+// buffers that BOTH eyes sample. renderEye() runs twice per frame in stereo, so
+// without a guard these passes would run redundantly for the second eye. This
+// flag is reset to false once per frame (before the eye loop) and set to true
+// after the first eye's shared passes complete, so the second eye reuses them.
+bool g_sharedPassesDone = false;
 
 // BVH invalidation tracking
 struct SceneState {
@@ -1731,10 +1737,6 @@ void savePreferences() {
   j["shadows"]["enablePCSS"] = preferences.shadowSettings.enablePCSS;
   j["shadows"]["lightSize"] = preferences.shadowSettings.lightSize;
   j["shadows"]["shadowSoftness"] = preferences.shadowSettings.shadowSoftness;
-  j["shadows"]["enableCascades"] = preferences.shadowSettings.enableCascades;
-  j["shadows"]["numCascades"] = preferences.shadowSettings.numCascades;
-  j["shadows"]["cascadeSplitLambda"] =
-      preferences.shadowSettings.cascadeSplitLambda;
   j["shadows"]["enableIndirectLighting"] =
       preferences.shadowSettings.enableIndirectLighting;
 
@@ -2290,12 +2292,6 @@ void loadPreferences() {
           j["shadows"].value("lightSize", 0.1f);
       preferences.shadowSettings.shadowSoftness =
           j["shadows"].value("shadowSoftness", 1.0f);
-      preferences.shadowSettings.enableCascades =
-          j["shadows"].value("enableCascades", false);
-      preferences.shadowSettings.numCascades =
-          j["shadows"].value("numCascades", 4);
-      preferences.shadowSettings.cascadeSplitLambda =
-          j["shadows"].value("cascadeSplitLambda", 0.5f);
       preferences.shadowSettings.enableIndirectLighting =
           j["shadows"].value("enableIndirectLighting", false);
     }
@@ -3696,6 +3692,11 @@ int main() {
       lightSpaceMatrix = calculateLightSpaceMatrix();
     }
 
+    // Reset the per-frame guard so the first renderEye() call regenerates the
+    // view-independent shadow maps and DDGI probe atlases; the second eye reuses
+    // them (see g_sharedPassesDone).
+    g_sharedPassesDone = false;
+
     // Check if HDR/bloom is enabled
     bool hdrEnabled =
         preferences.hdrSettings.enabled && bloomRenderer != nullptr;
@@ -4117,8 +4118,10 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   }
 
   // 2. Shadow mapping pass (only if using shadow mapping AND shadows are
-  // enabled)
-  if (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING && enableShadows) {
+  // enabled). The shadow map is view-independent (light space), so it is
+  // generated only on the first eye each frame and reused for the second.
+  if (!g_sharedPassesDone && currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING &&
+      enableShadows) {
     // Temporarily disable wireframe mode for shadow mapping
     // Shadow maps need filled polygons, not wireframe lines
     glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
@@ -4149,9 +4152,10 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     glPolygonMode(GL_FRONT_AND_BACK, camera.wireframe ? GL_LINE : GL_FILL);
   }
 
-  // 2.5. Point shadow mapping pass for all point lights
-  if (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING && enableShadows &&
-      !pointLights.empty()) {
+  // 2.5. Point shadow mapping pass for all point lights. Like the sun shadow
+  // map above, these cubemaps are view-independent and generated once per frame.
+  if (!g_sharedPassesDone && currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING &&
+      enableShadows && !pointLights.empty()) {
     // Temporarily disable wireframe mode for point shadow mapping
     glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
@@ -4352,12 +4356,6 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
                    preferences.shadowSettings.lightSize);
   shader->setFloat("shadowSettings.shadowSoftness",
                    preferences.shadowSettings.shadowSoftness);
-  shader->setBool("shadowSettings.enableCascades",
-                  preferences.shadowSettings.enableCascades);
-  shader->setInt("shadowSettings.numCascades",
-                 preferences.shadowSettings.numCascades);
-  shader->setFloat("shadowSettings.cascadeSplitLambda",
-                   preferences.shadowSettings.cascadeSplitLambda);
 
   // Set material enhancement uniforms (for enhanced material properties)
   shader->setBool("materialSettings.enablePBR",
@@ -4898,9 +4896,12 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     // octahedral atlases with temporal hysteresis, (3) copy the octahedral
     // borders so bilinear sampling is seamless. The fragment shader then
     // samples the atlases (bound on texture units 16/17 above).
-    if (ddgiActive && ddgiTraceShader && ddgiUpdateIrradianceShader &&
-        ddgiUpdateDistanceShader && ddgiBorderIrradianceShader &&
-        ddgiBorderDistanceShader && triangleCount > 0) {
+    // The probe atlases are view-independent (world-space ray tracing), so the
+    // trace + update is done once per frame and reused for the second eye.
+    if (!g_sharedPassesDone && ddgiActive && ddgiTraceShader &&
+        ddgiUpdateIrradianceShader && ddgiUpdateDistanceShader &&
+        ddgiBorderIrradianceShader && ddgiBorderDistanceShader &&
+        triangleCount > 0) {
 
       const int IRR_SIDE = Engine::DDGIVolume::IRRADIANCE_SIDE;
       const int DEP_SIDE = Engine::DDGIVolume::DEPTH_SIDE;
@@ -5078,6 +5079,11 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
             << " B=" << (int)colorMask[2] << " A=" << (int)colorMask[3] <<
   std::endl;
     */
+  // All view-independent passes (shadow maps, DDGI probe atlases) for this frame
+  // have now run. Mark them done so the second eye reuses the results instead of
+  // regenerating them.
+  g_sharedPassesDone = true;
+
   // Render scene - cache buffers still bound, fragment shader can read them
   renderModels(shader, projection * view);
   renderSkybox(projection, view, shader);
@@ -5603,7 +5609,7 @@ void renderPointClouds(Engine::Shader *shader, const glm::mat4 &view,
   shader->setBool("isPointCloud", false);
 
   // Composite compute result into the HDR framebuffer.
-  // endFrame() internally calls m_depthStencilShader->use() then
+  // endFrame() internally calls m_colorLookupShader->use() then
   // m_resolveShader->use(), leaving the resolve shader as the active program.
   // Re-bind the scene shader afterward so callers (e.g. renderLightVisualizations)
   // get correct glUniform* routing.
@@ -6156,11 +6162,6 @@ void renderLightVisualizations(Engine::Shader *shader) {
       mesh.Draw(*shader);
     }
   }
-}
-
-void updatePointLights() {
-  // Point lights are now only manually created, no auto-generation from
-  // emissive objects This function is kept for compatibility but does nothing
 }
 
 void updateSpaceMouseBounds() {
