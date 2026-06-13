@@ -63,10 +63,6 @@ void ComputePointCloudRenderer::init(int width, int height) {
         m_resolveShader = new Shader(
             "assets/shaders/core/pointcloud_resolve.vert",
             "assets/shaders/core/pointcloud_resolve.frag");
-        // Kept for reference only (unused in current pipeline).
-        m_depthStencilShader = new Shader(
-            "assets/shaders/core/pointcloud_resolve.vert",
-            "assets/shaders/core/pointcloud_depth_stencil.frag");
     } catch (const std::exception& e) {
         std::cerr << "[ComputePC] Shader load failed: " << e.what() << "\n";
         return;
@@ -89,10 +85,6 @@ void ComputePointCloudRenderer::init(int width, int height) {
     m_colorLookupShader->use();
     m_locColorLookupImageSize = glGetUniformLocation(m_colorLookupShader->getID(), "uImageSize");
     m_locLookupCloudID        = glGetUniformLocation(m_colorLookupShader->getID(), "uLookupCloudID");
-
-    // Cache depth-stencil shader uniform location (unused but shader is loaded)
-    m_depthStencilShader->use();
-    m_locDepthStencilImageSize = glGetUniformLocation(m_depthStencilShader->getID(), "uImageSize");
 
     // Cache resolve shader uniform locations
     m_resolveShader->use();
@@ -171,7 +163,6 @@ void ComputePointCloudRenderer::cleanup() {
 
     delete m_rasterShader;        m_rasterShader        = nullptr;
     delete m_colorLookupShader;   m_colorLookupShader   = nullptr;
-    delete m_depthStencilShader;  m_depthStencilShader  = nullptr;
     delete m_resolveShader;       m_resolveShader       = nullptr;
 
     if (m_quadVAO) { glDeleteVertexArrays(1, &m_quadVAO); m_quadVAO = 0; }

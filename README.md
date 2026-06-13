@@ -67,7 +67,7 @@ All cursor types are managed by a unified **Cursor Manager** that:
 ### 🌳 Point Cloud Visualization
 ![Point Cloud Rendering](screenshots/point_cloud_1.png)
 ![Point Cloud Detail](screenshots/point_cloud_2.png)
-* Efficient point cloud handling with support for XYZ, PLY, and PCB formats
+* Efficient point cloud handling with support for XYZ/TXT, ASCII PLY, LAS/LAZ, HDF5, and PCB formats
 * GPU-accelerated instanced rendering for millions of points
 * Chunked loading and visualization with optional chunk boundary outlines
 * World-space transformation and export capabilities

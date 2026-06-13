@@ -843,11 +843,18 @@ static void importPointCloudFile(const std::string &filePath) {
   if (extension == ".txt" || extension == ".xyz" || extension == ".ply") {
     Engine::PointCloud newPointCloud =
         std::move(Engine::PointCloudLoader::loadPointCloudFile(filePath));
-    newPointCloud.filePath = filePath;
-    currentScene.pointClouds.emplace_back(std::move(newPointCloud));
-    Engine::Undo::recordPointCloudAdded(
-        static_cast<int>(currentScene.pointClouds.size()) - 1);
-    updateSpaceMouseBounds();
+    if (newPointCloud.isLoaded()) {
+      newPointCloud.filePath = filePath;
+      currentScene.pointClouds.emplace_back(std::move(newPointCloud));
+      Engine::Undo::recordPointCloudAdded(
+          static_cast<int>(currentScene.pointClouds.size()) - 1);
+      updateSpaceMouseBounds();
+    } else {
+      GUI::ShowToast("Failed to load point cloud (no points / unsupported "
+                     "format - binary PLY is not supported): " +
+                         std::filesystem::path(filePath).filename().string(),
+                     GUI::ToastType::Error);
+    }
   } else if (extension == ".pcb") {
     Engine::PointCloud newPointCloud =
         std::move(Engine::PointCloudLoader::loadFromBinary(filePath));

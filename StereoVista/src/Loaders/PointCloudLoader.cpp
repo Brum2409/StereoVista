@@ -238,6 +238,31 @@ namespace Engine {
             std::cout << "[DEBUG] Loading as LAS/LAZ file" << std::endl;
             return loadFromLAS(filePath, downsampleFactor);
         }
+        else if (extension == ".ply") {
+            // Only ASCII PLY is supported: it falls through to the text parser
+            // below, which skips the (non-numeric) header lines and reads the
+            // "x y z [r g b]" vertex rows. Binary PLY would be parsed as garbage
+            // by the text path, so detect it up front and fail with a clear
+            // message instead of loading nonsense.
+            std::ifstream header(filePath, std::ios::binary);
+            std::string line;
+            if (header.is_open() && std::getline(header, line)) {
+                // First non-empty line of a PLY file is the "ply" magic; the
+                // "format" line that follows states ascii vs binary_*.
+                while (std::getline(header, line)) {
+                    if (line.rfind("format", 0) == 0) {
+                        if (line.find("binary") != std::string::npos) {
+                            std::cerr << "[PLY] Binary PLY is not supported. "
+                                         "Please re-export as ASCII PLY (or XYZ/TXT). File: "
+                                      << filePath << "\n";
+                            return PointCloud{};
+                        }
+                        break; // ASCII PLY -> fall through to the text parser
+                    }
+                }
+            }
+            // ASCII PLY continues into the default text handling below.
+        }
 
         // ── Default handling: XYZ, PLY, TXT, and other text formats ─────────
         // Streaming load: points are quantised and uploaded to GPU one batch
