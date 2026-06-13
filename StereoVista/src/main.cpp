@@ -32,6 +32,7 @@
 #include "Loaders/PointCloudLoader.h"
 #include "Tools/BrushTool.h"
 #include "Tools/MeasurementTool.h"
+#include "Tools/TransformGizmo.h"
 
 
 // ---- GUI and Dialog ----
@@ -136,6 +137,12 @@ bool rayIntersectsModel(const glm::vec3 &rayOrigin,
 // ---- Preferences Functions ----
 void savePreferences();
 void printCursorSyncDiagnostics();
+
+// ---- Transform Gizmo glue (defined alongside the input callbacks) ----
+static void bindGizmoTargetToSelection();
+static void beginGizmoDrag(Tools::TransformGizmo::Handle handle,
+                           const glm::vec3 &rayOrigin, const glm::vec3 &rayDir);
+static void finishGizmoDrag();
 #pragma endregion
 
 // ---- Global Variables ----
@@ -287,6 +294,20 @@ Tools::BrushTool brushTool;
 // ---- Measurement Tool ----
 Tools::MeasurementTool measurementTool;
 
+// ---- Transform Gizmo ----
+// Visual translate/rotate/scale gizmo anchored at the selected object's pivot.
+// Coexists with the legacy Ctrl/Alt body-drag free-move (which is preserved):
+// clicking a gizmo handle starts a constrained transform instead.
+Tools::TransformGizmo transformGizmo;
+bool gizmoDragging = false;
+// Undo snapshots captured at the start of a gizmo drag.
+Engine::Undo::ModelEditState gizmoUndoModelBefore;
+Engine::Undo::PointCloudEditState gizmoUndoPointCloudBefore;
+Engine::PointLight gizmoUndoPointLightBefore;
+Engine::SpotLight gizmoUndoSpotLightBefore;
+SelectedType gizmoUndoType = SelectedType::None;
+int gizmoUndoIndex = -1;
+
 // ---- Window Configuration ----
 int windowWidth = 1920;
 int windowHeight = 1080;
@@ -373,6 +394,9 @@ Engine::SSAORenderer *ssaoRenderer = nullptr;
 
 GUI::LightingMode currentLightingMode = GUI::LIGHTING_SHADOW_MAPPING;
 bool enableShadows = true;
+// Unlit view mode (albedo only): a view-shading toggle independent of the
+// lighting mode, used by the View toolbar and the ToggleUnlit shortcut.
+bool g_unlitMode = false;
 
 GUI::VCTSettings vctSettings;
 GUI::ApplicationPreferences::RadianceSettings radianceSettings;
@@ -3232,6 +3256,28 @@ int main() {
     // across scene loads).
     measurementTool.setMeasurements(&currentScene.measurements);
 
+    // ---- Transform Gizmo: bind target + process hover / constrained drag ----
+    // Safety net: if the mouse-up landed over an ImGui panel (whose callback
+    // early-returns) the release can be missed, so finalize here too.
+    if (gizmoDragging &&
+        glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_RELEASE) {
+      finishGizmoDrag();
+    }
+    bindGizmoTargetToSelection();
+    if (transformGizmo.enabled && transformGizmo.hasTarget()) {
+      glm::vec3 gRayOrigin, gRayDir, gRayNear, gRayFar;
+      calculateMouseRay(lastX, lastY, gRayOrigin, gRayDir, gRayNear, gRayFar,
+                        aspectRatio);
+      if (gizmoDragging) {
+        bool snapHeld = (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
+                         glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS);
+        transformGizmo.updateDrag(gRayOrigin, gRayDir, camera.Position, snapHeld);
+      } else if (!camera.IsOrbiting && !camera.IsPanning && !isMovingModel &&
+                 !rightMousePressed && !ImGui::GetIO().WantCaptureMouse) {
+        transformGizmo.updateHover(gRayOrigin, gRayDir, camera.Position);
+      }
+    }
+
     // ---- Update Model Depth Movement Physics ----
     // Apply smooth scrolling physics to model depth movement when dragging
     if (isMovingModel && currentSelectedType == SelectedType::Model &&
@@ -3659,8 +3705,10 @@ int main() {
       rightView = glm::lookAt(rightEyePos, rightEyePos + frontVec, upVec);
     }
     // ---- Update Scene State ----
-    // Set wireframe mode before rendering
-    glPolygonMode(GL_FRONT_AND_BACK, camera.wireframe ? GL_LINE : GL_FILL);
+    // Wireframe is applied per-draw (only around the model geometry pass inside
+    // renderEye) so GL_LINE never leaks into the full-screen post-process /
+    // composite passes — that leak is what broke wireframe under HDR.
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
     // Reset cursor position calculation flag at start of frame
     cursorManager.resetFrameCalculationFlag();
@@ -3682,6 +3730,12 @@ int main() {
       activeShader = voxelConeTracingShader;
     } else if (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING &&
                shadowMappingShader) {
+      activeShader = shadowMappingShader;
+    }
+
+    // Unlit view mode outputs albedo only; force the shadow-mapping shader
+    // (the only one carrying the unlit path) regardless of lighting mode.
+    if (g_unlitMode && shadowMappingShader) {
       activeShader = shadowMappingShader;
     }
 
@@ -3987,6 +4041,7 @@ void cleanup() {
 
   // Clean up measurement tool GL resources while the context is still valid
   measurementTool.cleanup();
+  transformGizmo.cleanup();
 
   // Drop undo history while the context is still valid - undo entries for
   // deleted objects own GL resources that are freed on destruction
@@ -4149,7 +4204,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     glDisable(GL_POLYGON_OFFSET_FILL);
 
     // Restore wireframe mode if it was enabled
-    glPolygonMode(GL_FRONT_AND_BACK, camera.wireframe ? GL_LINE : GL_FILL);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL); // wireframe is applied per-draw
   }
 
   // 2.5. Point shadow mapping pass for all point lights. Like the sun shadow
@@ -4215,7 +4270,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     }
 
     // Restore wireframe mode if it was enabled
-    glPolygonMode(GL_FRONT_AND_BACK, camera.wireframe ? GL_LINE : GL_FILL);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL); // wireframe is applied per-draw
   }
 
   // 2.7. SSAO geometry pass - render view-space positions and normals
@@ -4280,7 +4335,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     glEnable(GL_DEPTH_TEST);
 
     // Restore wireframe mode if it was enabled
-    glPolygonMode(GL_FRONT_AND_BACK, camera.wireframe ? GL_LINE : GL_FILL);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL); // wireframe is applied per-draw
   }
 
   // 3. Regular rendering pass
@@ -4334,6 +4389,9 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   // Set lighting mode uniforms - this is always needed
   shader->setInt("lightingMode", static_cast<int>(currentLightingMode));
   shader->setBool("enableShadows", enableShadows);
+  // Unlit view mode (albedo only). Harmless no-op on shaders lacking the
+  // uniform; only the shadow-mapping shader implements the unlit path.
+  shader->setBool("unlitMode", g_unlitMode);
 
   // Set HDR settings uniforms
   shader->setBool("hdrSettings.enabled", preferences.hdrSettings.enabled);
@@ -5084,8 +5142,15 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   // regenerating them.
   g_sharedPassesDone = true;
 
-  // Render scene - cache buffers still bound, fragment shader can read them
+  // Render scene - cache buffers still bound, fragment shader can read them.
+  // Wireframe is scoped to the model pass only: the skybox stays solid and,
+  // crucially, GL_LINE is reset before the post-process/composite passes so it
+  // can't turn the full-screen HDR quads into stray lines.
+  if (camera.wireframe)
+    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
   renderModels(shader, projection * view);
+  if (camera.wireframe)
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
   renderSkybox(projection, view, shader);
   renderPointClouds(shader, view, projection);
 
@@ -5303,6 +5368,9 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     }
     measurementTool.render(projection, view, measurePreview);
   }
+
+  // Render the transform gizmo overlay for the selected object (per eye).
+  transformGizmo.render(projection, view, camera.Position);
 
   // Render brush tool indicator
   if (preferences.brushToolSettings.enabled &&
@@ -6685,6 +6753,135 @@ static void endDragUndo() {
   }
 }
 
+// ── Transform gizmo glue ────────────────────────────────────────────────────
+// Bind the gizmo to the currently selected object's transform every frame.
+// Models and point clouds expose position/rotation/scale; lights expose only a
+// position (which restricts the gizmo to translation). Pointers are refreshed
+// each frame so container growth between frames can't leave them dangling.
+static void bindGizmoTargetToSelection() {
+  if (gizmoDragging)
+    return; // keep the live target stable for the duration of a drag
+
+  switch (currentSelectedType) {
+  case SelectedType::Model:
+    if (currentSelectedIndex >= 0 &&
+        currentSelectedIndex < static_cast<int>(currentScene.models.size())) {
+      Engine::Model &mdl = currentScene.models[currentSelectedIndex];
+      transformGizmo.setTarget(&mdl.position, &mdl.rotation, &mdl.scale);
+      return;
+    }
+    break;
+  case SelectedType::PointCloud:
+    if (currentSelectedIndex >= 0 &&
+        currentSelectedIndex <
+            static_cast<int>(currentScene.pointClouds.size())) {
+      Engine::PointCloud &pc = currentScene.pointClouds[currentSelectedIndex];
+      transformGizmo.setTarget(&pc.position, &pc.rotation, &pc.scale);
+      return;
+    }
+    break;
+  case SelectedType::PointLight:
+    if (currentSelectedIndex >= 0 &&
+        currentSelectedIndex < static_cast<int>(pointLights.size())) {
+      transformGizmo.setTarget(&pointLights[currentSelectedIndex].position,
+                               nullptr, nullptr);
+      return;
+    }
+    break;
+  case SelectedType::SpotLight:
+    if (currentSelectedIndex >= 0 &&
+        currentSelectedIndex < static_cast<int>(spotLights.size())) {
+      transformGizmo.setTarget(&spotLights[currentSelectedIndex].position,
+                               nullptr, nullptr);
+      return;
+    }
+    break;
+  default:
+    break;
+  }
+  transformGizmo.clearTarget();
+}
+
+// Capture the before-state so the whole gizmo drag becomes one undo entry.
+static void beginGizmoDrag(Tools::TransformGizmo::Handle handle,
+                           const glm::vec3 &rayOrigin,
+                           const glm::vec3 &rayDir) {
+  gizmoUndoType = currentSelectedType;
+  gizmoUndoIndex = currentSelectedIndex;
+  switch (gizmoUndoType) {
+  case SelectedType::Model:
+    gizmoUndoModelBefore = Engine::Undo::ModelEditState::capture(
+        currentScene.models[gizmoUndoIndex]);
+    break;
+  case SelectedType::PointCloud:
+    gizmoUndoPointCloudBefore = Engine::Undo::PointCloudEditState::capture(
+        currentScene.pointClouds[gizmoUndoIndex]);
+    break;
+  case SelectedType::PointLight:
+    gizmoUndoPointLightBefore = pointLights[gizmoUndoIndex];
+    break;
+  case SelectedType::SpotLight:
+    gizmoUndoSpotLightBefore = spotLights[gizmoUndoIndex];
+    break;
+  default:
+    break;
+  }
+  gizmoDragging =
+      transformGizmo.beginDrag(handle, rayOrigin, rayDir, camera.Position);
+  if (!gizmoDragging)
+    gizmoUndoType = SelectedType::None;
+}
+
+// Commit the drag: record undo, refresh dependent systems.
+static void finishGizmoDrag() {
+  if (!gizmoDragging)
+    return;
+  transformGizmo.endDrag();
+  gizmoDragging = false;
+
+  switch (gizmoUndoType) {
+  case SelectedType::Model:
+    if (gizmoUndoIndex >= 0 &&
+        gizmoUndoIndex < static_cast<int>(currentScene.models.size())) {
+      Undo::recordModelEdit(
+          gizmoUndoIndex, gizmoUndoModelBefore,
+          Engine::Undo::ModelEditState::capture(
+              currentScene.models[gizmoUndoIndex]));
+      if (voxelizer)
+        voxelizer->markDirty();
+    }
+    break;
+  case SelectedType::PointCloud:
+    if (gizmoUndoIndex >= 0 &&
+        gizmoUndoIndex < static_cast<int>(currentScene.pointClouds.size())) {
+      Undo::recordPointCloudEdit(
+          gizmoUndoIndex, gizmoUndoPointCloudBefore,
+          Engine::Undo::PointCloudEditState::capture(
+              currentScene.pointClouds[gizmoUndoIndex]));
+    }
+    break;
+  case SelectedType::PointLight:
+    if (gizmoUndoIndex >= 0 &&
+        gizmoUndoIndex < static_cast<int>(pointLights.size())) {
+      Undo::recordPointLightEdit(gizmoUndoIndex, gizmoUndoPointLightBefore,
+                                 pointLights[gizmoUndoIndex]);
+    }
+    break;
+  case SelectedType::SpotLight:
+    if (gizmoUndoIndex >= 0 &&
+        gizmoUndoIndex < static_cast<int>(spotLights.size())) {
+      Undo::recordSpotLightEdit(gizmoUndoIndex, gizmoUndoSpotLightBefore,
+                                spotLights[gizmoUndoIndex]);
+    }
+    break;
+  default:
+    break;
+  }
+  gizmoUndoType = SelectedType::None;
+  gizmoUndoIndex = -1;
+  updateSpaceMouseBounds();
+}
+
 void mouse_button_callback(GLFWwindow *window, int button, int action,
                            int mods) {
   if (ImGui::GetIO().WantCaptureMouse) {
@@ -6697,6 +6894,26 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
       // Check if Ctrl or Alt is held down
       bool ctrlPressed = (mods & GLFW_MOD_CONTROL);
       bool altPressed = (mods & GLFW_MOD_ALT);
+
+      // Transform gizmo: if a handle is under the cursor, start a constrained
+      // drag and consume the click. This works with or without modifiers, so a
+      // plain click on an axis/ring/plane manipulates the object while a click
+      // on empty space still orbits and Ctrl/Alt body-drag still free-moves.
+      // Re-bind first so the target pointer reflects the current selection even
+      // if a scene container was reallocated since the last frame.
+      bindGizmoTargetToSelection();
+      if (transformGizmo.enabled && transformGizmo.hasTarget()) {
+        glm::vec3 gRayOrigin, gRayDir, gRayNear, gRayFar;
+        calculateMouseRay(lastX, lastY, gRayOrigin, gRayDir, gRayNear, gRayFar,
+                          aspectRatio);
+        Tools::TransformGizmo::Handle hit =
+            transformGizmo.hitTest(gRayOrigin, gRayDir, camera.Position);
+        if (hit != Tools::TransformGizmo::Handle::None) {
+          beginGizmoDrag(hit, gRayOrigin, gRayDir);
+          if (gizmoDragging)
+            return;
+        }
+      }
 
       // Measurement tool: place a point at the 3D cursor position and consume
       // the click (no orbiting/selection while measuring). Ctrl/Alt clicks
@@ -7080,6 +7297,12 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
         }
       }
     } else if (action == GLFW_RELEASE) {
+      // Finalize a gizmo drag (records one undo entry) and consume the release.
+      if (gizmoDragging) {
+        finishGizmoDrag();
+        return;
+      }
+
       // Check if we were moving a model before processing the release
       bool wasMovingModel = isMovingModel;
 
@@ -7535,6 +7758,11 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
       reportToggle("Wireframe mode", camera.wireframe);
       break;
 
+    case StereoVista::ShortcutAction::ToggleUnlit:
+      g_unlitMode = !g_unlitMode;
+      reportToggle("Unlit shading", g_unlitMode);
+      break;
+
     case StereoVista::ShortcutAction::ToggleRadar:
       preferences.radarEnabled = !preferences.radarEnabled;
       reportToggle("Radar", preferences.radarEnabled);
@@ -7810,6 +8038,38 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
         if (!UndoManager::instance().redo()) {
           std::cout << "Nothing to redo" << std::endl;
         }
+      }
+      break;
+
+    // Transform gizmo mode/space. Switching mode is a persistent setting even
+    // with nothing selected; it takes visible effect once an object is picked.
+    // Guarded so digits typed into numeric fields don't switch modes.
+    case StereoVista::ShortcutAction::GizmoModeMove:
+      if (!ImGui::GetIO().WantTextInput) {
+        transformGizmo.setMode(Tools::TransformGizmo::Mode::Translate);
+        GUI::ShowToast("Gizmo: Move", GUI::ToastType::Info);
+      }
+      break;
+    case StereoVista::ShortcutAction::GizmoModeRotate:
+      if (!ImGui::GetIO().WantTextInput) {
+        transformGizmo.setMode(Tools::TransformGizmo::Mode::Rotate);
+        GUI::ShowToast("Gizmo: Rotate", GUI::ToastType::Info);
+      }
+      break;
+    case StereoVista::ShortcutAction::GizmoModeScale:
+      if (!ImGui::GetIO().WantTextInput) {
+        transformGizmo.setMode(Tools::TransformGizmo::Mode::Scale);
+        GUI::ShowToast("Gizmo: Scale", GUI::ToastType::Info);
+      }
+      break;
+    case StereoVista::ShortcutAction::GizmoToggleSpace:
+      if (!ImGui::GetIO().WantTextInput) {
+        transformGizmo.toggleSpace();
+        GUI::ShowToast(transformGizmo.space ==
+                               Tools::TransformGizmo::Space::World
+                           ? "Gizmo: World space"
+                           : "Gizmo: Local space",
+                       GUI::ToastType::Info);
       }
       break;
 

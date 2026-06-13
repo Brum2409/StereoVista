@@ -440,6 +440,15 @@ ShortcutProfile ShortcutManager::createDefaultProfile() {
                      KeyBinding(GLFW_KEY_Z, true, false, true),
                      1); // Ctrl+Shift+Z
 
+  // View shading
+  profile.setBinding(ShortcutAction::ToggleUnlit, KeyBinding(GLFW_KEY_U), 0);
+
+  // Transform gizmo (active while an object is selected)
+  profile.setBinding(ShortcutAction::GizmoModeMove, KeyBinding(GLFW_KEY_1), 0);
+  profile.setBinding(ShortcutAction::GizmoModeRotate, KeyBinding(GLFW_KEY_2), 0);
+  profile.setBinding(ShortcutAction::GizmoModeScale, KeyBinding(GLFW_KEY_3), 0);
+  profile.setBinding(ShortcutAction::GizmoToggleSpace, KeyBinding(GLFW_KEY_4), 0);
+
   // New actions start unbound - users can assign keys as needed
 
   return profile;
@@ -579,6 +588,8 @@ std::string ShortcutManager::getActionName(ShortcutAction action) {
   // Materials & Rendering
   case ShortcutAction::TogglePBR:
     return "TogglePBR";
+  case ShortcutAction::ToggleUnlit:
+    return "ToggleUnlit";
 
   // VCT
   case ShortcutAction::ToggleVoxelViz:
@@ -642,6 +653,16 @@ std::string ShortcutManager::getActionName(ShortcutAction action) {
   case ShortcutAction::Redo:
     return "Redo";
 
+  // Transform Gizmo
+  case ShortcutAction::GizmoModeMove:
+    return "GizmoModeMove";
+  case ShortcutAction::GizmoModeRotate:
+    return "GizmoModeRotate";
+  case ShortcutAction::GizmoModeScale:
+    return "GizmoModeScale";
+  case ShortcutAction::GizmoToggleSpace:
+    return "GizmoToggleSpace";
+
   default:
     return "Unknown";
   }
@@ -690,6 +711,8 @@ std::string ShortcutManager::getActionDescription(ShortcutAction action) {
   // Materials & Rendering
   case ShortcutAction::TogglePBR:
     return "Toggle PBR Materials";
+  case ShortcutAction::ToggleUnlit:
+    return "Toggle Unlit (Albedo) Shading";
 
   // VCT
   case ShortcutAction::ToggleVoxelViz:
@@ -752,6 +775,16 @@ std::string ShortcutManager::getActionDescription(ShortcutAction action) {
     return "Undo Last Action";
   case ShortcutAction::Redo:
     return "Redo Last Undone Action";
+
+  // Transform Gizmo
+  case ShortcutAction::GizmoModeMove:
+    return "Gizmo: Move Mode";
+  case ShortcutAction::GizmoModeRotate:
+    return "Gizmo: Rotate Mode";
+  case ShortcutAction::GizmoModeScale:
+    return "Gizmo: Scale Mode";
+  case ShortcutAction::GizmoToggleSpace:
+    return "Gizmo: Toggle World/Local Space";
 
   default:
     return "Unknown Action";

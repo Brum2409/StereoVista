@@ -11,6 +11,7 @@
 #include "Gui/GuiTypes.h"
 #include "Tools/BrushTool.h"
 #include "Tools/MeasurementTool.h"
+#include "Tools/TransformGizmo.h"
 #include "imgui/IconsFontAwesome5.h"
 #include "imgui/imgui_sytle.h"
 #include "libs/portable-file-dialogs.h"
@@ -70,12 +71,237 @@ extern Tools::BrushTool brushTool;
 extern Tools::MeasurementTool measurementTool;
 extern bool showMeasurementToolWindow;
 
+// Transform gizmo
+extern Tools::TransformGizmo transformGizmo;
+
+// Shared transform-gizmo controls (mode / space / snap), drawn inside the
+// Transform panel of any selectable object.
+static void DrawTransformGizmoControls(bool canRotateScale) {
+  using G = Tools::TransformGizmo;
+  ImGui::Spacing();
+  ImGui::Checkbox("Show Gizmo", &transformGizmo.enabled);
+  if (!transformGizmo.enabled)
+    return;
+
+  G::Mode mode = transformGizmo.mode();
+  auto modeButton = [&](const char *label, G::Mode m, bool enabledBtn) {
+    if (!enabledBtn)
+      ImGui::BeginDisabled();
+    bool active = (mode == m);
+    if (active)
+      ImGui::PushStyleColor(ImGuiCol_Button,
+                            ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+    if (ImGui::Button(label))
+      transformGizmo.setMode(m);
+    if (active)
+      ImGui::PopStyleColor();
+    if (!enabledBtn)
+      ImGui::EndDisabled();
+  };
+  modeButton("Move", G::Mode::Translate, true);
+  ImGui::SameLine();
+  modeButton("Rotate", G::Mode::Rotate, canRotateScale);
+  ImGui::SameLine();
+  modeButton("Scale", G::Mode::Scale, canRotateScale);
+  ImGui::SameLine();
+  bool world = (transformGizmo.space == G::Space::World);
+  if (ImGui::Button(world ? "World" : "Local"))
+    transformGizmo.toggleSpace();
+
+  ImGui::Checkbox("Snap", &transformGizmo.snapEnabled);
+  if (transformGizmo.snapEnabled) {
+    ImGui::DragFloat("Move Snap", &transformGizmo.snapTranslate, 0.01f, 0.001f,
+                     10.0f, "%.3f");
+    ImGui::DragFloat("Rotate Snap", &transformGizmo.snapRotateDeg, 0.5f, 1.0f,
+                     90.0f, "%.0f°");
+    ImGui::DragFloat("Scale Snap", &transformGizmo.snapScale, 0.01f, 0.001f,
+                     10.0f, "%.3f");
+  }
+  ImGui::DragFloat("Gizmo Size", &transformGizmo.screenSize, 0.005f, 0.04f,
+                   0.5f, "%.3f");
+  ImGui::TextDisabled(
+      "Default keys: 1 Move  2 Rotate  3 Scale  4 World/Local");
+  ImGui::TextDisabled("(rebindable in Settings > Shortcuts)");
+  ImGui::TextDisabled("Hold Shift while dragging to snap");
+}
+
 // 3D viewport rectangle (window pixels) — used to project measurement labels
 extern int g_viewportX;
 extern int g_viewportTopInset;
 extern int g_viewportWidth;
 extern int g_viewportHeight;
 extern float aspectRatio;
+extern StereoVista::ShortcutManager shortcutManager;
+
+// Floating mode toolbar drawn as a small rounded bubble in the top-right of the
+// 3D viewport while an object is selected. Mirrors the gizmo's current mode and
+// shows the (rebindable) shortcut keys as tooltips.
+static void renderGizmoViewportToolbar() {
+  using G = Tools::TransformGizmo;
+  using SA = StereoVista::ShortcutAction;
+  if (!transformGizmo.enabled || !transformGizmo.hasTarget())
+    return;
+  if (g_viewportWidth <= 0 || g_viewportHeight <= 0)
+    return;
+
+  auto keyFor = [&](SA a) -> std::string {
+    const StereoVista::ShortcutProfile *prof = shortcutManager.getActiveProfile();
+    if (!prof)
+      return "";
+    const std::vector<StereoVista::KeyBinding> &b = prof->getBindings(a);
+    if (b.empty() || b[0].isEmpty())
+      return "";
+    return b[0].toString();
+  };
+
+  const float scale = g_GuiScale.currentScale;
+  const float margin = 12.0f * scale;
+  ImGui::SetNextWindowPos(
+      ImVec2(g_viewportX + g_viewportWidth - margin, g_viewportTopInset + margin),
+      ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+  ImGui::SetNextWindowBgAlpha(0.78f);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f * scale);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+                      ImVec2(6.0f * scale, 6.0f * scale));
+  ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f * scale);
+
+  ImGuiWindowFlags flags =
+      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize |
+      ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing |
+      ImGuiWindowFlags_NoSavedSettings;
+
+  if (ImGui::Begin("##GizmoToolbar", nullptr, flags)) {
+    const ImVec4 accent = ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive);
+    const ImVec2 btn(0.0f, 26.0f * scale);
+
+    auto modeBtn = [&](const char *label, G::Mode m, bool enabledBtn, SA act) {
+      bool active = (transformGizmo.mode() == m);
+      if (active)
+        ImGui::PushStyleColor(ImGuiCol_Button, accent);
+      if (!enabledBtn)
+        ImGui::BeginDisabled();
+      if (ImGui::Button(label, btn))
+        transformGizmo.setMode(m);
+      if (!enabledBtn)
+        ImGui::EndDisabled();
+      if (active)
+        ImGui::PopStyleColor();
+      if (ImGui::IsItemHovered()) {
+        std::string k = keyFor(act);
+        ImGui::SetTooltip("%s%s%s", label, k.empty() ? "" : "  [",
+                          k.empty() ? "" : (k + "]").c_str());
+      }
+    };
+
+    bool rs = transformGizmo.canRotate(); // rotate/scale availability
+    modeBtn("Move", G::Mode::Translate, true, SA::GizmoModeMove);
+    ImGui::SameLine();
+    modeBtn("Rotate", G::Mode::Rotate, rs, SA::GizmoModeRotate);
+    ImGui::SameLine();
+    modeBtn("Scale", G::Mode::Scale, transformGizmo.canScale(),
+            SA::GizmoModeScale);
+    ImGui::SameLine();
+    ImGui::TextUnformatted("|");
+    ImGui::SameLine();
+    bool world = (transformGizmo.space == G::Space::World);
+    if (ImGui::Button(world ? "World" : "Local", btn))
+      transformGizmo.toggleSpace();
+    if (ImGui::IsItemHovered()) {
+      std::string k = keyFor(SA::GizmoToggleSpace);
+      ImGui::SetTooltip("Transform space%s%s%s",
+                        k.empty() ? "" : "  [", k.empty() ? "" : k.c_str(),
+                        k.empty() ? "" : "]");
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton(transformGizmo.snapEnabled ? "Snap:On" : "Snap:Off"))
+      transformGizmo.snapEnabled = !transformGizmo.snapEnabled;
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("Toggle snapping (hold Shift while dragging for "
+                        "momentary snap)");
+  }
+  ImGui::End();
+  ImGui::PopStyleVar(3);
+}
+
+extern bool g_unlitMode;
+
+// Floating "View" toolbar in the top-left of the viewport. Always available
+// (these are global view-shading toggles, independent of selection). Surfaces
+// the rebindable shortcut keys as tooltips.
+static void renderViewModeToolbar() {
+  using SA = StereoVista::ShortcutAction;
+  if (g_viewportWidth <= 0 || g_viewportHeight <= 0)
+    return;
+
+  auto keyFor = [&](SA a) -> std::string {
+    const StereoVista::ShortcutProfile *prof = shortcutManager.getActiveProfile();
+    if (!prof)
+      return "";
+    const std::vector<StereoVista::KeyBinding> &b = prof->getBindings(a);
+    if (b.empty() || b[0].isEmpty())
+      return "";
+    return b[0].toString();
+  };
+
+  const float scale = g_GuiScale.currentScale;
+  const float margin = 12.0f * scale;
+  ImGui::SetNextWindowPos(
+      ImVec2(g_viewportX + margin, g_viewportTopInset + margin),
+      ImGuiCond_Always, ImVec2(0.0f, 0.0f));
+  ImGui::SetNextWindowBgAlpha(0.78f);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f * scale);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+                      ImVec2(6.0f * scale, 6.0f * scale));
+  ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f * scale);
+
+  ImGuiWindowFlags flags =
+      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize |
+      ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing |
+      ImGuiWindowFlags_NoSavedSettings;
+
+  if (ImGui::Begin("##ViewModeToolbar", nullptr, flags)) {
+    const ImVec4 accent = ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive);
+    const ImVec2 btn(0.0f, 26.0f * scale);
+
+    auto toggleBtn = [&](const char *label, bool active, const char *tip,
+                         SA act) {
+      if (active)
+        ImGui::PushStyleColor(ImGuiCol_Button, accent);
+      bool clicked = ImGui::Button(label, btn);
+      if (active)
+        ImGui::PopStyleColor();
+      if (ImGui::IsItemHovered()) {
+        std::string k = keyFor(act);
+        if (k.empty())
+          ImGui::SetTooltip("%s", tip);
+        else
+          ImGui::SetTooltip("%s  [%s]", tip, k.c_str());
+      }
+      return clicked;
+    };
+
+    // Shading: Lit / Unlit (mutually exclusive)
+    if (toggleBtn("Lit", !g_unlitMode, "Lit shading", SA::ToggleUnlit))
+      g_unlitMode = false;
+    ImGui::SameLine();
+    if (toggleBtn("Unlit", g_unlitMode, "Unlit (albedo-only) shading",
+                  SA::ToggleUnlit))
+      g_unlitMode = true;
+    ImGui::SameLine();
+    ImGui::TextUnformatted("|");
+    ImGui::SameLine();
+    // Wireframe overlay toggle (independent of shading)
+    if (toggleBtn("Wireframe", camera.wireframe, "Wireframe (triangle edges)",
+                  SA::ToggleWireframe))
+      camera.wireframe = !camera.wireframe;
+  }
+  ImGui::End();
+  ImGui::PopStyleVar(3);
+}
 
 extern GUI::LightingMode currentLightingMode;
 extern bool enableShadows;
@@ -2370,6 +2596,11 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
   // Screen-space measurement labels (distances/angles/coordinates) projected
   // from the world-space measurement overlay
   drawMeasurementLabels();
+
+  // Floating view-mode toolbar (top-left) and transform-gizmo toolbar
+  // (top-right) of the viewport
+  renderViewModeToolbar();
+  renderGizmoViewportToolbar();
 
   // Centered hint while nothing is loaded yet
   renderEmptySceneHint();
@@ -6298,6 +6529,8 @@ void renderModelManipulationPanel(Engine::Model &model,
     if (transformChanged) {
       updateSpaceMouseBounds();
     }
+
+    DrawTransformGizmoControls(/*canRotateScale=*/true);
   }
 
   if (ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -6667,6 +6900,8 @@ void renderPointCloudManipulationPanel(Engine::PointCloud &pointCloud) {
     if (transformChanged) {
       updateSpaceMouseBounds();
     }
+
+    DrawTransformGizmoControls(/*canRotateScale=*/true);
   }
 
   if (ImGui::CollapsingHeader("Display Settings",
@@ -6842,6 +7077,7 @@ void renderPointLightManipulationPanel() {
 
   if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
     ImGui::DragFloat3("Position", glm::value_ptr(light.position), 0.1f);
+    DrawTransformGizmoControls(/*canRotateScale=*/false);
   }
 
   if (ImGui::CollapsingHeader("Light Properties",
@@ -6919,6 +7155,7 @@ void renderSpotLightManipulationPanel() {
     }
     ImGui::SameLine();
     DrawHelpMarker("Make direction vector unit length");
+    DrawTransformGizmoControls(/*canRotateScale=*/false);
   }
 
   if (ImGui::CollapsingHeader("Light Properties",
