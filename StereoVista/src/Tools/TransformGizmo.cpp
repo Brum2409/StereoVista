@@ -327,10 +327,13 @@ bool TransformGizmo::beginDrag(Handle handle, const glm::vec3& o,
     case Handle::ScaleUniform: {
         m_dragPlaneNormal = glm::normalize(cameraPos - pivot);
         glm::vec3 hit; float t;
-        if (rayPlane(o, d, pivot, m_dragPlaneNormal, hit, t))
-            m_startRadius = std::max(glm::length(hit - pivot), 1e-4f);
-        else
-            m_startRadius = m_gizmoScaleAtDrag;
+        // Store the start distance from the pivot; the update uses an additive
+        // factor so the response is stable even when the grab starts near the
+        // centre (no division by a tiny radius).
+        m_startRadius =
+            rayPlane(o, d, pivot, m_dragPlaneNormal, hit, t)
+                ? glm::length(hit - pivot)
+                : 0.0f;
         break;
     }
     default:
@@ -406,7 +409,9 @@ void TransformGizmo::updateDrag(const glm::vec3& o, const glm::vec3& d,
         if (!m_scale) break;
         glm::vec3 hit; float t;
         if (rayPlane(o, d, pivot, m_dragPlaneNormal, hit, t)) {
-            float factor = std::max(glm::length(hit - pivot) / m_startRadius, 0.01f);
+            float len = glm::length(hit - pivot);
+            float factor = std::max(
+                0.01f, 1.0f + (len - m_startRadius) / m_gizmoScaleAtDrag);
             glm::vec3 ns = m_startScale * factor;
             if (snap) {
                 ns.x = std::max(snapScale, std::round(ns.x / snapScale) * snapScale);

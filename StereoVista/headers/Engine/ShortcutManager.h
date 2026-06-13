@@ -70,6 +70,12 @@ enum class ShortcutAction {
   // Object Manipulation
   DeleteObject, // Delete - Delete selected object
 
+  // Transform Gizmo
+  GizmoModeMove,    // 1 - Gizmo translate mode
+  GizmoModeRotate,  // 2 - Gizmo rotate mode
+  GizmoModeScale,   // 3 - Gizmo scale mode
+  GizmoToggleSpace, // 4 - Toggle gizmo world/local space
+
   // Edit History
   Undo, // Ctrl+Z - Undo last action
   Redo, // Ctrl+Y - Redo last undone action

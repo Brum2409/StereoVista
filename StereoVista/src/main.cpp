@@ -6878,6 +6878,9 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
       // drag and consume the click. This works with or without modifiers, so a
       // plain click on an axis/ring/plane manipulates the object while a click
       // on empty space still orbits and Ctrl/Alt body-drag still free-moves.
+      // Re-bind first so the target pointer reflects the current selection even
+      // if a scene container was reallocated since the last frame.
+      bindGizmoTargetToSelection();
       if (transformGizmo.enabled && transformGizmo.hasTarget()) {
         glm::vec3 gRayOrigin, gRayDir, gRayNear, gRayFar;
         calculateMouseRay(lastX, lastY, gRayOrigin, gRayDir, gRayNear, gRayFar,
@@ -7614,37 +7617,6 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
     }
   }
 
-  // Transform gizmo mode switching (only when an object is selected and the
-  // user isn't typing). 1=Move, 2=Rotate, 3=Scale, 4=toggle World/Local.
-  if (transformGizmo.enabled && transformGizmo.hasTarget() &&
-      !ImGui::GetIO().WantTextInput && !(mods & GLFW_MOD_CONTROL) &&
-      !(mods & GLFW_MOD_ALT)) {
-    switch (key) {
-    case GLFW_KEY_1:
-      transformGizmo.setMode(Tools::TransformGizmo::Mode::Translate);
-      GUI::ShowToast("Gizmo: Move", GUI::ToastType::Info);
-      return;
-    case GLFW_KEY_2:
-      transformGizmo.setMode(Tools::TransformGizmo::Mode::Rotate);
-      GUI::ShowToast("Gizmo: Rotate", GUI::ToastType::Info);
-      return;
-    case GLFW_KEY_3:
-      transformGizmo.setMode(Tools::TransformGizmo::Mode::Scale);
-      GUI::ShowToast("Gizmo: Scale", GUI::ToastType::Info);
-      return;
-    case GLFW_KEY_4:
-      transformGizmo.toggleSpace();
-      GUI::ShowToast(transformGizmo.space ==
-                             Tools::TransformGizmo::Space::World
-                         ? "Gizmo: World space"
-                         : "Gizmo: Local space",
-                     GUI::ToastType::Info);
-      return;
-    default:
-      break;
-    }
-  }
-
   // Check if this key press matches any shortcut action
   auto actionOpt = shortcutManager.getActionForKey(key, mods);
 
@@ -8040,6 +8012,38 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
         if (!UndoManager::instance().redo()) {
           std::cout << "Nothing to redo" << std::endl;
         }
+      }
+      break;
+
+    // Transform gizmo mode/space. Switching mode is a persistent setting even
+    // with nothing selected; it takes visible effect once an object is picked.
+    // Guarded so digits typed into numeric fields don't switch modes.
+    case StereoVista::ShortcutAction::GizmoModeMove:
+      if (!ImGui::GetIO().WantTextInput) {
+        transformGizmo.setMode(Tools::TransformGizmo::Mode::Translate);
+        GUI::ShowToast("Gizmo: Move", GUI::ToastType::Info);
+      }
+      break;
+    case StereoVista::ShortcutAction::GizmoModeRotate:
+      if (!ImGui::GetIO().WantTextInput) {
+        transformGizmo.setMode(Tools::TransformGizmo::Mode::Rotate);
+        GUI::ShowToast("Gizmo: Rotate", GUI::ToastType::Info);
+      }
+      break;
+    case StereoVista::ShortcutAction::GizmoModeScale:
+      if (!ImGui::GetIO().WantTextInput) {
+        transformGizmo.setMode(Tools::TransformGizmo::Mode::Scale);
+        GUI::ShowToast("Gizmo: Scale", GUI::ToastType::Info);
+      }
+      break;
+    case StereoVista::ShortcutAction::GizmoToggleSpace:
+      if (!ImGui::GetIO().WantTextInput) {
+        transformGizmo.toggleSpace();
+        GUI::ShowToast(transformGizmo.space ==
+                               Tools::TransformGizmo::Space::World
+                           ? "Gizmo: World space"
+                           : "Gizmo: Local space",
+                       GUI::ToastType::Info);
       }
       break;
 
