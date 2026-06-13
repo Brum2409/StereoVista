@@ -721,8 +721,8 @@ static void renderPerformanceOverlay() {
     points += pc.totalPointCount;
   }
 
-  if (g_Fonts.small)
-    ImGui::PushFont(g_Fonts.small);
+  if (g_Fonts.smallFont)
+    ImGui::PushFont(g_Fonts.smallFont);
   char countBuffer[32];
   if (triangles > 0 || !currentScene.models.empty()) {
     formatCount(countBuffer, sizeof(countBuffer), triangles);
@@ -735,7 +735,7 @@ static void renderPerformanceOverlay() {
                         currentScene.pointClouds.size(), countBuffer);
   }
   ImGui::TextDisabled("%s", gpuName);
-  if (g_Fonts.small)
+  if (g_Fonts.smallFont)
     ImGui::PopFont();
 
   ImGui::End();

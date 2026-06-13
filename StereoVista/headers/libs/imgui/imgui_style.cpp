@@ -121,7 +121,7 @@ bool InitializeImGuiWithFonts(GLFWwindow *window, bool isDarkTheme) {
     smallConfig.SizePixels = smallSize;
     smallConfig.FontDataOwnedByAtlas =
         false; // CRITICAL: Do not free this memory as it is shared
-    g_Fonts.small = io.Fonts->AddFontFromMemoryTTF(
+    g_Fonts.smallFont = io.Fonts->AddFontFromMemoryTTF(
         (void *)g_Fonts.regular->ConfigData->FontData,
         g_Fonts.regular->ConfigData->FontDataSize, smallSize, &smallConfig);
   }
@@ -242,7 +242,7 @@ bool InitializeImGuiWithFonts(GLFWwindow *window, bool isDarkTheme) {
     g_Fonts.regular = io.Fonts->AddFontDefault();
     g_Fonts.bold = g_Fonts.regular;
     g_Fonts.header = g_Fonts.regular;
-    g_Fonts.small = g_Fonts.regular;
+    g_Fonts.smallFont = g_Fonts.regular;
     g_Fonts.mono = g_Fonts.regular;
   }
 
@@ -342,7 +342,7 @@ void RebuildImGuiFontAtlas(bool isDarkTheme) {
   g_Fonts.regular = nullptr;
   g_Fonts.bold = nullptr;
   g_Fonts.header = nullptr;
-  g_Fonts.small = nullptr;
+  g_Fonts.smallFont = nullptr;
   g_Fonts.mono = nullptr;
   g_Fonts.icons = nullptr;
 
@@ -433,7 +433,7 @@ void RebuildImGuiFontAtlas(bool isDarkTheme) {
 
   // Load small font
   if (loadedRegularFontPath) {
-    g_Fonts.small = io.Fonts->AddFontFromFileTTF(loadedRegularFontPath,
+    g_Fonts.smallFont = io.Fonts->AddFontFromFileTTF(loadedRegularFontPath,
                                                  smallSize, &fontConfig);
   }
 
@@ -540,7 +540,7 @@ void RebuildImGuiFontAtlas(bool isDarkTheme) {
     g_Fonts.regular = io.Fonts->AddFontDefault();
     g_Fonts.bold = g_Fonts.regular;
     g_Fonts.header = g_Fonts.regular;
-    g_Fonts.small = g_Fonts.regular;
+    g_Fonts.smallFont = g_Fonts.regular;
     g_Fonts.mono = g_Fonts.regular;
   }
 
