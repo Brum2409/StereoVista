@@ -22,7 +22,7 @@ struct ImGuiFonts {
     ImFont* regular = nullptr;
     ImFont* bold = nullptr;
     ImFont* header = nullptr;
-    ImFont* small = nullptr;
+    ImFont* smallFont = nullptr;
     ImFont* mono = nullptr;
     ImFont* icons = nullptr;
 };
