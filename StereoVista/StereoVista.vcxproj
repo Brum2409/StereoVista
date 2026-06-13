@@ -216,6 +216,7 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClCompile Include="src\Gui\GUI.cpp" />
     <ClCompile Include="src\Tools\BrushTool.cpp" />
     <ClCompile Include="src\Tools\MeasurementTool.cpp" />
+    <ClCompile Include="src\Tools\TransformGizmo.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="headers\core.h" />
@@ -242,6 +243,7 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClInclude Include="headers\Camera.h" />
     <ClInclude Include="headers\Tools\BrushTool.h" />
     <ClInclude Include="headers\Tools\MeasurementTool.h" />
+    <ClInclude Include="headers\Tools\TransformGizmo.h" />
     <ClInclude Include="headers\libs\assimp\aabb.h" />
     <ClInclude Include="headers\libs\assimp\ai_assert.h" />
     <ClInclude Include="headers\libs\assimp\anim.h" />

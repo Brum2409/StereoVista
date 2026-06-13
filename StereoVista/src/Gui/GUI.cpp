@@ -11,6 +11,7 @@
 #include "Gui/GuiTypes.h"
 #include "Tools/BrushTool.h"
 #include "Tools/MeasurementTool.h"
+#include "Tools/TransformGizmo.h"
 #include "imgui/IconsFontAwesome5.h"
 #include "imgui/imgui_sytle.h"
 #include "libs/portable-file-dialogs.h"
@@ -69,6 +70,58 @@ extern Tools::BrushTool brushTool;
 // Measurement tool
 extern Tools::MeasurementTool measurementTool;
 extern bool showMeasurementToolWindow;
+
+// Transform gizmo
+extern Tools::TransformGizmo transformGizmo;
+
+// Shared transform-gizmo controls (mode / space / snap), drawn inside the
+// Transform panel of any selectable object.
+static void DrawTransformGizmoControls(bool canRotateScale) {
+  using G = Tools::TransformGizmo;
+  ImGui::Spacing();
+  ImGui::Checkbox("Show Gizmo", &transformGizmo.enabled);
+  if (!transformGizmo.enabled)
+    return;
+
+  G::Mode mode = transformGizmo.mode();
+  auto modeButton = [&](const char *label, G::Mode m, bool enabledBtn) {
+    if (!enabledBtn)
+      ImGui::BeginDisabled();
+    bool active = (mode == m);
+    if (active)
+      ImGui::PushStyleColor(ImGuiCol_Button,
+                            ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+    if (ImGui::Button(label))
+      transformGizmo.setMode(m);
+    if (active)
+      ImGui::PopStyleColor();
+    if (!enabledBtn)
+      ImGui::EndDisabled();
+  };
+  modeButton("Move", G::Mode::Translate, true);
+  ImGui::SameLine();
+  modeButton("Rotate", G::Mode::Rotate, canRotateScale);
+  ImGui::SameLine();
+  modeButton("Scale", G::Mode::Scale, canRotateScale);
+  ImGui::SameLine();
+  bool world = (transformGizmo.space == G::Space::World);
+  if (ImGui::Button(world ? "World" : "Local"))
+    transformGizmo.toggleSpace();
+
+  ImGui::Checkbox("Snap", &transformGizmo.snapEnabled);
+  if (transformGizmo.snapEnabled) {
+    ImGui::DragFloat("Move Snap", &transformGizmo.snapTranslate, 0.01f, 0.001f,
+                     10.0f, "%.3f");
+    ImGui::DragFloat("Rotate Snap", &transformGizmo.snapRotateDeg, 0.5f, 1.0f,
+                     90.0f, "%.0f°");
+    ImGui::DragFloat("Scale Snap", &transformGizmo.snapScale, 0.01f, 0.001f,
+                     10.0f, "%.3f");
+  }
+  ImGui::DragFloat("Gizmo Size", &transformGizmo.screenSize, 0.005f, 0.04f,
+                   0.5f, "%.3f");
+  ImGui::TextDisabled("Keys: 1 Move  2 Rotate  3 Scale  4 World/Local");
+  ImGui::TextDisabled("Hold Shift while dragging to snap");
+}
 
 // 3D viewport rectangle (window pixels) — used to project measurement labels
 extern int g_viewportX;
@@ -6298,6 +6351,8 @@ void renderModelManipulationPanel(Engine::Model &model,
     if (transformChanged) {
       updateSpaceMouseBounds();
     }
+
+    DrawTransformGizmoControls(/*canRotateScale=*/true);
   }
 
   if (ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -6667,6 +6722,8 @@ void renderPointCloudManipulationPanel(Engine::PointCloud &pointCloud) {
     if (transformChanged) {
       updateSpaceMouseBounds();
     }
+
+    DrawTransformGizmoControls(/*canRotateScale=*/true);
   }
 
   if (ImGui::CollapsingHeader("Display Settings",
@@ -6842,6 +6899,7 @@ void renderPointLightManipulationPanel() {
 
   if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
     ImGui::DragFloat3("Position", glm::value_ptr(light.position), 0.1f);
+    DrawTransformGizmoControls(/*canRotateScale=*/false);
   }
 
   if (ImGui::CollapsingHeader("Light Properties",
@@ -6919,6 +6977,7 @@ void renderSpotLightManipulationPanel() {
     }
     ImGui::SameLine();
     DrawHelpMarker("Make direction vector unit length");
+    DrawTransformGizmoControls(/*canRotateScale=*/false);
   }
 
   if (ImGui::CollapsingHeader("Light Properties",
