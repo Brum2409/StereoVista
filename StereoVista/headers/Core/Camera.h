@@ -79,6 +79,10 @@ public:
   float AnimationEndZoom = ZOOM;
   float AnimationProgress;
   float AnimationDuration;
+  // Whether to fire centeringCompletedCallback when the current animation
+  // finishes. Centering animations want it; snapshot-restore animations do not
+  // (they must not warp the cursor or start orbiting).
+  bool AnimationInvokeCallback = true;
 
   bool useNewMethod = true;
   bool wireframe = false;
@@ -575,6 +579,7 @@ public:
   // Starts animation to center camera on target point
   void StartCenteringAnimation(const glm::vec3 &targetPoint) {
     IsAnimating = true;
+    AnimationInvokeCallback = true;
     AnimationStartPosition = Position;
     AnimationStartOrientation = Orientation;
     // Zoom (FOV) is unchanged by centering.
@@ -605,6 +610,9 @@ public:
   // untouched and re-anchored along the new front on completion.
   void StartStateAnimation(const CameraState &target, float duration = 0.6f) {
     IsAnimating = true;
+    // Snapshot restores must not trigger the centering callback (cursor warp /
+    // auto-orbit); that behavior is specific to double-click centering.
+    AnimationInvokeCallback = false;
     AnimationStartPosition = Position;
     AnimationStartOrientation = Orientation;
     AnimationStartZoom = Zoom;
@@ -638,7 +646,7 @@ public:
 
       OrbitPoint = Position + Front * OrbitDistance;
 
-      if (centeringCompletedCallback) {
+      if (AnimationInvokeCallback && centeringCompletedCallback) {
         centeringCompletedCallback();
       }
     } else {
