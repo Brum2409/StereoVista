@@ -29,6 +29,13 @@ uniform mat4 projection;
 uniform mat4 lightSpaceMatrix;
 uniform int currentMeshIndex;
 
+// User-controllable section/clip planes (world space); see the comment in
+// shadowMappingVertexShader.glsl. Brush instances are exempt from the radar
+// slice (index 0) but ARE cut by user section planes (indices 1..6).
+const int MAX_CLIP_PLANES = 6;
+uniform int  clipPlaneCount;
+uniform vec4 clipPlanes[MAX_CLIP_PLANES];
+
 void main() {
     // Use instance model matrix instead of uniform model matrix
     vs_out.FragPos = vec3(instanceModel * vec4(aPos, 1.0));
@@ -66,4 +73,14 @@ void main() {
     // Brush instances are never sliced by the radar clip plane; keep them when
     // GL_CLIP_DISTANCE0 is enabled during the radar scene pass.
     gl_ClipDistance[0] = 1.0;
+
+    // User section planes occupy gl_ClipDistance[1..6]. Inactive slots stay
+    // positive (+1.0). Constant indices keep the implicit gl_ClipDistance[]
+    // array sized correctly.
+    gl_ClipDistance[1] = (clipPlaneCount > 0) ? dot(clipPlanes[0].xyz, vs_out.FragPos) + clipPlanes[0].w : 1.0;
+    gl_ClipDistance[2] = (clipPlaneCount > 1) ? dot(clipPlanes[1].xyz, vs_out.FragPos) + clipPlanes[1].w : 1.0;
+    gl_ClipDistance[3] = (clipPlaneCount > 2) ? dot(clipPlanes[2].xyz, vs_out.FragPos) + clipPlanes[2].w : 1.0;
+    gl_ClipDistance[4] = (clipPlaneCount > 3) ? dot(clipPlanes[3].xyz, vs_out.FragPos) + clipPlanes[3].w : 1.0;
+    gl_ClipDistance[5] = (clipPlaneCount > 4) ? dot(clipPlanes[4].xyz, vs_out.FragPos) + clipPlanes[4].w : 1.0;
+    gl_ClipDistance[6] = (clipPlaneCount > 5) ? dot(clipPlanes[5].xyz, vs_out.FragPos) + clipPlanes[5].w : 1.0;
 }

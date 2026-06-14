@@ -10,6 +10,7 @@
 #include "Engine/ThreeDConnexionSync.h"
 #include "Gui/GuiTypes.h"
 #include "Tools/BrushTool.h"
+#include "Tools/ClipPlaneTool.h"
 #include "Tools/MeasurementTool.h"
 #include "Tools/TransformGizmo.h"
 #include "imgui/IconsFontAwesome5.h"
@@ -70,6 +71,13 @@ extern Tools::BrushTool brushTool;
 // Measurement tool
 extern Tools::MeasurementTool measurementTool;
 extern bool showMeasurementToolWindow;
+
+// Section / clip plane tool
+extern Tools::ClipPlaneTool clipPlaneTool;
+extern bool showClipPlaneToolWindow;
+// Defined in main.cpp: place planes using the 3D cursor / selection context.
+void addClipPlaneAtCursor();
+void addClipPlaneAxisAligned(int axis);
 
 // Transform gizmo
 extern Tools::TransformGizmo transformGizmo;
@@ -1931,6 +1939,11 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       showMeasurementToolWindow = true;
     }
 
+    // Section / Clip Plane Tool Menu
+    if (ImGui::MenuItem("Section Planes")) {
+      showClipPlaneToolWindow = true;
+    }
+
     // AI Assistant quick access (accent-highlighted, deep-links into Settings)
     ImGui::PushStyleColor(ImGuiCol_Text, g_StyleColors.accent);
     if (ImGui::MenuItem("AI Assistant")) {
@@ -2591,6 +2604,10 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
 
   if (showMeasurementToolWindow) {
     renderMeasurementToolWindow();
+  }
+
+  if (showClipPlaneToolWindow) {
+    renderClipPlaneToolWindow();
   }
 
   // Screen-space measurement labels (distances/angles/coordinates) projected
@@ -6361,6 +6378,121 @@ void renderMeasurementToolWindow() {
   ImGui::TextDisabled("Measurements are saved with the scene file.");
 
   ImGui::End();
+}
+
+void renderClipPlaneToolWindow() {
+  ImGui::SetNextWindowSize(ImVec2(440, 560), ImGuiCond_FirstUseEver);
+  ImGui::Begin("Section Planes", &showClipPlaneToolWindow);
+
+  // The tool's editing UX (overlay, gizmo takeover, scroll scrub) is active
+  // while this panel is open.
+  clipPlaneTool.setEnabled(true);
+
+  DrawSectionHeader("Section / Clip Planes");
+  ImGui::TextWrapped(
+      "Section planes hide scene geometry on the back side of each plane. Add a "
+      "plane at the 3D cursor or an axis-aligned plane, then move / rotate it "
+      "with the transform gizmo, or scroll to slide the active plane along its "
+      "normal.");
+
+  auto *planes = clipPlaneTool.getPlanes();
+  const int planeCount = planes ? static_cast<int>(planes->size()) : 0;
+  const bool full = planeCount >= Engine::MAX_CLIP_PLANES;
+
+  ImGui::Spacing();
+  DrawSectionHeader("Add Plane");
+  if (full)
+    ImGui::BeginDisabled();
+  if (ImGui::Button("At Cursor", ImVec2(120 * g_GuiScale.currentScale, 0)))
+    addClipPlaneAtCursor();
+  ImGui::SameLine();
+  DrawHelpMarker("Places a plane at the 3D cursor, oriented by the surface "
+                 "normal under it (camera-facing fallback). Hover geometry "
+                 "first so the cursor has a valid position.");
+  ImGui::SameLine();
+  if (ImGui::Button("X##addAxisX", ImVec2(34 * g_GuiScale.currentScale, 0)))
+    addClipPlaneAxisAligned(0);
+  ImGui::SameLine();
+  if (ImGui::Button("Y##addAxisY", ImVec2(34 * g_GuiScale.currentScale, 0)))
+    addClipPlaneAxisAligned(1);
+  ImGui::SameLine();
+  if (ImGui::Button("Z##addAxisZ", ImVec2(34 * g_GuiScale.currentScale, 0)))
+    addClipPlaneAxisAligned(2);
+  ImGui::SameLine();
+  DrawHelpMarker("Add an axis-aligned plane through the selection centre, else "
+                 "the 3D cursor, else the world origin.");
+  if (full) {
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("Plane budget full (%d).", Engine::MAX_CLIP_PLANES);
+  }
+
+  ImGui::Spacing();
+  DrawSectionHeader("Display");
+  ImGui::SliderFloat("Overlay Size", &clipPlaneTool.displaySize, 0.25f, 25.0f,
+                     "%.2f");
+  ImGui::SliderFloat("Scroll Step", &clipPlaneTool.nudgeStep, 0.01f, 2.0f,
+                     "%.3f");
+
+  ImGui::Spacing();
+  DrawSectionHeader("Planes");
+  if (planeCount == 0) {
+    ImGui::TextDisabled("No section planes yet.");
+  } else {
+    const int activeIdx = clipPlaneTool.activeIndex();
+    int deleteIndex = -1;
+    for (int i = 0; i < planeCount; ++i) {
+      auto &p = (*planes)[i];
+      ImGui::PushID(i);
+
+      ImGui::Checkbox("##enabled", &p.enabled);
+      ImGui::SameLine();
+      ImGui::ColorEdit3("##color", glm::value_ptr(p.color),
+                        ImGuiColorEditFlags_NoInputs |
+                            ImGuiColorEditFlags_NoLabel);
+      ImGui::SameLine();
+      const bool selected = (i == activeIdx);
+      if (ImGui::RadioButton(p.name.c_str(), selected))
+        clipPlaneTool.setActiveIndex(selected ? -1 : i);
+
+      ImGui::SameLine(ImGui::GetWindowWidth() - 96 * g_GuiScale.currentScale);
+      if (ImGui::SmallButton("Flip"))
+        clipPlaneTool.flipNormal(i);
+      ImGui::SameLine();
+      if (ImGui::SmallButton("X"))
+        deleteIndex = i;
+
+      if (selected) {
+        ImGui::Indent();
+        ImGui::DragFloat3("Position", glm::value_ptr(p.position), 0.05f);
+        ImGui::DragFloat3("Normal", glm::value_ptr(p.normal), 0.02f, -1.0f,
+                          1.0f);
+        ImGui::Unindent();
+      }
+      ImGui::PopID();
+    }
+    if (deleteIndex >= 0)
+      clipPlaneTool.deletePlane(deleteIndex);
+
+    // Gizmo controls (move / rotate) for the active plane.
+    if (clipPlaneTool.activeIndex() >= 0) {
+      ImGui::Spacing();
+      DrawSectionHeader("Active Plane Gizmo");
+      DrawTransformGizmoControls(/*canRotateScale=*/true);
+    } else {
+      ImGui::Spacing();
+      ImGui::TextDisabled("Select a plane to edit it with the gizmo.");
+    }
+  }
+
+  ImGui::Spacing();
+  ImGui::TextDisabled(
+      "Section planes are saved with the scene file. Default key: P.");
+
+  ImGui::End();
+
+  // Closing the window (X) disables the editing UX; the planes keep clipping.
+  if (!showClipPlaneToolWindow)
+    clipPlaneTool.setEnabled(false);
 }
 
 // Projects measurement values (segment lengths, angles, coordinates) into

@@ -356,6 +356,38 @@ namespace Engine {
         }
     };
 
+    // Maximum number of simultaneous user section/clip planes. The scene
+    // vertex shaders write these to gl_ClipDistance[1..MAX_CLIP_PLANES]; index 0
+    // stays reserved for the legacy radar top-down slice. 6 user planes + the
+    // radar slice = 7 clip distances, within the GL-guaranteed minimum of 8.
+    static constexpr int MAX_CLIP_PLANES = 6;
+
+    // A user-controllable section / clipping plane. Geometry on the negative
+    // side of the plane (dot(normal, p - position) < 0) is hidden in the main
+    // lit pass; the "kept" side is the one the normal points to. Planes are part
+    // of the scene and serialized to/from scene files by SceneManager, exactly
+    // like Measurement.
+    struct ClipPlane {
+        glm::vec3   position = glm::vec3(0.0f);            // a point on the plane
+        glm::vec3   normal   = glm::vec3(0.0f, 1.0f, 0.0f); // unit normal (kept side)
+        bool        enabled  = true;
+        std::string name;
+        glm::vec3   color    = glm::vec3(0.25f, 0.60f, 1.0f); // overlay tint
+
+        // Unit normal, guarded against a degenerate (zero-length) normal.
+        glm::vec3 unitNormal() const {
+            const float len = glm::length(normal);
+            return (len > 1e-6f) ? (normal / len) : glm::vec3(0.0f, 1.0f, 0.0f);
+        }
+
+        // Plane packed for the shader / point-cloud test: (normal.xyz, d) with
+        // d = -dot(n, position). A point p is kept while dot(n, p) + d >= 0.
+        glm::vec4 packed() const {
+            const glm::vec3 n = unitNormal();
+            return glm::vec4(n, -glm::dot(n, position));
+        }
+    };
+
     struct Sun {
         glm::vec3 direction;
         glm::vec3 color;

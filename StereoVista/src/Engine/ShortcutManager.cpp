@@ -434,6 +434,8 @@ ShortcutProfile ShortcutManager::createDefaultProfile() {
   profile.setBinding(ShortcutAction::ResetCamera, KeyBinding(GLFW_KEY_HOME), 0);
   profile.setBinding(ShortcutAction::OpenMeasurementTool, KeyBinding(GLFW_KEY_M),
                      0);
+  profile.setBinding(ShortcutAction::OpenClipPlaneTool, KeyBinding(GLFW_KEY_P),
+                     0);
   profile.setBinding(ShortcutAction::Undo, KeyBinding(GLFW_KEY_Z, true), 0);
   profile.setBinding(ShortcutAction::Redo, KeyBinding(GLFW_KEY_Y, true), 0);
   profile.setBinding(ShortcutAction::Redo,
@@ -632,6 +634,8 @@ std::string ShortcutManager::getActionName(ShortcutAction action) {
     return "OpenBrushTool";
   case ShortcutAction::OpenMeasurementTool:
     return "OpenMeasurementTool";
+  case ShortcutAction::OpenClipPlaneTool:
+    return "OpenClipPlaneTool";
 
   // File Operations
   case ShortcutAction::ImportModel:
@@ -755,6 +759,8 @@ std::string ShortcutManager::getActionDescription(ShortcutAction action) {
     return "Open Brush Tool Window";
   case ShortcutAction::OpenMeasurementTool:
     return "Open Measurement Tool Window";
+  case ShortcutAction::OpenClipPlaneTool:
+    return "Open Section / Clip Plane Tool Window";
 
   // File Operations
   case ShortcutAction::ImportModel:

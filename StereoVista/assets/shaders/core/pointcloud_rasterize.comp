@@ -67,6 +67,16 @@ uniform int   uPointsPerThread; // ceil(kComputeBatchSize / 128)
 uniform uint  uCloudID;         // 5-bit id of this cloud → packed in framebuffer payload
 uniform int   uSplatMaxRadius;  // 0 = single-pixel (off); >0 = max adaptive round-splat radius (px)
 
+// User section/clip planes, expressed in this cloud's LOCAL space so they can be
+// tested directly against the decoded `point` (which is local, like the batch
+// AABBs). The host pre-multiplies each world-space plane by transpose(model):
+//   localPlane = transpose(model) * vec4(worldNormal, worldD)
+// A point is discarded when dot(plane.xyz, point) + plane.w < 0 (the clipped
+// side). uClipPlaneCount is 0..MAX_CLIP_PLANES.
+const int MAX_CLIP_PLANES = 6;
+uniform int  uClipPlaneCount;
+uniform vec4 uClipPlanes[MAX_CLIP_PLANES];
+
 // ── Frustum culling ───────────────────────────────────────────────────────────
 // Adapted from Schütz compute_rasterizer / three.js (MIT).
 // Extracts 6 clip planes directly from the MVP matrix (Gribb/Hartmann method).
@@ -319,6 +329,18 @@ void main() {
             point = vec3(float(X), float(Y), float(Z))
                   * (boxSize / float(STEPS_10BIT)) + wgMin;
         }
+
+        // ── Section/clip planes ───────────────────────────────────────────────
+        // Discard points on the clipped side of any active plane (planes are in
+        // local space, so this matches the decoded `point` directly).
+        bool clipped = false;
+        for (int cp = 0; cp < uClipPlaneCount; ++cp) {
+            if (dot(uClipPlanes[cp].xyz, point) + uClipPlanes[cp].w < 0.0) {
+                clipped = true;
+                break;
+            }
+        }
+        if (clipped) continue;
 
         // ── Project to clip space ─────────────────────────────────────────────
         vec4 clip = uMVP * vec4(point, 1.0);

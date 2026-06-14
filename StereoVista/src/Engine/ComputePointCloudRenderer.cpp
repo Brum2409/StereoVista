@@ -80,6 +80,8 @@ void ComputePointCloudRenderer::init(int width, int height) {
     m_locPointsPerThread  = glGetUniformLocation(pid, "uPointsPerThread");
     m_locCloudID          = glGetUniformLocation(pid, "uCloudID");
     m_locSplatMaxRadius   = glGetUniformLocation(pid, "uSplatMaxRadius");
+    m_locClipPlaneCount   = glGetUniformLocation(pid, "uClipPlaneCount");
+    m_locClipPlanes       = glGetUniformLocation(pid, "uClipPlanes");
 
     // Cache color-lookup compute uniform location
     m_colorLookupShader->use();
@@ -195,6 +197,12 @@ void ComputePointCloudRenderer::beginFrame() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+void ComputePointCloudRenderer::setClipPlanes(int count, const glm::vec4* worldPlanes) {
+    m_clipPlaneCount = glm::clamp(count, 0, 6);
+    for (int i = 0; i < m_clipPlaneCount; ++i)
+        m_clipPlanesWorld[i] = worldPlanes[i];
+}
+
 void ComputePointCloudRenderer::renderNode(
         GLuint batchSSBO,
         GLuint xyz12bSSBO,
@@ -206,6 +214,7 @@ void ComputePointCloudRenderer::renderNode(
         const glm::mat4& mvp,
         const glm::mat4& modelView,
         const glm::mat4& proj,
+        const glm::mat4& model,
         int      splatMaxRadius)
 {
     if (!m_initialized || numBatches == 0) return;
@@ -239,6 +248,18 @@ void ComputePointCloudRenderer::renderNode(
     glUniform2i(m_locImageSize, m_width, m_height);
     glUniform1ui(m_locCloudID, cloudID);
     glUniform1i(m_locSplatMaxRadius, splatMaxRadius);
+
+    // Section/clip planes: transform each active world-space plane into this
+    // cloud's local space (localPlane = transpose(model) * worldPlane) so the
+    // shader can test it against the decoded local-space points directly.
+    glUniform1i(m_locClipPlaneCount, m_clipPlaneCount);
+    if (m_clipPlaneCount > 0 && m_locClipPlanes >= 0) {
+        const glm::mat4 mt = glm::transpose(model);
+        glm::vec4 localPlanes[6];
+        for (int i = 0; i < m_clipPlaneCount; ++i)
+            localPlanes[i] = mt * m_clipPlanesWorld[i];
+        glUniform4fv(m_locClipPlanes, m_clipPlaneCount, glm::value_ptr(localPlanes[0]));
+    }
 
     // Bind packed-coordinate and batch SSBOs (matching shader bindings)
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 40, batchSSBO);

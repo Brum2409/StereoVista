@@ -254,6 +254,19 @@ namespace Engine {
             }
             sceneJson["measurements"] = measurementsJson;
 
+            // Save section / clip planes (world-space)
+            json clipPlanesJson = json::array();
+            for (const auto& plane : scene.clipPlanes) {
+                json planeJson;
+                planeJson["name"] = plane.name;
+                planeJson["position"] = { plane.position.x, plane.position.y, plane.position.z };
+                planeJson["normal"] = { plane.normal.x, plane.normal.y, plane.normal.z };
+                planeJson["color"] = { plane.color.r, plane.color.g, plane.color.b };
+                planeJson["enabled"] = plane.enabled;
+                clipPlanesJson.push_back(planeJson);
+            }
+            sceneJson["clipPlanes"] = clipPlanesJson;
+
             // Save point lights
             json pointLightsJson = json::array();
             for (const auto& pointLight : scene.pointLights) {
@@ -714,6 +727,45 @@ namespace Engine {
                     }
                     catch (const std::exception& e) {
                         std::cerr << "Failed to load measurement: " << e.what() << std::endl;
+                    }
+                }
+            }
+
+            // Load section / clip planes
+            if (sceneJson.contains("clipPlanes")) {
+                for (const auto& planeJson : sceneJson["clipPlanes"]) {
+                    try {
+                        ClipPlane plane;
+                        plane.name = planeJson.value("name", std::string("Plane"));
+                        plane.enabled = planeJson.value("enabled", true);
+                        if (planeJson.contains("position") &&
+                            planeJson["position"].is_array() &&
+                            planeJson["position"].size() == 3) {
+                            plane.position = glm::vec3(
+                                planeJson["position"][0].get<float>(),
+                                planeJson["position"][1].get<float>(),
+                                planeJson["position"][2].get<float>());
+                        }
+                        if (planeJson.contains("normal") &&
+                            planeJson["normal"].is_array() &&
+                            planeJson["normal"].size() == 3) {
+                            plane.normal = glm::vec3(
+                                planeJson["normal"][0].get<float>(),
+                                planeJson["normal"][1].get<float>(),
+                                planeJson["normal"][2].get<float>());
+                        }
+                        if (planeJson.contains("color") &&
+                            planeJson["color"].is_array() &&
+                            planeJson["color"].size() == 3) {
+                            plane.color = glm::vec3(
+                                planeJson["color"][0].get<float>(),
+                                planeJson["color"][1].get<float>(),
+                                planeJson["color"][2].get<float>());
+                        }
+                        scene.clipPlanes.push_back(std::move(plane));
+                    }
+                    catch (const std::exception& e) {
+                        std::cerr << "Failed to load clip plane: " << e.what() << std::endl;
                     }
                 }
             }

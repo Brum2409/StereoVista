@@ -40,6 +40,13 @@ public:
     // Must be called before any renderNode() calls for this frame.
     void beginFrame();
 
+    // Set the active world-space section/clip planes for this frame. Each plane
+    // is vec4(unitNormal.xyz, d) with d = -dot(n, pointOnPlane); points on the
+    // clipped side (dot(n, worldP) + d < 0) are discarded. renderNode()
+    // transforms these into each cloud's local space. Pass count == 0 to clip
+    // nothing. Call before the renderNode() calls for the frame.
+    void setClipPlanes(int count, const glm::vec4* worldPlanes);
+
     // Rasterize one point cloud using the Schütz batch-based compute path.
     //
     //   batchSSBO        – binding 40: ComputeBatch descriptor array
@@ -54,6 +61,8 @@ public:
     //   proj             – projection matrix    (precision-level sphere projection)
     //   splatMaxRadius   – 0 = single-pixel rasterize (off); >0 = max adaptive
     //                      round-splat radius in pixels (fills close-up/sparse gaps)
+    //   model            – the cloud's model matrix, used to transform the
+    //                       active world-space clip planes into local space
     void renderNode(GLuint batchSSBO,
                     GLuint xyz12bSSBO,
                     GLuint xyz8bSSBO,
@@ -64,6 +73,7 @@ public:
                     const glm::mat4& mvp,
                     const glm::mat4& modelView,
                     const glm::mat4& proj,
+                    const glm::mat4& model,
                     int      splatMaxRadius = 0);
 
     // Wait for all compute work to finish, then composite the point cloud result
@@ -116,6 +126,13 @@ private:
     GLint m_locPointsPerThread   = -1;
     GLint m_locCloudID           = -1;   // uCloudID in the rasterize shader
     GLint m_locSplatMaxRadius    = -1;   // uSplatMaxRadius in the rasterize shader
+    GLint m_locClipPlaneCount    = -1;   // uClipPlaneCount in the rasterize shader
+    GLint m_locClipPlanes        = -1;   // uClipPlanes[0] in the rasterize shader
+
+    // Active world-space section/clip planes for the current frame (set via
+    // setClipPlanes); transformed into each cloud's local space in renderNode.
+    int       m_clipPlaneCount = 0;
+    glm::vec4 m_clipPlanesWorld[6] = {};
 
     // Cached color-lookup compute shader uniform location
     GLint m_locColorLookupImageSize  = -1;
