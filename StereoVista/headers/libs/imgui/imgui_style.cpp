@@ -10,6 +10,115 @@
 ImGuiFonts g_Fonts;
 GuiScaleSettings g_GuiScale;
 CustomStyleColors g_StyleColors;
+int g_currentTheme = GUI_THEME_MODERN_DARK;
+
+// ===========================================================================
+// Color themes
+// ===========================================================================
+
+// A theme is described by a compact palette. The four background levels are
+// ordered from the primary surface outward: for DARK themes lvl0 is the
+// darkest (title bars / scrollbar track) and lvl3 the lightest (frames,
+// buttons, borders); for LIGHT themes lvl0 is the lightest (window) and lvl3
+// the darkest (strong borders / active grabs). The accent drives all the
+// interactive highlights; status colors feed toasts and the FPS overlay.
+struct ThemePalette {
+  const char *name;
+  bool isDark;
+  ImVec4 lvl0, lvl1, lvl2, lvl3;
+  ImVec4 textPrimary, textSecondary, textDisabled;
+  ImVec4 accent, accentHover, accentActive;
+  ImVec4 success, warning, danger, info;
+};
+
+// 0xRRGGBB -> ImVec4 helper for authoring palettes from hex codes.
+static ImVec4 Hex(unsigned int rgb, float a = 1.0f) {
+  return ImVec4(((rgb >> 16) & 0xFF) / 255.0f, ((rgb >> 8) & 0xFF) / 255.0f,
+                (rgb & 0xFF) / 255.0f, a);
+}
+
+static const ThemePalette &GetPalette(int theme) {
+  // Function-local static: built once, on first use. Keep this array in the
+  // same order as the GuiTheme enum.
+  static const ThemePalette palettes[GUI_THEME_COUNT] = {
+      // GUI_THEME_MODERN_DARK -- the original cool indigo dark theme (exact
+      // float values preserved so the default look is unchanged).
+      {"Modern Dark", true,
+       ImVec4(0.085f, 0.090f, 0.105f, 1.00f), ImVec4(0.115f, 0.122f, 0.140f, 1.00f),
+       ImVec4(0.155f, 0.165f, 0.190f, 1.00f), ImVec4(0.205f, 0.217f, 0.245f, 1.00f),
+       ImVec4(0.95f, 0.96f, 0.98f, 1.00f), ImVec4(0.65f, 0.68f, 0.72f, 1.00f),
+       ImVec4(0.46f, 0.49f, 0.55f, 1.00f),
+       ImVec4(0.33f, 0.56f, 1.00f, 1.00f), ImVec4(0.45f, 0.66f, 1.00f, 1.00f),
+       ImVec4(0.25f, 0.46f, 0.92f, 1.00f),
+       ImVec4(0.26f, 0.73f, 0.42f, 1.00f), ImVec4(0.96f, 0.69f, 0.13f, 1.00f),
+       ImVec4(0.86f, 0.28f, 0.29f, 1.00f), ImVec4(0.20f, 0.65f, 0.87f, 1.00f)},
+
+      // GUI_THEME_MODERN_LIGHT -- the original clean light theme (preserved).
+      {"Modern Light", false,
+       ImVec4(0.98f, 0.98f, 0.99f, 1.00f), ImVec4(0.94f, 0.95f, 0.96f, 1.00f),
+       ImVec4(0.88f, 0.89f, 0.91f, 1.00f), ImVec4(0.82f, 0.84f, 0.86f, 1.00f),
+       ImVec4(0.10f, 0.10f, 0.12f, 1.00f), ImVec4(0.40f, 0.42f, 0.46f, 1.00f),
+       ImVec4(0.60f, 0.62f, 0.66f, 1.00f),
+       ImVec4(0.26f, 0.50f, 0.98f, 1.00f), ImVec4(0.36f, 0.60f, 1.00f, 1.00f),
+       ImVec4(0.20f, 0.42f, 0.90f, 1.00f),
+       ImVec4(0.20f, 0.70f, 0.35f, 1.00f), ImVec4(0.90f, 0.65f, 0.10f, 1.00f),
+       ImVec4(0.85f, 0.25f, 0.25f, 1.00f), ImVec4(0.15f, 0.60f, 0.85f, 1.00f)},
+
+      // GUI_THEME_SCHNEIDER_DIGITAL -- the Schneider Digital brand: clean white
+      // surfaces, near-black text and the signature golden-yellow accent (matched
+      // to the logo / call-to-action yellow on schneider-digital.com).
+      {"Schneider Digital", false,
+       Hex(0xFCFCFC), Hex(0xEFF0F1), Hex(0xDDDFE2), Hex(0xC0C3C7),
+       Hex(0x1B1B1B), Hex(0x565A5E), Hex(0x9AA0A6),
+       Hex(0xF3C218), Hex(0xFFD23D), Hex(0xD9A50A),
+       Hex(0x2FA15A), Hex(0xE0900F), Hex(0xD63A3A), Hex(0x1F8FCF)},
+
+      // GUI_THEME_NORD -- the popular muted arctic blue-gray palette; very easy
+      // on the eyes for long sessions.
+      {"Nord", true,
+       Hex(0x2E3440), Hex(0x343C4A), Hex(0x3B4252), Hex(0x4C566A),
+       Hex(0xECEFF4), Hex(0xC2CAD8), Hex(0x808C9E),
+       Hex(0x88C0D0), Hex(0x9FD3E0), Hex(0x5E81AC),
+       Hex(0xA3BE8C), Hex(0xEBCB8B), Hex(0xBF616A), Hex(0x81A1C1)},
+
+      // GUI_THEME_FOREST -- warm olive/green with a cream foreground.
+      {"Forest", true,
+       Hex(0x141711), Hex(0x1B211A), Hex(0x252D1F), Hex(0x3A4630),
+       Hex(0xEBD5AB), Hex(0xA8B58C), Hex(0x6E7A5A),
+       Hex(0x8BAE66), Hex(0xA6C683), Hex(0x628141),
+       Hex(0x6FBF73), Hex(0xE0A93B), Hex(0xD9694E), Hex(0x6FA8C9)},
+
+      // GUI_THEME_LAGOON -- deep teal with a mint accent and cream text.
+      {"Lagoon", true,
+       Hex(0x122420), Hex(0x1A312C), Hex(0x214139), Hex(0x2F5A4F),
+       Hex(0xFFF4E1), Hex(0xA7C5BB), Hex(0x6F8A82),
+       Hex(0x89D7B7), Hex(0xA6E6CC), Hex(0x428475),
+       Hex(0x5FC79A), Hex(0xE8B85C), Hex(0xE07A6A), Hex(0x5FB0C9)},
+
+      // GUI_THEME_AMETHYST -- neutral near-black with a soft violet accent.
+      {"Amethyst", true,
+       Hex(0x15131C), Hex(0x1C1925), Hex(0x272234), Hex(0x352E47),
+       Hex(0xECE9F2), Hex(0xA79FB8), Hex(0x6E667E),
+       Hex(0xA579F0), Hex(0xB994F5), Hex(0x8A5BE0),
+       Hex(0x56C596), Hex(0xE9B44C), Hex(0xE5616E), Hex(0x6FA8DC)},
+  };
+  if (theme < 0 || theme >= GUI_THEME_COUNT)
+    theme = GUI_THEME_MODERN_DARK;
+  return palettes[theme];
+}
+
+int GetGuiThemeCount() { return GUI_THEME_COUNT; }
+const char *GetGuiThemeName(int theme) { return GetPalette(theme).name; }
+bool IsGuiThemeDark(int theme) { return GetPalette(theme).isDark; }
+
+int GetGuiThemeSwatches(int theme, ImVec4 *out, int maxColors) {
+  const ThemePalette &p = GetPalette(theme);
+  const ImVec4 colors[4] = {p.lvl1, p.accent, p.textPrimary, p.lvl3};
+  int n = maxColors < 4 ? maxColors : 4;
+  for (int i = 0; i < n; ++i)
+    out[i] = colors[i];
+  return n;
+}
 
 bool InitializeImGuiWithFonts(GLFWwindow *window, bool isDarkTheme) {
   IMGUI_CHECKVERSION();
@@ -315,9 +424,10 @@ void RescaleImGuiFonts(GLFWwindow *window, bool isDarkTheme) {
     g_GuiScale.needsFontRebuild = false;
   }
 
-  // Always update style to match current scale
+  // Always update style to match current scale. Re-apply the active theme
+  // (not the dark/light boolean) so a custom theme survives a window resize.
   if (g_GuiScale.needsRescale) {
-    SetupImGuiStyle(isDarkTheme, 1.0f);
+    ApplyGuiTheme(g_currentTheme, 1.0f);
     g_GuiScale.needsRescale = false;
   }
 }
@@ -565,8 +675,8 @@ void RebuildImGuiFontAtlas(bool isDarkTheme) {
             << std::endl;
 }
 
-void SetupImGuiStyle(bool bStyleDark_, float alpha_) {
-  ImGuiStyle &style = ImGui::GetStyle();
+// Shared geometry (spacing, rounding, sizes). Applied for every theme.
+static void ApplyStyleGeometry(ImGuiStyle &style) {
   float scale = g_GuiScale.currentScale;
 
   // Modern style parameters with improved spacing
@@ -600,43 +710,26 @@ void SetupImGuiStyle(bool bStyleDark_, float alpha_) {
   style.ColorButtonPosition = ImGuiDir_Right;
   style.ButtonTextAlign = ImVec2(0.5f, 0.5f);
   style.SelectableTextAlign = ImVec2(0.0f, 0.0f);
+}
 
-  // Apply modern color schemes
-  if (bStyleDark_) {
-    // Modern Dark Theme with blue accents
+// Dark-theme color engine. Reads the four background levels and accents from
+// the palette (lvl0 darkest .. lvl3 lightest) and lays out every ImGui color
+// the same way the original dark theme did, so any dark palette gets a
+// consistent, tuned result.
+static void ApplyDarkColors(ImGuiStyle &style, const ThemePalette &p) {
     ImVec4 *colors = style.Colors;
 
-    // Define color palette - deeper, cooler neutrals for a premium feel
-    const ImVec4 bgDark = ImVec4(0.085f, 0.090f, 0.105f, 1.00f);     // #16171B
-    const ImVec4 bgMedium = ImVec4(0.115f, 0.122f, 0.140f, 1.00f);   // #1D1F24
-    const ImVec4 bgLight = ImVec4(0.155f, 0.165f, 0.190f, 1.00f);    // #282A30
-    const ImVec4 bgVeryLight = ImVec4(0.205f, 0.217f, 0.245f, 1.00f);// #34373E
+    const ImVec4 bgDark = p.lvl0;
+    const ImVec4 bgMedium = p.lvl1;
+    const ImVec4 bgLight = p.lvl2;
+    const ImVec4 bgVeryLight = p.lvl3;
 
-    const ImVec4 textPrimary = ImVec4(0.95f, 0.96f, 0.98f, 1.00f);
-    const ImVec4 textSecondary = ImVec4(0.65f, 0.68f, 0.72f, 1.00f);
-    const ImVec4 textDisabled = ImVec4(0.46f, 0.49f, 0.55f, 1.00f);
+    const ImVec4 textPrimary = p.textPrimary;
+    const ImVec4 textDisabled = p.textDisabled;
 
-    // Modern indigo-blue accent colors
-    const ImVec4 accentPrimary = ImVec4(0.33f, 0.56f, 1.00f, 1.00f); // #548FFF
-    const ImVec4 accentHover = ImVec4(0.45f, 0.66f, 1.00f, 1.00f);   // #73A8FF
-    const ImVec4 accentActive = ImVec4(0.25f, 0.46f, 0.92f, 1.00f);  // #4076EB
-    const ImVec4 accentDim = ImVec4(0.33f, 0.56f, 1.00f, 0.40f);
-
-    // Success, Warning, Danger colors
-    const ImVec4 success = ImVec4(0.26f, 0.73f, 0.42f, 1.00f); // #43BB6C
-    const ImVec4 warning = ImVec4(0.96f, 0.69f, 0.13f, 1.00f); // #F5B021
-    const ImVec4 danger = ImVec4(0.86f, 0.28f, 0.29f, 1.00f);  // #DC474A
-
-    // Store custom colors
-    g_StyleColors.primary = accentPrimary;
-    g_StyleColors.primaryHover = accentHover;
-    g_StyleColors.primaryActive = accentActive;
-    g_StyleColors.secondary = bgVeryLight;
-    g_StyleColors.accent = accentPrimary;
-    g_StyleColors.success = success;
-    g_StyleColors.warning = warning;
-    g_StyleColors.danger = danger;
-    g_StyleColors.info = ImVec4(0.20f, 0.65f, 0.87f, 1.00f);
+    const ImVec4 accentPrimary = p.accent;
+    const ImVec4 accentHover = p.accentHover;
+    const ImVec4 accentActive = p.accentActive;
 
     // Background colors
     colors[ImGuiCol_WindowBg] = bgMedium;
@@ -666,13 +759,14 @@ void SetupImGuiStyle(bool bStyleDark_, float alpha_) {
     colors[ImGuiCol_ButtonActive] =
         ImVec4(accentPrimary.x, accentPrimary.y, accentPrimary.z, 0.50f);
 
-    // Frame backgrounds
+    // Frame backgrounds. Kept solid enough that input boxes, combos and
+    // sliders read as distinct controls against the window background.
     colors[ImGuiCol_FrameBg] =
-        ImVec4(bgVeryLight.x, bgVeryLight.y, bgVeryLight.z, 0.30f);
+        ImVec4(bgVeryLight.x, bgVeryLight.y, bgVeryLight.z, 0.52f);
     colors[ImGuiCol_FrameBgHovered] =
-        ImVec4(bgVeryLight.x, bgVeryLight.y, bgVeryLight.z, 0.40f);
+        ImVec4(bgVeryLight.x, bgVeryLight.y, bgVeryLight.z, 0.68f);
     colors[ImGuiCol_FrameBgActive] =
-        ImVec4(bgVeryLight.x, bgVeryLight.y, bgVeryLight.z, 0.50f);
+        ImVec4(bgVeryLight.x, bgVeryLight.y, bgVeryLight.z, 0.80f);
 
     // Tabs
     colors[ImGuiCol_Tab] = bgLight;
@@ -744,35 +838,25 @@ void SetupImGuiStyle(bool bStyleDark_, float alpha_) {
     colors[ImGuiCol_NavWindowingHighlight] = ImVec4(1.00f, 1.00f, 1.00f, 0.70f);
     colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.20f);
     colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.50f);
-  } else {
-    // Modern Light Theme
+}
+
+// Light-theme color engine. Reads the four background levels from the palette
+// (lvl0 lightest .. lvl3 darkest) and the accents, reproducing the original
+// light theme's layout for any light palette.
+static void ApplyLightColors(ImGuiStyle &style, const ThemePalette &p) {
     ImVec4 *colors = style.Colors;
 
-    // Light color palette
-    const ImVec4 bgWhite = ImVec4(0.98f, 0.98f, 0.99f, 1.00f);  // #FAFAFC
-    const ImVec4 bgLight = ImVec4(0.94f, 0.95f, 0.96f, 1.00f);  // #F0F2F5
-    const ImVec4 bgMedium = ImVec4(0.88f, 0.89f, 0.91f, 1.00f); // #E0E3E8
-    const ImVec4 bgDark = ImVec4(0.82f, 0.84f, 0.86f, 1.00f);   // #D1D5DB
+    const ImVec4 bgWhite = p.lvl0;
+    const ImVec4 bgLight = p.lvl1;
+    const ImVec4 bgMedium = p.lvl2;
+    const ImVec4 bgDark = p.lvl3;
 
-    const ImVec4 textPrimary = ImVec4(0.10f, 0.10f, 0.12f, 1.00f);
-    const ImVec4 textSecondary = ImVec4(0.40f, 0.42f, 0.46f, 1.00f);
-    const ImVec4 textDisabled = ImVec4(0.60f, 0.62f, 0.66f, 1.00f);
+    const ImVec4 textPrimary = p.textPrimary;
+    const ImVec4 textDisabled = p.textDisabled;
 
-    // Indigo-blue accent for light theme (matches the dark theme accent)
-    const ImVec4 accentPrimary = ImVec4(0.26f, 0.50f, 0.98f, 1.00f);
-    const ImVec4 accentHover = ImVec4(0.36f, 0.60f, 1.00f, 1.00f);
-    const ImVec4 accentActive = ImVec4(0.20f, 0.42f, 0.90f, 1.00f);
-
-    // Store custom colors
-    g_StyleColors.primary = accentPrimary;
-    g_StyleColors.primaryHover = accentHover;
-    g_StyleColors.primaryActive = accentActive;
-    g_StyleColors.secondary = bgMedium;
-    g_StyleColors.accent = accentPrimary;
-    g_StyleColors.success = ImVec4(0.20f, 0.70f, 0.35f, 1.00f);
-    g_StyleColors.warning = ImVec4(0.90f, 0.65f, 0.10f, 1.00f);
-    g_StyleColors.danger = ImVec4(0.85f, 0.25f, 0.25f, 1.00f);
-    g_StyleColors.info = ImVec4(0.15f, 0.60f, 0.85f, 1.00f);
+    const ImVec4 accentPrimary = p.accent;
+    const ImVec4 accentHover = p.accentHover;
+    const ImVec4 accentActive = p.accentActive;
 
     // Background colors
     colors[ImGuiCol_WindowBg] = bgWhite;
@@ -866,15 +950,52 @@ void SetupImGuiStyle(bool bStyleDark_, float alpha_) {
     colors[ImGuiCol_NavWindowingHighlight] = ImVec4(0.70f, 0.70f, 0.70f, 0.70f);
     colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.20f, 0.20f, 0.20f, 0.20f);
     colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.35f);
-  }
+}
+
+// Apply a full color theme: shared geometry, the palette-derived colors via the
+// matching (dark/light) engine, and the published g_StyleColors used across the
+// GUI. Records the theme so GUI-scale restyles keep the user's choice.
+void ApplyGuiTheme(int theme, float alpha) {
+  if (theme < 0 || theme >= GUI_THEME_COUNT)
+    theme = GUI_THEME_MODERN_DARK;
+  g_currentTheme = theme;
+
+  const ThemePalette &p = GetPalette(theme);
+  ImGuiStyle &style = ImGui::GetStyle();
+
+  ApplyStyleGeometry(style);
+
+  // Publish accent/status colors consumed throughout the GUI (section headers,
+  // toasts, the performance overlay, etc.).
+  g_StyleColors.primary = p.accent;
+  g_StyleColors.primaryHover = p.accentHover;
+  g_StyleColors.primaryActive = p.accentActive;
+  g_StyleColors.secondary = p.lvl3;
+  g_StyleColors.accent = p.accent;
+  g_StyleColors.success = p.success;
+  g_StyleColors.warning = p.warning;
+  g_StyleColors.danger = p.danger;
+  g_StyleColors.info = p.info;
+
+  if (p.isDark)
+    ApplyDarkColors(style, p);
+  else
+    ApplyLightColors(style, p);
 
   // Apply alpha if needed
-  if (alpha_ < 1.0f) {
+  if (alpha < 1.0f) {
     ImVec4 *colors = style.Colors;
     for (int i = 0; i < ImGuiCol_COUNT; i++) {
-      colors[i].w *= alpha_;
+      colors[i].w *= alpha;
     }
   }
+}
+
+// Backward-compatible entry point: maps the old dark/light boolean onto the two
+// built-in themes.
+void SetupImGuiStyle(bool bStyleDark_, float alpha_) {
+  ApplyGuiTheme(bStyleDark_ ? GUI_THEME_MODERN_DARK : GUI_THEME_MODERN_LIGHT,
+                alpha_);
 }
 
 // Custom widget styling functions

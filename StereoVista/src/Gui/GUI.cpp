@@ -374,11 +374,9 @@ extern const int MAX_LIGHTS;
 // ===========================================================================
 
 // Categories for the redesigned, sidebar-navigated Settings window. Declared at
-// file scope so the main menu bar can deep-link straight to a category (e.g.
-// the "AI Assistant" shortcut).
+// file scope so the main menu bar can deep-link straight to a category.
 enum SettingsCategory {
-  SETTINGS_CAT_AI = 0,
-  SETTINGS_CAT_RENDERING,
+  SETTINGS_CAT_RENDERING = 0,
   SETTINGS_CAT_CAMERA,
   SETTINGS_CAT_ENVIRONMENT,
   SETTINGS_CAT_DISPLAY,
@@ -386,7 +384,7 @@ enum SettingsCategory {
   SETTINGS_CAT_IMPORT,
   SETTINGS_CAT_SHORTCUTS
 };
-static int g_settingsCategory = SETTINGS_CAT_AI;
+static int g_settingsCategory = SETTINGS_CAT_RENDERING;
 
 // Docked-region insets published to the render loop (see Gui.h). Updated each
 // frame in renderGUI so the 3D viewport can be sized to the free area.
@@ -470,6 +468,16 @@ static void DrawSectionHeader(const char *label) {
   ImGui::TextUnformatted(label);
   ImGui::Unindent(10.0f * scale);
   ImGui::Spacing();
+  ImGui::Separator();
+}
+
+// Title row for an object's properties panel: an accent-colored icon (drawn
+// through the reliable dedicated icon font) followed by the object name, then a
+// separator. Keeps every manipulation panel header visually consistent instead
+// of relying on raw emoji glyphs that may be missing from the system fonts.
+static void DrawPanelTitle(const char *icon, const std::string &title) {
+  DrawInlineIcon(icon, g_StyleColors.accent);
+  ImGui::TextUnformatted(title.c_str());
   ImGui::Separator();
 }
 
@@ -1135,6 +1143,18 @@ static void importLASFiles(const std::vector<std::string> &lasFiles) {
         static_cast<int>(currentScene.pointClouds.size()) - 1);
   }
   updateSpaceMouseBounds();
+}
+
+// Case-insensitive substring test used by the Scene Hierarchy search filter.
+// An empty needle matches everything (so the unfiltered list shows in full).
+static bool searchMatches(const std::string &haystack, const char *needle) {
+  if (needle == nullptr || needle[0] == '\0')
+    return true;
+  std::string h = haystack;
+  std::string n = needle;
+  std::transform(h.begin(), h.end(), h.begin(), ::tolower);
+  std::transform(n.begin(), n.end(), n.begin(), ::tolower);
+  return h.find(n) != std::string::npos;
 }
 
 void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
@@ -1970,38 +1990,45 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       ImGui::EndMenu();
     }
 
+    // Tooltip helper for the bare tool buttons in the menu bar, so first-time
+    // users can tell what each one opens without clicking.
+    auto menuButtonTooltip = [](const char *desc) {
+      if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("%s", desc);
+    };
+
     // Settings Menu
     if (ImGui::MenuItem("Settings")) {
       showSettingsWindow = true;
     }
+    menuButtonTooltip("Application settings: rendering, camera, environment, "
+                      "input and shortcuts");
 
     // Brush Tool Menu
     if (ImGui::MenuItem("Brush Tool")) {
       showBrushToolWindow = true;
     }
+    menuButtonTooltip("Scatter copies of a model across surfaces with the "
+                      "paint brush");
 
     // Measurement Tool Menu
     if (ImGui::MenuItem("Measure")) {
       showMeasurementToolWindow = true;
     }
+    menuButtonTooltip("Measure distances, angles and coordinates in the scene");
 
     // Section / Clip Plane Tool Menu
     if (ImGui::MenuItem("Section Planes")) {
       showClipPlaneToolWindow = true;
     }
+    menuButtonTooltip("Slice the scene with clipping planes to inspect "
+                      "interiors");
 
     // Snapshots Menu
     if (ImGui::MenuItem("Snapshots")) {
       showSnapshotsWindow = true;
     }
-
-    // AI Assistant quick access (accent-highlighted, deep-links into Settings)
-    ImGui::PushStyleColor(ImGuiCol_Text, g_StyleColors.accent);
-    if (ImGui::MenuItem("AI Assistant")) {
-      showSettingsWindow = true;
-      g_settingsCategory = SETTINGS_CAT_AI;
-    }
-    ImGui::PopStyleColor();
+    menuButtonTooltip("Save and restore camera viewpoints of the scene");
 
     ImGui::EndMainMenuBar();
   }
@@ -2030,10 +2057,29 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
   static char searchBuffer[128] = "";
   DrawInlineIcon(ICON_FA_SEARCH,
                  ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-  ImGui::PushItemWidth(-1);
+  const bool hasSearchText = (searchBuffer[0] != '\0');
+  const float clearBtnSize = ImGui::GetFrameHeight();
+  ImGui::SetNextItemWidth(
+      ImGui::GetContentRegionAvail().x -
+      (hasSearchText ? (clearBtnSize + ImGui::GetStyle().ItemSpacing.x) : 0.0f));
   ImGui::InputTextWithHint("##Search", "Search objects...", searchBuffer,
                            sizeof(searchBuffer));
-  ImGui::PopItemWidth();
+  if (hasSearchText) {
+    ImGui::SameLine();
+    // Force a square button so the icon font's smaller glyph stays aligned
+    // with the input box height.
+    if (g_Fonts.icons)
+      ImGui::PushFont(g_Fonts.icons);
+    bool clearClicked = ImGui::Button(
+        g_Fonts.icons ? ICON_FA_TIMES "##clearsearch" : "x##clearsearch",
+        ImVec2(clearBtnSize, clearBtnSize));
+    if (g_Fonts.icons)
+      ImGui::PopFont();
+    if (clearClicked)
+      searchBuffer[0] = '\0';
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("Clear search");
+  }
   ImGui::Separator();
 
   if (ImGui::BeginChild("ObjectList", ImVec2(0, 250 * g_GuiScale.currentScale),
@@ -2041,30 +2087,37 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
     ImGui::Columns(2, "ObjectColumns", false);
     ImGui::SetColumnWidth(0, 60 * g_GuiScale.currentScale);
 
-    // Sun Object (always at top, ungrouped)
-    ImGui::PushID("sun");
-    bool sunVisible = sun.enabled;
-    if (ImGui::Checkbox("##visible", &sunVisible))
-      sun.enabled = sunVisible;
-    ImGui::NextColumn();
+    // Tracks whether the active search matched any object, so the list can
+    // show a friendly "no results" hint instead of appearing empty.
+    bool anyMatch = false;
 
-    bool isSunSelected = (currentSelectedType == SelectedType::Sun);
-    ImGui::AlignTextToFramePadding();
-    // Render Sun with FontAwesome icon to avoid missing glyphs in fonts
-    if (g_Fonts.icons) {
-      ImGui::PushFont(g_Fonts.icons);
-      ImGui::Text(ICON_FA_SUN);
-      ImGui::PopFont();
-      ImGui::SameLine();
+    // Sun Object (always at top, ungrouped)
+    if (searchMatches("Sun", searchBuffer)) {
+      anyMatch = true;
+      ImGui::PushID("sun");
+      bool sunVisible = sun.enabled;
+      if (ImGui::Checkbox("##visible", &sunVisible))
+        sun.enabled = sunVisible;
+      ImGui::NextColumn();
+
+      bool isSunSelected = (currentSelectedType == SelectedType::Sun);
+      ImGui::AlignTextToFramePadding();
+      // Render Sun with FontAwesome icon to avoid missing glyphs in fonts
+      if (g_Fonts.icons) {
+        ImGui::PushFont(g_Fonts.icons);
+        ImGui::Text(ICON_FA_SUN);
+        ImGui::PopFont();
+        ImGui::SameLine();
+      }
+      if (ImGui::Selectable("Sun", isSunSelected,
+                            ImGuiSelectableFlags_SpanAllColumns)) {
+        currentSelectedType = SelectedType::Sun;
+        currentSelectedIndex = -1;
+        currentSelectedMeshIndex = -1;
+      }
+      ImGui::NextColumn();
+      ImGui::PopID();
     }
-    if (ImGui::Selectable("Sun", isSunSelected,
-                          ImGuiSelectableFlags_SpanAllColumns)) {
-      currentSelectedType = SelectedType::Sun;
-      currentSelectedIndex = -1;
-      currentSelectedMeshIndex = -1;
-    }
-    ImGui::NextColumn();
-    ImGui::PopID();
 
     // Group objects by sourceScenePath
     std::map<std::string, std::vector<int>> sceneModels;
@@ -2107,9 +2160,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
     // Helper lambda to render a model
     auto renderModel = [&](int i) {
       std::string modelName = currentScene.models[i].name;
-      if (strlen(searchBuffer) > 0 &&
-          modelName.find(searchBuffer) == std::string::npos)
+      if (!searchMatches(modelName, searchBuffer))
         return;
+      anyMatch = true;
 
       ImGui::PushID(i);
       ImGui::AlignTextToFramePadding();
@@ -2204,9 +2257,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
     // Helper lambda to render a point cloud
     auto renderPointCloud = [&](int i) {
       std::string pcName = currentScene.pointClouds[i].name;
-      if (strlen(searchBuffer) > 0 &&
-          pcName.find(searchBuffer) == std::string::npos)
+      if (!searchMatches(pcName, searchBuffer))
         return;
+      anyMatch = true;
 
       ImGui::PushID(i + currentScene.models.size());
       bool isSelected = (currentSelectedIndex == i &&
@@ -2237,6 +2290,11 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
 
     // Helper lambda to render a point light
     auto renderPointLight = [&](int i) {
+      std::string lightText = "Point Light " + std::to_string(i + 1);
+      if (!searchMatches(lightText, searchBuffer))
+        return;
+      anyMatch = true;
+
       ImGui::PushID(i + currentScene.models.size() + 1000);
       bool isSelected = (currentSelectedIndex == i &&
                          currentSelectedType == SelectedType::PointLight);
@@ -2252,7 +2310,6 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         ImGui::PopFont();
         ImGui::SameLine();
       }
-      std::string lightText = "Point Light " + std::to_string(i + 1);
       if (ImGui::Selectable(lightText.c_str(), isSelected,
                             ImGuiSelectableFlags_SpanAllColumns)) {
         currentSelectedType = SelectedType::PointLight;
@@ -2265,6 +2322,11 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
 
     // Helper lambda to render a spot light
     auto renderSpotLight = [&](int i) {
+      std::string spotText = "Spot Light " + std::to_string(i + 1);
+      if (!searchMatches(spotText, searchBuffer))
+        return;
+      anyMatch = true;
+
       ImGui::PushID(i + currentScene.models.size() + 2000);
       bool isSelected = (currentSelectedIndex == i &&
                          currentSelectedType == SelectedType::SpotLight);
@@ -2276,7 +2338,6 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         ImGui::PopFont();
         ImGui::SameLine();
       }
-      std::string spotText = "Spot Light " + std::to_string(i + 1);
       if (ImGui::Selectable(spotText.c_str(), isSelected,
                             ImGuiSelectableFlags_SpanAllColumns)) {
         currentSelectedType = SelectedType::SpotLight;
@@ -2485,9 +2546,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         continue;
 
       std::string clusterName = cluster->name;
-      if (strlen(searchBuffer) > 0 &&
-          clusterName.find(searchBuffer) == std::string::npos)
+      if (!searchMatches(clusterName, searchBuffer))
         continue;
+      anyMatch = true;
 
       ImGui::PushID(i + currentScene.models.size() +
                     currentScene.pointClouds.size() + 5000);
@@ -2519,6 +2580,15 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
     }
 
     ImGui::Columns(1);
+
+    // Friendly hint when a search filters everything out.
+    if (!anyMatch && hasSearchText) {
+      ImGui::Spacing();
+      ImGui::PushStyleColor(ImGuiCol_Text,
+                            ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+      ImGui::TextWrapped("No objects match \"%s\".", searchBuffer);
+      ImGui::PopStyleColor();
+    }
     ImGui::EndChild();
   }
 
@@ -2564,9 +2634,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         Tools::BrushCluster *cluster =
             brushTool.getCluster(currentSelectedIndex);
         if (cluster) {
-          DrawSectionHeader("Brush Cluster Properties");
+          DrawPanelTitle(ICON_FA_PAINT_BRUSH, cluster->name);
 
-          ImGui::Text("Name: %s", cluster->name.c_str());
           if (cluster->sourceModelIndex >= 0 &&
               cluster->sourceModelIndex < currentScene.models.size()) {
             ImGui::Text(
@@ -2793,7 +2862,6 @@ void renderSettingsWindow() {
     const char *label;
   };
   static const SettingsNavEntry kNavEntries[] = {
-      {SETTINGS_CAT_AI, ICON_FA_ROBOT, "AI Assistant"},
       {SETTINGS_CAT_RENDERING, ICON_FA_LIGHTBULB, "Rendering"},
       {SETTINGS_CAT_CAMERA, ICON_FA_VIDEO, "Camera & 3D"},
       {SETTINGS_CAT_ENVIRONMENT, ICON_FA_MOUNTAIN, "Environment"},
@@ -2824,176 +2892,6 @@ void renderSettingsWindow() {
 
   ImGui::SameLine();
   ImGui::BeginChild("##SettingsContent", ImVec2(0, 0), false);
-
-  // ===========================
-  // AI ASSISTANT TAB (scaffold)
-  // ===========================
-  if (g_settingsCategory == SETTINGS_CAT_AI) {
-    ImGui::PushID("AITab");
-
-    DrawInlineIcon(ICON_FA_ROBOT, g_StyleColors.accent);
-    ImGui::TextUnformatted("AI Assistant");
-    ImGui::PushStyleColor(ImGuiCol_Text,
-                          ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-    ImGui::TextWrapped(
-        "Describe what you want in plain language and the assistant will "
-        "adjust your scene and settings for you — change the lighting, "
-        "add objects, tune the look, and more.");
-    ImGui::PopStyleColor();
-    ImGui::Spacing();
-
-    // Connection state (scaffold-only: no network transport yet).
-    static bool aiConnected = false;
-    static char aiApiKey[256] = "";
-    static char aiModel[128] = "claude-opus-4-8";
-    static char aiEndpoint[256] = "https://api.anthropic.com/v1/messages";
-    static int aiProvider = 0;
-    static std::vector<std::pair<bool, std::string>> aiHistory; // {isUser,text}
-    static char aiInput[1024] = "";
-
-    // Status banner
-    {
-      ImVec4 col = aiConnected ? g_StyleColors.success : g_StyleColors.warning;
-      ImGui::PushStyleColor(ImGuiCol_ChildBg,
-                            ImVec4(col.x, col.y, col.z, 0.12f));
-      ImGui::BeginChild("##aistatus", ImVec2(0, ImGui::GetFrameHeight() * 2.2f),
-                        true);
-      DrawInlineIcon(aiConnected ? ICON_FA_CHECK : ICON_FA_EXCLAMATION_TRIANGLE,
-                     col);
-      ImGui::AlignTextToFramePadding();
-      ImGui::TextWrapped(
-          "%s",
-          aiConnected
-              ? "Connected. The assistant can read and modify your scene."
-              : "Not connected. Add an API key under Connection to enable "
-                "live requests.");
-      ImGui::EndChild();
-      ImGui::PopStyleColor();
-    }
-
-    ImGui::Spacing();
-    DrawSectionHeader("Conversation");
-
-    // Chat transcript
-    ImGui::BeginChild("##aichat", ImVec2(0, 260 * scale), true);
-    if (aiHistory.empty()) {
-      ImGui::PushStyleColor(ImGuiCol_Text,
-                            ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-      ImGui::Spacing();
-      ImGui::TextWrapped("No messages yet. Try one of the suggestions below, "
-                         "or type your own request.");
-      ImGui::PopStyleColor();
-    } else {
-      for (const auto &msg : aiHistory) {
-        const bool isUser = msg.first;
-        ImGui::PushStyleColor(
-            ImGuiCol_Text,
-            isUser ? ImGui::GetStyleColorVec4(ImGuiCol_Text)
-                   : g_StyleColors.accent);
-        DrawInlineIcon(isUser ? ICON_FA_COMMENT : ICON_FA_ROBOT,
-                       isUser ? ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled)
-                              : g_StyleColors.accent);
-        ImGui::TextUnformatted(isUser ? "You" : "Assistant");
-        ImGui::PopStyleColor();
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextWrapped("%s", msg.second.c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-      }
-      ImGui::SetScrollHereY(1.0f);
-    }
-    ImGui::EndChild();
-
-    // Lambda to "submit" a prompt. Scaffold only: echoes the prompt and an
-    // honest placeholder until a transport + apply layer is wired up.
-    auto submitPrompt = [&](const std::string &prompt) {
-      if (prompt.empty())
-        return;
-      aiHistory.emplace_back(true, prompt);
-      aiHistory.emplace_back(
-          false,
-          aiConnected
-              ? "(Live requests are not wired up in this build yet.)"
-              : "I can't act on this yet — add an API key under "
-                "Connection to enable live requests. Once connected I'll be "
-                "able to apply changes like this directly to your scene.");
-      aiInput[0] = '\0';
-    };
-
-    // Suggestion chips
-    ImGui::Spacing();
-    const char *suggestions[] = {"Make the lighting warmer",
-                                 "Add a cube to the scene",
-                                 "Enable soft shadows",
-                                 "Switch to a sunset sky"};
-    const float rightEdge =
-        ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
-    const float spacing = ImGui::GetStyle().ItemSpacing.x;
-    for (int i = 0; i < IM_ARRAYSIZE(suggestions); ++i) {
-      // Keep the chip on the current row only if it actually fits.
-      if (i > 0) {
-        float chipW = ImGui::CalcTextSize(suggestions[i]).x +
-                      ImGui::GetStyle().FramePadding.x * 2.0f;
-        float nextX = ImGui::GetItemRectMax().x + spacing + chipW;
-        if (nextX < rightEdge)
-          ImGui::SameLine();
-      }
-      if (ImGui::Button(suggestions[i]))
-        submitPrompt(suggestions[i]);
-    }
-
-    // Input row
-    ImGui::Spacing();
-    float sendW = 90.0f * scale;
-    ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - sendW -
-                         ImGui::GetStyle().ItemSpacing.x);
-    bool entered = ImGui::InputTextWithHint(
-        "##aiinput", "Ask the assistant to change your scene…", aiInput,
-        sizeof(aiInput), ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::PopItemWidth();
-    ImGui::SameLine();
-    bool sendClicked = ImGui::Button("Send", ImVec2(sendW, 0));
-    if (entered || sendClicked)
-      submitPrompt(std::string(aiInput));
-
-    if (!aiHistory.empty()) {
-      if (ImGui::SmallButton("Clear conversation"))
-        aiHistory.clear();
-    }
-
-    // Connection / configuration
-    ImGui::Spacing();
-    if (ImGui::CollapsingHeader("Connection")) {
-      DrawToggleSwitch("Enable live requests", &aiConnected);
-      ImGui::SameLine();
-      DrawHelpMarker("When connected, the assistant sends your prompts to the "
-                     "configured provider. Networking is not implemented in "
-                     "this build — this is the UI scaffold.");
-
-      const char *providers[] = {"Anthropic (Claude)", "OpenAI", "Custom"};
-      ImGui::Combo("Provider", &aiProvider, providers,
-                   IM_ARRAYSIZE(providers));
-
-      ImGui::InputText("API Key", aiApiKey, sizeof(aiApiKey),
-                       ImGuiInputTextFlags_Password);
-      ImGui::SameLine();
-      DrawHelpMarker("Stored only for this session in this scaffold build.");
-
-      ImGui::InputText("Model", aiModel, sizeof(aiModel));
-      ImGui::InputText("Endpoint", aiEndpoint, sizeof(aiEndpoint));
-    }
-
-    if (ImGui::CollapsingHeader("What the assistant can do")) {
-      ImGui::BulletText("Adjust rendering, camera and environment settings");
-      ImGui::BulletText("Create primitives and lights");
-      ImGui::BulletText("Tune materials and the overall look");
-      ImGui::BulletText("Explain what each setting does");
-    }
-
-    ImGui::PopID();
-  }
 
   // ===========================
   // RENDERING TAB
@@ -4237,14 +4135,47 @@ void renderSettingsWindow() {
       ImGui::PushID("DisplayTab");
       DrawSectionHeader("Interface");
 
-      if (ImGui::Checkbox("Dark Theme", &isDarkTheme)) {
-        SetupImGuiStyle(isDarkTheme, 1.0f);
-        preferences.isDarkTheme = isDarkTheme;
-        settingsChanged = true;
+      // Color theme picker
+      {
+        int themeIndex = preferences.guiTheme;
+        if (themeIndex < 0 || themeIndex >= GetGuiThemeCount())
+          themeIndex = 0;
+
+        if (ImGui::BeginCombo("Theme", GetGuiThemeName(themeIndex))) {
+          for (int i = 0; i < GetGuiThemeCount(); ++i) {
+            bool selected = (i == themeIndex);
+            if (ImGui::Selectable(GetGuiThemeName(i), selected)) {
+              ApplyGuiTheme(i, 1.0f);
+              themeIndex = i;
+              preferences.guiTheme = i;
+              isDarkTheme = IsGuiThemeDark(i);
+              preferences.isDarkTheme = isDarkTheme;
+              settingsChanged = true;
+            }
+            if (selected)
+              ImGui::SetItemDefaultFocus();
+          }
+          ImGui::EndCombo();
+        }
+        ImGui::SameLine();
+        DrawHelpMarker("Color theme for the entire interface. \"Schneider "
+                       "Digital\" is the white & golden-yellow brand theme; the "
+                       "rest are modern, easy-on-the-eyes light and dark palettes.");
+
+        // Live swatch preview of the selected theme's palette
+        ImVec4 swatches[4];
+        int swatchCount = GetGuiThemeSwatches(themeIndex, swatches, 4);
+        for (int i = 0; i < swatchCount; ++i) {
+          std::string id = "##themesw" + std::to_string(i);
+          ImGui::ColorButton(id.c_str(), swatches[i],
+                             ImGuiColorEditFlags_NoTooltip |
+                                 ImGuiColorEditFlags_NoPicker |
+                                 ImGuiColorEditFlags_NoDragDrop,
+                             ImVec2(34 * scale, 16 * scale));
+          if (i < swatchCount - 1)
+            ImGui::SameLine();
+        }
       }
-      ImGui::SameLine();
-      DrawHelpMarker(
-          "Switches between light and dark color themes for the interface");
 
       if (ImGui::Checkbox("Show Performance Overlay", &showFPS)) {
         preferences.showFPS = showFPS;
@@ -7191,7 +7122,7 @@ static void drawMeasurementLabels() {
 void renderSunManipulationPanel() {
   const Engine::Sun sunPreFrame = sun;
 
-  DrawSectionHeader("Sun Light");
+  DrawPanelTitle(ICON_FA_SUN, "Sun");
 
   ImGui::Checkbox("Enabled", &sun.enabled);
   ImGui::ColorEdit3("Color", glm::value_ptr(sun.color));
@@ -7228,8 +7159,7 @@ void renderModelManipulationPanel(Engine::Model &model,
   const Engine::Undo::ModelEditState modelStatePreFrame =
       Engine::Undo::ModelEditState::capture(model);
 
-  ImGui::Text("📦 %s", model.name.c_str());
-  ImGui::Separator();
+  DrawPanelTitle(ICON_FA_CUBE, model.name);
 
   if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
     bool transformChanged = false;
@@ -7421,8 +7351,8 @@ void renderMeshManipulationPanel(Engine::Model &model, int meshIndex,
   const Engine::Undo::ModelEditState modelStatePreFrame =
       Engine::Undo::ModelEditState::capture(model);
 
-  ImGui::Text("📦 %s - Mesh %d", model.name.c_str(), meshIndex + 1);
-  ImGui::Separator();
+  DrawPanelTitle(ICON_FA_CUBE,
+                 model.name + "  -  Mesh " + std::to_string(meshIndex + 1));
 
   ImGui::Checkbox("Visible", &mesh.visible);
 
@@ -7588,7 +7518,7 @@ void renderMeshManipulationPanel(Engine::Model &model, int meshIndex,
 }
 
 void renderPointCloudManipulationPanel(Engine::PointCloud &pointCloud) {
-  ImGui::Text("☁ %s", pointCloud.name.c_str());
+  DrawPanelTitle(ICON_FA_CLOUD, pointCloud.name);
 
   // isLoaded() returns true when compute SSBOs are ready (numBatches > 0)
   // or when a legacy CPU-side points vector is still populated.
@@ -7778,17 +7708,8 @@ void renderPointLightManipulationPanel() {
   auto &light = pointLights[currentSelectedIndex];
   const Engine::PointLight lightStatePreFrame = light;
 
-  // Render icon and text with PushFont/PopFont approach
-  if (g_Fonts.icons) {
-    ImGui::PushFont(g_Fonts.icons);
-    ImGui::Text(ICON_FA_LIGHTBULB);
-    ImGui::PopFont();
-    ImGui::SameLine();
-    ImGui::Text("Point Light %d", currentSelectedIndex + 1);
-  } else {
-    ImGui::Text("? Point Light %d", currentSelectedIndex + 1);
-  }
-  ImGui::Separator();
+  DrawPanelTitle(ICON_FA_LIGHTBULB,
+                 "Point Light " + std::to_string(currentSelectedIndex + 1));
 
   if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
     ImGui::DragFloat3("Position", glm::value_ptr(light.position), 0.1f);
@@ -7857,8 +7778,8 @@ void renderSpotLightManipulationPanel() {
   auto &light = spotLights[currentSelectedIndex];
   const Engine::SpotLight lightStatePreFrame = light;
 
-  ImGui::Text("🔦 Spot Light %d", currentSelectedIndex + 1);
-  ImGui::Separator();
+  DrawPanelTitle(ICON_FA_BULLSEYE,
+                 "Spot Light " + std::to_string(currentSelectedIndex + 1));
 
   if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
     ImGui::DragFloat3("Position", glm::value_ptr(light.position), 0.1f);

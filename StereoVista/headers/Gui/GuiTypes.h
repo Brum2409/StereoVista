@@ -101,6 +101,9 @@ struct PlaneCursor {
 
 struct ApplicationPreferences {
   bool isDarkTheme = true;
+  // Index into the GuiTheme enum (imgui_sytle.h). Authoritative theme selection;
+  // isDarkTheme is kept in sync for legacy code paths and font handling.
+  int guiTheme = 0;
   float guiScaleFactor =
       1.0f; // User-controlled GUI scale multiplier (0.5x - 2.0x)
   float separation = 0.5f;

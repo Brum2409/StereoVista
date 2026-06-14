@@ -55,6 +55,20 @@ enum class GuiStylePreset {
     MINIMAL
 };
 
+// Selectable color themes. The index of each entry doubles as the value
+// persisted in preferences ("ui.theme"), so only ever append new themes to the
+// end -- never reorder or remove -- to keep saved preferences stable.
+enum GuiTheme {
+    GUI_THEME_MODERN_DARK = 0,
+    GUI_THEME_MODERN_LIGHT,
+    GUI_THEME_SCHNEIDER_DIGITAL,
+    GUI_THEME_NORD,
+    GUI_THEME_FOREST,
+    GUI_THEME_LAGOON,
+    GUI_THEME_AMETHYST,
+    GUI_THEME_COUNT
+};
+
 // Custom style colors
 struct CustomStyleColors {
     ImVec4 primary;
@@ -72,6 +86,9 @@ struct CustomStyleColors {
 extern ImGuiFonts g_Fonts;
 extern GuiScaleSettings g_GuiScale;
 extern CustomStyleColors g_StyleColors;
+// Index (GuiTheme) of the theme currently applied. Authoritative for restyles
+// triggered by GUI-scale changes, so a custom theme survives a window resize.
+extern int g_currentTheme;
 
 // Function declarations
 bool InitializeImGuiWithFonts(GLFWwindow* window, bool isDarkTheme);
@@ -80,3 +97,14 @@ float CalculateGuiScale(int windowWidth, int windowHeight);
 void RescaleImGuiFonts(GLFWwindow* window, bool isDarkTheme);
 void RebuildImGuiFontAtlas(bool isDarkTheme);
 void ApplyStylePreset(GuiStylePreset preset);
+
+// Theme system. ApplyGuiTheme() applies a full color theme (and the shared
+// geometry/spacing) and records it as the current theme. The helpers expose
+// theme metadata for building the picker UI.
+void ApplyGuiTheme(int theme, float alpha);
+int GetGuiThemeCount();
+const char *GetGuiThemeName(int theme);
+bool IsGuiThemeDark(int theme);
+// Fills up to `maxColors` swatch colors (background, accent, two text/surface
+// tones) for a compact preview in the picker. Returns the count written.
+int GetGuiThemeSwatches(int theme, ImVec4 *out, int maxColors);
