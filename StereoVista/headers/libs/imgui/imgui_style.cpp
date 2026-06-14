@@ -666,13 +666,14 @@ void SetupImGuiStyle(bool bStyleDark_, float alpha_) {
     colors[ImGuiCol_ButtonActive] =
         ImVec4(accentPrimary.x, accentPrimary.y, accentPrimary.z, 0.50f);
 
-    // Frame backgrounds
+    // Frame backgrounds. Kept solid enough that input boxes, combos and
+    // sliders read as distinct controls against the window background.
     colors[ImGuiCol_FrameBg] =
-        ImVec4(bgVeryLight.x, bgVeryLight.y, bgVeryLight.z, 0.30f);
+        ImVec4(bgVeryLight.x, bgVeryLight.y, bgVeryLight.z, 0.52f);
     colors[ImGuiCol_FrameBgHovered] =
-        ImVec4(bgVeryLight.x, bgVeryLight.y, bgVeryLight.z, 0.40f);
+        ImVec4(bgVeryLight.x, bgVeryLight.y, bgVeryLight.z, 0.68f);
     colors[ImGuiCol_FrameBgActive] =
-        ImVec4(bgVeryLight.x, bgVeryLight.y, bgVeryLight.z, 0.50f);
+        ImVec4(bgVeryLight.x, bgVeryLight.y, bgVeryLight.z, 0.80f);
 
     // Tabs
     colors[ImGuiCol_Tab] = bgLight;

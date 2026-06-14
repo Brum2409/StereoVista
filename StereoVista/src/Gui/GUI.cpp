@@ -473,6 +473,16 @@ static void DrawSectionHeader(const char *label) {
   ImGui::Separator();
 }
 
+// Title row for an object's properties panel: an accent-colored icon (drawn
+// through the reliable dedicated icon font) followed by the object name, then a
+// separator. Keeps every manipulation panel header visually consistent instead
+// of relying on raw emoji glyphs that may be missing from the system fonts.
+static void DrawPanelTitle(const char *icon, const std::string &title) {
+  DrawInlineIcon(icon, g_StyleColors.accent);
+  ImGui::TextUnformatted(title.c_str());
+  ImGui::Separator();
+}
+
 // Vertical sidebar navigation entry (icon + label). Returns true when clicked.
 // The icon is rendered through the dedicated icon font via the draw list so it
 // is reliable regardless of whether the merged-font path succeeded.
@@ -1135,6 +1145,18 @@ static void importLASFiles(const std::vector<std::string> &lasFiles) {
         static_cast<int>(currentScene.pointClouds.size()) - 1);
   }
   updateSpaceMouseBounds();
+}
+
+// Case-insensitive substring test used by the Scene Hierarchy search filter.
+// An empty needle matches everything (so the unfiltered list shows in full).
+static bool searchMatches(const std::string &haystack, const char *needle) {
+  if (needle == nullptr || needle[0] == '\0')
+    return true;
+  std::string h = haystack;
+  std::string n = needle;
+  std::transform(h.begin(), h.end(), h.begin(), ::tolower);
+  std::transform(n.begin(), n.end(), n.begin(), ::tolower);
+  return h.find(n) != std::string::npos;
 }
 
 void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
@@ -1970,30 +1992,45 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       ImGui::EndMenu();
     }
 
+    // Tooltip helper for the bare tool buttons in the menu bar, so first-time
+    // users can tell what each one opens without clicking.
+    auto menuButtonTooltip = [](const char *desc) {
+      if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("%s", desc);
+    };
+
     // Settings Menu
     if (ImGui::MenuItem("Settings")) {
       showSettingsWindow = true;
     }
+    menuButtonTooltip("Application settings: rendering, camera, environment, "
+                      "input and shortcuts");
 
     // Brush Tool Menu
     if (ImGui::MenuItem("Brush Tool")) {
       showBrushToolWindow = true;
     }
+    menuButtonTooltip("Scatter copies of a model across surfaces with the "
+                      "paint brush");
 
     // Measurement Tool Menu
     if (ImGui::MenuItem("Measure")) {
       showMeasurementToolWindow = true;
     }
+    menuButtonTooltip("Measure distances, angles and coordinates in the scene");
 
     // Section / Clip Plane Tool Menu
     if (ImGui::MenuItem("Section Planes")) {
       showClipPlaneToolWindow = true;
     }
+    menuButtonTooltip("Slice the scene with clipping planes to inspect "
+                      "interiors");
 
     // Snapshots Menu
     if (ImGui::MenuItem("Snapshots")) {
       showSnapshotsWindow = true;
     }
+    menuButtonTooltip("Save and restore camera viewpoints of the scene");
 
     // AI Assistant quick access (accent-highlighted, deep-links into Settings)
     ImGui::PushStyleColor(ImGuiCol_Text, g_StyleColors.accent);
@@ -2002,6 +2039,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       g_settingsCategory = SETTINGS_CAT_AI;
     }
     ImGui::PopStyleColor();
+    menuButtonTooltip("Adjust your scene and settings by describing what you "
+                      "want in plain language");
 
     ImGui::EndMainMenuBar();
   }
@@ -2030,10 +2069,29 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
   static char searchBuffer[128] = "";
   DrawInlineIcon(ICON_FA_SEARCH,
                  ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-  ImGui::PushItemWidth(-1);
+  const bool hasSearchText = (searchBuffer[0] != '\0');
+  const float clearBtnSize = ImGui::GetFrameHeight();
+  ImGui::SetNextItemWidth(
+      ImGui::GetContentRegionAvail().x -
+      (hasSearchText ? (clearBtnSize + ImGui::GetStyle().ItemSpacing.x) : 0.0f));
   ImGui::InputTextWithHint("##Search", "Search objects...", searchBuffer,
                            sizeof(searchBuffer));
-  ImGui::PopItemWidth();
+  if (hasSearchText) {
+    ImGui::SameLine();
+    // Force a square button so the icon font's smaller glyph stays aligned
+    // with the input box height.
+    if (g_Fonts.icons)
+      ImGui::PushFont(g_Fonts.icons);
+    bool clearClicked = ImGui::Button(
+        g_Fonts.icons ? ICON_FA_TIMES "##clearsearch" : "x##clearsearch",
+        ImVec2(clearBtnSize, clearBtnSize));
+    if (g_Fonts.icons)
+      ImGui::PopFont();
+    if (clearClicked)
+      searchBuffer[0] = '\0';
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("Clear search");
+  }
   ImGui::Separator();
 
   if (ImGui::BeginChild("ObjectList", ImVec2(0, 250 * g_GuiScale.currentScale),
@@ -2041,30 +2099,37 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
     ImGui::Columns(2, "ObjectColumns", false);
     ImGui::SetColumnWidth(0, 60 * g_GuiScale.currentScale);
 
-    // Sun Object (always at top, ungrouped)
-    ImGui::PushID("sun");
-    bool sunVisible = sun.enabled;
-    if (ImGui::Checkbox("##visible", &sunVisible))
-      sun.enabled = sunVisible;
-    ImGui::NextColumn();
+    // Tracks whether the active search matched any object, so the list can
+    // show a friendly "no results" hint instead of appearing empty.
+    bool anyMatch = false;
 
-    bool isSunSelected = (currentSelectedType == SelectedType::Sun);
-    ImGui::AlignTextToFramePadding();
-    // Render Sun with FontAwesome icon to avoid missing glyphs in fonts
-    if (g_Fonts.icons) {
-      ImGui::PushFont(g_Fonts.icons);
-      ImGui::Text(ICON_FA_SUN);
-      ImGui::PopFont();
-      ImGui::SameLine();
+    // Sun Object (always at top, ungrouped)
+    if (searchMatches("Sun", searchBuffer)) {
+      anyMatch = true;
+      ImGui::PushID("sun");
+      bool sunVisible = sun.enabled;
+      if (ImGui::Checkbox("##visible", &sunVisible))
+        sun.enabled = sunVisible;
+      ImGui::NextColumn();
+
+      bool isSunSelected = (currentSelectedType == SelectedType::Sun);
+      ImGui::AlignTextToFramePadding();
+      // Render Sun with FontAwesome icon to avoid missing glyphs in fonts
+      if (g_Fonts.icons) {
+        ImGui::PushFont(g_Fonts.icons);
+        ImGui::Text(ICON_FA_SUN);
+        ImGui::PopFont();
+        ImGui::SameLine();
+      }
+      if (ImGui::Selectable("Sun", isSunSelected,
+                            ImGuiSelectableFlags_SpanAllColumns)) {
+        currentSelectedType = SelectedType::Sun;
+        currentSelectedIndex = -1;
+        currentSelectedMeshIndex = -1;
+      }
+      ImGui::NextColumn();
+      ImGui::PopID();
     }
-    if (ImGui::Selectable("Sun", isSunSelected,
-                          ImGuiSelectableFlags_SpanAllColumns)) {
-      currentSelectedType = SelectedType::Sun;
-      currentSelectedIndex = -1;
-      currentSelectedMeshIndex = -1;
-    }
-    ImGui::NextColumn();
-    ImGui::PopID();
 
     // Group objects by sourceScenePath
     std::map<std::string, std::vector<int>> sceneModels;
@@ -2107,9 +2172,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
     // Helper lambda to render a model
     auto renderModel = [&](int i) {
       std::string modelName = currentScene.models[i].name;
-      if (strlen(searchBuffer) > 0 &&
-          modelName.find(searchBuffer) == std::string::npos)
+      if (!searchMatches(modelName, searchBuffer))
         return;
+      anyMatch = true;
 
       ImGui::PushID(i);
       ImGui::AlignTextToFramePadding();
@@ -2204,9 +2269,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
     // Helper lambda to render a point cloud
     auto renderPointCloud = [&](int i) {
       std::string pcName = currentScene.pointClouds[i].name;
-      if (strlen(searchBuffer) > 0 &&
-          pcName.find(searchBuffer) == std::string::npos)
+      if (!searchMatches(pcName, searchBuffer))
         return;
+      anyMatch = true;
 
       ImGui::PushID(i + currentScene.models.size());
       bool isSelected = (currentSelectedIndex == i &&
@@ -2237,6 +2302,11 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
 
     // Helper lambda to render a point light
     auto renderPointLight = [&](int i) {
+      std::string lightText = "Point Light " + std::to_string(i + 1);
+      if (!searchMatches(lightText, searchBuffer))
+        return;
+      anyMatch = true;
+
       ImGui::PushID(i + currentScene.models.size() + 1000);
       bool isSelected = (currentSelectedIndex == i &&
                          currentSelectedType == SelectedType::PointLight);
@@ -2252,7 +2322,6 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         ImGui::PopFont();
         ImGui::SameLine();
       }
-      std::string lightText = "Point Light " + std::to_string(i + 1);
       if (ImGui::Selectable(lightText.c_str(), isSelected,
                             ImGuiSelectableFlags_SpanAllColumns)) {
         currentSelectedType = SelectedType::PointLight;
@@ -2265,6 +2334,11 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
 
     // Helper lambda to render a spot light
     auto renderSpotLight = [&](int i) {
+      std::string spotText = "Spot Light " + std::to_string(i + 1);
+      if (!searchMatches(spotText, searchBuffer))
+        return;
+      anyMatch = true;
+
       ImGui::PushID(i + currentScene.models.size() + 2000);
       bool isSelected = (currentSelectedIndex == i &&
                          currentSelectedType == SelectedType::SpotLight);
@@ -2276,7 +2350,6 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         ImGui::PopFont();
         ImGui::SameLine();
       }
-      std::string spotText = "Spot Light " + std::to_string(i + 1);
       if (ImGui::Selectable(spotText.c_str(), isSelected,
                             ImGuiSelectableFlags_SpanAllColumns)) {
         currentSelectedType = SelectedType::SpotLight;
@@ -2485,9 +2558,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         continue;
 
       std::string clusterName = cluster->name;
-      if (strlen(searchBuffer) > 0 &&
-          clusterName.find(searchBuffer) == std::string::npos)
+      if (!searchMatches(clusterName, searchBuffer))
         continue;
+      anyMatch = true;
 
       ImGui::PushID(i + currentScene.models.size() +
                     currentScene.pointClouds.size() + 5000);
@@ -2519,6 +2592,15 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
     }
 
     ImGui::Columns(1);
+
+    // Friendly hint when a search filters everything out.
+    if (!anyMatch && hasSearchText) {
+      ImGui::Spacing();
+      ImGui::PushStyleColor(ImGuiCol_Text,
+                            ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+      ImGui::TextWrapped("No objects match \"%s\".", searchBuffer);
+      ImGui::PopStyleColor();
+    }
     ImGui::EndChild();
   }
 
@@ -2564,9 +2646,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         Tools::BrushCluster *cluster =
             brushTool.getCluster(currentSelectedIndex);
         if (cluster) {
-          DrawSectionHeader("Brush Cluster Properties");
+          DrawPanelTitle(ICON_FA_PAINT_BRUSH, cluster->name);
 
-          ImGui::Text("Name: %s", cluster->name.c_str());
           if (cluster->sourceModelIndex >= 0 &&
               cluster->sourceModelIndex < currentScene.models.size()) {
             ImGui::Text(
@@ -7191,7 +7272,7 @@ static void drawMeasurementLabels() {
 void renderSunManipulationPanel() {
   const Engine::Sun sunPreFrame = sun;
 
-  DrawSectionHeader("Sun Light");
+  DrawPanelTitle(ICON_FA_SUN, "Sun");
 
   ImGui::Checkbox("Enabled", &sun.enabled);
   ImGui::ColorEdit3("Color", glm::value_ptr(sun.color));
@@ -7228,8 +7309,7 @@ void renderModelManipulationPanel(Engine::Model &model,
   const Engine::Undo::ModelEditState modelStatePreFrame =
       Engine::Undo::ModelEditState::capture(model);
 
-  ImGui::Text("📦 %s", model.name.c_str());
-  ImGui::Separator();
+  DrawPanelTitle(ICON_FA_CUBE, model.name);
 
   if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
     bool transformChanged = false;
@@ -7421,8 +7501,8 @@ void renderMeshManipulationPanel(Engine::Model &model, int meshIndex,
   const Engine::Undo::ModelEditState modelStatePreFrame =
       Engine::Undo::ModelEditState::capture(model);
 
-  ImGui::Text("📦 %s - Mesh %d", model.name.c_str(), meshIndex + 1);
-  ImGui::Separator();
+  DrawPanelTitle(ICON_FA_CUBE,
+                 model.name + "  -  Mesh " + std::to_string(meshIndex + 1));
 
   ImGui::Checkbox("Visible", &mesh.visible);
 
@@ -7588,7 +7668,7 @@ void renderMeshManipulationPanel(Engine::Model &model, int meshIndex,
 }
 
 void renderPointCloudManipulationPanel(Engine::PointCloud &pointCloud) {
-  ImGui::Text("☁ %s", pointCloud.name.c_str());
+  DrawPanelTitle(ICON_FA_CLOUD, pointCloud.name);
 
   // isLoaded() returns true when compute SSBOs are ready (numBatches > 0)
   // or when a legacy CPU-side points vector is still populated.
@@ -7778,17 +7858,8 @@ void renderPointLightManipulationPanel() {
   auto &light = pointLights[currentSelectedIndex];
   const Engine::PointLight lightStatePreFrame = light;
 
-  // Render icon and text with PushFont/PopFont approach
-  if (g_Fonts.icons) {
-    ImGui::PushFont(g_Fonts.icons);
-    ImGui::Text(ICON_FA_LIGHTBULB);
-    ImGui::PopFont();
-    ImGui::SameLine();
-    ImGui::Text("Point Light %d", currentSelectedIndex + 1);
-  } else {
-    ImGui::Text("? Point Light %d", currentSelectedIndex + 1);
-  }
-  ImGui::Separator();
+  DrawPanelTitle(ICON_FA_LIGHTBULB,
+                 "Point Light " + std::to_string(currentSelectedIndex + 1));
 
   if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
     ImGui::DragFloat3("Position", glm::value_ptr(light.position), 0.1f);
@@ -7857,8 +7928,8 @@ void renderSpotLightManipulationPanel() {
   auto &light = spotLights[currentSelectedIndex];
   const Engine::SpotLight lightStatePreFrame = light;
 
-  ImGui::Text("🔦 Spot Light %d", currentSelectedIndex + 1);
-  ImGui::Separator();
+  DrawPanelTitle(ICON_FA_BULLSEYE,
+                 "Spot Light " + std::to_string(currentSelectedIndex + 1));
 
   if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
     ImGui::DragFloat3("Position", glm::value_ptr(light.position), 0.1f);
