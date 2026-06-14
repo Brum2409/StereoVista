@@ -75,8 +75,14 @@ public:
   glm::vec3 AnimationEndPosition;
   glm::quat AnimationStartOrientation;
   glm::quat AnimationEndOrientation;
+  float AnimationStartZoom = ZOOM;
+  float AnimationEndZoom = ZOOM;
   float AnimationProgress;
   float AnimationDuration;
+  // Whether to fire centeringCompletedCallback when the current animation
+  // finishes. Centering animations want it; snapshot-restore animations do not
+  // (they must not warp the cursor or start orbiting).
+  bool AnimationInvokeCallback = true;
 
   bool useNewMethod = true;
   bool wireframe = false;
@@ -573,8 +579,12 @@ public:
   // Starts animation to center camera on target point
   void StartCenteringAnimation(const glm::vec3 &targetPoint) {
     IsAnimating = true;
+    AnimationInvokeCallback = true;
     AnimationStartPosition = Position;
     AnimationStartOrientation = Orientation;
+    // Zoom (FOV) is unchanged by centering.
+    AnimationStartZoom = Zoom;
+    AnimationEndZoom = Zoom;
 
     float initialDistance = glm::length(Position - targetPoint);
     glm::vec3 directionToCamera = glm::normalize(Position - targetPoint);
@@ -590,7 +600,33 @@ public:
     AnimationEndOrientation = glm::normalize(glm::quat_cast(targetRotMatrix));
 
     AnimationProgress = 0.0f;
+    AnimationDuration = 0.5f;
     OrbitDistance = initialDistance;
+  }
+
+  // Smoothly animate every camera parameter (position, orientation and zoom)
+  // toward a saved state with easing. Used when restoring a snapshot's camera
+  // so the view glides into place instead of jumping. OrbitDistance is left
+  // untouched and re-anchored along the new front on completion.
+  void StartStateAnimation(const CameraState &target, float duration = 0.6f) {
+    IsAnimating = true;
+    // Snapshot restores must not trigger the centering callback (cursor warp /
+    // auto-orbit); that behavior is specific to double-click centering.
+    AnimationInvokeCallback = false;
+    AnimationStartPosition = Position;
+    AnimationStartOrientation = Orientation;
+    AnimationStartZoom = Zoom;
+
+    AnimationEndPosition = target.position;
+    glm::quat endOrient = glm::normalize(target.orientation);
+    // Take the shortest rotational path so large turns don't spin the long way.
+    if (glm::dot(AnimationStartOrientation, endOrient) < 0.0f)
+      endOrient = -endOrient;
+    AnimationEndOrientation = endOrient;
+    AnimationEndZoom = target.zoom;
+
+    AnimationProgress = 0.0f;
+    AnimationDuration = (duration > 0.0001f) ? duration : 0.0001f;
   }
 
   // Updates camera animation with smooth easing
@@ -604,22 +640,24 @@ public:
       // Animation complete
       Position = AnimationEndPosition;
       Orientation = AnimationEndOrientation;
+      Zoom = AnimationEndZoom;
       IsAnimating = false;
       updateCameraVectorsFromQuaternion();
 
       OrbitPoint = Position + Front * OrbitDistance;
 
-      if (centeringCompletedCallback) {
+      if (AnimationInvokeCallback && centeringCompletedCallback) {
         centeringCompletedCallback();
       }
     } else {
       // Apply cubic easing function
       float t = easeOutCubic(AnimationProgress);
 
-      // Interpolate position and orientation using SLERP for smooth rotation
+      // Interpolate position, orientation (SLERP) and zoom for a smooth glide.
       Position = glm::mix(AnimationStartPosition, AnimationEndPosition, t);
       Orientation = glm::normalize(
           glm::slerp(AnimationStartOrientation, AnimationEndOrientation, t));
+      Zoom = glm::mix(AnimationStartZoom, AnimationEndZoom, t);
 
       // Update camera vectors from interpolated quaternion
       updateCameraVectorsFromQuaternion();
