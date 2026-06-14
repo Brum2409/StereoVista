@@ -19,6 +19,7 @@
 #include "imgui/imgui_sytle.h"
 #include "libs/portable-file-dialogs.h"
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -6563,6 +6564,100 @@ static void DrawSnapshotIcon(const char *icon, const char *tooltip) {
     ImGui::SetTooltip("%s", tooltip);
 }
 
+// ── Snapshot organization helpers ─────────────────────────────────────────
+
+// Case-insensitive subsequence match: every character of `needle` must appear
+// in `haystack` in order (not necessarily contiguous). An empty needle always
+// matches. This gives a forgiving "fuzzy" feel for the search box.
+static bool snapshotFuzzyMatch(const std::string &needle,
+                               const std::string &haystack) {
+  if (needle.empty())
+    return true;
+  size_t h = 0;
+  for (char rawN : needle) {
+    char n = static_cast<char>(std::tolower(static_cast<unsigned char>(rawN)));
+    bool found = false;
+    for (; h < haystack.size(); ++h) {
+      char c = static_cast<char>(
+          std::tolower(static_cast<unsigned char>(haystack[h])));
+      if (c == n) {
+        ++h;
+        found = true;
+        break;
+      }
+    }
+    if (!found)
+      return false;
+  }
+  return true;
+}
+
+// Build the combined searchable text for a snapshot: name, timestamp, tags and
+// the names of the aspects it stored. Used by the fuzzy search box.
+static std::string snapshotSearchText(const Core::Snapshot &s) {
+  std::string text = s.name + " " + s.timestamp;
+  for (const auto &t : s.tags)
+    text += " " + t;
+  if (s.flags & Core::SNAPSHOT_CAMERA)
+    text += " camera";
+  if (s.flags & Core::SNAPSHOT_SCENE)
+    text += " scene";
+  if (s.flags & Core::SNAPSHOT_TOOLS)
+    text += " tools";
+  return text;
+}
+
+// Split a comma-separated string into trimmed, non-empty tags.
+static std::vector<std::string> parseSnapshotTags(const char *csv) {
+  std::vector<std::string> out;
+  std::string cur;
+  auto flush = [&]() {
+    size_t a = cur.find_first_not_of(" \t");
+    size_t b = cur.find_last_not_of(" \t");
+    if (a != std::string::npos)
+      out.push_back(cur.substr(a, b - a + 1));
+    cur.clear();
+  };
+  for (const char *p = csv; *p; ++p) {
+    if (*p == ',')
+      flush();
+    else
+      cur += *p;
+  }
+  flush();
+  return out;
+}
+
+static std::string joinSnapshotTags(const std::vector<std::string> &tags) {
+  std::string s;
+  for (size_t i = 0; i < tags.size(); ++i) {
+    if (i)
+      s += ", ";
+    s += tags[i];
+  }
+  return s;
+}
+
+// A small rounded "chip" used to display / toggle a tag. Returns true when the
+// chip is clicked. `active` draws it with the accent fill (used for active
+// filters).
+static bool DrawTagChip(const char *label, bool active) {
+  ImVec4 base =
+      active ? g_StyleColors.accent
+             : ImVec4(g_StyleColors.primary.x, g_StyleColors.primary.y,
+                      g_StyleColors.primary.z, 0.35f);
+  ImGui::PushStyleColor(ImGuiCol_Button, base);
+  ImGui::PushStyleColor(ImGuiCol_ButtonHovered, g_StyleColors.primaryHover);
+  ImGui::PushStyleColor(ImGuiCol_ButtonActive, g_StyleColors.primaryActive);
+  ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding,
+                      ImGui::GetFrameHeight() * 0.5f);
+  std::string id = std::string(label) + "##chip";
+  bool clicked = ImGui::SmallButton(id.c_str());
+  ImGui::PopStyleVar();
+  ImGui::PopStyleColor(3);
+  return clicked;
+}
+
 // Snapshots panel: capture the current camera / scene / tool state into named,
 // thumbnailed checkpoints and roll back to them. Mirrors the screenshot capture
 // pipeline for the thumbnail and the Undo edit-states for the scene data.
@@ -6644,12 +6739,100 @@ void renderSnapshotsWindow() {
     return;
   }
 
+  // ── Search box ──────────────────────────────────────────────────────────
+  // Fuzzy (subsequence) match across name, timestamp, tags and aspect names.
+  static char searchBuf[128] = "";
+  DrawSnapshotIcon(ICON_FA_SEARCH, "Fuzzy search over name, tags, date & "
+                                   "aspects");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(-(40 * scale));
+  ImGui::InputTextWithHint("##snapSearch", "Search snapshots…", searchBuf,
+                           IM_ARRAYSIZE(searchBuf));
+  ImGui::SameLine();
+  if (ImGui::Button(ICON_FA_TIMES "##clearSearch"))
+    searchBuf[0] = '\0';
+  if (ImGui::IsItemHovered())
+    ImGui::SetTooltip("Clear search");
+
+  // ── Tag filter chips ────────────────────────────────────────────────────
+  // Collect the live tag set and drop any active filters whose tag no longer
+  // exists (e.g. after an edit or delete). A snapshot passes when it carries
+  // any of the selected tags.
+  static std::set<std::string> activeTagFilters;
+  std::set<std::string> allTags;
+  for (const auto &s : snaps)
+    for (const auto &t : s.tags)
+      allTags.insert(t);
+  for (auto it = activeTagFilters.begin(); it != activeTagFilters.end();) {
+    if (allTags.find(*it) == allTags.end())
+      it = activeTagFilters.erase(it);
+    else
+      ++it;
+  }
+
+  if (!allTags.empty()) {
+    const ImGuiStyle &style = ImGui::GetStyle();
+    float rightEdge =
+        ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+    DrawSnapshotIcon(ICON_FA_FILTER, "Filter by tag (matches any selected)");
+    int chipId = 0;
+    for (const auto &t : allTags) {
+      ImGui::PushID(chipId++);
+      float thisW = ImGui::CalcTextSize(t.c_str()).x +
+                    style.FramePadding.x * 2.0f + 8.0f * scale;
+      if (ImGui::GetItemRectMax().x + style.ItemSpacing.x + thisW < rightEdge)
+        ImGui::SameLine();
+      bool active = activeTagFilters.count(t) != 0;
+      if (DrawTagChip(t.c_str(), active)) {
+        if (active)
+          activeTagFilters.erase(t);
+        else
+          activeTagFilters.insert(t);
+      }
+      ImGui::PopID();
+    }
+    if (!activeTagFilters.empty()) {
+      ImGui::SameLine();
+      if (ImGui::SmallButton("Clear filters"))
+        activeTagFilters.clear();
+    }
+  }
+
+  ImGui::Spacing();
+
   int toRestore = -1;
   int toDelete = -1;
+
+  // Inline editor state. `editingIndex` indexes into the live snapshot vector;
+  // it is cleared whenever the vector is mutated (delete) so it can't dangle.
+  static int editingIndex = -1;
+  static char editName[128] = "";
+  static char editTags[256] = "";
+  static bool editHasColor = false;
+  static glm::vec3 editColor = glm::vec3(0.40f, 0.65f, 1.0f);
+
+  int visibleCount = 0;
 
   ImGui::BeginChild("SnapshotList", ImVec2(0, 0), false);
   for (int i = 0; i < static_cast<int>(snaps.size()); ++i) {
     Core::Snapshot &s = snaps[i];
+
+    // Apply the search box and tag filters.
+    if (searchBuf[0] != '\0' &&
+        !snapshotFuzzyMatch(searchBuf, snapshotSearchText(s)))
+      continue;
+    if (!activeTagFilters.empty()) {
+      bool anyMatch = false;
+      for (const auto &t : s.tags)
+        if (activeTagFilters.count(t)) {
+          anyMatch = true;
+          break;
+        }
+      if (!anyMatch)
+        continue;
+    }
+    ++visibleCount;
+
     ImGui::PushID(i);
 
     const float thumbW = 170 * scale;
@@ -6668,6 +6851,15 @@ void renderSnapshotsWindow() {
     ImGui::SameLine();
     ImGui::BeginGroup();
 
+    // Optional color marker, then the name.
+    if (s.hasColor) {
+      ImGui::ColorButton("##marker",
+                         ImVec4(s.color.r, s.color.g, s.color.b, 1.0f),
+                         ImGuiColorEditFlags_NoTooltip |
+                             ImGuiColorEditFlags_NoPicker,
+                         ImVec2(14 * scale, 14 * scale));
+      ImGui::SameLine();
+    }
     if (g_Fonts.bold)
       ImGui::PushFont(g_Fonts.bold);
     ImGui::TextUnformatted(s.name.c_str());
@@ -6690,25 +6882,87 @@ void renderSnapshotsWindow() {
     }
     ImGui::NewLine();
 
+    // Tag chips: click one to toggle it as a filter.
+    if (!s.tags.empty()) {
+      DrawSnapshotIcon(ICON_FA_TAGS, "Tags");
+      for (size_t ti = 0; ti < s.tags.size(); ++ti) {
+        ImGui::SameLine();
+        ImGui::PushID(static_cast<int>(ti));
+        bool active = activeTagFilters.count(s.tags[ti]) != 0;
+        if (DrawTagChip(s.tags[ti].c_str(), active)) {
+          if (active)
+            activeTagFilters.erase(s.tags[ti]);
+          else
+            activeTagFilters.insert(s.tags[ti]);
+        }
+        ImGui::PopID();
+      }
+    }
+
     if (ImGui::Button(ICON_FA_HISTORY " Restore"))
       toRestore = i;
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_FA_PEN " Edit")) {
+      editingIndex = (editingIndex == i) ? -1 : i;
+      if (editingIndex == i) {
+        std::snprintf(editName, sizeof(editName), "%s", s.name.c_str());
+        std::string joined = joinSnapshotTags(s.tags);
+        std::snprintf(editTags, sizeof(editTags), "%s", joined.c_str());
+        editHasColor = s.hasColor;
+        editColor = s.color;
+      }
+    }
     ImGui::SameLine();
     ImGui::PushStyleColor(ImGuiCol_Button, g_StyleColors.danger);
     if (ImGui::Button(ICON_FA_TRASH " Delete"))
       toDelete = i;
     ImGui::PopStyleColor();
 
+    // Inline editor for name / tags / color.
+    if (editingIndex == i) {
+      ImGui::Spacing();
+      ImGui::SetNextItemWidth(-1);
+      ImGui::InputTextWithHint("##editName", "Name", editName,
+                               IM_ARRAYSIZE(editName));
+      ImGui::SetNextItemWidth(-1);
+      ImGui::InputTextWithHint("##editTags", "Tags (comma-separated)", editTags,
+                               IM_ARRAYSIZE(editTags));
+      ImGui::Checkbox("Color marker", &editHasColor);
+      if (editHasColor) {
+        ImGui::SameLine();
+        ImGui::ColorEdit3("##editColor", &editColor.x,
+                          ImGuiColorEditFlags_NoInputs |
+                              ImGuiColorEditFlags_NoLabel);
+      }
+      if (ImGui::Button(ICON_FA_CHECK " Save")) {
+        if (editName[0] != '\0')
+          s.name = editName;
+        s.tags = parseSnapshotTags(editTags);
+        s.hasColor = editHasColor;
+        s.color = editColor;
+        editingIndex = -1;
+      }
+      ImGui::SameLine();
+      if (ImGui::Button(ICON_FA_TIMES " Cancel"))
+        editingIndex = -1;
+    }
+
     ImGui::EndGroup();
     ImGui::PopID();
     ImGui::Separator();
   }
+  if (visibleCount == 0)
+    ImGui::TextDisabled("No snapshots match the current search / filters.");
   ImGui::EndChild();
 
   // Apply deferred actions after the loop so the list isn't mutated mid-draw.
   if (toRestore >= 0)
     Core::RestoreSnapshot(toRestore);
-  if (toDelete >= 0)
+  if (toDelete >= 0) {
     mgr.remove(toDelete);
+    // Indices shift after a delete; close any open editor to avoid dangling.
+    editingIndex = -1;
+  }
 
   ImGui::End();
 }

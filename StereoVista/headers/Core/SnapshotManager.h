@@ -87,6 +87,14 @@ struct Snapshot {
   std::string timestamp;
   uint32_t flags = SNAPSHOT_NONE;
 
+  // Organization metadata (user-editable after capture, persisted with the
+  // scene). `tags` are freeform labels / categories used for filtering and
+  // search; `color` is an optional marker used to visually group snapshots in
+  // the panel (only shown when `hasColor` is set).
+  std::vector<std::string> tags;
+  bool hasColor = false;
+  glm::vec3 color = glm::vec3(0.40f, 0.65f, 1.0f);
+
   Camera::CameraState camera{};
   SnapshotSceneState scene;
   SnapshotToolState tools;

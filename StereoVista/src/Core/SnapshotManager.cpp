@@ -651,6 +651,10 @@ void SnapshotManager::saveToScene(const std::string &sceneFile) {
       j["name"] = s.name;
       j["timestamp"] = s.timestamp;
       j["flags"] = s.flags;
+      if (!s.tags.empty())
+        j["tags"] = s.tags;
+      if (s.hasColor)
+        j["color"] = vec3ToJson(s.color);
       if (s.flags & SNAPSHOT_CAMERA)
         j["camera"] = cameraStateToJson(s.camera);
       if (s.flags & SNAPSHOT_SCENE)
@@ -711,6 +715,15 @@ void SnapshotManager::loadFromScene(const std::string &sceneFile) {
       s.name = j.value("name", std::string("Snapshot"));
       s.timestamp = j.value("timestamp", std::string());
       s.flags = j.value("flags", 0u);
+      if (j.contains("tags") && j["tags"].is_array()) {
+        for (const auto &t : j["tags"])
+          if (t.is_string())
+            s.tags.push_back(t.get<std::string>());
+      }
+      if (j.contains("color")) {
+        s.color = jsonToVec3(j["color"], s.color);
+        s.hasColor = true;
+      }
       if (j.contains("camera"))
         s.camera = cameraStateFromJson(j["camera"]);
       if (j.contains("scene"))
