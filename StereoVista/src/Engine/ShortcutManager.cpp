@@ -419,6 +419,8 @@ ShortcutProfile ShortcutManager::createDefaultProfile() {
 
   // Set default bindings based on original hardcoded shortcuts
   profile.setBinding(ShortcutAction::ToggleGUI, KeyBinding(GLFW_KEY_G), 0);
+  profile.setBinding(ShortcutAction::TakeScreenshot, KeyBinding(GLFW_KEY_F12),
+                     0);
   profile.setBinding(ShortcutAction::CenterView, KeyBinding(GLFW_KEY_C), 0);
   profile.setBinding(ShortcutAction::CycleLighting, KeyBinding(GLFW_KEY_L), 0);
   profile.setBinding(ShortcutAction::ToggleShadows, KeyBinding(GLFW_KEY_K), 0);
@@ -562,6 +564,8 @@ std::string ShortcutManager::getActionName(ShortcutAction action) {
     return "ToggleRadar";
   case ShortcutAction::ToggleZeroPlane:
     return "ToggleZeroPlane";
+  case ShortcutAction::TakeScreenshot:
+    return "TakeScreenshot";
 
   // Camera Controls
   case ShortcutAction::CenterView:
@@ -685,6 +689,8 @@ std::string ShortcutManager::getActionDescription(ShortcutAction action) {
     return "Toggle Radar/Mini-Map";
   case ShortcutAction::ToggleZeroPlane:
     return "Toggle Zero Plane";
+  case ShortcutAction::TakeScreenshot:
+    return "Save Screenshot to Image File";
 
   // Camera Controls
   case ShortcutAction::CenterView:

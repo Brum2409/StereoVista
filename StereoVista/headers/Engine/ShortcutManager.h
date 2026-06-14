@@ -17,6 +17,7 @@ enum class ShortcutAction {
   ToggleWireframe, // Toggle wireframe mode
   ToggleRadar,     // Toggle radar/mini-map
   ToggleZeroPlane, // Toggle zero plane visibility
+  TakeScreenshot,  // Save the current viewport to an image file
 
   // Camera Controls
   CenterView,              // C - Center on cursor/selected/scene
