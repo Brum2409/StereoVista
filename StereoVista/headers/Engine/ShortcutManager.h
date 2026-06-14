@@ -61,6 +61,7 @@ enum class ShortcutAction {
   OpenCursorSettings,  // Open cursor settings
   OpenBrushTool,       // Open brush tool window
   OpenMeasurementTool, // Open measurement tool window
+  OpenClipPlaneTool,   // P - Open section/clip plane tool window
 
   // File Operations
   ImportModel,      // Open import model dialog

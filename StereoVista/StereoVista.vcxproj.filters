@@ -126,6 +126,9 @@
     <ClCompile Include="src\Tools\BrushTool.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\Tools\ClipPlaneTool.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\Tools\MeasurementTool.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -483,6 +486,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\Tools\BrushTool.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Tools\ClipPlaneTool.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\Tools\MeasurementTool.h">

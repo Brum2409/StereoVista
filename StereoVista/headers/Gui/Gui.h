@@ -46,6 +46,7 @@ void renderSettingsWindow();
 void renderCursorSettingsWindow();
 void renderBrushToolWindow();
 void renderMeasurementToolWindow();
+void renderClipPlaneToolWindow();
 void renderSunManipulationPanel();
 void renderModelManipulationPanel(Engine::Model &model, Engine::Shader *shader);
 void renderMeshManipulationPanel(Engine::Model &model, int meshIndex,

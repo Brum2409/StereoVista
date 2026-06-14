@@ -40,6 +40,16 @@ uniform int currentMeshIndex;
 uniform bool radarClipEnabled;
 uniform float radarClipHeight;
 
+// User-controllable section/clip planes (world space). Each active plane i is
+// written to gl_ClipDistance[i + 1] (index 0 is the radar slice above). A plane
+// is vec4(normal.xyz, d) with d = -dot(normal, pointOnPlane); a fragment is kept
+// while dot(normal, worldPos) + d >= 0 (the +normal side). clipPlaneCount is the
+// number of active planes; the host enables the matching GL_CLIP_DISTANCE slots
+// only for the main lit pass, so these have no effect in other passes.
+const int MAX_CLIP_PLANES = 6;
+uniform int  clipPlaneCount;
+uniform vec4 clipPlanes[MAX_CLIP_PLANES];
+
 void main() {
     // Normal matrix is provided via uniform
 
@@ -82,4 +92,15 @@ void main() {
     // Radar slice clip plane (no effect unless GL_CLIP_DISTANCE0 is enabled)
     gl_ClipDistance[0] =
         radarClipEnabled ? (radarClipHeight - vs_out.FragPos.y) : 1.0;
+
+    // User section planes occupy gl_ClipDistance[1..6]. Inactive slots stay
+    // positive (+1.0) so they never clip. Constant indices keep the implicit
+    // gl_ClipDistance[] array sized correctly (a dynamic loop index would leave
+    // its size undefined).
+    gl_ClipDistance[1] = (clipPlaneCount > 0) ? dot(clipPlanes[0].xyz, vs_out.FragPos) + clipPlanes[0].w : 1.0;
+    gl_ClipDistance[2] = (clipPlaneCount > 1) ? dot(clipPlanes[1].xyz, vs_out.FragPos) + clipPlanes[1].w : 1.0;
+    gl_ClipDistance[3] = (clipPlaneCount > 2) ? dot(clipPlanes[2].xyz, vs_out.FragPos) + clipPlanes[2].w : 1.0;
+    gl_ClipDistance[4] = (clipPlaneCount > 3) ? dot(clipPlanes[3].xyz, vs_out.FragPos) + clipPlanes[3].w : 1.0;
+    gl_ClipDistance[5] = (clipPlaneCount > 4) ? dot(clipPlanes[4].xyz, vs_out.FragPos) + clipPlanes[4].w : 1.0;
+    gl_ClipDistance[6] = (clipPlaneCount > 5) ? dot(clipPlanes[5].xyz, vs_out.FragPos) + clipPlanes[5].w : 1.0;
 }

@@ -32,6 +32,7 @@
 #include "Loaders/PointCloudLoader.h"
 #include "Tools/BrushTool.h"
 #include "Tools/MeasurementTool.h"
+#include "Tools/ClipPlaneTool.h"
 #include "Tools/TransformGizmo.h"
 
 
@@ -203,6 +204,7 @@ bool show3DCursor = true;
 bool showCursorSettingsWindow = false;
 bool showBrushToolWindow = false;
 bool showMeasurementToolWindow = false;
+bool showClipPlaneToolWindow = false;
 enum class SelectedType {
   None,
   Model,
@@ -294,6 +296,9 @@ Tools::BrushTool brushTool;
 // ---- Measurement Tool ----
 Tools::MeasurementTool measurementTool;
 
+// ---- Section / Clip Plane Tool ----
+Tools::ClipPlaneTool clipPlaneTool;
+
 // ---- Transform Gizmo ----
 // Visual translate/rotate/scale gizmo anchored at the selected object's pivot.
 // Coexists with the legacy Ctrl/Alt body-drag free-move (which is preserved):
@@ -307,6 +312,9 @@ Engine::PointLight gizmoUndoPointLightBefore;
 Engine::SpotLight gizmoUndoSpotLightBefore;
 SelectedType gizmoUndoType = SelectedType::None;
 int gizmoUndoIndex = -1;
+// True while the gizmo is driving the active clip plane (instead of a scene
+// object), so the drag press/update/release routes to the clip-plane tool.
+bool g_clipPlaneGizmoActive = false;
 
 // ---- Window Configuration ----
 int windowWidth = 1920;
@@ -3256,6 +3264,9 @@ int main() {
     // across scene loads).
     measurementTool.setMeasurements(&currentScene.measurements);
 
+    // Keep the clip-plane tool bound to the current scene's plane storage.
+    clipPlaneTool.setPlanes(&currentScene.clipPlanes);
+
     // ---- Transform Gizmo: bind target + process hover / constrained drag ----
     // Safety net: if the mouse-up landed over an ImGui panel (whose callback
     // early-returns) the release can be missed, so finalize here too.
@@ -3272,6 +3283,10 @@ int main() {
         bool snapHeld = (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
                          glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS);
         transformGizmo.updateDrag(gRayOrigin, gRayDir, camera.Position, snapHeld);
+        // A clip-plane rotate drag updates the gizmo Euler scratch; mirror it
+        // back into the plane's normal.
+        if (g_clipPlaneGizmoActive)
+          clipPlaneTool.syncActiveNormalFromGizmo();
       } else if (!camera.IsOrbiting && !camera.IsPanning && !isMovingModel &&
                  !rightMousePressed && !ImGui::GetIO().WantCaptureMouse) {
         transformGizmo.updateHover(gRayOrigin, gRayDir, camera.Position);
@@ -4041,6 +4056,7 @@ void cleanup() {
 
   // Clean up measurement tool GL resources while the context is still valid
   measurementTool.cleanup();
+  clipPlaneTool.cleanup();
   transformGizmo.cleanup();
 
   // Drop undo history while the context is still valid - undo entries for
@@ -5146,11 +5162,25 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   // Wireframe is scoped to the model pass only: the skybox stays solid and,
   // crucially, GL_LINE is reset before the post-process/composite passes so it
   // can't turn the full-screen HDR quads into stray lines.
+  // Section / clip planes: push the active planes to the scene shader and
+  // enable the matching GL_CLIP_DISTANCE slots (index 0 stays reserved for the
+  // radar slice, so user planes use slots 1..N). Scoped to the model pass only
+  // and disabled immediately after so the clip state can't leak into the skybox,
+  // point-cloud, or post-process passes (whose shaders don't write
+  // gl_ClipDistance, which would otherwise clip them with undefined values).
+  int activeClipPlanes = clipPlaneTool.applyToShader(shader);
+  for (int i = 0; i < activeClipPlanes; ++i)
+    glEnable(GL_CLIP_DISTANCE0 + 1 + i);
+
   if (camera.wireframe)
     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
   renderModels(shader, projection * view);
   if (camera.wireframe)
     glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+  for (int i = 0; i < activeClipPlanes; ++i)
+    glDisable(GL_CLIP_DISTANCE0 + 1 + i);
+
   renderSkybox(projection, view, shader);
   renderPointClouds(shader, view, projection);
 
@@ -5372,6 +5402,10 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   // Render the transform gizmo overlay for the selected object (per eye).
   transformGizmo.render(projection, view, camera.Position);
 
+  // Render the section/clip-plane overlay (translucent quad + normal arrow);
+  // only while the tool is active (panel/toolbar open).
+  clipPlaneTool.render(projection, view, camera.Position);
+
   // Render brush tool indicator
   if (preferences.brushToolSettings.enabled &&
       preferences.brushToolSettings.selectedModelIndex >= 0 &&
@@ -5566,6 +5600,11 @@ void renderModels(Engine::Shader *shader, const glm::mat4 &viewProj,
     instancedShader->setFloat("sunIntensity", sun.intensity);
     instancedShader->setBool("useInstanceColor", true);
 
+    // Section/clip planes: the matching GL_CLIP_DISTANCE slots are already
+    // enabled by renderEye for the model pass, so feed the instanced program the
+    // same planes (otherwise its gl_ClipDistance writes default to "keep").
+    clipPlaneTool.applyToShader(instancedShader);
+
     // Bind shadow map
     if (enableShadows) {
       glActiveTexture(GL_TEXTURE0 + Engine::SHADOW_MAP_TEXTURE_UNIT);
@@ -5592,6 +5631,11 @@ void renderPointClouds(Engine::Shader *shader, const glm::mat4 &view,
   bool useCompute =
       computePointCloudRenderer && computePointCloudRenderer->isInitialized();
   if (useCompute) {
+    // Feed the active section/clip planes to the compute rasterizer so clipped
+    // points are discarded (point clouds don't use gl_ClipDistance).
+    glm::vec4 worldPlanes[Engine::MAX_CLIP_PLANES];
+    int nClip = clipPlaneTool.collectEnabledPlanes(worldPlanes);
+    computePointCloudRenderer->setClipPlanes(nClip, worldPlanes);
     computePointCloudRenderer->beginFrame();
   }
 
@@ -5637,6 +5681,7 @@ void renderPointClouds(Engine::Shader *shader, const glm::mat4 &view,
             projection * view * modelMatrix, // uMVP
             view * modelMatrix,              // uModelView (for precision level)
             projection,                      // uProj      (for precision level)
+            modelMatrix,                     // model (for local-space clip planes)
             splatMaxRadius);                 // adaptive splat radius clamp (px)
       }
     } else if (pointCloud.octreeRoot) {
@@ -6651,6 +6696,14 @@ void framebuffer_size_callback(GLFWwindow *window, int width, int height) {
 
 void scroll_callback(GLFWwindow *window, double xoffset, double yoffset) {
   if (!ImGui::GetIO().WantCaptureMouse && !spaceMouseActive) {
+    // Clip-plane scrubbing: while the tool is active with a selected plane,
+    // scroll nudges the plane along its normal (mirrors model scroll-to-depth)
+    // so the user can quickly slice through the model.
+    if (clipPlaneTool.isEnabled() && clipPlaneTool.hasActivePlane()) {
+      clipPlaneTool.nudgeActive(static_cast<float>(yoffset) *
+                                clipPlaneTool.nudgeStep);
+      return;
+    }
     // Check if we're currently moving a model with Ctrl+drag
     if (isMovingModel && currentSelectedType == SelectedType::Model &&
         currentSelectedIndex != -1) {
@@ -6762,6 +6815,13 @@ static void bindGizmoTargetToSelection() {
   if (gizmoDragging)
     return; // keep the live target stable for the duration of a drag
 
+  // The clip-plane tool takes over the gizmo when active with a plane selected,
+  // so the user can slide (move) and rotate the section plane directly.
+  if (clipPlaneTool.isEnabled() && clipPlaneTool.hasActivePlane()) {
+    if (clipPlaneTool.bindGizmo(transformGizmo))
+      return;
+  }
+
   switch (currentSelectedType) {
   case SelectedType::Model:
     if (currentSelectedIndex >= 0 &&
@@ -6806,6 +6866,16 @@ static void bindGizmoTargetToSelection() {
 static void beginGizmoDrag(Tools::TransformGizmo::Handle handle,
                            const glm::vec3 &rayOrigin,
                            const glm::vec3 &rayDir) {
+  // Clip-plane gizmo drag: the plane (not a scene object) is the target.
+  if (clipPlaneTool.isEnabled() && clipPlaneTool.hasActivePlane()) {
+    gizmoUndoType = SelectedType::None;
+    clipPlaneTool.captureGizmoUndo();
+    gizmoDragging =
+        transformGizmo.beginDrag(handle, rayOrigin, rayDir, camera.Position);
+    g_clipPlaneGizmoActive = gizmoDragging;
+    return;
+  }
+
   gizmoUndoType = currentSelectedType;
   gizmoUndoIndex = currentSelectedIndex;
   switch (gizmoUndoType) {
@@ -6838,6 +6908,13 @@ static void finishGizmoDrag() {
     return;
   transformGizmo.endDrag();
   gizmoDragging = false;
+
+  // Clip-plane drag: record the position/normal change as one undo entry.
+  if (g_clipPlaneGizmoActive) {
+    g_clipPlaneGizmoActive = false;
+    clipPlaneTool.recordGizmoUndo();
+    return;
+  }
 
   switch (gizmoUndoType) {
   case SelectedType::Model:
@@ -6880,6 +6957,54 @@ static void finishGizmoDrag() {
   gizmoUndoType = SelectedType::None;
   gizmoUndoIndex = -1;
   updateSpaceMouseBounds();
+}
+
+// ── Clip-plane creation helpers (invoked from the GUI panel) ────────────────
+// Place a clip plane at the 3D cursor, oriented by the surface normal under the
+// cursor (camera-facing fallback). No-op when the cursor isn't on geometry.
+void addClipPlaneAtCursor() {
+  if (!cursorManager.isCursorPositionValid())
+    return;
+  const glm::vec3 pos = cursorManager.getCursorPosition();
+
+  // Default to a camera-facing normal, then refine with the surface normal of
+  // the NEAREST model under the cursor (so overlapping models pick the visible
+  // surface, matching the cursor's own hit point).
+  glm::vec3 normal = glm::normalize(camera.Position - pos);
+  glm::vec3 rayOrigin, rayDir, rayNear, rayFar;
+  calculateMouseRay(lastX, lastY, rayOrigin, rayDir, rayNear, rayFar,
+                    aspectRatio);
+  float closest = std::numeric_limits<float>::max();
+  for (const auto &model : currentScene.models) {
+    float distance;
+    glm::vec3 hitNormal;
+    if (rayIntersectsModel(rayOrigin, rayDir, model, distance, hitNormal) &&
+        distance < closest) {
+      closest = distance;
+      normal = hitNormal;
+    }
+  }
+  clipPlaneTool.addPlane(pos, normal);
+  clipPlaneTool.setEnabled(true);
+}
+
+// Add an axis-aligned plane (0 = X, 1 = Y, 2 = Z) through the selection centre,
+// else the 3D cursor, else the world origin.
+void addClipPlaneAxisAligned(int axis) {
+  glm::vec3 center(0.0f);
+  if (currentSelectedType == SelectedType::Model && currentSelectedIndex >= 0 &&
+      currentSelectedIndex < static_cast<int>(currentScene.models.size())) {
+    center = currentScene.models[currentSelectedIndex].position;
+  } else if (currentSelectedType == SelectedType::PointCloud &&
+             currentSelectedIndex >= 0 &&
+             currentSelectedIndex <
+                 static_cast<int>(currentScene.pointClouds.size())) {
+    center = currentScene.pointClouds[currentSelectedIndex].position;
+  } else if (cursorManager.isCursorPositionValid()) {
+    center = cursorManager.getCursorPosition();
+  }
+  clipPlaneTool.addAxisAlignedPlane(axis, center);
+  clipPlaneTool.setEnabled(true);
 }
 
 void mouse_button_callback(GLFWwindow *window, int button, int action,
@@ -7960,6 +8085,12 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
     case StereoVista::ShortcutAction::OpenMeasurementTool:
       showMeasurementToolWindow = true;
       std::cout << "Opening measurement tool window" << std::endl;
+      break;
+
+    case StereoVista::ShortcutAction::OpenClipPlaneTool:
+      showClipPlaneToolWindow = true;
+      clipPlaneTool.setEnabled(true);
+      std::cout << "Opening clip plane tool window" << std::endl;
       break;
 
     // File Operations - these will trigger file dialogs through GUI
