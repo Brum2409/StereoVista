@@ -374,11 +374,9 @@ extern const int MAX_LIGHTS;
 // ===========================================================================
 
 // Categories for the redesigned, sidebar-navigated Settings window. Declared at
-// file scope so the main menu bar can deep-link straight to a category (e.g.
-// the "AI Assistant" shortcut).
+// file scope so the main menu bar can deep-link straight to a category.
 enum SettingsCategory {
-  SETTINGS_CAT_AI = 0,
-  SETTINGS_CAT_RENDERING,
+  SETTINGS_CAT_RENDERING = 0,
   SETTINGS_CAT_CAMERA,
   SETTINGS_CAT_ENVIRONMENT,
   SETTINGS_CAT_DISPLAY,
@@ -386,7 +384,7 @@ enum SettingsCategory {
   SETTINGS_CAT_IMPORT,
   SETTINGS_CAT_SHORTCUTS
 };
-static int g_settingsCategory = SETTINGS_CAT_AI;
+static int g_settingsCategory = SETTINGS_CAT_RENDERING;
 
 // Docked-region insets published to the render loop (see Gui.h). Updated each
 // frame in renderGUI so the 3D viewport can be sized to the free area.
@@ -2032,16 +2030,6 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
     }
     menuButtonTooltip("Save and restore camera viewpoints of the scene");
 
-    // AI Assistant quick access (accent-highlighted, deep-links into Settings)
-    ImGui::PushStyleColor(ImGuiCol_Text, g_StyleColors.accent);
-    if (ImGui::MenuItem("AI Assistant")) {
-      showSettingsWindow = true;
-      g_settingsCategory = SETTINGS_CAT_AI;
-    }
-    ImGui::PopStyleColor();
-    menuButtonTooltip("Adjust your scene and settings by describing what you "
-                      "want in plain language");
-
     ImGui::EndMainMenuBar();
   }
 
@@ -2874,7 +2862,6 @@ void renderSettingsWindow() {
     const char *label;
   };
   static const SettingsNavEntry kNavEntries[] = {
-      {SETTINGS_CAT_AI, ICON_FA_ROBOT, "AI Assistant"},
       {SETTINGS_CAT_RENDERING, ICON_FA_LIGHTBULB, "Rendering"},
       {SETTINGS_CAT_CAMERA, ICON_FA_VIDEO, "Camera & 3D"},
       {SETTINGS_CAT_ENVIRONMENT, ICON_FA_MOUNTAIN, "Environment"},
@@ -2905,176 +2892,6 @@ void renderSettingsWindow() {
 
   ImGui::SameLine();
   ImGui::BeginChild("##SettingsContent", ImVec2(0, 0), false);
-
-  // ===========================
-  // AI ASSISTANT TAB (scaffold)
-  // ===========================
-  if (g_settingsCategory == SETTINGS_CAT_AI) {
-    ImGui::PushID("AITab");
-
-    DrawInlineIcon(ICON_FA_ROBOT, g_StyleColors.accent);
-    ImGui::TextUnformatted("AI Assistant");
-    ImGui::PushStyleColor(ImGuiCol_Text,
-                          ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-    ImGui::TextWrapped(
-        "Describe what you want in plain language and the assistant will "
-        "adjust your scene and settings for you — change the lighting, "
-        "add objects, tune the look, and more.");
-    ImGui::PopStyleColor();
-    ImGui::Spacing();
-
-    // Connection state (scaffold-only: no network transport yet).
-    static bool aiConnected = false;
-    static char aiApiKey[256] = "";
-    static char aiModel[128] = "claude-opus-4-8";
-    static char aiEndpoint[256] = "https://api.anthropic.com/v1/messages";
-    static int aiProvider = 0;
-    static std::vector<std::pair<bool, std::string>> aiHistory; // {isUser,text}
-    static char aiInput[1024] = "";
-
-    // Status banner
-    {
-      ImVec4 col = aiConnected ? g_StyleColors.success : g_StyleColors.warning;
-      ImGui::PushStyleColor(ImGuiCol_ChildBg,
-                            ImVec4(col.x, col.y, col.z, 0.12f));
-      ImGui::BeginChild("##aistatus", ImVec2(0, ImGui::GetFrameHeight() * 2.2f),
-                        true);
-      DrawInlineIcon(aiConnected ? ICON_FA_CHECK : ICON_FA_EXCLAMATION_TRIANGLE,
-                     col);
-      ImGui::AlignTextToFramePadding();
-      ImGui::TextWrapped(
-          "%s",
-          aiConnected
-              ? "Connected. The assistant can read and modify your scene."
-              : "Not connected. Add an API key under Connection to enable "
-                "live requests.");
-      ImGui::EndChild();
-      ImGui::PopStyleColor();
-    }
-
-    ImGui::Spacing();
-    DrawSectionHeader("Conversation");
-
-    // Chat transcript
-    ImGui::BeginChild("##aichat", ImVec2(0, 260 * scale), true);
-    if (aiHistory.empty()) {
-      ImGui::PushStyleColor(ImGuiCol_Text,
-                            ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-      ImGui::Spacing();
-      ImGui::TextWrapped("No messages yet. Try one of the suggestions below, "
-                         "or type your own request.");
-      ImGui::PopStyleColor();
-    } else {
-      for (const auto &msg : aiHistory) {
-        const bool isUser = msg.first;
-        ImGui::PushStyleColor(
-            ImGuiCol_Text,
-            isUser ? ImGui::GetStyleColorVec4(ImGuiCol_Text)
-                   : g_StyleColors.accent);
-        DrawInlineIcon(isUser ? ICON_FA_COMMENT : ICON_FA_ROBOT,
-                       isUser ? ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled)
-                              : g_StyleColors.accent);
-        ImGui::TextUnformatted(isUser ? "You" : "Assistant");
-        ImGui::PopStyleColor();
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextWrapped("%s", msg.second.c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-      }
-      ImGui::SetScrollHereY(1.0f);
-    }
-    ImGui::EndChild();
-
-    // Lambda to "submit" a prompt. Scaffold only: echoes the prompt and an
-    // honest placeholder until a transport + apply layer is wired up.
-    auto submitPrompt = [&](const std::string &prompt) {
-      if (prompt.empty())
-        return;
-      aiHistory.emplace_back(true, prompt);
-      aiHistory.emplace_back(
-          false,
-          aiConnected
-              ? "(Live requests are not wired up in this build yet.)"
-              : "I can't act on this yet — add an API key under "
-                "Connection to enable live requests. Once connected I'll be "
-                "able to apply changes like this directly to your scene.");
-      aiInput[0] = '\0';
-    };
-
-    // Suggestion chips
-    ImGui::Spacing();
-    const char *suggestions[] = {"Make the lighting warmer",
-                                 "Add a cube to the scene",
-                                 "Enable soft shadows",
-                                 "Switch to a sunset sky"};
-    const float rightEdge =
-        ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
-    const float spacing = ImGui::GetStyle().ItemSpacing.x;
-    for (int i = 0; i < IM_ARRAYSIZE(suggestions); ++i) {
-      // Keep the chip on the current row only if it actually fits.
-      if (i > 0) {
-        float chipW = ImGui::CalcTextSize(suggestions[i]).x +
-                      ImGui::GetStyle().FramePadding.x * 2.0f;
-        float nextX = ImGui::GetItemRectMax().x + spacing + chipW;
-        if (nextX < rightEdge)
-          ImGui::SameLine();
-      }
-      if (ImGui::Button(suggestions[i]))
-        submitPrompt(suggestions[i]);
-    }
-
-    // Input row
-    ImGui::Spacing();
-    float sendW = 90.0f * scale;
-    ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - sendW -
-                         ImGui::GetStyle().ItemSpacing.x);
-    bool entered = ImGui::InputTextWithHint(
-        "##aiinput", "Ask the assistant to change your scene…", aiInput,
-        sizeof(aiInput), ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::PopItemWidth();
-    ImGui::SameLine();
-    bool sendClicked = ImGui::Button("Send", ImVec2(sendW, 0));
-    if (entered || sendClicked)
-      submitPrompt(std::string(aiInput));
-
-    if (!aiHistory.empty()) {
-      if (ImGui::SmallButton("Clear conversation"))
-        aiHistory.clear();
-    }
-
-    // Connection / configuration
-    ImGui::Spacing();
-    if (ImGui::CollapsingHeader("Connection")) {
-      DrawToggleSwitch("Enable live requests", &aiConnected);
-      ImGui::SameLine();
-      DrawHelpMarker("When connected, the assistant sends your prompts to the "
-                     "configured provider. Networking is not implemented in "
-                     "this build — this is the UI scaffold.");
-
-      const char *providers[] = {"Anthropic (Claude)", "OpenAI", "Custom"};
-      ImGui::Combo("Provider", &aiProvider, providers,
-                   IM_ARRAYSIZE(providers));
-
-      ImGui::InputText("API Key", aiApiKey, sizeof(aiApiKey),
-                       ImGuiInputTextFlags_Password);
-      ImGui::SameLine();
-      DrawHelpMarker("Stored only for this session in this scaffold build.");
-
-      ImGui::InputText("Model", aiModel, sizeof(aiModel));
-      ImGui::InputText("Endpoint", aiEndpoint, sizeof(aiEndpoint));
-    }
-
-    if (ImGui::CollapsingHeader("What the assistant can do")) {
-      ImGui::BulletText("Adjust rendering, camera and environment settings");
-      ImGui::BulletText("Create primitives and lights");
-      ImGui::BulletText("Tune materials and the overall look");
-      ImGui::BulletText("Explain what each setting does");
-    }
-
-    ImGui::PopID();
-  }
 
   // ===========================
   // RENDERING TAB
