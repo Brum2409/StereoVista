@@ -1,5 +1,6 @@
 #include "Gui/Gui.h"
 #include "Core/Camera.h"
+#include "Core/SnapshotManager.h"
 #include "Core/UndoManager.h"
 #include "Core/Voxalizer.h"
 #include "Cursors/Base/CursorManager.h"
@@ -78,6 +79,9 @@ extern bool showMeasurementToolWindow;
 // Section / clip plane tool
 extern Tools::ClipPlaneTool clipPlaneTool;
 extern bool showClipPlaneToolWindow;
+
+// Snapshots
+extern bool showSnapshotsWindow;
 // Defined in main.cpp: place planes using the 3D cursor / selection context.
 void addClipPlaneAtCursor();
 void addClipPlaneAxisAligned(int axis);
@@ -1199,6 +1203,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       }
       spotLights = currentScene.spotLights;
 
+      // Replace the snapshot list with the ones saved for this scene.
+      Core::SnapshotManager::instance().loadFromScene(sceneFile);
+
       for (auto &model : currentScene.models) {
         glm::vec3 targetScale = model.scale;
         if (preferences.enableSpawnAnimation) {
@@ -1284,6 +1291,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       pl.castShadows = true;
     }
     spotLights = currentScene.spotLights;
+
+    // Replace the snapshot list with the ones saved for this scene.
+    Core::SnapshotManager::instance().loadFromScene(sceneFile);
 
     for (auto &model : currentScene.models) {
       glm::vec3 targetScale = model.scale;
@@ -1507,6 +1517,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
             currentScene.pointLights = pointLights;
             currentScene.spotLights = spotLights;
             Engine::saveScene(destination, currentScene, camera);
+            // Persist this scene's snapshots (metadata + thumbnails) alongside it.
+            Core::SnapshotManager::instance().saveToScene(destination);
             GUI::UpdateWindowTitleForScene(destination);
             GUI::ShowToast(
                 "Scene saved: " +
@@ -1975,6 +1987,11 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
     // Section / Clip Plane Tool Menu
     if (ImGui::MenuItem("Section Planes")) {
       showClipPlaneToolWindow = true;
+    }
+
+    // Snapshots Menu
+    if (ImGui::MenuItem("Snapshots")) {
+      showSnapshotsWindow = true;
     }
 
     // AI Assistant quick access (accent-highlighted, deep-links into Settings)
@@ -2641,6 +2658,10 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
 
   if (showClipPlaneToolWindow) {
     renderClipPlaneToolWindow();
+  }
+
+  if (showSnapshotsWindow) {
+    renderSnapshotsWindow();
   }
 
   // Screen-space measurement labels (distances/angles/coordinates) projected
@@ -6527,6 +6548,169 @@ void renderClipPlaneToolWindow() {
   // Closing the window (X) disables the editing UX; the planes keep clipping.
   if (!showClipPlaneToolWindow)
     clipPlaneTool.setEnabled(false);
+}
+
+// Draw a FontAwesome glyph inline with an optional hover tooltip. The icon font
+// is merged into the regular font, so the glyph is available directly; the
+// explicit PushFont keeps it visually consistent with the rest of the GUI.
+static void DrawSnapshotIcon(const char *icon, const char *tooltip) {
+  if (g_Fonts.icons)
+    ImGui::PushFont(g_Fonts.icons);
+  ImGui::TextUnformatted(icon);
+  if (g_Fonts.icons)
+    ImGui::PopFont();
+  if (tooltip && ImGui::IsItemHovered())
+    ImGui::SetTooltip("%s", tooltip);
+}
+
+// Snapshots panel: capture the current camera / scene / tool state into named,
+// thumbnailed checkpoints and roll back to them. Mirrors the screenshot capture
+// pipeline for the thumbnail and the Undo edit-states for the scene data.
+void renderSnapshotsWindow() {
+  float scale = g_GuiScale.currentScale;
+  ImGui::SetNextWindowSize(ImVec2(560 * scale, 620 * scale),
+                           ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSizeConstraints(ImVec2(380 * scale, 300 * scale),
+                                      ImVec2(100000.0f, 100000.0f));
+  ImGui::Begin("Snapshots", &showSnapshotsWindow);
+
+  auto &mgr = Core::SnapshotManager::instance();
+
+  // ── Create section ──────────────────────────────────────────────────────
+  DrawSectionHeader("New Snapshot");
+  ImGui::TextWrapped(
+      "Capture the current state into a named snapshot. Choose which aspects to "
+      "store; restoring rolls those aspects back to this point.");
+  ImGui::Spacing();
+
+  static char snapName[128] = "";
+  static bool saveCamera = true;
+  static bool saveScene = true;
+  static bool saveTools = false;
+  static int autoCounter = 1;
+
+  ImGui::InputTextWithHint("Name", "Snapshot name (optional)", snapName,
+                           IM_ARRAYSIZE(snapName));
+
+  DrawSnapshotIcon(ICON_FA_CAMERA, "Camera position & orientation");
+  ImGui::SameLine();
+  ImGui::Checkbox("Camera", &saveCamera);
+  ImGui::SameLine(0, 24 * scale);
+  DrawSnapshotIcon(ICON_FA_CUBES, "Objects: transform, color, visibility, "
+                                  "materials, lights, sun, measurements, "
+                                  "section planes");
+  ImGui::SameLine();
+  ImGui::Checkbox("Scene", &saveScene);
+  ImGui::SameLine(0, 24 * scale);
+  DrawSnapshotIcon(ICON_FA_TOOLS,
+                   "Tool settings (brush, measure, section planes)");
+  ImGui::SameLine();
+  ImGui::Checkbox("Tools", &saveTools);
+
+  uint32_t flags = (saveCamera ? Core::SNAPSHOT_CAMERA : 0u) |
+                   (saveScene ? Core::SNAPSHOT_SCENE : 0u) |
+                   (saveTools ? Core::SNAPSHOT_TOOLS : 0u);
+
+  ImGui::Spacing();
+  const bool canCapture = flags != 0u;
+  if (!canCapture)
+    ImGui::BeginDisabled();
+  if (ImGui::Button(ICON_FA_PLUS " Capture Snapshot",
+                    ImVec2(-1, 32 * scale))) {
+    std::string name = snapName[0] != '\0'
+                           ? std::string(snapName)
+                           : ("Snapshot " + std::to_string(autoCounter));
+    autoCounter++;
+    Core::RequestSnapshotCapture(name, flags);
+    snapName[0] = '\0';
+  }
+  if (!canCapture) {
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("Select at least one aspect to capture.");
+  }
+
+  ImGui::Spacing();
+  ImGui::Separator();
+  ImGui::Spacing();
+
+  // ── Saved snapshots list ────────────────────────────────────────────────
+  auto &snaps = mgr.snapshots();
+  DrawSectionHeader(
+      ("Saved Snapshots (" + std::to_string(snaps.size()) + ")").c_str());
+
+  if (snaps.empty()) {
+    ImGui::TextDisabled("No snapshots yet. Capture one above.");
+    ImGui::End();
+    return;
+  }
+
+  int toRestore = -1;
+  int toDelete = -1;
+
+  ImGui::BeginChild("SnapshotList", ImVec2(0, 0), false);
+  for (int i = 0; i < static_cast<int>(snaps.size()); ++i) {
+    Core::Snapshot &s = snaps[i];
+    ImGui::PushID(i);
+
+    const float thumbW = 170 * scale;
+    const float thumbH =
+        s.thumbWidth > 0
+            ? thumbW * static_cast<float>(s.thumbHeight) /
+                  static_cast<float>(s.thumbWidth)
+            : thumbW * 0.5625f;
+
+    if (s.thumbnailTexture != 0)
+      ImGui::Image((void *)(intptr_t)s.thumbnailTexture,
+                   ImVec2(thumbW, thumbH));
+    else
+      ImGui::Dummy(ImVec2(thumbW, thumbH));
+
+    ImGui::SameLine();
+    ImGui::BeginGroup();
+
+    if (g_Fonts.bold)
+      ImGui::PushFont(g_Fonts.bold);
+    ImGui::TextUnformatted(s.name.c_str());
+    if (g_Fonts.bold)
+      ImGui::PopFont();
+    ImGui::TextDisabled("%s", s.timestamp.c_str());
+
+    // Icons marking which aspects this snapshot stored.
+    if (s.flags & Core::SNAPSHOT_CAMERA) {
+      DrawSnapshotIcon(ICON_FA_CAMERA, "Camera");
+      ImGui::SameLine();
+    }
+    if (s.flags & Core::SNAPSHOT_SCENE) {
+      DrawSnapshotIcon(ICON_FA_CUBES, "Scene");
+      ImGui::SameLine();
+    }
+    if (s.flags & Core::SNAPSHOT_TOOLS) {
+      DrawSnapshotIcon(ICON_FA_TOOLS, "Tools");
+      ImGui::SameLine();
+    }
+    ImGui::NewLine();
+
+    if (ImGui::Button(ICON_FA_HISTORY " Restore"))
+      toRestore = i;
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Button, g_StyleColors.danger);
+    if (ImGui::Button(ICON_FA_TRASH " Delete"))
+      toDelete = i;
+    ImGui::PopStyleColor();
+
+    ImGui::EndGroup();
+    ImGui::PopID();
+    ImGui::Separator();
+  }
+  ImGui::EndChild();
+
+  // Apply deferred actions after the loop so the list isn't mutated mid-draw.
+  if (toRestore >= 0)
+    Core::RestoreSnapshot(toRestore);
+  if (toDelete >= 0)
+    mgr.remove(toDelete);
+
+  ImGui::End();
 }
 
 // Projects measurement values (segment lengths, angles, coordinates) into

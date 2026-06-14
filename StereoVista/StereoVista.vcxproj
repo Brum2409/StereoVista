@@ -204,6 +204,7 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClCompile Include="headers\libs\portable-file-dialogs.h" />
     <ClCompile Include="src\Loaders\PointCloudLoader.cpp" />
     <ClCompile Include="src\Core\SceneManager.cpp" />
+    <ClCompile Include="src\Core\SnapshotManager.cpp" />
     <ClCompile Include="src\Core\UndoManager.cpp" />
     <ClCompile Include="src\Engine\StbImageImpl.cpp" />
     <ClCompile Include="src\Core\Voxalizer.cpp" />
@@ -223,6 +224,7 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
   <ItemGroup>
     <ClInclude Include="headers\core.h" />
     <ClInclude Include="headers\Core\SceneManager.h" />
+    <ClInclude Include="headers\Core\SnapshotManager.h" />
     <ClInclude Include="headers\Core\UndoManager.h" />
     <ClInclude Include="headers\Core\CursorSynchronizer.h" />
     <ClInclude Include="headers\Core\CursorSyncState.h" />
