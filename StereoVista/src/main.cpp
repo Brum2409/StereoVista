@@ -2904,6 +2904,9 @@ int main() {
     pointLights = currentScene.pointLights;
     spotLights = currentScene.spotLights;
 
+    // Load any snapshots saved with this scene.
+    Core::SnapshotManager::instance().loadFromScene("office.scene");
+
     // Start spawn animation for all loaded models
     for (auto &model : currentScene.models) {
       glm::vec3 targetScale = model.scale;
@@ -3022,6 +3025,10 @@ int main() {
       // Sync lights from scene to global variables
       pointLights = currentScene.pointLights;
       spotLights = currentScene.spotLights;
+
+      // Load any snapshots saved with this scene.
+      Core::SnapshotManager::instance().loadFromScene(
+          preferences.startupScenePath);
 
       // Start spawn animation for all loaded models
       for (auto &model : currentScene.models) {

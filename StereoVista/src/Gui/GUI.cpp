@@ -1203,6 +1203,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       }
       spotLights = currentScene.spotLights;
 
+      // Replace the snapshot list with the ones saved for this scene.
+      Core::SnapshotManager::instance().loadFromScene(sceneFile);
+
       for (auto &model : currentScene.models) {
         glm::vec3 targetScale = model.scale;
         if (preferences.enableSpawnAnimation) {
@@ -1288,6 +1291,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       pl.castShadows = true;
     }
     spotLights = currentScene.spotLights;
+
+    // Replace the snapshot list with the ones saved for this scene.
+    Core::SnapshotManager::instance().loadFromScene(sceneFile);
 
     for (auto &model : currentScene.models) {
       glm::vec3 targetScale = model.scale;
@@ -1511,6 +1517,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
             currentScene.pointLights = pointLights;
             currentScene.spotLights = spotLights;
             Engine::saveScene(destination, currentScene, camera);
+            // Persist this scene's snapshots (metadata + thumbnails) alongside it.
+            Core::SnapshotManager::instance().saveToScene(destination);
             GUI::UpdateWindowTitleForScene(destination);
             GUI::ShowToast(
                 "Scene saved: " +

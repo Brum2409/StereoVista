@@ -27,9 +27,12 @@ namespace Core {
 // the scene, only the tools, or any combination. Every snapshot also keeps a
 // thumbnail captured from the viewer when it was taken.
 //
-// Snapshots live for the duration of the session (they are not serialized to
-// disk). Scene restore re-applies object transforms / materials by index and
-// fully replaces the lights, sun, measurements and clip planes; it does not
+// Thumbnails are written to a per-session temporary folder on disk as PNG
+// (not kept in RAM); when a scene is saved each snapshot's data and thumbnail
+// are persisted into the scene directory, and loaded back with the scene.
+//
+// Scene restore re-applies object transforms / materials by index and fully
+// replaces the lights, sun, measurements and clip planes; it does not
 // re-create objects that were deleted after the snapshot was taken.
 // -----------------------------------------------------------------------
 
@@ -88,10 +91,10 @@ struct Snapshot {
   SnapshotSceneState scene;
   SnapshotToolState tools;
 
-  // Thumbnail: downscaled RGB pixels (top-down) and the GL texture built from
-  // them for display in the GUI. The texture is owned by the snapshot and
-  // released through SnapshotManager::remove()/clear().
-  std::vector<unsigned char> thumbnailRGB;
+  // Thumbnail: a downscaled PNG written to disk (thumbnailPath) plus the GL
+  // texture built from it for display in the GUI. The texture is owned by the
+  // snapshot and released through SnapshotManager::remove()/clear().
+  std::string thumbnailPath;
   int thumbWidth = 0;
   int thumbHeight = 0;
   GLuint thumbnailTexture = 0;
@@ -137,9 +140,20 @@ public:
   // Delete all snapshots (releases their GL textures).
   void clear();
 
+  // Persist every snapshot (metadata + thumbnail PNG) into the scene's
+  // directory so they are saved with the scene. `sceneFile` is the .scene path
+  // passed to Engine::saveScene.
+  void saveToScene(const std::string &sceneFile);
+  // Replace the in-memory snapshots with those stored alongside `sceneFile`
+  // (the inverse of saveToScene). Recreates the thumbnail GL textures, so this
+  // must be called with a current GL context. Does nothing if the scene has no
+  // saved snapshots.
+  void loadFromScene(const std::string &sceneFile);
+
 private:
   SnapshotManager() = default;
   std::vector<Snapshot> m_snapshots;
+  int m_captureCounter = 0; // for unique thumbnail filenames this session
 };
 
 // ---- Glue implemented in main.cpp (operate on the live application globals) ----
