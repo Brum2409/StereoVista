@@ -5,6 +5,7 @@
 #include "Cursors/Base/CursorManager.h"
 #include "Engine/BVHDebug.h"
 #include "Engine/Core.h"
+#include "Engine/Screenshot.h"
 #include "Engine/ShortcutManager.h"
 #include "Engine/SpaceMouseInput.h"
 #include "Engine/ThreeDConnexionSync.h"
@@ -43,6 +44,8 @@ extern Engine::Scene currentScene;
 extern Camera camera;
 extern bool showGui;
 extern bool showFPS;
+extern bool g_requestScreenshot;
+extern std::string g_screenshotPath;
 extern bool isDarkTheme;
 extern bool isStereoWindow;
 extern bool showInfoWindow;
@@ -1516,6 +1519,36 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
           }
         }
       }
+
+      ImGui::Separator();
+
+      if (ImGui::MenuItem("Save Screenshot...")) {
+        // Capture happens on the render thread next frame; here we just pick
+        // the destination path and arm the request.
+        std::string defaultName =
+            Engine::Screenshot::makeTimestampedPath("screenshots");
+        auto destination =
+            pfd::save_file("Save screenshot",
+                           std::filesystem::path(defaultName).string(),
+                           {"PNG Image", "*.png", "All Files", "*"})
+                .result();
+        if (!destination.empty()) {
+          // Ensure a .png extension so the encoded image matches the file name.
+          if (std::filesystem::path(destination).extension() != ".png")
+            destination += ".png";
+          g_screenshotPath = destination;
+          g_requestScreenshot = true;
+        }
+      }
+
+      if (ImGui::MenuItem("Quick Screenshot", "F12")) {
+        // Auto-save to the "screenshots" folder with a timestamped name.
+        g_screenshotPath.clear();
+        g_requestScreenshot = true;
+      }
+
+      ImGui::MenuItem("Include UI in Screenshot", nullptr,
+                      &preferences.screenshotIncludeUI);
 
       ImGui::Separator();
 
@@ -5286,6 +5319,7 @@ void renderSettingsWindow() {
           renderAction(StereoVista::ShortcutAction::ToggleWireframe);
           renderAction(StereoVista::ShortcutAction::ToggleRadar);
           renderAction(StereoVista::ShortcutAction::ToggleZeroPlane);
+          renderAction(StereoVista::ShortcutAction::TakeScreenshot);
         }
 
         // GROUP: Camera Controls

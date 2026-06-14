@@ -22,6 +22,7 @@
 #include "Cursors/Base/CursorManager.h"
 #include "Cursors/CursorPresets.h"
 #include "Engine/OctreePointCloudManager.h"
+#include "Engine/Screenshot.h"
 #include "Engine/ShortcutManager.h"
 #include "Engine/SpaceMouseInput.h"
 #include "Engine/ThreeDConnexionSync.h"
@@ -197,6 +198,14 @@ bool firstMouse = true;
 // ---- GUI Settings ----
 bool showGui = true;
 bool showFPS = true;
+
+// ---- Screenshot / Image Export ----
+// Set to request a screenshot on the next frame. When g_screenshotPath is empty
+// the image is auto-saved to the "screenshots" folder with a timestamped name;
+// otherwise it is written to the chosen path. Both the GUI (File > Save
+// Screenshot) and the keyboard shortcut set these.
+bool g_requestScreenshot = false;
+std::string g_screenshotPath;
 bool isDarkTheme = true;
 bool showInfoWindow = false;
 bool showSettingsWindow = false;
@@ -1621,6 +1630,7 @@ void savePreferences() {
       preferences.cursorKeepLastDepthOnBackground;
   j["ui"]["enableSpawnAnimation"] = preferences.enableSpawnAnimation;
   j["ui"]["guiScaleFactor"] = preferences.guiScaleFactor;
+  j["ui"]["screenshotIncludeUI"] = preferences.screenshotIncludeUI;
 
   // Radar settings
   j["radar"]["enabled"] = preferences.radarEnabled;
@@ -2072,6 +2082,8 @@ void loadPreferences() {
       preferences.enableSpawnAnimation =
           j["ui"].value("enableSpawnAnimation", true);
       preferences.guiScaleFactor = j["ui"].value("guiScaleFactor", 1.0f);
+      preferences.screenshotIncludeUI =
+          j["ui"].value("screenshotIncludeUI", false);
     }
 
     // Radar settings
@@ -3172,6 +3184,12 @@ int main() {
   glfwSwapInterval(preferences.vsyncEnabled ? 1 : 0);
 
   // ---- Main Loop ----
+  // Screenshot capture is deferred by one frame: when a request comes in we
+  // arm a capture for the *next* frame. That way the captured back buffer never
+  // contains the just-clicked menu, and (when the UI is excluded) the GUI can be
+  // hidden for a single clean frame before reading the pixels.
+  bool screenshotArmed = false;
+  std::string screenshotArmedPath;
   while (!glfwWindowShouldClose(window)) {
     // ---- Per-frame Time Logic ----
     float currentFrame =
@@ -3645,6 +3663,18 @@ int main() {
       }
     }
 
+    // ---- Screenshot: handle a capture armed on the previous frame ----
+    // When excluding the UI, hide the GUI for this single frame so the captured
+    // image holds only the rendered scene. savedShowGuiForCapture restores it
+    // right after the pixels are read (just before the buffer swap).
+    bool captureThisFrame = screenshotArmed;
+    std::string captureThisFramePath = screenshotArmedPath;
+    bool savedShowGuiForCapture = showGui;
+    if (captureThisFrame && !preferences.screenshotIncludeUI) {
+      showGui = false;
+    }
+    screenshotArmed = false;
+
     // ---- Size the 3D viewport to the free area beside the docked GUI ----
     // g_dockLeftWidth / g_dockTopHeight are published by renderGUI each frame
     // (0 when the GUI is hidden, so the viewport fills the window then).
@@ -3946,6 +3976,37 @@ int main() {
                   rightProjection, activeShader, preferences.radarShowScene,
                   preferences.radarScale, preferences.radarPos);
       }
+    }
+
+    // ---- Screenshot: read the finished frame before swapping ----
+    if (captureThisFrame) {
+      // Read the left/primary color buffer (GL_BACK is invalid on a
+      // quad-buffer stereo window, so pick the left eye there).
+      GLenum readBuffer = isStereoWindow ? GL_BACK_LEFT : GL_BACK;
+      std::string path = captureThisFramePath;
+      if (path.empty()) {
+        path = Engine::Screenshot::makeTimestampedPath("screenshots");
+      }
+      bool ok = Engine::Screenshot::captureToPNG(path, 0, 0, windowWidth,
+                                                 windowHeight, readBuffer);
+      if (ok) {
+        std::cout << "Screenshot saved: " << path << std::endl;
+        GUI::ShowToast("Screenshot saved: " +
+                           std::filesystem::path(path).filename().string(),
+                       GUI::ToastType::Success);
+      } else {
+        std::cerr << "Failed to save screenshot: " << path << std::endl;
+        GUI::ShowToast("Failed to save screenshot", GUI::ToastType::Error);
+      }
+      showGui = savedShowGuiForCapture;
+    }
+
+    // Arm a capture for the next frame if one was requested this frame.
+    if (g_requestScreenshot) {
+      screenshotArmed = true;
+      screenshotArmedPath = g_screenshotPath;
+      g_requestScreenshot = false;
+      g_screenshotPath.clear();
     }
 
     // ---- Swap Buffers ----
@@ -7775,6 +7836,12 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
       showGui = !showGui;
       std::cout << "GUI visibility toggled. showGui = "
                 << (showGui ? "true" : "false") << std::endl;
+      break;
+
+    case StereoVista::ShortcutAction::TakeScreenshot:
+      // Auto-save a timestamped screenshot to the "screenshots" folder.
+      g_screenshotPath.clear();
+      g_requestScreenshot = true;
       break;
 
     case StereoVista::ShortcutAction::CycleLighting:

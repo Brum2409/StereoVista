@@ -284,6 +284,10 @@ struct ApplicationPreferences {
 
   bool showZeroPlane = false;
 
+  // Screenshot export: when true the GUI overlay is included in saved
+  // screenshots; when false only the rendered 3D scene is captured.
+  bool screenshotIncludeUI = false;
+
   bool enableSpawnAnimation = true;
 
   // SpaceMouse settings
