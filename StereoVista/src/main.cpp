@@ -1632,6 +1632,7 @@ void savePreferences() {
 
   // UI preferences
   j["ui"]["darkTheme"] = preferences.isDarkTheme;
+  j["ui"]["theme"] = preferences.guiTheme;
   j["ui"]["showFPS"] = preferences.showFPS;
   j["ui"]["vsync"] = preferences.vsyncEnabled;
   j["ui"]["show3DCursor"] = preferences.show3DCursor;
@@ -1916,8 +1917,9 @@ void savePreferences() {
 
 void applyPreferencesToProgram() {
   // Apply UI preferences
-  isDarkTheme = preferences.isDarkTheme;
-  SetupImGuiStyle(isDarkTheme, 1.0f);
+  ApplyGuiTheme(preferences.guiTheme, 1.0f);
+  isDarkTheme = IsGuiThemeDark(preferences.guiTheme);
+  preferences.isDarkTheme = isDarkTheme;
   showFPS = preferences.showFPS;
   show3DCursor = preferences.show3DCursor;
   cursorManager.setKeepLastDepthOnBackground(
@@ -2083,6 +2085,10 @@ void loadPreferences() {
     // UI preferences
     if (j.contains("ui")) {
       preferences.isDarkTheme = j["ui"].value("darkTheme", true);
+      // Fall back to the matching built-in theme for configs saved before the
+      // multi-theme picker existed (0 = Modern Dark, 1 = Modern Light).
+      preferences.guiTheme =
+          j["ui"].value("theme", preferences.isDarkTheme ? 0 : 1);
       preferences.showFPS = j["ui"].value("showFPS", true);
       preferences.vsyncEnabled = j["ui"].value("vsync", false);
       preferences.show3DCursor = j["ui"].value("show3DCursor", true);
@@ -2645,7 +2651,8 @@ void InitializeDefaults() {
   }
 
   // Set ImGui style
-  SetupImGuiStyle(isDarkTheme, 1.0f);
+  ApplyGuiTheme(preferences.guiTheme, 1.0f);
+  isDarkTheme = IsGuiThemeDark(preferences.guiTheme);
 }
 
 void PerspectiveProjection(GLfloat *frustum, GLfloat dir, GLfloat fovy,

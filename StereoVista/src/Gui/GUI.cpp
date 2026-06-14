@@ -4135,14 +4135,47 @@ void renderSettingsWindow() {
       ImGui::PushID("DisplayTab");
       DrawSectionHeader("Interface");
 
-      if (ImGui::Checkbox("Dark Theme", &isDarkTheme)) {
-        SetupImGuiStyle(isDarkTheme, 1.0f);
-        preferences.isDarkTheme = isDarkTheme;
-        settingsChanged = true;
+      // Color theme picker
+      {
+        int themeIndex = preferences.guiTheme;
+        if (themeIndex < 0 || themeIndex >= GetGuiThemeCount())
+          themeIndex = 0;
+
+        if (ImGui::BeginCombo("Theme", GetGuiThemeName(themeIndex))) {
+          for (int i = 0; i < GetGuiThemeCount(); ++i) {
+            bool selected = (i == themeIndex);
+            if (ImGui::Selectable(GetGuiThemeName(i), selected)) {
+              ApplyGuiTheme(i, 1.0f);
+              themeIndex = i;
+              preferences.guiTheme = i;
+              isDarkTheme = IsGuiThemeDark(i);
+              preferences.isDarkTheme = isDarkTheme;
+              settingsChanged = true;
+            }
+            if (selected)
+              ImGui::SetItemDefaultFocus();
+          }
+          ImGui::EndCombo();
+        }
+        ImGui::SameLine();
+        DrawHelpMarker("Color theme for the entire interface. \"Schneider "
+                       "Digital\" is the white & golden-yellow brand theme; the "
+                       "rest are modern, easy-on-the-eyes light and dark palettes.");
+
+        // Live swatch preview of the selected theme's palette
+        ImVec4 swatches[4];
+        int swatchCount = GetGuiThemeSwatches(themeIndex, swatches, 4);
+        for (int i = 0; i < swatchCount; ++i) {
+          std::string id = "##themesw" + std::to_string(i);
+          ImGui::ColorButton(id.c_str(), swatches[i],
+                             ImGuiColorEditFlags_NoTooltip |
+                                 ImGuiColorEditFlags_NoPicker |
+                                 ImGuiColorEditFlags_NoDragDrop,
+                             ImVec2(34 * scale, 16 * scale));
+          if (i < swatchCount - 1)
+            ImGui::SameLine();
+        }
       }
-      ImGui::SameLine();
-      DrawHelpMarker(
-          "Switches between light and dark color themes for the interface");
 
       if (ImGui::Checkbox("Show Performance Overlay", &showFPS)) {
         preferences.showFPS = showFPS;
