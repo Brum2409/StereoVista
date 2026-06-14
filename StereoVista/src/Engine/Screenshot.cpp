@@ -160,10 +160,13 @@ bool captureToPNG(const std::string &path, int x, int y, int width, int height,
   if (width <= 0 || height <= 0)
     return false;
 
-  // Read from the default framebuffer's selected color buffer.
+  // Read from the default framebuffer's selected color buffer, restoring all
+  // touched GL state afterwards so the capture is transparent to the renderer.
   GLint prevReadFbo = 0;
   glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevReadFbo);
   glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+  GLint prevReadBuffer = GL_BACK;
+  glGetIntegerv(GL_READ_BUFFER, &prevReadBuffer);
   glReadBuffer(static_cast<GLenum>(readBuffer));
 
   const int channels = 3; // RGB
@@ -176,6 +179,7 @@ bool captureToPNG(const std::string &path, int x, int y, int width, int height,
   glReadPixels(x, y, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
   glPixelStorei(GL_PACK_ALIGNMENT, prevAlign);
 
+  glReadBuffer(static_cast<GLenum>(prevReadBuffer));
   glBindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFbo);
 
   // OpenGL returns rows bottom-to-top; flip so the PNG is upright.
