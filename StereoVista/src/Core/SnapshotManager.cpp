@@ -559,8 +559,10 @@ void SnapshotManager::restore(const Snapshot &snap, Camera &camera,
                               Tools::MeasurementTool &measure,
                               Tools::ClipPlaneTool &clip) {
   // Camera ----------------------------------------------------------------
+  // Glide the view into place (position, orientation and zoom all eased)
+  // instead of snapping, so restoring a camera reads as a smooth move.
   if (snap.flags & SNAPSHOT_CAMERA)
-    camera.SetState(snap.camera);
+    camera.StartStateAnimation(snap.camera);
 
   // Scene -----------------------------------------------------------------
   if (snap.flags & SNAPSHOT_SCENE) {
