@@ -6484,6 +6484,32 @@ void RestoreSnapshot(int index) {
     voxelizer->markDirty();
   updateSpaceMouseBounds();
 
+  // Restoring lights can change their counts, so make sure the current
+  // selection still points at a valid object (same guard as undo/redo).
+  int objectCount = -1;
+  switch (currentSelectedType) {
+  case SelectedType::Model:
+    objectCount = static_cast<int>(currentScene.models.size());
+    break;
+  case SelectedType::PointCloud:
+    objectCount = static_cast<int>(currentScene.pointClouds.size());
+    break;
+  case SelectedType::PointLight:
+    objectCount = static_cast<int>(pointLights.size());
+    break;
+  case SelectedType::SpotLight:
+    objectCount = static_cast<int>(spotLights.size());
+    break;
+  default:
+    break;
+  }
+  if (objectCount >= 0 &&
+      (currentSelectedIndex < 0 || currentSelectedIndex >= objectCount)) {
+    currentSelectedType = SelectedType::None;
+    currentSelectedIndex = -1;
+    currentSelectedMeshIndex = -1;
+  }
+
   GUI::ShowToast("Restored snapshot: " + name, GUI::ToastType::Info);
 }
 
