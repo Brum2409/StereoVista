@@ -6967,18 +6967,21 @@ void addClipPlaneAtCursor() {
     return;
   const glm::vec3 pos = cursorManager.getCursorPosition();
 
-  // Default to a camera-facing normal, then refine with the surface normal
-  // under the cursor if a model is hit.
+  // Default to a camera-facing normal, then refine with the surface normal of
+  // the NEAREST model under the cursor (so overlapping models pick the visible
+  // surface, matching the cursor's own hit point).
   glm::vec3 normal = glm::normalize(camera.Position - pos);
   glm::vec3 rayOrigin, rayDir, rayNear, rayFar;
   calculateMouseRay(lastX, lastY, rayOrigin, rayDir, rayNear, rayFar,
                     aspectRatio);
-  float distance;
+  float closest = std::numeric_limits<float>::max();
   for (const auto &model : currentScene.models) {
+    float distance;
     glm::vec3 hitNormal;
-    if (rayIntersectsModel(rayOrigin, rayDir, model, distance, hitNormal)) {
+    if (rayIntersectsModel(rayOrigin, rayDir, model, distance, hitNormal) &&
+        distance < closest) {
+      closest = distance;
       normal = hitNormal;
-      break;
     }
   }
   clipPlaneTool.addPlane(pos, normal);

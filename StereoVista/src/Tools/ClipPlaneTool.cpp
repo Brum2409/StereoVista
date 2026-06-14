@@ -358,6 +358,12 @@ void main() {
         glGetBooleanv(GL_DEPTH_WRITEMASK, &prevDepthMask);
         const GLboolean prevBlend = glIsEnabled(GL_BLEND);
         const GLboolean prevCull = glIsEnabled(GL_CULL_FACE);
+        GLint prevBlendSrcRGB = GL_SRC_ALPHA, prevBlendDstRGB = GL_ONE_MINUS_SRC_ALPHA;
+        GLint prevBlendSrcA = GL_SRC_ALPHA, prevBlendDstA = GL_ONE_MINUS_SRC_ALPHA;
+        glGetIntegerv(GL_BLEND_SRC_RGB, &prevBlendSrcRGB);
+        glGetIntegerv(GL_BLEND_DST_RGB, &prevBlendDstRGB);
+        glGetIntegerv(GL_BLEND_SRC_ALPHA, &prevBlendSrcA);
+        glGetIntegerv(GL_BLEND_DST_ALPHA, &prevBlendDstA);
 
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -416,6 +422,8 @@ void main() {
         // Restore state.
         glDepthFunc(prevDepthFunc);
         glDepthMask(prevDepthMask);
+        glBlendFuncSeparate(prevBlendSrcRGB, prevBlendDstRGB, prevBlendSrcA,
+                            prevBlendDstA);
         if (!prevBlend) glDisable(GL_BLEND);
         if (prevCull) glEnable(GL_CULL_FACE);
         glBindVertexArray(0);
