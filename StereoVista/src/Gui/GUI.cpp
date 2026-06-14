@@ -6671,12 +6671,8 @@ void renderSnapshotsWindow() {
 
   auto &mgr = Core::SnapshotManager::instance();
 
-  // ── Create section ──────────────────────────────────────────────────────
+  // ── Create card ─────────────────────────────────────────────────────────
   DrawSectionHeader("New Snapshot");
-  ImGui::TextWrapped(
-      "Capture the current state into a named snapshot. Choose which aspects to "
-      "store; restoring rolls those aspects back to this point.");
-  ImGui::Spacing();
 
   static char snapName[128] = "";
   static bool saveCamera = true;
@@ -6684,23 +6680,52 @@ void renderSnapshotsWindow() {
   static bool saveTools = false;
   static int autoCounter = 1;
 
-  ImGui::InputTextWithHint("Name", "Snapshot name (optional)", snapName,
+  ImGui::PushStyleColor(ImGuiCol_ChildBg,
+                        ImVec4(g_StyleColors.primary.x, g_StyleColors.primary.y,
+                               g_StyleColors.primary.z, 0.06f));
+  ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 10.0f * scale);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+                      ImVec2(12.0f * scale, 12.0f * scale));
+  ImGui::BeginChild("CreateCard", ImVec2(0, 0),
+                    ImGuiChildFlags_Border | ImGuiChildFlags_AutoResizeY);
+
+  ImGui::SetNextItemWidth(-1);
+  ImGui::InputTextWithHint("##snapName", "Name (optional)…", snapName,
                            IM_ARRAYSIZE(snapName));
 
-  DrawSnapshotIcon(ICON_FA_CAMERA, "Camera position & orientation");
-  ImGui::SameLine();
-  ImGui::Checkbox("Camera", &saveCamera);
-  ImGui::SameLine(0, 24 * scale);
-  DrawSnapshotIcon(ICON_FA_CUBES, "Objects: transform, color, visibility, "
-                                  "materials, lights, sun, measurements, "
-                                  "section planes");
-  ImGui::SameLine();
-  ImGui::Checkbox("Scene", &saveScene);
-  ImGui::SameLine(0, 24 * scale);
-  DrawSnapshotIcon(ICON_FA_TOOLS,
-                   "Tool settings (brush, measure, section planes)");
-  ImGui::SameLine();
-  ImGui::Checkbox("Tools", &saveTools);
+  ImGui::Spacing();
+  ImGui::TextDisabled("WHICH ASPECTS TO CAPTURE");
+  ImGui::Spacing();
+
+  // Right-aligned toggle rows so the three aspects read as a clean list. The
+  // leading icon brightens to the accent color when its aspect is enabled.
+  auto aspectRow = [&](const char *icon, const char *label, const char *help,
+                       bool *v) {
+    DrawInlineIcon(icon, *v ? g_StyleColors.accent
+                            : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(label);
+    if (help) {
+      ImGui::SameLine();
+      DrawHelpMarker(help);
+    }
+    float tw = ImGui::GetFrameHeight() * 1.85f;
+    ImGui::SameLine();
+    float room = ImGui::GetContentRegionAvail().x;
+    if (room > tw)
+      ImGui::SetCursorPosX(ImGui::GetCursorPosX() + room - tw);
+    ImGui::PushID(label);
+    DrawToggleSwitch("##t", v);
+    ImGui::PopID();
+  };
+  aspectRow(ICON_FA_CAMERA, "Camera", "Camera position & orientation",
+            &saveCamera);
+  aspectRow(ICON_FA_CUBES, "Scene",
+            "Objects: transform, color, visibility, materials, lights, sun, "
+            "measurements, section planes",
+            &saveScene);
+  aspectRow(ICON_FA_TOOLS, "Tools",
+            "Tool settings (brush, measure, section planes)", &saveTools);
 
   uint32_t flags = (saveCamera ? Core::SNAPSHOT_CAMERA : 0u) |
                    (saveScene ? Core::SNAPSHOT_SCENE : 0u) |
@@ -6710,8 +6735,12 @@ void renderSnapshotsWindow() {
   const bool canCapture = flags != 0u;
   if (!canCapture)
     ImGui::BeginDisabled();
-  if (ImGui::Button(ICON_FA_PLUS " Capture Snapshot",
-                    ImVec2(-1, 32 * scale))) {
+  ImGui::PushStyleColor(ImGuiCol_Button, g_StyleColors.primary);
+  ImGui::PushStyleColor(ImGuiCol_ButtonHovered, g_StyleColors.primaryHover);
+  ImGui::PushStyleColor(ImGuiCol_ButtonActive, g_StyleColors.primaryActive);
+  ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f * scale);
+  if (ImGui::Button(ICON_FA_CAMERA "  Capture Snapshot",
+                    ImVec2(-1, 36 * scale))) {
     std::string name = snapName[0] != '\0'
                            ? std::string(snapName)
                            : ("Snapshot " + std::to_string(autoCounter));
@@ -6719,22 +6748,33 @@ void renderSnapshotsWindow() {
     Core::RequestSnapshotCapture(name, flags);
     snapName[0] = '\0';
   }
+  ImGui::PopStyleVar();
+  ImGui::PopStyleColor(3);
   if (!canCapture) {
     ImGui::EndDisabled();
+    ImGui::Spacing();
     ImGui::TextDisabled("Select at least one aspect to capture.");
   }
 
-  ImGui::Spacing();
-  ImGui::Separator();
+  ImGui::EndChild();
+  ImGui::PopStyleVar(2);
+  ImGui::PopStyleColor();
+
   ImGui::Spacing();
 
-  // ── Saved snapshots list ────────────────────────────────────────────────
+  // ── Saved snapshots ──────────────────────────────────────────────────────
   auto &snaps = mgr.snapshots();
   DrawSectionHeader(
       ("Saved Snapshots (" + std::to_string(snaps.size()) + ")").c_str());
 
   if (snaps.empty()) {
-    ImGui::TextDisabled("No snapshots yet. Capture one above.");
+    ImGui::Spacing();
+    ImGui::Spacing();
+    const char *msg = "No snapshots yet — capture one above.";
+    float tw = ImGui::CalcTextSize(msg).x;
+    ImGui::SetCursorPosX(
+        std::max(0.0f, (ImGui::GetContentRegionAvail().x - tw) * 0.5f));
+    ImGui::TextDisabled("%s", msg);
     ImGui::End();
     return;
   }
@@ -6742,17 +6782,18 @@ void renderSnapshotsWindow() {
   // ── Search box ──────────────────────────────────────────────────────────
   // Fuzzy (subsequence) match across name, timestamp, tags and aspect names.
   static char searchBuf[128] = "";
-  DrawSnapshotIcon(ICON_FA_SEARCH, "Fuzzy search over name, tags, date & "
-                                   "aspects");
-  ImGui::SameLine();
-  ImGui::SetNextItemWidth(-(40 * scale));
-  ImGui::InputTextWithHint("##snapSearch", "Search snapshots…", searchBuf,
-                           IM_ARRAYSIZE(searchBuf));
+  ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f * scale);
+  DrawInlineIcon(ICON_FA_SEARCH,
+                 ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+  ImGui::SetNextItemWidth(-(38 * scale));
+  ImGui::InputTextWithHint("##snapSearch", "Search name, tags, date, aspects…",
+                           searchBuf, IM_ARRAYSIZE(searchBuf));
   ImGui::SameLine();
   if (ImGui::Button(ICON_FA_TIMES "##clearSearch"))
     searchBuf[0] = '\0';
   if (ImGui::IsItemHovered())
     ImGui::SetTooltip("Clear search");
+  ImGui::PopStyleVar();
 
   // ── Tag filter chips ────────────────────────────────────────────────────
   // Collect the live tag set and drop any active filters whose tag no longer
@@ -6774,7 +6815,8 @@ void renderSnapshotsWindow() {
     const ImGuiStyle &style = ImGui::GetStyle();
     float rightEdge =
         ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
-    DrawSnapshotIcon(ICON_FA_FILTER, "Filter by tag (matches any selected)");
+    DrawInlineIcon(ICON_FA_FILTER,
+                   ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
     int chipId = 0;
     for (const auto &t : allTags) {
       ImGui::PushID(chipId++);
@@ -6793,8 +6835,10 @@ void renderSnapshotsWindow() {
     }
     if (!activeTagFilters.empty()) {
       ImGui::SameLine();
-      if (ImGui::SmallButton("Clear filters"))
+      if (ImGui::SmallButton("Clear"))
         activeTagFilters.clear();
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Clear tag filters");
     }
   }
 
@@ -6813,7 +6857,7 @@ void renderSnapshotsWindow() {
 
   int visibleCount = 0;
 
-  ImGui::BeginChild("SnapshotList", ImVec2(0, 0), false);
+  ImGui::BeginChild("SnapshotList", ImVec2(0, 0), ImGuiChildFlags_None);
   for (int i = 0; i < static_cast<int>(snaps.size()); ++i) {
     Core::Snapshot &s = snaps[i];
 
@@ -6835,13 +6879,25 @@ void renderSnapshotsWindow() {
 
     ImGui::PushID(i);
 
-    const float thumbW = 170 * scale;
+    // Each snapshot is a self-contained rounded card.
+    ImGui::PushStyleColor(
+        ImGuiCol_ChildBg,
+        ImVec4(g_StyleColors.primary.x, g_StyleColors.primary.y,
+               g_StyleColors.primary.z, 0.05f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 10.0f * scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+                        ImVec2(10.0f * scale, 10.0f * scale));
+    ImGui::BeginChild("card", ImVec2(0, 0),
+                      ImGuiChildFlags_Border | ImGuiChildFlags_AutoResizeY);
+
+    const float thumbW = 150 * scale;
     const float thumbH =
         s.thumbWidth > 0
             ? thumbW * static_cast<float>(s.thumbHeight) /
                   static_cast<float>(s.thumbWidth)
             : thumbW * 0.5625f;
 
+    // Top row: thumbnail on the left, details column on the right.
     if (s.thumbnailTexture != 0)
       ImGui::Image((void *)(intptr_t)s.thumbnailTexture,
                    ImVec2(thumbW, thumbH));
@@ -6851,13 +6907,13 @@ void renderSnapshotsWindow() {
     ImGui::SameLine();
     ImGui::BeginGroup();
 
-    // Optional color marker, then the name.
+    // Color marker dot + name.
     if (s.hasColor) {
       ImGui::ColorButton("##marker",
                          ImVec4(s.color.r, s.color.g, s.color.b, 1.0f),
                          ImGuiColorEditFlags_NoTooltip |
                              ImGuiColorEditFlags_NoPicker,
-                         ImVec2(14 * scale, 14 * scale));
+                         ImVec2(12 * scale, 12 * scale));
       ImGui::SameLine();
     }
     if (g_Fonts.bold)
@@ -6865,9 +6921,12 @@ void renderSnapshotsWindow() {
     ImGui::TextUnformatted(s.name.c_str());
     if (g_Fonts.bold)
       ImGui::PopFont();
+
+    DrawInlineIcon(ICON_FA_CLOCK,
+                   ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
     ImGui::TextDisabled("%s", s.timestamp.c_str());
 
-    // Icons marking which aspects this snapshot stored.
+    // Aspect badges marking what this snapshot stored.
     if (s.flags & Core::SNAPSHOT_CAMERA) {
       DrawSnapshotIcon(ICON_FA_CAMERA, "Camera");
       ImGui::SameLine();
@@ -6898,12 +6957,30 @@ void renderSnapshotsWindow() {
         ImGui::PopID();
       }
     }
+    ImGui::EndGroup();
 
+    // Action row (full card width). Restore reads as the primary action via
+    // the accent fill; Delete uses the danger color.
+    ImGui::Spacing();
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 7.0f * scale);
+    ImGui::PushStyleColor(ImGuiCol_Button, g_StyleColors.primary);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, g_StyleColors.primaryHover);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, g_StyleColors.primaryActive);
     if (ImGui::Button(ICON_FA_HISTORY " Restore"))
       toRestore = i;
+    ImGui::PopStyleColor(3);
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("Roll the saved aspects back onto the scene");
+
     ImGui::SameLine();
+    const bool editingThis = (editingIndex == i);
+    if (editingThis) {
+      ImGui::PushStyleColor(ImGuiCol_Button, g_StyleColors.accent);
+      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, g_StyleColors.accent);
+      ImGui::PushStyleColor(ImGuiCol_ButtonActive, g_StyleColors.accent);
+    }
     if (ImGui::Button(ICON_FA_PEN " Edit")) {
-      editingIndex = (editingIndex == i) ? -1 : i;
+      editingIndex = editingThis ? -1 : i;
       if (editingIndex == i) {
         std::snprintf(editName, sizeof(editName), "%s", s.name.c_str());
         std::string joined = joinSnapshotTags(s.tags);
@@ -6912,14 +6989,20 @@ void renderSnapshotsWindow() {
         editColor = s.color;
       }
     }
+    if (editingThis)
+      ImGui::PopStyleColor(3);
+
     ImGui::SameLine();
     ImGui::PushStyleColor(ImGuiCol_Button, g_StyleColors.danger);
     if (ImGui::Button(ICON_FA_TRASH " Delete"))
       toDelete = i;
     ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
 
     // Inline editor for name / tags / color.
     if (editingIndex == i) {
+      ImGui::Spacing();
+      ImGui::Separator();
       ImGui::Spacing();
       ImGui::SetNextItemWidth(-1);
       ImGui::InputTextWithHint("##editName", "Name", editName,
@@ -6934,6 +7017,9 @@ void renderSnapshotsWindow() {
                           ImGuiColorEditFlags_NoInputs |
                               ImGuiColorEditFlags_NoLabel);
       }
+      ImGui::Spacing();
+      ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 7.0f * scale);
+      ImGui::PushStyleColor(ImGuiCol_Button, g_StyleColors.success);
       if (ImGui::Button(ICON_FA_CHECK " Save")) {
         if (editName[0] != '\0')
           s.name = editName;
@@ -6942,17 +7028,42 @@ void renderSnapshotsWindow() {
         s.color = editColor;
         editingIndex = -1;
       }
+      ImGui::PopStyleColor();
       ImGui::SameLine();
       if (ImGui::Button(ICON_FA_TIMES " Cancel"))
         editingIndex = -1;
+      ImGui::PopStyleVar();
     }
 
-    ImGui::EndGroup();
+    ImGui::EndChild();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor();
+
+    // Draw the left color stripe and a hover ring over the finished card.
+    ImVec2 cardMin = ImGui::GetItemRectMin();
+    ImVec2 cardMax = ImGui::GetItemRectMax();
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    if (s.hasColor)
+      dl->AddRectFilled(
+          cardMin, ImVec2(cardMin.x + 4.0f * scale, cardMax.y),
+          ImGui::ColorConvertFloat4ToU32(
+              ImVec4(s.color.r, s.color.g, s.color.b, 1.0f)),
+          10.0f * scale, ImDrawFlags_RoundCornersLeft);
+    if (ImGui::IsItemHovered())
+      dl->AddRect(cardMin, cardMax, ImGui::GetColorU32(g_StyleColors.accent),
+                  10.0f * scale, 0, 1.5f * scale);
+
     ImGui::PopID();
-    ImGui::Separator();
+    ImGui::Spacing();
   }
-  if (visibleCount == 0)
-    ImGui::TextDisabled("No snapshots match the current search / filters.");
+  if (visibleCount == 0) {
+    ImGui::Spacing();
+    const char *msg = "No snapshots match the current search / filters.";
+    float tw = ImGui::CalcTextSize(msg).x;
+    ImGui::SetCursorPosX(
+        std::max(0.0f, (ImGui::GetContentRegionAvail().x - tw) * 0.5f));
+    ImGui::TextDisabled("%s", msg);
+  }
   ImGui::EndChild();
 
   // Apply deferred actions after the loop so the list isn't mutated mid-draw.
