@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 namespace Engine {
 namespace Screenshot {
@@ -12,6 +13,16 @@ namespace Screenshot {
 // dependency.
 bool writePNG(const std::string &path, int width, int height, int channels,
               const unsigned char *pixels);
+
+// Read a rectangular region from the default framebuffer's color buffer into
+// an in-memory RGB buffer (3 channels). `readBuffer` selects the source buffer
+// (e.g. GL_BACK, GL_BACK_LEFT). The returned rows are flipped vertically so
+// the image is upright (top-to-bottom), matching captureToPNG. `outWidth` and
+// `outHeight` receive the captured dimensions. Returns true on success.
+bool captureToMemory(int x, int y, int width, int height,
+                     unsigned int readBuffer,
+                     std::vector<unsigned char> &outPixels, int &outWidth,
+                     int &outHeight);
 
 // Read a rectangular region from the default framebuffer's color buffer and
 // save it to a PNG file. `readBuffer` selects the source buffer (e.g.

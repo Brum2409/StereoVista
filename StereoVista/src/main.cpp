@@ -17,6 +17,7 @@
 #include "Core/CursorSyncState.h"
 #include "Core/CursorSynchronizer.h"
 #include "Core/SceneManager.h"
+#include "Core/SnapshotManager.h"
 #include "Core/UndoManager.h"
 #include "Core/Voxalizer.h"
 #include "Cursors/Base/CursorManager.h"
@@ -206,6 +207,13 @@ bool showFPS = true;
 // Screenshot) and the keyboard shortcut set these.
 bool g_requestScreenshot = false;
 std::string g_screenshotPath;
+// ---- Snapshots ----
+// Set by the GUI to request a snapshot capture on the next clean (GUI-free)
+// frame. The flags select which aspects (camera/scene/tools) to store; the
+// name labels the snapshot in the panel.
+bool g_requestSnapshot = false;
+std::string g_pendingSnapshotName;
+uint32_t g_pendingSnapshotFlags = 0;
 bool isDarkTheme = true;
 bool showInfoWindow = false;
 bool showSettingsWindow = false;
@@ -214,6 +222,7 @@ bool showCursorSettingsWindow = false;
 bool showBrushToolWindow = false;
 bool showMeasurementToolWindow = false;
 bool showClipPlaneToolWindow = false;
+bool showSnapshotsWindow = false;
 enum class SelectedType {
   None,
   Model,
@@ -3190,6 +3199,12 @@ int main() {
   // hidden for a single clean frame before reading the pixels.
   bool screenshotArmed = false;
   std::string screenshotArmedPath;
+
+  // Snapshot capture is deferred the same way: armed for the next frame so the
+  // thumbnail is read from a clean, GUI-free viewer image.
+  bool snapshotArmed = false;
+  std::string snapshotArmedName;
+  uint32_t snapshotArmedFlags = 0;
   while (!glfwWindowShouldClose(window)) {
     // ---- Per-frame Time Logic ----
     float currentFrame =
@@ -3669,11 +3684,18 @@ int main() {
     // right after the pixels are read (just before the buffer swap).
     bool captureThisFrame = screenshotArmed;
     std::string captureThisFramePath = screenshotArmedPath;
+    bool captureSnapshotThisFrame = snapshotArmed;
+    std::string snapshotThisFrameName = snapshotArmedName;
+    uint32_t snapshotThisFrameFlags = snapshotArmedFlags;
     bool savedShowGuiForCapture = showGui;
-    if (captureThisFrame && !preferences.screenshotIncludeUI) {
+    // Snapshots always want a clean viewer image (GUI hidden), as do screenshots
+    // when the UI is excluded.
+    if ((captureThisFrame && !preferences.screenshotIncludeUI) ||
+        captureSnapshotThisFrame) {
       showGui = false;
     }
     screenshotArmed = false;
+    snapshotArmed = false;
 
     // ---- Size the 3D viewport to the free area beside the docked GUI ----
     // g_dockLeftWidth / g_dockTopHeight are published by renderGUI each frame
@@ -4001,12 +4023,41 @@ int main() {
       showGui = savedShowGuiForCapture;
     }
 
+    // ---- Snapshot: read the clean frame and store it ----
+    if (captureSnapshotThisFrame) {
+      GLenum readBuffer = isStereoWindow ? GL_BACK_LEFT : GL_BACK;
+      std::vector<unsigned char> px;
+      int pw = 0, ph = 0;
+      bool ok = Engine::Screenshot::captureToMemory(
+          0, 0, windowWidth, windowHeight, readBuffer, px, pw, ph);
+      if (ok) {
+        Core::SnapshotManager::instance().create(
+            snapshotThisFrameName, snapshotThisFrameFlags, camera, currentScene,
+            pointLights, spotLights, sun, brushTool, measurementTool,
+            clipPlaneTool, px, pw, ph);
+        GUI::ShowToast("Snapshot saved: " + snapshotThisFrameName,
+                       GUI::ToastType::Success);
+      } else {
+        GUI::ShowToast("Failed to capture snapshot", GUI::ToastType::Error);
+      }
+      showGui = savedShowGuiForCapture;
+    }
+
     // Arm a capture for the next frame if one was requested this frame.
     if (g_requestScreenshot) {
       screenshotArmed = true;
       screenshotArmedPath = g_screenshotPath;
       g_requestScreenshot = false;
       g_screenshotPath.clear();
+    }
+
+    if (g_requestSnapshot) {
+      snapshotArmed = true;
+      snapshotArmedName = g_pendingSnapshotName;
+      snapshotArmedFlags = g_pendingSnapshotFlags;
+      g_requestSnapshot = false;
+      g_pendingSnapshotName.clear();
+      g_pendingSnapshotFlags = 0;
     }
 
     // ---- Swap Buffers ----
@@ -6398,6 +6449,38 @@ void updateSpaceMouseBounds() {
   // Update SpaceMouse with new bounds
   spaceMouseInput.SetModelExtents(modelMin, modelMax);
 }
+
+// ---- Snapshot glue (declared in Core/SnapshotManager.h) ----
+namespace Core {
+
+void RequestSnapshotCapture(const std::string &name, uint32_t flags) {
+  g_pendingSnapshotName = name;
+  g_pendingSnapshotFlags = flags;
+  g_requestSnapshot = true;
+}
+
+void RestoreSnapshot(int index) {
+  auto &mgr = Core::SnapshotManager::instance();
+  if (index < 0 || index >= static_cast<int>(mgr.snapshots().size()))
+    return;
+
+  const Core::Snapshot &snap = mgr.snapshots()[index];
+  std::string name = snap.name;
+  mgr.restore(snap, camera, currentScene, pointLights, spotLights, sun,
+              brushTool, measurementTool, clipPlaneTool);
+
+  // Resync the systems that depend on scene structure. BVH / triangle data and
+  // DDGI rebuild automatically via the per-frame scene-change check; the
+  // voxelizer and SpaceMouse bounds are refreshed explicitly here (mirroring
+  // the undo/redo resync).
+  if (voxelizer)
+    voxelizer->markDirty();
+  updateSpaceMouseBounds();
+
+  GUI::ShowToast("Restored snapshot: " + name, GUI::ToastType::Info);
+}
+
+} // namespace Core
 
 void updateSpaceMouseCursorAnchor() {
   // Update SpaceMouse cursor anchor based on mode

@@ -155,8 +155,10 @@ bool writePNG(const std::string &path, int width, int height, int channels,
   return file.good();
 }
 
-bool captureToPNG(const std::string &path, int x, int y, int width, int height,
-                  unsigned int readBuffer) {
+bool captureToMemory(int x, int y, int width, int height,
+                     unsigned int readBuffer,
+                     std::vector<unsigned char> &outPixels, int &outWidth,
+                     int &outHeight) {
   if (width <= 0 || height <= 0)
     return false;
 
@@ -182,16 +184,27 @@ bool captureToPNG(const std::string &path, int x, int y, int width, int height,
   glReadBuffer(static_cast<GLenum>(prevReadBuffer));
   glBindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFbo);
 
-  // OpenGL returns rows bottom-to-top; flip so the PNG is upright.
+  // OpenGL returns rows bottom-to-top; flip so the image is upright.
   const size_t rowBytes = static_cast<size_t>(width) * channels;
-  std::vector<unsigned char> flipped(pixels.size());
+  outPixels.assign(pixels.size(), 0);
   for (int row = 0; row < height; ++row) {
     std::copy(pixels.begin() + static_cast<size_t>(height - 1 - row) * rowBytes,
               pixels.begin() + static_cast<size_t>(height - row) * rowBytes,
-              flipped.begin() + static_cast<size_t>(row) * rowBytes);
+              outPixels.begin() + static_cast<size_t>(row) * rowBytes);
   }
+  outWidth = width;
+  outHeight = height;
+  return true;
+}
 
-  return writePNG(path, width, height, channels, flipped.data());
+bool captureToPNG(const std::string &path, int x, int y, int width, int height,
+                  unsigned int readBuffer) {
+  std::vector<unsigned char> flipped;
+  int w = 0, h = 0;
+  if (!captureToMemory(x, y, width, height, readBuffer, flipped, w, h))
+    return false;
+
+  return writePNG(path, w, h, 3, flipped.data());
 }
 
 std::string makeTimestampedPath(const std::string &directory) {
