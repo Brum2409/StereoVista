@@ -7,6 +7,7 @@ on:
 env:
   SOLUTION_FILE_PATH: .
   BUILD_CONFIGURATION: Release
+  BUILD_PLATFORM: x64
 
 permissions:
   contents: write
@@ -66,26 +67,93 @@ jobs:
 
     - name: Build
       if: steps.check_changes.outputs.changed == 'true'
-      run: msbuild /m /p:Configuration=${{ env.BUILD_CONFIGURATION }} ${{ env.SOLUTION_FILE_PATH }}
+      run: msbuild /m /p:Configuration=${{ env.BUILD_CONFIGURATION }} /p:Platform=${{ env.BUILD_PLATFORM }} ${{ env.SOLUTION_FILE_PATH }}
 
     # ---------------------------
-    # Collect built files
+    # Collect built files + runtime data
     # ---------------------------
-    - name: Zip artifacts
+    # The build output (bin\<Platform>\<Configuration>) only contains the
+    # executable, the two runtime DLLs and the 'assets' folder (copied by the
+    # project's post-build event). The application, however, loads several
+    # other files relative to its working directory at runtime: the cubemap
+    # skybox images, the FontAwesome icon font, the default 'office.scene' and
+    # the JSON configuration files. Those live in the project directory
+    # (StereoVista\) and must be shipped alongside the executable, with their
+    # directory structure preserved, or the app fails to start / render.
+    - name: Stage release files
       if: steps.check_changes.outputs.changed == 'true'
+      shell: pwsh
       run: |
-        New-Item -ItemType Directory -Path release_stage -Force
-        
-        # Find 'Release' folders, but EXCLUDE 'obj' folders to avoid intermediate files
-        Get-ChildItem -Path . -Recurse -Filter "Release" -Directory | 
-          Where-Object { $_.FullName -notmatch '\\obj\\' } |
-          ForEach-Object {
-            Write-Host "Copying files from: $($_.FullName)"
-            Get-ChildItem -Path $_.FullName -Recurse -File | 
-              Copy-Item -Destination release_stage -Force
-          }
+        $stage = "release_stage"
+        if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+        New-Item -ItemType Directory -Path $stage -Force | Out-Null
 
-        Compress-Archive -Path release_stage\* -DestinationPath build.zip -Force
+        # 1. Build output: executable + runtime DLLs (+ assets copied by post-build).
+        $buildOut = Join-Path "bin" (Join-Path "${{ env.BUILD_PLATFORM }}" "${{ env.BUILD_CONFIGURATION }}")
+        if (-not (Test-Path $buildOut)) {
+          Write-Error "Build output directory not found: $buildOut"
+          exit 1
+        }
+        Write-Host "Copying build output from $buildOut"
+        Copy-Item -Path (Join-Path $buildOut "*") -Destination $stage -Recurse -Force
+
+        # 2. Runtime data shipped from the project directory. 'assets' is copied
+        #    here as well so the release is self-contained even if the post-build
+        #    step ever changes; -Force merges it with the staged copy.
+        $projDir = "StereoVista"
+        $runtimeItems = @(
+          "assets",
+          "skybox",
+          "fonts",
+          "office.scene",
+          "preferences.json",
+          "shortcuts.json",
+          "cursor_presets.json"
+        )
+        foreach ($item in $runtimeItems) {
+          $src = Join-Path $projDir $item
+          if (-not (Test-Path $src)) {
+            Write-Warning "Expected runtime item not found (skipped): $src"
+            continue
+          }
+          Write-Host "Copying runtime data: $src"
+          if (Test-Path $src -PathType Container) {
+            # Merge directory contents into the staged folder (it may already
+            # exist, e.g. 'assets' from the post-build step). Copying the
+            # contents rather than the folder itself avoids Copy-Item's
+            # "container onto existing leaf" merge ambiguity.
+            $destDir = Join-Path $stage $item
+            New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+            Copy-Item -Path (Join-Path $src "*") -Destination $destDir -Recurse -Force
+          } else {
+            Copy-Item -Path $src -Destination $stage -Force
+          }
+        }
+
+        # 3. Sanity checks: fail the build if essential files are missing so a
+        #    broken release is never published.
+        $required = @(
+          "StereoVista.exe",
+          "assimp-vc143-mt.dll",
+          "LASzip64.dll",
+          "assets\shaders",
+          "skybox",
+          "fonts\fa-solid-900.ttf",
+          "office.scene"
+        )
+        $missing = @()
+        foreach ($r in $required) {
+          if (-not (Test-Path (Join-Path $stage $r))) { $missing += $r }
+        }
+        if ($missing.Count -gt 0) {
+          Write-Error "Release staging is missing required items: $($missing -join ', ')"
+          exit 1
+        }
+
+        Write-Host "Staged release contents:"
+        Get-ChildItem -Path $stage | Format-Table Name, Mode -AutoSize
+
+        Compress-Archive -Path (Join-Path $stage "*") -DestinationPath build.zip -Force
 
     # ---------------------------
     # Create Release
