@@ -5740,9 +5740,24 @@ void renderPointClouds(Engine::Shader *shader, const glm::mat4 &view,
   if (shader == simpleDepthShader)
     return;
 
-  // Schütz compute rasterizer: one clear + one dispatch per cloud + one resolve
-  bool useCompute =
-      computePointCloudRenderer && computePointCloudRenderer->isInitialized();
+  // Schütz compute rasterizer: one clear + one dispatch per cloud + one resolve.
+  // Only engage it when the scene actually has a visible point cloud to draw.
+  // beginFrame()/endFrame() always cost a memory barrier plus a full-viewport
+  // resolve pass that writes gl_FragDepth for every pixel, so running them for a
+  // model-only scene (the common default) is pure waste. The framebuffer SSBO is
+  // pre-cleared at allocation and re-cleared by every endFrame(), and skipped
+  // frames never touch it, so the "already cleared" invariant beginFrame() relies
+  // on still holds whenever a point cloud reappears.
+  bool hasVisibleCloud = false;
+  for (const auto &pc : currentScene.pointClouds) {
+    if (pc.visible) {
+      hasVisibleCloud = true;
+      break;
+    }
+  }
+  bool useCompute = computePointCloudRenderer &&
+                    computePointCloudRenderer->isInitialized() &&
+                    hasVisibleCloud;
   if (useCompute) {
     // Feed the active section/clip planes to the compute rasterizer so clipped
     // points are discarded (point clouds don't use gl_ClipDistance).
