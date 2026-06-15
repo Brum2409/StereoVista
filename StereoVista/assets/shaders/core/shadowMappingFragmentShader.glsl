@@ -123,6 +123,11 @@ struct Sun {
 // Material and texture uniforms
 uniform Material material;
 uniform sampler2D shadowMap;
+// Sun light-space transform + world footprint of one shadow texel. Used to
+// re-project the fragment with a normal-offset bias (kills shadow acne without
+// the peter-panning that large depth biases cause).
+uniform mat4 lightSpaceMatrix;
+uniform float shadowTexelWorldSize;
 uniform samplerCubeArray pointShadowMaps;
 uniform samplerCube skybox;
 uniform float skyboxIntensity;
@@ -646,6 +651,22 @@ float getLODFactor(vec3 fragPos, vec3 viewPos) {
 }
 
 // ---- ENHANCED SHADOW MAPPING FUNCTIONS ----
+
+// Re-project the fragment into light space after pushing it a few texels along
+// the geometric surface normal. The push grows at grazing angles (where acne is
+// worst) and is expressed in world units that track the actual shadow-map texel
+// footprint, so it stays consistent regardless of scene scale. Because the
+// offset is along the surface (not toward the light) it removes self-shadowing
+// without detaching the shadow from the caster -- i.e. no peter panning.
+vec4 sunFragPosLightSpace(vec3 lightDir) {
+    vec3 n = normalize(fs_in.Normal);
+    float nl = clamp(dot(n, lightDir), 0.0, 1.0);
+    // tan(angle) = sqrt(1 - nl^2) / nl, clamped so near-grazing stays sane.
+    float slope = clamp(sqrt(max(1.0 - nl * nl, 0.0)) / max(nl, 0.15), 0.0, 3.0);
+    float offset = shadowTexelWorldSize * (1.5 + 1.5 * slope);
+    return lightSpaceMatrix * vec4(fs_in.FragPos + n * offset, 1.0);
+}
+
 float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir) {
     if (!enableShadows) return 0.0;
     
@@ -662,13 +683,15 @@ float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir) {
     // Depth of current fragment from light
     float currentDepth = projCoords.z;
     
-    // Adaptive bias based on surface angle to light
+    // Small residual depth bias. The normal-offset applied to the receiver
+    // position (sunFragPosLightSpace) already removes the bulk of self-shadow
+    // acne, so this stays tiny to avoid re-introducing peter panning.
     float cosTheta = dot(normal, lightDir);
     cosTheta = clamp(cosTheta, 0.0, 1.0);
-    float baseBias = 0.0005;
-    float maxBias = 0.005;
+    float baseBias = 0.0004;
+    float maxBias = 0.0010;
     float adaptiveBias = baseBias + maxBias * (1.0 - cosTheta);
-    
+
     // Enhanced PCF with variable kernel size
     float shadow = 0.0;
     vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
@@ -966,13 +989,13 @@ float PCF_Filter(sampler2D shadowMap, vec2 uv, float zReceiver, float filterRadi
     int pcfSamples = 32; // Reduced for performance
     float sum = 0.0;
     
-    // Adaptive bias
+    // Small residual depth bias; normal-offset on the receiver does the rest.
     float cosTheta = dot(normal, lightDir);
     cosTheta = clamp(cosTheta, 0.0, 1.0);
-    float baseBias = 0.0005;
-    float maxBias = 0.005;
+    float baseBias = 0.0004;
+    float maxBias = 0.0010;
     float adaptiveBias = baseBias + maxBias * (1.0 - cosTheta);
-    
+
     for(int i = 0; i < pcfSamples; i++) {
         vec2 offset = poissonDisk[i] * filterRadius;
         vec2 sampleCoords = uv + offset;
@@ -1274,13 +1297,14 @@ vec3 CalcPBRDirLight(Sun sun, vec3 normal, vec3 viewDir,
                      vec3 albedo, float metallic, float roughness, vec3 F0) {
     vec3 lightDir = normalize(-sun.direction);
 
-    // Calculate shadow
+    // Calculate shadow (normal-offset receiver position avoids acne + peter panning)
     float shadow = 0.0;
     if (enableShadows) {
+        vec4 fragPosLS = sunFragPosLightSpace(lightDir);
         if(shadowSettings.enablePCSS) {
-            shadow = calculatePCSSShadow(shadowMap, fs_in.FragPosLightSpace, normal, lightDir);
+            shadow = calculatePCSSShadow(shadowMap, fragPosLS, normal, lightDir);
         } else {
-            shadow = ShadowCalculation(fs_in.FragPosLightSpace, normal, lightDir);
+            shadow = ShadowCalculation(fragPosLS, normal, lightDir);
         }
     }
 
@@ -1712,10 +1736,9 @@ void main() {
             } else {
                 // Traditional Blinn-Phong lighting
                 if (enableShadows) {
-                    float shadow = calculatePCSSShadow(shadowMap, fs_in.FragPosLightSpace, normal, normalize(-sun.direction));
-
-                    // Calculate lighting components separately
                     vec3 lightDir = normalize(-sun.direction);
+                    float shadow = calculatePCSSShadow(shadowMap, sunFragPosLightSpace(lightDir), normal, lightDir);
+
                     float diff = max(dot(normal, lightDir), 0.0);
                     vec3 halfwayDir = normalize(lightDir + viewDir);
                     float clampedShininess = max(material.shininess, 4.0);

@@ -386,8 +386,8 @@ std::vector<Engine::SpotLight> spotLights;
 float zOffset = 0.5f;
 Engine::Sun sun = {
     glm::normalize(glm::vec3(-1.0f, -2.0f, -1.0f)), // More vertical angle
-    glm::vec3(1.0f, 0.95f, 0.8f),                   // Warmer color
-    0.16f,                                          // Higher intensity
+    glm::vec3(1.0f, 0.98f, 0.95f), // Neutral daylight white (slightly warm)
+    0.16f,                         // Intensity
     false};
 
 unsigned int depthMapFBO;
@@ -395,6 +395,10 @@ unsigned int depthMap;
 const unsigned int SHADOW_WIDTH = 4096, SHADOW_HEIGHT = 4096;
 Engine::Shader *simpleDepthShader = nullptr;
 glm::mat4 lightSpaceMatrix = glm::mat4(1.0f);
+// World-space size of a single sun shadow-map texel for the current frame.
+// Drives the normal-offset shadow bias so the offset scales with the actual
+// projected texel footprint (set in calculateLightSpaceMatrix()).
+float shadowTexelWorldSize = 0.01f;
 
 // Point shadow mapping variables
 unsigned int depthCubemap;
@@ -1564,19 +1568,16 @@ glm::mat4 calculateLightSpaceMatrix() {
   glm::vec3 sceneMin = glm::vec3(1e6f);
   glm::vec3 sceneMax = glm::vec3(-1e6f);
 
-  // Include camera position in the shadow calculation to ensure visible area is
-  // covered
-  sceneMin = glm::min(sceneMin, camera.Position - glm::vec3(5.0f));
-  sceneMax = glm::max(sceneMax, camera.Position + glm::vec3(5.0f));
-
-  // Calculate actual scene bounds from all models.
+  // Fit the shadow frustum to the actual scene geometry (not the camera). The
+  // sun is a directional light, so a single ortho frustum that bounds every
+  // caster gives stable, view-independent shadows. Including the camera here
+  // (as the old code did) made the frustum bloat and slide every time the user
+  // moved, which both wasted shadow-map resolution and caused the shadows to
+  // shimmer/shift -- the "behaves wrongly" symptom.
+  //
   // boundingSphereRadius is measured from localBoundsCenter (AABB center in
-  // local space), so we must account for that offset when computing world
-  // bounds.
+  // local space), so we account for that offset when computing world bounds.
   for (const auto &model : currentScene.models) {
-    // World-space center of the bounding sphere (model.position is the
-    // transform origin; localBoundsCenter is the offset to the AABB center in
-    // local space).
     glm::vec3 worldSphereCenter =
         model.position + glm::vec3(model.scale * model.localBoundsCenter);
     float worldRadius =
@@ -1587,42 +1588,59 @@ glm::mat4 calculateLightSpaceMatrix() {
     sceneMax = glm::max(sceneMax, worldSphereCenter + glm::vec3(worldRadius));
   }
 
-  // If no models, use camera-centered bounds
+  // If no models, fall back to camera-centered bounds so something still casts.
   if (currentScene.models.empty()) {
     sceneMin = camera.Position - glm::vec3(10.0f);
     sceneMax = camera.Position + glm::vec3(10.0f);
   }
 
-  // Calculate scene properties
+  // Bounding sphere of the scene.
   glm::vec3 sceneCenter = (sceneMin + sceneMax) * 0.5f;
   glm::vec3 sceneSize = sceneMax - sceneMin;
   float sceneRadius = glm::length(sceneSize) * 0.5f;
+  sceneRadius = std::max(sceneRadius, 1.0f); // Avoid a degenerate frustum.
 
-  // Ensure minimum size
-  sceneRadius = std::max(sceneRadius, 5.0f);
-
-  // Position light from sun direction
   glm::vec3 lightDir = glm::normalize(sun.direction);
 
-  // Place light far enough to cover the entire scene
-  float lightDistance = sceneRadius * 2.5f;
+  // Pull the light back beyond the sphere so the whole scene is in front of the
+  // near plane, with a little headroom for off-screen casters.
+  float lightDistance = sceneRadius * 2.0f;
   glm::vec3 lightPos = sceneCenter - lightDir * lightDistance;
 
-  // Create orthographic projection with proper bounds
-  float orthoSize = sceneRadius * 1.5f; // More generous padding
+  // Tight ortho bounds (only ~3% padding) keep texel density high.
+  float orthoSize = sceneRadius * 1.03f;
+  float nearPlane = lightDistance - sceneRadius * 1.5f;
+  nearPlane = std::max(nearPlane, 0.05f);
+  float farPlane = lightDistance + sceneRadius * 1.5f;
+
   glm::mat4 lightProjection = glm::ortho(-orthoSize, orthoSize, // left, right
                                          -orthoSize, orthoSize, // bottom, top
-                                         0.1f, lightDistance * 2.0f // near, far
-  );
+                                         nearPlane, farPlane);
 
-  // Create light view matrix
   glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
-  // Ensure up vector is not parallel to light direction
   if (abs(glm::dot(lightDir, up)) > 0.99f) {
     up = glm::vec3(1.0f, 0.0f, 0.0f);
   }
-
   glm::mat4 lightView = glm::lookAt(lightPos, sceneCenter, up);
+
+  glm::mat4 lightSpace = lightProjection * lightView;
+
+  // ---- Texel snapping ----
+  // Snap the projected world origin to whole shadow-map texels so the shadow
+  // pattern does not crawl/shimmer as the scene bounds (and therefore the
+  // frustum) change slightly between frames.
+  glm::vec4 shadowOrigin = lightSpace * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+  shadowOrigin *= float(SHADOW_WIDTH) * 0.5f; // NDC -> half-texel units
+  glm::vec4 roundedOrigin = glm::round(shadowOrigin);
+  glm::vec4 roundOffset = roundedOrigin - shadowOrigin;
+  roundOffset *= 2.0f / float(SHADOW_WIDTH); // back to NDC
+  roundOffset.z = 0.0f;
+  roundOffset.w = 0.0f;
+  lightProjection[3] += roundOffset;
+
+  // World-space footprint of one texel, used by the fragment shader's
+  // normal-offset bias.
+  shadowTexelWorldSize = (2.0f * orthoSize) / float(SHADOW_WIDTH);
 
   return lightProjection * lightView;
 }
@@ -1783,6 +1801,13 @@ void savePreferences() {
   j["pointcloud"]["baseSize"] = preferences.pointCloudBaseSize;
   j["pointcloud"]["splatEnabled"] = preferences.pointSplatSettings.enabled;
   j["pointcloud"]["splatMaxRadius"] = preferences.pointSplatSettings.maxRadius;
+
+  // Save sun (directional light). It is an application-global light, so it
+  // belongs in preferences rather than per-scene.
+  j["sun"]["enabled"] = sun.enabled;
+  j["sun"]["direction"] = {sun.direction.x, sun.direction.y, sun.direction.z};
+  j["sun"]["color"] = {sun.color.x, sun.color.y, sun.color.z};
+  j["sun"]["intensity"] = sun.intensity;
 
   // Save shadow settings
   j["shadows"]["pcfKernelSize"] = preferences.shadowSettings.pcfKernelSize;
@@ -2339,6 +2364,23 @@ void loadPreferences() {
           j["pointcloud"].value("splatEnabled", true);
       preferences.pointSplatSettings.maxRadius =
           j["pointcloud"].value("splatMaxRadius", 4);
+    }
+
+    // Sun (directional light)
+    if (j.contains("sun")) {
+      sun.enabled = j["sun"].value("enabled", sun.enabled);
+      if (j["sun"].contains("direction") && j["sun"]["direction"].size() == 3) {
+        sun.direction = glm::normalize(glm::vec3(
+            j["sun"]["direction"][0].get<float>(),
+            j["sun"]["direction"][1].get<float>(),
+            j["sun"]["direction"][2].get<float>()));
+      }
+      if (j["sun"].contains("color") && j["sun"]["color"].size() == 3) {
+        sun.color = glm::vec3(j["sun"]["color"][0].get<float>(),
+                              j["sun"]["color"][1].get<float>(),
+                              j["sun"]["color"][2].get<float>());
+      }
+      sun.intensity = j["sun"].value("intensity", sun.intensity);
     }
 
     // Shadow settings
@@ -4331,12 +4373,17 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     simpleDepthShader->use();
     simpleDepthShader->setMat4("lightSpaceMatrix", lightSpaceMatrix);
 
-    // Enable polygon offset to reduce peter panning - fine-tuned values
+    // A small slope-scaled polygon offset handles residual self-shadowing on
+    // steep triangles. The bulk of the acne/peter-panning trade-off is now
+    // handled by the normal-offset bias in the lighting shader, so this stays
+    // intentionally light -- large values here are what produced the detached
+    // "peter panning" shadows previously.
     glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(1.1f, 4.0f); // Reduced factor for tighter attachment
+    glPolygonOffset(1.0f, 1.0f);
 
-    // Render scene to depth buffer - disable culling to avoid issues with
-    // complex geometry
+    // Render scene to depth buffer - disable culling so both faces of
+    // non-watertight meshes write depth (the nearest face wins, which is what
+    // we want for the caster).
     glDisable(GL_CULL_FACE);
     renderModels(simpleDepthShader, lightSpaceMatrix);
     glEnable(GL_CULL_FACE);
@@ -4584,6 +4631,9 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       glActiveTexture(GL_TEXTURE4); // Using texture unit 4 for shadow map
       glBindTexture(GL_TEXTURE_2D, depthMap);
       shader->setInt("shadowMap", 4);
+
+      // World footprint of a sun shadow texel, drives the normal-offset bias.
+      shader->setFloat("shadowTexelWorldSize", shadowTexelWorldSize);
 
       // Bind point shadow cubemap array
       glActiveTexture(GL_TEXTURE6); // Use texture unit 6 for point shadow maps
@@ -5745,6 +5795,7 @@ void renderModels(Engine::Shader *shader, const glm::mat4 &viewProj,
       glActiveTexture(GL_TEXTURE0 + Engine::SHADOW_MAP_TEXTURE_UNIT);
       glBindTexture(GL_TEXTURE_2D, depthMap);
       instancedShader->setInt("shadowMap", Engine::SHADOW_MAP_TEXTURE_UNIT);
+      instancedShader->setFloat("shadowTexelWorldSize", shadowTexelWorldSize);
     }
 
     // Render instances
