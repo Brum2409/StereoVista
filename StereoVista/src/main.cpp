@@ -4513,60 +4513,66 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   shader->setMat4("view", view);
   shader->setVec3("viewPos", camera.Position);
 
-  // Schütz Phase 1: point cloud per-frame uniforms for screen-space point size
-  shader->setFloat("pointCloudBaseSize", preferences.pointCloudBaseSize);
-  shader->setFloat("screenHeight", static_cast<float>(g_viewportHeight));
-  shader->setFloat("fieldOfView", glm::radians(preferences.fov));
+  // Frame-constant scene uniforms: identical for both eyes and preserved in the
+  // program object between them (nothing in the intervening post-process pass nor
+  // renderModels() overwrites these), so set them once per frame on the first
+  // eye. g_sharedPassesDone is false during the first eye and is set true (near
+  // the end of renderEye) before the second eye reaches this point -- the same
+  // guard the shared shadow-map / DDGI passes use.
+  if (!g_sharedPassesDone) {
+    // Schütz Phase 1: point cloud per-frame uniforms for screen-space point size
+    shader->setFloat("pointCloudBaseSize", preferences.pointCloudBaseSize);
+    shader->setFloat("screenHeight", static_cast<float>(g_viewportHeight));
+    shader->setFloat("fieldOfView", glm::radians(preferences.fov));
 
-  // lightingMode / enableShadows are pushed by renderModels() right before the
-  // first scene draw (it is the shared authority used by the radar pass too), so
-  // setting them here as well would be a redundant per-eye upload.
-  // Unlit view mode (albedo only). Harmless no-op on shaders lacking the
-  // uniform; only the shadow-mapping shader implements the unlit path.
-  shader->setBool("unlitMode", g_unlitMode);
+    // Unlit view mode (albedo only). Harmless no-op on shaders lacking the
+    // uniform; only the shadow-mapping shader implements the unlit path.
+    shader->setBool("unlitMode", g_unlitMode);
 
-  // Set HDR settings uniforms
-  shader->setBool("hdrSettings.enabled", preferences.hdrSettings.enabled);
-  shader->setFloat("hdrSettings.exposure", preferences.hdrSettings.exposure);
-  shader->setFloat("hdrSettings.bloomThreshold",
-                   preferences.hdrSettings.bloomThreshold);
-  shader->setFloat("hdrSettings.bloomIntensity",
-                   preferences.hdrSettings.bloomIntensity);
-  shader->setInt("hdrSettings.toneMapOperator",
-                 preferences.hdrSettings.toneMapOperator);
-  shader->setBool("hdrSettings.enableBloom",
-                  preferences.hdrSettings.enableBloom);
+    // Set HDR settings uniforms
+    shader->setBool("hdrSettings.enabled", preferences.hdrSettings.enabled);
+    shader->setFloat("hdrSettings.exposure", preferences.hdrSettings.exposure);
+    shader->setFloat("hdrSettings.bloomThreshold",
+                     preferences.hdrSettings.bloomThreshold);
+    shader->setFloat("hdrSettings.bloomIntensity",
+                     preferences.hdrSettings.bloomIntensity);
+    shader->setInt("hdrSettings.toneMapOperator",
+                   preferences.hdrSettings.toneMapOperator);
+    shader->setBool("hdrSettings.enableBloom",
+                    preferences.hdrSettings.enableBloom);
 
-  // Set shadow quality settings uniforms
-  shader->setInt("shadowSettings.pcfKernelSize",
-                 preferences.shadowSettings.pcfKernelSize);
-  shader->setBool("shadowSettings.enablePCSS",
-                  preferences.shadowSettings.enablePCSS);
-  shader->setFloat("shadowSettings.lightSize",
-                   preferences.shadowSettings.lightSize);
-  shader->setFloat("shadowSettings.shadowSoftness",
-                   preferences.shadowSettings.shadowSoftness);
+    // Set shadow quality settings uniforms
+    shader->setInt("shadowSettings.pcfKernelSize",
+                   preferences.shadowSettings.pcfKernelSize);
+    shader->setBool("shadowSettings.enablePCSS",
+                    preferences.shadowSettings.enablePCSS);
+    shader->setFloat("shadowSettings.lightSize",
+                     preferences.shadowSettings.lightSize);
+    shader->setFloat("shadowSettings.shadowSoftness",
+                     preferences.shadowSettings.shadowSoftness);
 
-  // Set material enhancement uniforms (for enhanced material properties)
-  shader->setBool("materialSettings.enablePBR",
-                  preferences.materialSettings.enablePBR);
-  shader->setBool("materialSettings.enableAO",
-                  preferences.materialSettings.enableAO);
-  shader->setBool("materialSettings.enableNormalMapping",
-                  preferences.materialSettings.enableNormalMapping);
-  shader->setBool("materialSettings.enableParallaxMapping",
-                  preferences.materialSettings.enableParallaxMapping);
-  shader->setFloat("materialSettings.normalScale",
-                   preferences.materialSettings.normalScale);
-  shader->setFloat("materialSettings.heightScale",
-                   preferences.materialSettings.heightScale);
-  shader->setFloat("materialSettings.metallicFactor",
-                   preferences.materialSettings.metallicFactor);
-  shader->setFloat("materialSettings.roughnessFactor",
-                   preferences.materialSettings.roughnessFactor);
+    // Set material enhancement uniforms (for enhanced material properties)
+    shader->setBool("materialSettings.enablePBR",
+                    preferences.materialSettings.enablePBR);
+    shader->setBool("materialSettings.enableAO",
+                    preferences.materialSettings.enableAO);
+    shader->setBool("materialSettings.enableNormalMapping",
+                    preferences.materialSettings.enableNormalMapping);
+    shader->setBool("materialSettings.enableParallaxMapping",
+                    preferences.materialSettings.enableParallaxMapping);
+    shader->setFloat("materialSettings.normalScale",
+                     preferences.materialSettings.normalScale);
+    shader->setFloat("materialSettings.heightScale",
+                     preferences.materialSettings.heightScale);
+    shader->setFloat("materialSettings.metallicFactor",
+                     preferences.materialSettings.metallicFactor);
+    shader->setFloat("materialSettings.roughnessFactor",
+                     preferences.materialSettings.roughnessFactor);
+  }
 
-  // Sun uniforms are pushed by renderModels() (Shadow Mapping / VCT) and by the
-  // Radiance branch below, so setting them here for every eye would be redundant.
+  // lightingMode / enableShadows / sun are pushed per-eye by renderModels() (the
+  // shared authority used by the radar pass too) and, for Radiance, by its branch
+  // below -- so they are intentionally not set here.
 
   // Shadow mapping specific setup
   if (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING) {
@@ -4586,46 +4592,51 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       shader->setFloat("far_plane", far_plane);
     }
 
-    // Set point light uniforms
-    {
-      char buf[64];
-      for (int i = 0; i < (int)pointLights.size() && i < MAX_LIGHTS; i++) {
-        snprintf(buf, sizeof(buf), "lights[%d].position", i);
-        shader->setVec3(buf, pointLights[i].position);
-        snprintf(buf, sizeof(buf), "lights[%d].color", i);
-        shader->setVec3(buf, pointLights[i].color);
-        snprintf(buf, sizeof(buf), "lights[%d].intensity", i);
-        shader->setFloat(buf, pointLights[i].intensity);
-        snprintf(buf, sizeof(buf), "lights[%d].linear", i);
-        shader->setFloat(buf, pointLights[i].linear);
-        snprintf(buf, sizeof(buf), "lights[%d].quadratic", i);
-        shader->setFloat(buf, pointLights[i].quadratic);
-        snprintf(buf, sizeof(buf), "lightsCastShadows[%d]", i);
-        shader->setBool(buf, pointLights[i].castShadows);
+    // Point/spot light uniforms are frame-constant; set them once per frame on
+    // the first eye (they persist in the program object for the second eye).
+    if (!g_sharedPassesDone) {
+      // Set point light uniforms
+      {
+        char buf[64];
+        for (int i = 0; i < (int)pointLights.size() && i < MAX_LIGHTS; i++) {
+          snprintf(buf, sizeof(buf), "lights[%d].position", i);
+          shader->setVec3(buf, pointLights[i].position);
+          snprintf(buf, sizeof(buf), "lights[%d].color", i);
+          shader->setVec3(buf, pointLights[i].color);
+          snprintf(buf, sizeof(buf), "lights[%d].intensity", i);
+          shader->setFloat(buf, pointLights[i].intensity);
+          snprintf(buf, sizeof(buf), "lights[%d].linear", i);
+          shader->setFloat(buf, pointLights[i].linear);
+          snprintf(buf, sizeof(buf), "lights[%d].quadratic", i);
+          shader->setFloat(buf, pointLights[i].quadratic);
+          snprintf(buf, sizeof(buf), "lightsCastShadows[%d]", i);
+          shader->setBool(buf, pointLights[i].castShadows);
+        }
       }
-    }
-    shader->setInt("numLights", std::min((int)pointLights.size(), MAX_LIGHTS));
+      shader->setInt("numLights",
+                     std::min((int)pointLights.size(), MAX_LIGHTS));
 
-    // Set spot light uniforms
-    {
-      char buf[64];
-      for (int i = 0; i < (int)spotLights.size() && i < MAX_LIGHTS; i++) {
-        snprintf(buf, sizeof(buf), "spotLights[%d].position", i);
-        shader->setVec3(buf, spotLights[i].position);
-        snprintf(buf, sizeof(buf), "spotLights[%d].direction", i);
-        shader->setVec3(buf, spotLights[i].direction);
-        snprintf(buf, sizeof(buf), "spotLights[%d].color", i);
-        shader->setVec3(buf, spotLights[i].color);
-        snprintf(buf, sizeof(buf), "spotLights[%d].intensity", i);
-        shader->setFloat(buf, spotLights[i].intensity);
-        snprintf(buf, sizeof(buf), "spotLights[%d].innerCutOff", i);
-        shader->setFloat(buf, spotLights[i].innerCutOff);
-        snprintf(buf, sizeof(buf), "spotLights[%d].outerCutOff", i);
-        shader->setFloat(buf, spotLights[i].outerCutOff);
+      // Set spot light uniforms
+      {
+        char buf[64];
+        for (int i = 0; i < (int)spotLights.size() && i < MAX_LIGHTS; i++) {
+          snprintf(buf, sizeof(buf), "spotLights[%d].position", i);
+          shader->setVec3(buf, spotLights[i].position);
+          snprintf(buf, sizeof(buf), "spotLights[%d].direction", i);
+          shader->setVec3(buf, spotLights[i].direction);
+          snprintf(buf, sizeof(buf), "spotLights[%d].color", i);
+          shader->setVec3(buf, spotLights[i].color);
+          snprintf(buf, sizeof(buf), "spotLights[%d].intensity", i);
+          shader->setFloat(buf, spotLights[i].intensity);
+          snprintf(buf, sizeof(buf), "spotLights[%d].innerCutOff", i);
+          shader->setFloat(buf, spotLights[i].innerCutOff);
+          snprintf(buf, sizeof(buf), "spotLights[%d].outerCutOff", i);
+          shader->setFloat(buf, spotLights[i].outerCutOff);
+        }
       }
+      shader->setInt("numSpotLights",
+                     std::min((int)spotLights.size(), MAX_LIGHTS));
     }
-    shader->setInt("numSpotLights",
-                   std::min((int)spotLights.size(), MAX_LIGHTS));
 
     // ---- DDGI indirect diffuse (replaces the old VCT GI in shadow mapping) ----
     // Shadow Mapping keeps its shadow-mapped direct lighting; only the indirect
@@ -4699,46 +4710,51 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     shader->setBool("enableVoxelVisualization",
                     voxelizer->showDebugVisualization);
 
-    // Set point light uniforms
-    {
-      char buf[64];
-      for (int i = 0; i < (int)pointLights.size() && i < MAX_LIGHTS; i++) {
-        snprintf(buf, sizeof(buf), "lights[%d].position", i);
-        shader->setVec3(buf, pointLights[i].position);
-        snprintf(buf, sizeof(buf), "lights[%d].color", i);
-        shader->setVec3(buf, pointLights[i].color);
-        snprintf(buf, sizeof(buf), "lights[%d].intensity", i);
-        shader->setFloat(buf, pointLights[i].intensity);
-        snprintf(buf, sizeof(buf), "lights[%d].linear", i);
-        shader->setFloat(buf, pointLights[i].linear);
-        snprintf(buf, sizeof(buf), "lights[%d].quadratic", i);
-        shader->setFloat(buf, pointLights[i].quadratic);
-        snprintf(buf, sizeof(buf), "lightsCastShadows[%d]", i);
-        shader->setBool(buf, pointLights[i].castShadows);
+    // Point/spot light uniforms are frame-constant; set them once per frame on
+    // the first eye (they persist in the program object for the second eye).
+    if (!g_sharedPassesDone) {
+      // Set point light uniforms
+      {
+        char buf[64];
+        for (int i = 0; i < (int)pointLights.size() && i < MAX_LIGHTS; i++) {
+          snprintf(buf, sizeof(buf), "lights[%d].position", i);
+          shader->setVec3(buf, pointLights[i].position);
+          snprintf(buf, sizeof(buf), "lights[%d].color", i);
+          shader->setVec3(buf, pointLights[i].color);
+          snprintf(buf, sizeof(buf), "lights[%d].intensity", i);
+          shader->setFloat(buf, pointLights[i].intensity);
+          snprintf(buf, sizeof(buf), "lights[%d].linear", i);
+          shader->setFloat(buf, pointLights[i].linear);
+          snprintf(buf, sizeof(buf), "lights[%d].quadratic", i);
+          shader->setFloat(buf, pointLights[i].quadratic);
+          snprintf(buf, sizeof(buf), "lightsCastShadows[%d]", i);
+          shader->setBool(buf, pointLights[i].castShadows);
+        }
       }
-    }
-    shader->setInt("numLights", std::min((int)pointLights.size(), MAX_LIGHTS));
+      shader->setInt("numLights",
+                     std::min((int)pointLights.size(), MAX_LIGHTS));
 
-    // Set spot light uniforms
-    {
-      char buf[64];
-      for (int i = 0; i < (int)spotLights.size() && i < MAX_LIGHTS; i++) {
-        snprintf(buf, sizeof(buf), "spotLights[%d].position", i);
-        shader->setVec3(buf, spotLights[i].position);
-        snprintf(buf, sizeof(buf), "spotLights[%d].direction", i);
-        shader->setVec3(buf, spotLights[i].direction);
-        snprintf(buf, sizeof(buf), "spotLights[%d].color", i);
-        shader->setVec3(buf, spotLights[i].color);
-        snprintf(buf, sizeof(buf), "spotLights[%d].intensity", i);
-        shader->setFloat(buf, spotLights[i].intensity);
-        snprintf(buf, sizeof(buf), "spotLights[%d].innerCutOff", i);
-        shader->setFloat(buf, spotLights[i].innerCutOff);
-        snprintf(buf, sizeof(buf), "spotLights[%d].outerCutOff", i);
-        shader->setFloat(buf, spotLights[i].outerCutOff);
+      // Set spot light uniforms
+      {
+        char buf[64];
+        for (int i = 0; i < (int)spotLights.size() && i < MAX_LIGHTS; i++) {
+          snprintf(buf, sizeof(buf), "spotLights[%d].position", i);
+          shader->setVec3(buf, spotLights[i].position);
+          snprintf(buf, sizeof(buf), "spotLights[%d].direction", i);
+          shader->setVec3(buf, spotLights[i].direction);
+          snprintf(buf, sizeof(buf), "spotLights[%d].color", i);
+          shader->setVec3(buf, spotLights[i].color);
+          snprintf(buf, sizeof(buf), "spotLights[%d].intensity", i);
+          shader->setFloat(buf, spotLights[i].intensity);
+          snprintf(buf, sizeof(buf), "spotLights[%d].innerCutOff", i);
+          shader->setFloat(buf, spotLights[i].innerCutOff);
+          snprintf(buf, sizeof(buf), "spotLights[%d].outerCutOff", i);
+          shader->setFloat(buf, spotLights[i].outerCutOff);
+        }
       }
+      shader->setInt("numSpotLights",
+                     std::min((int)spotLights.size(), MAX_LIGHTS));
     }
-    shader->setInt("numSpotLights",
-                   std::min((int)spotLights.size(), MAX_LIGHTS));
   }
   // Radiance rendering specific setup
   else if (currentLightingMode == GUI::LIGHTING_RADIANCE) {
@@ -4792,53 +4808,59 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
 
     // No camera matrices needed - using rasterized fragment positions
 
-    // Set point light uniforms
-    {
-      char buf[64];
-      for (int i = 0; i < (int)pointLights.size() && i < MAX_LIGHTS; i++) {
-        snprintf(buf, sizeof(buf), "pointLights[%d].position", i);
-        shader->setVec3(buf, pointLights[i].position);
-        snprintf(buf, sizeof(buf), "pointLights[%d].color", i);
-        shader->setVec3(buf, pointLights[i].color);
-        snprintf(buf, sizeof(buf), "pointLights[%d].intensity", i);
-        shader->setFloat(buf, pointLights[i].intensity);
-        snprintf(buf, sizeof(buf), "pointLights[%d].linear", i);
-        shader->setFloat(buf, pointLights[i].linear);
-        snprintf(buf, sizeof(buf), "pointLights[%d].quadratic", i);
-        shader->setFloat(buf, pointLights[i].quadratic);
-        snprintf(buf, sizeof(buf), "lightsCastShadows[%d]", i);
-        shader->setBool(buf, pointLights[i].castShadows);
+    // Point/spot light + sun uniforms are frame-constant; set them once per
+    // frame on the first eye (they persist in the program object for the second
+    // eye). Radiance does not get its sun pushed by renderModels(), so it is set
+    // here.
+    if (!g_sharedPassesDone) {
+      // Set point light uniforms
+      {
+        char buf[64];
+        for (int i = 0; i < (int)pointLights.size() && i < MAX_LIGHTS; i++) {
+          snprintf(buf, sizeof(buf), "pointLights[%d].position", i);
+          shader->setVec3(buf, pointLights[i].position);
+          snprintf(buf, sizeof(buf), "pointLights[%d].color", i);
+          shader->setVec3(buf, pointLights[i].color);
+          snprintf(buf, sizeof(buf), "pointLights[%d].intensity", i);
+          shader->setFloat(buf, pointLights[i].intensity);
+          snprintf(buf, sizeof(buf), "pointLights[%d].linear", i);
+          shader->setFloat(buf, pointLights[i].linear);
+          snprintf(buf, sizeof(buf), "pointLights[%d].quadratic", i);
+          shader->setFloat(buf, pointLights[i].quadratic);
+          snprintf(buf, sizeof(buf), "lightsCastShadows[%d]", i);
+          shader->setBool(buf, pointLights[i].castShadows);
+        }
       }
-    }
 
-    // Set spot light uniforms
-    {
-      char buf[64];
-      for (int i = 0; i < (int)spotLights.size() && i < MAX_LIGHTS; i++) {
-        snprintf(buf, sizeof(buf), "spotLights[%d].position", i);
-        shader->setVec3(buf, spotLights[i].position);
-        snprintf(buf, sizeof(buf), "spotLights[%d].direction", i);
-        shader->setVec3(buf, spotLights[i].direction);
-        snprintf(buf, sizeof(buf), "spotLights[%d].color", i);
-        shader->setVec3(buf, spotLights[i].color);
-        snprintf(buf, sizeof(buf), "spotLights[%d].intensity", i);
-        shader->setFloat(buf, spotLights[i].intensity);
-        snprintf(buf, sizeof(buf), "spotLights[%d].innerCutOff", i);
-        shader->setFloat(buf, spotLights[i].innerCutOff);
-        snprintf(buf, sizeof(buf), "spotLights[%d].outerCutOff", i);
-        shader->setFloat(buf, spotLights[i].outerCutOff);
+      // Set spot light uniforms
+      {
+        char buf[64];
+        for (int i = 0; i < (int)spotLights.size() && i < MAX_LIGHTS; i++) {
+          snprintf(buf, sizeof(buf), "spotLights[%d].position", i);
+          shader->setVec3(buf, spotLights[i].position);
+          snprintf(buf, sizeof(buf), "spotLights[%d].direction", i);
+          shader->setVec3(buf, spotLights[i].direction);
+          snprintf(buf, sizeof(buf), "spotLights[%d].color", i);
+          shader->setVec3(buf, spotLights[i].color);
+          snprintf(buf, sizeof(buf), "spotLights[%d].intensity", i);
+          shader->setFloat(buf, spotLights[i].intensity);
+          snprintf(buf, sizeof(buf), "spotLights[%d].innerCutOff", i);
+          shader->setFloat(buf, spotLights[i].innerCutOff);
+          snprintf(buf, sizeof(buf), "spotLights[%d].outerCutOff", i);
+          shader->setFloat(buf, spotLights[i].outerCutOff);
+        }
       }
-    }
-    shader->setInt("numPointLights",
-                   std::min((int)pointLights.size(), MAX_LIGHTS));
-    shader->setInt("numSpotLights",
-                   std::min((int)spotLights.size(), MAX_LIGHTS));
+      shader->setInt("numPointLights",
+                     std::min((int)pointLights.size(), MAX_LIGHTS));
+      shader->setInt("numSpotLights",
+                     std::min((int)spotLights.size(), MAX_LIGHTS));
 
-    // Set sun properties
-    shader->setBool("sun.enabled", sun.enabled);
-    shader->setVec3("sun.direction", sun.direction);
-    shader->setVec3("sun.color", sun.color);
-    shader->setFloat("sun.intensity", sun.intensity);
+      // Set sun properties
+      shader->setBool("sun.enabled", sun.enabled);
+      shader->setVec3("sun.direction", sun.direction);
+      shader->setVec3("sun.color", sun.color);
+      shader->setFloat("sun.intensity", sun.intensity);
+    }
 
     // DIAGNOSTIC: Verify critical uniforms once on first frame
     static bool shaderDebugLogged = false;
