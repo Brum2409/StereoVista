@@ -4285,11 +4285,19 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   glBindTexture(GL_TEXTURE_2D, 0);
   glBindTexture(GL_TEXTURE_3D, 0);
 
-  // Detect scene changes (model transforms) and mark voxelizer dirty.
-  // This must happen before voxelizer->update() and independently of
-  // lighting mode / BVH, so that voxelization refreshes whenever any
-  // object is moved, rotated, or scaled -- matching BVH behavior.
-  {
+  // 1. Update the voxel grid if voxel visualization is enabled or we're using
+  // voxel cone tracing.
+  // Shadow Mapping mode's indirect lighting is now DDGI (probe-traced via the
+  // BVH), not voxel cone tracing, so it no longer needs the voxel grid.
+  bool needsVoxelization =
+      (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) ||
+      voxelizer->showDebugVisualization;
+  if (needsVoxelization) {
+    // Detect scene changes (model transforms) and mark voxelizer dirty so it
+    // re-voxelizes. Only relevant when the voxel grid is actually consumed; for
+    // the shadow-mapping default this scene scan would run every eye for
+    // nothing. The tracked state is not advanced while voxelization is off, so
+    // the first frame it is needed again still reports "changed" and refreshes.
     static SceneState lastVoxelSceneState;
     if (lastVoxelSceneState.hasChanged(currentScene)) {
       if (voxelizer) {
@@ -4297,16 +4305,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       }
       lastVoxelSceneState.update(currentScene);
     }
-  }
 
-  // 1. Update the voxel grid if voxel visualization is enabled or we're using
-  // voxel cone tracing or shadow mapping with indirect lighting
-  // Shadow Mapping mode's indirect lighting is now DDGI (probe-traced via the
-  // BVH), not voxel cone tracing, so it no longer needs the voxel grid.
-  bool needsVoxelization =
-      (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) ||
-      voxelizer->showDebugVisualization;
-  if (needsVoxelization) {
     // Keep voxelizer lights in sync with the scene so voxelized
     // lighting matches the actual point lights (not just the default).
     voxelizer->setLights(pointLights);
@@ -4369,6 +4368,10 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       glEnable(GL_POLYGON_OFFSET_FILL);
       glPolygonOffset(0.5f, 1.0f);
 
+      // The program never changes inside the loop, so activate it once here
+      // instead of re-binding it for every light.
+      pointShadowShader->use();
+
       for (int li = 0; li < pointLights.size() && li < MAX_LIGHTS; ++li) {
         // Skip generating shadow map for lights that don't cast shadows
         if (!pointLights[li].castShadows)
@@ -4391,7 +4394,6 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
                                      glm::vec3(0, -1, 0)),
         };
 
-        pointShadowShader->use();
         char smName[32];
         for (unsigned int i = 0; i < 6; ++i) {
           snprintf(smName, sizeof(smName), "shadowMatrices[%u]", i);
@@ -4488,24 +4490,12 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     Engine::BloomSettings &bloomSettings = bloomRenderer->getSettings();
     glBindFramebuffer(GL_FRAMEBUFFER, bloomSettings.hdrFBO);
 
-    // Validate HDR framebuffer is complete
-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-      std::cerr << "ERROR: HDR framebuffer not complete in renderEye!"
-                << std::endl;
-      glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    } else {
-      // Ensure MRT is set up correctly
-      GLuint attachments[2] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
-      glDrawBuffers(2, attachments);
-
-      // Verify MRT setup
-      GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-      if (status != GL_FRAMEBUFFER_COMPLETE) {
-        std::cerr << "ERROR: HDR framebuffer with MRT not complete!"
-                  << std::endl;
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-      }
-    }
+    // FBO completeness is validated once after init/resize via hdrFboValid in
+    // the main loop; re-querying glCheckFramebufferStatus here (twice) on every
+    // eye every frame is a redundant driver sync. Just set up the MRT for the
+    // two color attachments (HDR color + bright/bloom).
+    GLuint attachments[2] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
+    glDrawBuffers(2, attachments);
   } else {
     // Bind default framebuffer for non-HDR rendering
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -4528,9 +4518,9 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   shader->setFloat("screenHeight", static_cast<float>(g_viewportHeight));
   shader->setFloat("fieldOfView", glm::radians(preferences.fov));
 
-  // Set lighting mode uniforms - this is always needed
-  shader->setInt("lightingMode", static_cast<int>(currentLightingMode));
-  shader->setBool("enableShadows", enableShadows);
+  // lightingMode / enableShadows are pushed by renderModels() right before the
+  // first scene draw (it is the shared authority used by the radar pass too), so
+  // setting them here as well would be a redundant per-eye upload.
   // Unlit view mode (albedo only). Harmless no-op on shaders lacking the
   // uniform; only the shadow-mapping shader implements the unlit path.
   shader->setBool("unlitMode", g_unlitMode);
@@ -4575,11 +4565,8 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   shader->setFloat("materialSettings.roughnessFactor",
                    preferences.materialSettings.roughnessFactor);
 
-  // Set common light properties - these are needed for both modes
-  shader->setVec3("sun.direction", sun.direction);
-  shader->setVec3("sun.color", sun.color);
-  shader->setFloat("sun.intensity", sun.intensity);
-  shader->setBool("sun.enabled", sun.enabled);
+  // Sun uniforms are pushed by renderModels() (Shadow Mapping / VCT) and by the
+  // Radiance branch below, so setting them here for every eye would be redundant.
 
   // Shadow mapping specific setup
   if (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING) {
