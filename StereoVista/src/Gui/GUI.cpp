@@ -4107,23 +4107,20 @@ void renderSettingsWindow() {
       ImGui::SameLine();
       DrawHelpMarker("Controls the brightness of sunlight");
 
-      static glm::vec3 sunAngles = glm::vec3(-45.0f, -45.0f, 0.0f);
-      if (ImGui::DragFloat3("Sun Direction", glm::value_ptr(sunAngles), 1.0f,
-                            -180.0f, 180.0f, "%.0f°")) {
-        glm::mat4 rotationMatrix = glm::mat4(1.0f);
-        rotationMatrix = glm::rotate(rotationMatrix, glm::radians(sunAngles.x),
-                                     glm::vec3(1, 0, 0));
-        rotationMatrix = glm::rotate(rotationMatrix, glm::radians(sunAngles.y),
-                                     glm::vec3(0, 1, 0));
-        rotationMatrix = glm::rotate(rotationMatrix, glm::radians(sunAngles.z),
-                                     glm::vec3(0, 0, 1));
-        sun.direction =
-            glm::normalize(glm::vec3(rotationMatrix * glm::vec4(0, -1, 0, 0)));
-        settingsChanged = true;
+      // Edit the direction vector directly and re-normalize. (The previous
+      // Euler-angle control used a static cache that never reflected the actual
+      // sun.direction, so it desynced after load/undo and snapped on first use.)
+      glm::vec3 sunDir = sun.direction;
+      if (ImGui::DragFloat3("Sun Direction", glm::value_ptr(sunDir), 0.01f,
+                            -1.0f, 1.0f, "%.2f")) {
+        if (glm::length(sunDir) > 1e-4f) {
+          sun.direction = glm::normalize(sunDir);
+          settingsChanged = true;
+        }
       }
       ImGui::SameLine();
-      DrawHelpMarker(
-          "Sets the direction of sunlight. Affects shadows and lighting");
+      DrawHelpMarker("Direction the sunlight travels (points away from the "
+                     "sun). Affects shadows and lighting.");
 
       ImGui::PopID();
   }
@@ -7130,22 +7127,15 @@ void renderSunManipulationPanel() {
 
   ImGui::Spacing();
 
-  static glm::vec3 angles = glm::vec3(-45.0f, -45.0f, 0.0f);
-  if (ImGui::DragFloat3("Direction (Angles)", glm::value_ptr(angles), 1.0f,
-                        -180.0f, 180.0f, "%.0f°")) {
-    glm::mat4 rotationMatrix = glm::mat4(1.0f);
-    rotationMatrix =
-        glm::rotate(rotationMatrix, glm::radians(angles.x), glm::vec3(1, 0, 0));
-    rotationMatrix =
-        glm::rotate(rotationMatrix, glm::radians(angles.y), glm::vec3(0, 1, 0));
-    rotationMatrix =
-        glm::rotate(rotationMatrix, glm::radians(angles.z), glm::vec3(0, 0, 1));
-    sun.direction =
-        glm::normalize(glm::vec3(rotationMatrix * glm::vec4(0, -1, 0, 0)));
+  // Edit the direction vector directly and re-normalize so the control always
+  // reflects the live sun.direction (load, undo, or the settings panel).
+  glm::vec3 dir = sun.direction;
+  if (ImGui::DragFloat3("Direction", glm::value_ptr(dir), 0.01f, -1.0f, 1.0f,
+                        "%.2f")) {
+    if (glm::length(dir) > 1e-4f) {
+      sun.direction = glm::normalize(dir);
+    }
   }
-
-  ImGui::Text("Direction Vector: (%.2f, %.2f, %.2f)", sun.direction.x,
-              sun.direction.y, sun.direction.z);
 
   s_sunEditTracker.update(0, sunPreFrame, sun,
                           [](int, const Engine::Sun &before,

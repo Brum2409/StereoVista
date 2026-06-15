@@ -40,6 +40,20 @@ uniform float sunIntensity;
 uniform sampler2D shadowMap;
 uniform bool enableShadows;
 uniform bool useInstanceColor;
+// Sun light-space transform + texel footprint for the normal-offset bias
+// (mirrors shadowMappingFragmentShader.glsl so instances shadow identically).
+uniform mat4 lightSpaceMatrix;
+uniform float shadowTexelWorldSize;
+
+// Push the receiver a few texels along its surface normal, then re-project into
+// light space. Removes acne without peter panning (matches the main shader).
+vec4 sunFragPosLightSpace(vec3 lightDir) {
+    vec3 n = normalize(fs_in.Normal);
+    float nl = clamp(dot(n, lightDir), 0.0, 1.0);
+    float slope = clamp(sqrt(max(1.0 - nl * nl, 0.0)) / max(nl, 0.15), 0.0, 3.0);
+    float offset = shadowTexelWorldSize * (1.5 + 1.5 * slope);
+    return lightSpaceMatrix * vec4(fs_in.FragPos + n * offset, 1.0);
+}
 
 // Simple shadow calculation
 float calculateShadow(vec4 fragPosLightSpace) {
@@ -51,7 +65,7 @@ float calculateShadow(vec4 fragPosLightSpace) {
     if (projCoords.z > 1.0) return 0.0;
 
     float currentDepth = projCoords.z;
-    float bias = 0.005;
+    float bias = 0.0005;
     float shadow = 0.0;
 
     // Simple PCF
@@ -83,8 +97,8 @@ vec3 calculateLighting(vec3 normal, vec3 viewDir, vec3 albedo) {
     float spec = pow(max(dot(normal, halfwayDir), 0.0), material.shininess);
     vec3 specular = spec * sunColor * sunIntensity;
 
-    // Shadow
-    float shadow = calculateShadow(fs_in.FragPosLightSpace);
+    // Shadow (normal-offset receiver position)
+    float shadow = calculateShadow(sunFragPosLightSpace(lightDir));
 
     vec3 lighting = ambient + (1.0 - shadow) * (diffuse + specular);
     return lighting;
