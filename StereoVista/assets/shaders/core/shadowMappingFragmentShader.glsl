@@ -212,6 +212,8 @@ uniform bool isMeshSelected;
 // (no HDR/bloom tone-map), so tone-map + gamma in-place using this value as the
 // exposure so the radar floor plan stays bright. 0 = normal (non-radar) output.
 uniform float radarBrightness;
+// Unlit view mode: output albedo/base color directly, skipping lighting/GI.
+uniform bool unlitMode;
 
 // ---- HELPER FUNCTIONS ----
 // Returns true if a world position is inside the voxel grid
@@ -1690,8 +1692,21 @@ void main() {
     } else {
         baseColor = material.objectColor;
     }
-    
-    float specularStrength = material.hasSpecularMap ? 
+
+    // Unlit view mode: output the albedo directly and skip all lighting,
+    // shadows and GI. Reuses the same HDR-vs-direct output convention as the
+    // lit tail (radar pass is left to its own dedicated path below).
+    if (unlitMode && radarBrightness <= 0.0) {
+        if (hdrSettings.enabled) {
+            FragColor = vec4(baseColor, 1.0); // linear; post does tonemap+gamma
+        } else {
+            FragColor = vec4(pow(baseColor, vec3(1.0 / 2.2)), 1.0);
+        }
+        BrightColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+
+    float specularStrength = material.hasSpecularMap ?
                            texture(material.textures[1], fs_in.TexCoords).r : 0.2;
     
     // Calculate enhanced normal with improved TBN and multi-layer support

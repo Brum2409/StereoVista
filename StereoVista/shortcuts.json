@@ -12,6 +12,15 @@
                         "shift": false
                     }
                 ],
+                "ClearIrradianceCache": [
+                    {
+                        "alt": false,
+                        "ctrl": true,
+                        "keyCode": 73,
+                        "mouseButton": -1,
+                        "shift": true
+                    }
+                ],
                 "CycleLighting": [
                     {
                         "alt": false,
@@ -30,6 +39,42 @@
                         "shift": false
                     }
                 ],
+                "GizmoModeMove": [
+                    {
+                        "alt": false,
+                        "ctrl": false,
+                        "keyCode": 49,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
+                ],
+                "GizmoModeRotate": [
+                    {
+                        "alt": false,
+                        "ctrl": false,
+                        "keyCode": 50,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
+                ],
+                "GizmoModeScale": [
+                    {
+                        "alt": false,
+                        "ctrl": false,
+                        "keyCode": 51,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
+                ],
+                "GizmoToggleSpace": [
+                    {
+                        "alt": false,
+                        "ctrl": false,
+                        "keyCode": 52,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
+                ],
                 "ImportPointCloud": [
                     {
                         "alt": false,
@@ -39,11 +84,54 @@
                         "shift": false
                     }
                 ],
+                "OpenClipPlaneTool": [
+                    {
+                        "alt": false,
+                        "ctrl": false,
+                        "keyCode": 80,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
+                ],
+                "OpenMeasurementTool": [
+                    {
+                        "alt": false,
+                        "ctrl": false,
+                        "keyCode": 77,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
+                ],
+                "Redo": [
+                    {
+                        "alt": false,
+                        "ctrl": true,
+                        "keyCode": 89,
+                        "mouseButton": -1,
+                        "shift": false
+                    },
+                    {
+                        "alt": false,
+                        "ctrl": true,
+                        "keyCode": 90,
+                        "mouseButton": -1,
+                        "shift": true
+                    }
+                ],
                 "ResetCamera": [
                     {
                         "alt": false,
                         "ctrl": false,
                         "keyCode": 84,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
+                ],
+                "TakeScreenshot": [
+                    {
+                        "alt": false,
+                        "ctrl": false,
+                        "keyCode": 301,
                         "mouseButton": -1,
                         "shift": false
                     }
@@ -127,6 +215,24 @@
                         "keyCode": 78,
                         "mouseButton": -1,
                         "shift": false
+                    }
+                ],
+                "Undo": [
+                    {
+                        "alt": false,
+                        "ctrl": true,
+                        "keyCode": 90,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
+                ],
+                "Unknown": [
+                    {
+                        "alt": false,
+                        "ctrl": true,
+                        "keyCode": 77,
+                        "mouseButton": -1,
+                        "shift": true
                     }
                 ]
             },

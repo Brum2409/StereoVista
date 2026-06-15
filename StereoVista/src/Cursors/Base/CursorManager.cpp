@@ -226,6 +226,24 @@ void CursorManager::resetFrameCalculationFlag() {
   m_cursorPositionCalculatedThisFrame = false;
 }
 
+// Pin the shared cursor (and every cursor type) onto an explicit world point.
+void CursorManager::setForcedCursorPosition(const glm::vec3 &position) {
+  m_cursorPosition = position;
+  m_cursorPositionValid = true;
+
+  m_sphereCursor->setPosition(position);
+  m_sphereCursor->setPositionValid(true);
+  m_sphereCursor->calculateRadius(camera.Position);
+  m_fragmentCursor->setPosition(position);
+  m_fragmentCursor->setPositionValid(true);
+  m_planeCursor->setPosition(position);
+  m_planeCursor->setPositionValid(true);
+
+  // We have an authoritative 3D point this frame; drop any stale background
+  // fallback so it can't override the forced position downstream.
+  m_hasBackgroundCursorPosition = false;
+}
+
 // Render visible 3D cursors in the scene
 void CursorManager::renderCursors(const glm::mat4 &projection,
                                   const glm::mat4 &view) {

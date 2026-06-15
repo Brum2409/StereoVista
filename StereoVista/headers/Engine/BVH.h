@@ -176,7 +176,7 @@ namespace Engine {
 
     struct GPUTriangle {
         float v0[4];    // vec3 + padding
-        float v1[4];    // vec3 + padding  
+        float v1[4];    // vec3 + padding
         float v2[4];    // vec3 + padding
         float normal[4]; // vec3 + padding
         float color[4];  // vec3 + emissiveness
@@ -184,6 +184,20 @@ namespace Engine {
         uint32_t materialId; // int (as uint32_t)
         float padding[2]; // align to 64 bytes
         // Total: 64 bytes (matches current Triangle struct)
+    };
+
+    // Per-object instance record for the two-level (TLAS/BLAS) path. Each scene
+    // model becomes one instance referencing a sub-range of the concatenated
+    // BLAS-node / BLAS-triangle / BLAS-index SSBOs. Matches the std430 `Instance`
+    // block in radianceFragmentShader.glsl and ddgiTraceRays.glsl exactly.
+    struct GPUInstance {
+        float model[16];        // object -> world (column-major, glm layout)
+        float invModel[16];     // world -> object
+        uint32_t blasNodeOffset;    // base index into the BLAS-node SSBO
+        uint32_t triOffset;         // base index into the BLAS-triangle SSBO
+        uint32_t triIndexOffset;    // base index into the BLAS-triangle-index SSBO
+        uint32_t pad;               // pad to 16-byte boundary
+        // Total: 64 + 64 + 16 = 144 bytes
     };
 
 } // namespace Engine

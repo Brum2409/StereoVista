@@ -230,6 +230,7 @@ struct ApplicationPreferences {
     float emissiveIntensity = 1.0f;
     float materialRoughness = 0.5f;
     bool enableBVH = true;
+    bool enableTwoLevelBVH = true; // two-level TLAS/BLAS path (default; A/B toggle)
     bool showBVHDebug = false;
     int bvhDebugMaxDepth = 3;
     int bvhDebugRenderMode =

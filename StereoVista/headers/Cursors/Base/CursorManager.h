@@ -91,6 +91,13 @@ public:
     m_cursorPositionValid = true;
   }
 
+  // Force the shared 3D cursor onto an explicit world point (e.g. a transform
+  // gizmo handle), updating every cursor type so the visible cursor sits
+  // exactly there at that depth. Lets tools that draw their own always-on-top
+  // overlay keep the 3D cursor glued to them instead of punching through to the
+  // geometry behind. Call after updateCursorPosition() for the frame.
+  void setForcedCursorPosition(const glm::vec3 &position);
+
   // Enhanced cursor position setter that integrates with synchronization system
   void setCapturedCursorPositionWithSync(const glm::vec3 &position,
                                          bool enableSync = true) {

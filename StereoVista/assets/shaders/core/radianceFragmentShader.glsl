@@ -182,6 +182,26 @@ uniform int numTriangles;
 uniform int numBVHNodes;
 uniform bool enableBVH;
 
+// ---- Two-level BVH (TLAS/BLAS) ---------------------------------------------
+// When enableTwoLevel is set, bindings 0/1/2 hold CONCATENATED per-model BLAS
+// data in LOCAL (object) space, and the TLAS below indexes per-object instances.
+// A ray is traced against the TLAS (world space), then transformed into each
+// hit instance's local space to traverse that instance's BLAS sub-range.
+struct Instance {
+    mat4 model;            // object -> world
+    mat4 invModel;         // world -> object
+    uint blasNodeOffset;   // base into bvhNodes[]   for this BLAS
+    uint triOffset;        // base into triangles[]   for this BLAS
+    uint triIndexOffset;   // base into triangleIndices[] for this BLAS
+    uint pad;
+};
+layout(std430, binding = 3) readonly buffer TLASNodeBuffer { BVHNode tlasNodes[]; };
+layout(std430, binding = 4) readonly buffer InstanceBuffer { Instance instances[]; };
+layout(std430, binding = 5) readonly buffer TLASIndexBuffer { uint tlasIndices[]; };
+uniform int numTLASNodes;
+uniform int numInstances;
+uniform bool enableTwoLevel;
+
 // Optional ground plane
 struct GroundPlane {
     vec3 point;
@@ -379,11 +399,126 @@ HitInfo castRayLinear(Ray ray) {
     return hit;
 }
 
+// ---- Two-level BVH traversal ----------------------------------------------
+// Traverse one instance's BLAS in its LOCAL space. `lray` is the ray already
+// transformed into object space (direction left UN-normalized so the hit
+// parameter t stays in the same units as the world ray -- this keeps result.distance
+// directly comparable across instances). `wray` is the original world ray, used
+// only to reconstruct the world-space hit point. Updates the running closest hit.
+void intersectBLAS(Ray lray, Ray wray, uint nodeBase, uint triIdxBase, uint triBase,
+                   mat3 normalMat, inout HitInfo result) {
+    uint stack[24]; // depth-capped at 20 by the builder -> max ~21 entries
+    int sp = 0;
+    stack[sp++] = 0u; // BLAS-local root
+
+    while (sp > 0) {
+        BVHNode node = bvhNodes[nodeBase + stack[--sp]];
+        if (node.triCount > 0u) {
+            for (uint i = 0u; i < node.triCount; i++) {
+                uint triIdx = triangleIndices[triIdxBase + node.leftFirst + i];
+                Triangle tri = triangles[triBase + triIdx];
+                float t;
+                if (intersectTriangle(lray, tri, t) && t < result.distance) {
+                    result.hit = true;
+                    result.distance = t;
+                    result.point = wray.origin + wray.direction * t;
+                    result.normal = normalize(normalMat * tri.normal);
+                    result.albedo = tri.color;
+                    result.emissiveness = tri.emissiveness;
+                    result.shininess = tri.shininess;
+                    result.roughness = 1.0 - clamp(tri.shininess / 256.0, 0.0, 1.0);
+                    result.materialId = tri.materialId;
+                }
+            }
+        } else {
+            uint a = node.leftFirst + 0u;
+            uint b = node.leftFirst + 1u;
+            BVHNode childA = bvhNodes[nodeBase + a];
+            BVHNode childB = bvhNodes[nodeBase + b];
+            bool hitA = rayAABBIntersect(lray, childA.minBounds, childA.maxBounds);
+            bool hitB = rayAABBIntersect(lray, childB.minBounds, childB.maxBounds);
+            if (hitA && hitB) {
+                float dstA = rayBoundingBoxDistance(lray, childA.minBounds, childA.maxBounds);
+                float dstB = rayBoundingBoxDistance(lray, childB.minBounds, childB.maxBounds);
+                if (dstA <= dstB) {
+                    if (dstB < result.distance && sp < 23) stack[sp++] = b;
+                    if (dstA < result.distance && sp < 23) stack[sp++] = a;
+                } else {
+                    if (dstA < result.distance && sp < 23) stack[sp++] = a;
+                    if (dstB < result.distance && sp < 23) stack[sp++] = b;
+                }
+            } else if (hitA) {
+                if (sp < 23) stack[sp++] = a;
+            } else if (hitB) {
+                if (sp < 23) stack[sp++] = b;
+            }
+        }
+    }
+}
+
+// Walk the TLAS (world space); at each leaf, transform the ray into each
+// instance's local space and traverse its BLAS.
+HitInfo castRayTwoLevel(Ray ray) {
+    HitInfo result;
+    result.hit = false;
+    result.distance = rayMaxDistance;
+    if (numTLASNodes == 0) return result;
+
+    uint stack[24]; // depth-capped at 20 by the builder -> max ~21 entries
+    int sp = 0;
+    stack[sp++] = 0u;
+
+    while (sp > 0) {
+        BVHNode node = tlasNodes[stack[--sp]];
+        if (node.triCount > 0u) {
+            for (uint i = 0u; i < node.triCount; i++) {
+                uint instIdx = tlasIndices[node.leftFirst + i];
+                Instance inst = instances[instIdx];
+                vec3 lo = (inst.invModel * vec4(ray.origin, 1.0)).xyz;
+                vec3 ld = (inst.invModel * vec4(ray.direction, 0.0)).xyz; // not normalized
+                Ray lray;
+                lray.origin = lo;
+                lray.direction = ld;
+                lray.invDir = 1.0 / ld;
+                mat3 normalMat = transpose(mat3(inst.invModel));
+                intersectBLAS(lray, ray, inst.blasNodeOffset, inst.triIndexOffset,
+                              inst.triOffset, normalMat, result);
+            }
+        } else {
+            uint a = node.leftFirst + 0u;
+            uint b = node.leftFirst + 1u;
+            if (a >= numTLASNodes || b >= numTLASNodes) continue;
+            BVHNode childA = tlasNodes[a];
+            BVHNode childB = tlasNodes[b];
+            bool hitA = rayAABBIntersect(ray, childA.minBounds, childA.maxBounds);
+            bool hitB = rayAABBIntersect(ray, childB.minBounds, childB.maxBounds);
+            if (hitA && hitB) {
+                float dstA = rayBoundingBoxDistance(ray, childA.minBounds, childA.maxBounds);
+                float dstB = rayBoundingBoxDistance(ray, childB.minBounds, childB.maxBounds);
+                if (dstA <= dstB) {
+                    if (dstB < result.distance && sp < 23) stack[sp++] = b;
+                    if (dstA < result.distance && sp < 23) stack[sp++] = a;
+                } else {
+                    if (dstA < result.distance && sp < 23) stack[sp++] = a;
+                    if (dstB < result.distance && sp < 23) stack[sp++] = b;
+                }
+            } else if (hitA) {
+                if (sp < 23) stack[sp++] = a;
+            } else if (hitB) {
+                if (sp < 23) stack[sp++] = b;
+            }
+        }
+    }
+    return result;
+}
+
 // Cast ray and find closest hit
 HitInfo castRay(Ray ray) {
     HitInfo hit;
 
-    if (enableBVH && numBVHNodes > 0) {
+    if (enableTwoLevel && numTLASNodes > 0) {
+        hit = castRayTwoLevel(ray);
+    } else if (enableBVH && numBVHNodes > 0) {
         hit = castRayBVH(ray);
     } else {
         hit = castRayLinear(ray);

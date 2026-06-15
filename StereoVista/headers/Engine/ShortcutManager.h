@@ -197,6 +197,17 @@ public:
   std::optional<ShortcutAction> getActionForKey(int key, int mods) const;
   std::optional<ShortcutAction> getActionForMouse(int button, int mods) const;
 
+  // Translate a physical GLFW key code to the canonical key code that matches
+  // the label printed on that physical key in the user's current keyboard
+  // layout. GLFW key codes are tied to physical US-layout positions, so without
+  // this a binding on "Z" lands on a different key on e.g. a QWERTZ (German) or
+  // AZERTY (French) layout. Letter/number keys whose layout label is a single
+  // ASCII character are remapped to GLFW_KEY_<label>; all other keys (function
+  // keys, arrows, punctuation that has no ASCII label, etc.) are returned
+  // unchanged. Pass the event scancode when available; it is ignored by GLFW
+  // whenever 'key' is a known token, so -1 is fine for the GUI capture path.
+  static int normalizeKeyToLayout(int key, int scancode = -1);
+
   // Get human-readable name for an action
   static std::string getActionName(ShortcutAction action);
   static std::string getActionDescription(ShortcutAction action);

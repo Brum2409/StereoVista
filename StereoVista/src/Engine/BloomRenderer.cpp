@@ -132,6 +132,15 @@ void BloomRenderer::resize(int width, int height) {
 }
 
 bool BloomRenderer::setupFramebuffers() {
+  // Drain any pre-existing GL errors so the per-step glGetError() checks below
+  // only catch failures from this function. Without this, a stale error raised
+  // by an unrelated earlier call (e.g. GL_INVALID_FRAMEBUFFER_OPERATION from a
+  // draw against a momentarily-incomplete FBO) is misattributed to the texture
+  // creation here, aborts setup, and leaves the HDR FBO incomplete -> the
+  // "HDR Framebuffer not complete during bloom pass!" black frames.
+  while (glGetError() != GL_NO_ERROR) {
+  }
+
   // Create HDR framebuffer with two color attachments
   glGenFramebuffers(1, &m_settings.hdrFBO);
   glBindFramebuffer(GL_FRAMEBUFFER, m_settings.hdrFBO);

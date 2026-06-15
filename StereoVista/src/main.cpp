@@ -461,7 +461,6 @@ GLuint bvhNodeSSBO = 0;
 GLuint triangleIndexSSBO = 0;
 std::vector<Engine::GPUBVHNode> gpuBVHNodes;
 std::vector<uint32_t> gpuTriangleIndices;
-std::vector<Engine::GPUTriangle> gpuTriangles;
 bool bvhBuilt = false;
 bool bvhBuffersUploaded = false;
 bool triangleDataUploaded = false;
@@ -470,6 +469,46 @@ bool enableBVH = true; // BVH toggle
 // BVH Debug Renderer
 Engine::BVHDebugRenderer bvhDebugRenderer;
 bool showBVHDebug = false;
+
+// ---- Two-Level BVH (TLAS / BLAS) ----
+// Per-object BLAS built once in LOCAL (object) space (cached, invalidated by
+// geometry/material edits, NOT by transforms) + a small TLAS over per-object
+// world AABBs. Lives behind the `enableTwoLevelBVH` toggle and is mutually
+// exclusive with the flat single-level path above: both feed SSBO bindings
+// 0/1/2, but with different contents (world-space single tree vs concatenated
+// local-space BLAS), plus 3/4/5 for the TLAS + instance table.
+bool enableTwoLevelBVH = true; // runtime toggle (mirrors preferences); default on
+
+// Cached per-model BLAS in local/object space. Parallel to currentScene.models.
+struct BLASCacheEntry {
+  std::vector<float> triangleData;       // flat local-space triangles (16 floats each)
+  std::vector<Engine::GPUBVHNode> nodes; // local-space BLAS nodes
+  std::vector<uint32_t> triIndices;      // BVH permutation into this BLAS's triangles
+  uint32_t triangleCount = 0;
+  glm::vec3 boundsMin = glm::vec3(0.0f); // local-space root AABB
+  glm::vec3 boundsMax = glm::vec3(0.0f);
+  size_t geomSignature = 0;              // invalidation key (geometry, not transform)
+  bool valid = false;
+};
+std::vector<BLASCacheEntry> blasCache;
+
+// Concatenated GPU buffers for the two-level path.
+GLuint blasTriangleSSBO = 0; // binding 0 (when two-level active)
+GLuint blasNodeSSBO = 0;     // binding 1
+GLuint blasIndexSSBO = 0;    // binding 2
+GLuint tlasNodeSSBO = 0;     // binding 3
+GLuint instanceSSBO = 0;     // binding 4
+GLuint tlasIndexSSBO = 0;    // binding 5
+std::vector<float> twoLevelTriangleData;           // -> binding 0
+std::vector<Engine::GPUBVHNode> twoLevelBLASNodes; // -> binding 1
+std::vector<uint32_t> twoLevelTriIndices;          // -> binding 2
+std::vector<Engine::GPUBVHNode> gpuTLASNodes;      // -> binding 3
+std::vector<Engine::GPUInstance> gpuInstances;     // -> binding 4
+std::vector<uint32_t> tlasInstanceIndices;         // -> binding 5
+std::vector<int> instanceToModel; // CPU-side: instance index -> scene.models index
+int twoLevelTriangleCount = 0;
+bool twoLevelBuilt = false;
+Engine::BVHBuilder tlasBuilder; // reused to build the TLAS over instance AABBs
 
 // ---- Dynamic Diffuse Global Illumination (DDGI) ----
 Engine::DDGIVolume *ddgiVolume = nullptr;
@@ -969,7 +1008,6 @@ void buildBVH(const std::vector<Engine::BVHTriangle> &triangles) {
   // Convert to GPU format
   const auto &nodes = bvhBuilder.getNodes();
   const auto &indices = bvhBuilder.getTriangleIndices();
-  const auto &bvhTriangles = bvhBuilder.getTriangles();
 
   // Convert BVH nodes to GPU format
   gpuBVHNodes.clear();
@@ -990,42 +1028,392 @@ void buildBVH(const std::vector<Engine::BVHTriangle> &triangles) {
   // Copy triangle indices
   gpuTriangleIndices = indices;
 
-  // Convert triangles to GPU format (reordered according to BVH)
-  gpuTriangles.clear();
-  gpuTriangles.reserve(bvhTriangles.size());
-  for (const auto &tri : bvhTriangles) {
-    Engine::GPUTriangle gpuTri;
-    gpuTri.v0[0] = tri.v0.x;
-    gpuTri.v0[1] = tri.v0.y;
-    gpuTri.v0[2] = tri.v0.z;
-    gpuTri.v0[3] = 0.0f;
-    gpuTri.v1[0] = tri.v1.x;
-    gpuTri.v1[1] = tri.v1.y;
-    gpuTri.v1[2] = tri.v1.z;
-    gpuTri.v1[3] = 0.0f;
-    gpuTri.v2[0] = tri.v2.x;
-    gpuTri.v2[1] = tri.v2.y;
-    gpuTri.v2[2] = tri.v2.z;
-    gpuTri.v2[3] = 0.0f;
-    gpuTri.normal[0] = tri.normal.x;
-    gpuTri.normal[1] = tri.normal.y;
-    gpuTri.normal[2] = tri.normal.z;
-    gpuTri.normal[3] = 0.0f;
-    gpuTri.color[0] = tri.color.x;
-    gpuTri.color[1] = tri.color.y;
-    gpuTri.color[2] = tri.color.z;
-    gpuTri.color[3] = tri.emissiveness;
-    gpuTri.shininess = tri.shininess;
-    gpuTri.materialId = static_cast<uint32_t>(tri.materialId);
-    gpuTri.padding[0] = 0.0f;
-    gpuTri.padding[1] = 0.0f;
-    gpuTriangles.push_back(gpuTri);
-  }
-
   bvhBuilt = true;
   bvhBuffersUploaded = false;   // Mark that buffers need to be uploaded
   triangleDataUploaded = false; // Mark that triangle data needs to be uploaded
   std::cout << "BVH built successfully" << std::endl;
+}
+
+// ============================================================================
+// Two-Level BVH (TLAS / BLAS)
+// ============================================================================
+static Engine::GPUBVHNode toGPUNode(const Engine::BVHNode &n) {
+  Engine::GPUBVHNode g;
+  g.minX = n.minBounds.x;
+  g.minY = n.minBounds.y;
+  g.minZ = n.minBounds.z;
+  g.leftFirst = n.leftFirst;
+  g.maxX = n.maxBounds.x;
+  g.maxY = n.maxBounds.y;
+  g.maxZ = n.maxBounds.z;
+  g.triCount = n.triCount;
+  return g;
+}
+
+// Cheap content key that changes with geometry/material edits but NOT with
+// transforms, so moving an object never invalidates its cached BLAS.
+static size_t computeModelGeomSignature(const Engine::Model &model) {
+  size_t h = 1469598103934665603ull; // FNV-1a offset basis
+  auto mix = [&h](size_t v) {
+    h ^= v;
+    h *= 1099511628211ull;
+  };
+  auto mixF = [&mix](float f) { mix((size_t)(*reinterpret_cast<uint32_t *>(&f))); };
+
+  mix(model.getMeshes().size());
+  for (const auto &mesh : model.getMeshes()) {
+    mix(mesh.vertices.size());
+    mix(mesh.indices.size());
+    mix(reinterpret_cast<size_t>(mesh.vertices.data()));
+    if (!mesh.textures.empty())
+      mix((size_t)mesh.textures[0].id);
+  }
+  // Material values baked per-triangle in the BLAS.
+  mixF(model.emissive);
+  mixF(model.shininess);
+  mixF(model.color.x);
+  mixF(model.color.y);
+  mixF(model.color.z);
+  return h;
+}
+
+// Build one model's BLAS in LOCAL (object) space. Mirrors the per-triangle data
+// layout and albedo logic of the flat extraction path, minus the world transform.
+static void buildModelBLAS(const Engine::Model &model, BLASCacheEntry &entry) {
+  entry.triangleData.clear();
+  entry.nodes.clear();
+  entry.triIndices.clear();
+  entry.triangleCount = 0;
+
+  std::vector<Engine::BVHTriangle> bvhTriangles;
+
+  for (const auto &mesh : model.getMeshes()) {
+    // Albedo for GI rays: match the rasterizer (texture average or flat color).
+    glm::vec3 meshAlbedo = model.color;
+    if (!mesh.textures.empty()) {
+      GLuint diffuseId = mesh.textures[0].id;
+      for (const auto &t : mesh.textures) {
+        if (t.type == "texture_diffuse") {
+          diffuseId = t.id;
+          break;
+        }
+      }
+      if (diffuseId != 0)
+        meshAlbedo = getAverageTextureColor(diffuseId);
+    }
+
+    const auto &vertices = mesh.vertices;
+    const auto &indices = mesh.indices;
+    for (size_t i = 0; i + 2 < indices.size(); i += 3) {
+      // LOCAL-space vertices (no model matrix). The instance transform is
+      // applied on the GPU during traversal.
+      glm::vec3 v0 = vertices[indices[i]].position;
+      glm::vec3 v1 = vertices[indices[i + 1]].position;
+      glm::vec3 v2 = vertices[indices[i + 2]].position;
+      glm::vec3 normal = normalize(cross(v1 - v0, v2 - v0));
+
+      // Flat triangle data (same 16-float Triangle layout as the single-level
+      // path, but in local space and with a local-space normal).
+      entry.triangleData.insert(entry.triangleData.end(), {v0.x, v0.y, v0.z});
+      entry.triangleData.push_back(0.0f);
+      entry.triangleData.insert(entry.triangleData.end(), {v1.x, v1.y, v1.z});
+      entry.triangleData.push_back(0.0f);
+      entry.triangleData.insert(entry.triangleData.end(), {v2.x, v2.y, v2.z});
+      entry.triangleData.push_back(0.0f);
+      entry.triangleData.insert(entry.triangleData.end(),
+                                {normal.x, normal.y, normal.z});
+      entry.triangleData.push_back(0.0f);
+      entry.triangleData.insert(entry.triangleData.end(),
+                                {meshAlbedo.x, meshAlbedo.y, meshAlbedo.z});
+      entry.triangleData.push_back(model.emissive);
+      entry.triangleData.push_back(model.shininess);
+      int materialId = (int)entry.triangleCount;
+      entry.triangleData.push_back(*reinterpret_cast<float *>(&materialId));
+      entry.triangleData.push_back(0.0f);
+      entry.triangleData.push_back(0.0f);
+
+      bvhTriangles.emplace_back(v0, v1, v2, normal, meshAlbedo, model.emissive,
+                                model.shininess, materialId);
+      entry.triangleCount++;
+    }
+  }
+
+  if (bvhTriangles.empty()) {
+    entry.boundsMin = entry.boundsMax = glm::vec3(0.0f);
+    entry.valid = true; // empty model -> empty BLAS (skipped during TLAS build)
+    return;
+  }
+
+  Engine::BVHBuilder builder;
+  builder.build(bvhTriangles);
+
+  const auto &nodes = builder.getNodes();
+  entry.nodes.reserve(nodes.size());
+  for (const auto &n : nodes)
+    entry.nodes.push_back(toGPUNode(n));
+  entry.triIndices = builder.getTriangleIndices();
+
+  entry.boundsMin = nodes[0].minBounds; // local-space root AABB
+  entry.boundsMax = nodes[0].maxBounds;
+  entry.valid = true;
+}
+
+// Assemble per-model BLAS (cached) + a TLAS over instance world AABBs, and pack
+// the concatenated SSBO payloads. Does NOT upload (see updateTwoLevelBuffers).
+// Pack a glm::mat4 into 16 floats (column-major; glm + std430 agree).
+static void packMat4(float *dst, const glm::mat4 &m) {
+  for (int col = 0; col < 4; col++)
+    for (int row = 0; row < 4; row++)
+      dst[col * 4 + row] = m[col][row];
+}
+
+// Object->world matrix from a model's transform (matches the rasterizer).
+static glm::mat4 modelMatrixOf(const Engine::Model &model) {
+  glm::mat4 m(1.0f);
+  m = glm::translate(m, model.position);
+  m = glm::rotate(m, glm::radians(model.rotation.x), glm::vec3(1, 0, 0));
+  m = glm::rotate(m, glm::radians(model.rotation.y), glm::vec3(0, 1, 0));
+  m = glm::rotate(m, glm::radians(model.rotation.z), glm::vec3(0, 0, 1));
+  m = glm::scale(m, model.scale);
+  return m;
+}
+
+// World-space AABB of a local AABB transformed by m (8-corner expansion).
+static Engine::AABB worldAABBOf(const glm::vec3 &lmin, const glm::vec3 &lmax,
+                                const glm::mat4 &m) {
+  Engine::AABB world;
+  for (int c = 0; c < 8; c++) {
+    glm::vec3 corner((c & 1) ? lmax.x : lmin.x, (c & 2) ? lmax.y : lmin.y,
+                     (c & 4) ? lmax.z : lmin.z);
+    world.expand(glm::vec3(m * glm::vec4(corner, 1.0f)));
+  }
+  return world;
+}
+
+// Build the TLAS (bindings 3/5 payloads) over per-instance world-AABB items.
+// Reuses BVHBuilder by encoding each instance as a degenerate triangle whose
+// materialId carries the instance id.
+static void buildTLAS(const std::vector<Engine::BVHTriangle> &tlasItems) {
+  gpuTLASNodes.clear();
+  tlasInstanceIndices.clear();
+  if (tlasItems.empty())
+    return;
+  tlasBuilder.build(tlasItems);
+  const auto &tnodes = tlasBuilder.getNodes();
+  gpuTLASNodes.reserve(tnodes.size());
+  for (const auto &n : tnodes)
+    gpuTLASNodes.push_back(toGPUNode(n));
+
+  const auto &perm = tlasBuilder.getTriangleIndices();
+  const auto &items = tlasBuilder.getTriangles();
+  tlasInstanceIndices.reserve(perm.size());
+  for (uint32_t p : perm)
+    tlasInstanceIndices.push_back((uint32_t)items[p].materialId);
+}
+
+// Full (re)build: refresh cached BLAS, concatenate the BLAS layer (bindings
+// 0/1/2), build the instance table, and build the TLAS. Used when geometry or
+// the model set changes -- NOT on a plain transform move (see
+// refreshInstanceTransforms).
+void buildTwoLevelBVH(const Engine::Scene &scene) {
+  // 1) Ensure each model has an up-to-date local-space BLAS.
+  blasCache.resize(scene.models.size());
+  for (size_t i = 0; i < scene.models.size(); i++) {
+    size_t sig = computeModelGeomSignature(scene.models[i]);
+    if (!blasCache[i].valid || blasCache[i].geomSignature != sig) {
+      buildModelBLAS(scene.models[i], blasCache[i]);
+      blasCache[i].geomSignature = sig;
+      std::cout << "BLAS built for model " << i << " ("
+                << blasCache[i].triangleCount << " tris)" << std::endl;
+    }
+  }
+
+  // 2) Concatenate BLAS payloads and build the per-object instance table.
+  twoLevelTriangleData.clear();
+  twoLevelBLASNodes.clear();
+  twoLevelTriIndices.clear();
+  gpuInstances.clear();
+  instanceToModel.clear();
+  twoLevelTriangleCount = 0;
+
+  std::vector<Engine::BVHTriangle> tlasItems; // one degenerate item per instance
+
+  for (size_t i = 0; i < scene.models.size(); i++) {
+    const Engine::Model &model = scene.models[i];
+    const BLASCacheEntry &blas = blasCache[i];
+    if (!blas.valid || blas.triangleCount == 0 || blas.nodes.empty())
+      continue; // skip empty models
+
+    glm::mat4 m = modelMatrixOf(model);
+
+    Engine::GPUInstance inst;
+    packMat4(inst.model, m);
+    packMat4(inst.invModel, glm::inverse(m));
+    inst.blasNodeOffset = (uint32_t)twoLevelBLASNodes.size();
+    inst.triOffset = (uint32_t)twoLevelTriangleCount;
+    inst.triIndexOffset = (uint32_t)twoLevelTriIndices.size();
+    inst.pad = 0;
+
+    twoLevelBLASNodes.insert(twoLevelBLASNodes.end(), blas.nodes.begin(),
+                             blas.nodes.end());
+    twoLevelTriIndices.insert(twoLevelTriIndices.end(), blas.triIndices.begin(),
+                              blas.triIndices.end());
+    twoLevelTriangleData.insert(twoLevelTriangleData.end(),
+                                blas.triangleData.begin(),
+                                blas.triangleData.end());
+    twoLevelTriangleCount += (int)blas.triangleCount;
+
+    uint32_t instanceIndex = (uint32_t)gpuInstances.size();
+    gpuInstances.push_back(inst);
+    instanceToModel.push_back((int)i);
+
+    Engine::AABB world = worldAABBOf(blas.boundsMin, blas.boundsMax, m);
+    Engine::BVHTriangle item;
+    item.bounds = world;
+    item.centroid = world.getCenter();
+    item.materialId = (int)instanceIndex;
+    tlasItems.push_back(item);
+  }
+
+  // 3) Build the TLAS over instance AABBs.
+  buildTLAS(tlasItems);
+
+  twoLevelBuilt = true;
+  std::cout << "Two-level BVH built: " << gpuInstances.size() << " instances, "
+            << twoLevelTriangleCount << " tris, " << twoLevelBLASNodes.size()
+            << " BLAS nodes, " << gpuTLASNodes.size() << " TLAS nodes"
+            << std::endl;
+}
+
+// Incremental transform update (Step 2 fast path): recompute only the
+// per-instance matrices and the TLAS. The BLAS layer on bindings 0/1/2 is
+// untouched, so a plain object move costs O(#objects), not O(#triangles).
+void refreshInstanceTransforms(const Engine::Scene &scene) {
+  std::vector<Engine::BVHTriangle> tlasItems;
+  tlasItems.reserve(gpuInstances.size());
+  for (size_t k = 0; k < gpuInstances.size(); k++) {
+    int i = instanceToModel[k];
+    const BLASCacheEntry &blas = blasCache[i];
+    glm::mat4 m = modelMatrixOf(scene.models[i]);
+    packMat4(gpuInstances[k].model, m);
+    packMat4(gpuInstances[k].invModel, glm::inverse(m));
+    // BLAS offsets are unchanged.
+
+    Engine::AABB world = worldAABBOf(blas.boundsMin, blas.boundsMax, m);
+    Engine::BVHTriangle item;
+    item.bounds = world;
+    item.centroid = world.getCenter();
+    item.materialId = (int)k;
+    tlasItems.push_back(item);
+  }
+  buildTLAS(tlasItems);
+}
+
+void setupTwoLevelBuffers() {
+  if (blasTriangleSSBO == 0) glGenBuffers(1, &blasTriangleSSBO);
+  if (blasNodeSSBO == 0) glGenBuffers(1, &blasNodeSSBO);
+  if (blasIndexSSBO == 0) glGenBuffers(1, &blasIndexSSBO);
+  if (tlasNodeSSBO == 0) glGenBuffers(1, &tlasNodeSSBO);
+  if (instanceSSBO == 0) glGenBuffers(1, &instanceSSBO);
+  if (tlasIndexSSBO == 0) glGenBuffers(1, &tlasIndexSSBO);
+}
+
+// Upload the concatenated two-level payloads to bindings 0..5. Mirrors the
+// single-level path's bindings 0/1/2 (with local-space BLAS contents) and adds
+// 3 = TLAS nodes, 4 = instances, 5 = TLAS instance indices.
+void updateTwoLevelBuffers() {
+  if (!twoLevelBuilt) return;
+  setupTwoLevelBuffers();
+
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, blasTriangleSSBO);
+  glBufferData(GL_SHADER_STORAGE_BUFFER,
+               twoLevelTriangleData.size() * sizeof(float),
+               twoLevelTriangleData.data(), GL_DYNAMIC_DRAW);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, blasTriangleSSBO);
+
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, blasNodeSSBO);
+  glBufferData(GL_SHADER_STORAGE_BUFFER,
+               twoLevelBLASNodes.size() * sizeof(Engine::GPUBVHNode),
+               twoLevelBLASNodes.data(), GL_DYNAMIC_DRAW);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, blasNodeSSBO);
+
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, blasIndexSSBO);
+  glBufferData(GL_SHADER_STORAGE_BUFFER,
+               twoLevelTriIndices.size() * sizeof(uint32_t),
+               twoLevelTriIndices.data(), GL_DYNAMIC_DRAW);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, blasIndexSSBO);
+
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, tlasNodeSSBO);
+  glBufferData(GL_SHADER_STORAGE_BUFFER,
+               gpuTLASNodes.size() * sizeof(Engine::GPUBVHNode),
+               gpuTLASNodes.data(), GL_DYNAMIC_DRAW);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, tlasNodeSSBO);
+
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, instanceSSBO);
+  glBufferData(GL_SHADER_STORAGE_BUFFER,
+               gpuInstances.size() * sizeof(Engine::GPUInstance),
+               gpuInstances.data(), GL_DYNAMIC_DRAW);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, instanceSSBO);
+
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, tlasIndexSSBO);
+  glBufferData(GL_SHADER_STORAGE_BUFFER,
+               tlasInstanceIndices.size() * sizeof(uint32_t),
+               tlasInstanceIndices.data(), GL_DYNAMIC_DRAW);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, tlasIndexSSBO);
+
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+}
+
+// Upload ONLY the instance + TLAS payloads (bindings 3/4/5). The Step 2 fast
+// path for a plain object move: the BLAS layer on bindings 0/1/2 is untouched,
+// so only this small data (a few KB for hundreds of objects) is re-uploaded.
+void updateInstanceAndTLASBuffers() {
+  if (!twoLevelBuilt) return;
+  setupTwoLevelBuffers();
+
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, tlasNodeSSBO);
+  glBufferData(GL_SHADER_STORAGE_BUFFER,
+               gpuTLASNodes.size() * sizeof(Engine::GPUBVHNode),
+               gpuTLASNodes.data(), GL_DYNAMIC_DRAW);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, tlasNodeSSBO);
+
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, instanceSSBO);
+  glBufferData(GL_SHADER_STORAGE_BUFFER,
+               gpuInstances.size() * sizeof(Engine::GPUInstance),
+               gpuInstances.data(), GL_DYNAMIC_DRAW);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, instanceSSBO);
+
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, tlasIndexSSBO);
+  glBufferData(GL_SHADER_STORAGE_BUFFER,
+               tlasInstanceIndices.size() * sizeof(uint32_t),
+               tlasInstanceIndices.data(), GL_DYNAMIC_DRAW);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, tlasIndexSSBO);
+
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+}
+
+// Bind the two-level payloads to bindings 0..5 without re-uploading. Used to
+// refresh binding-point state before the lit draw (point-cloud passes reuse
+// binding 1, and binding state must be re-established each frame).
+void bindTwoLevelBuffers() {
+  if (!twoLevelBuilt) return;
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, blasTriangleSSBO);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, blasNodeSSBO);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, blasIndexSSBO);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, tlasNodeSSBO);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, instanceSSBO);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, tlasIndexSSBO);
+}
+
+void cleanupTwoLevelBuffers() {
+  GLuint *bufs[] = {&blasTriangleSSBO, &blasNodeSSBO, &blasIndexSSBO,
+                    &tlasNodeSSBO,     &instanceSSBO, &tlasIndexSSBO};
+  for (GLuint *b : bufs) {
+    if (*b != 0) {
+      glDeleteBuffers(1, b);
+      *b = 0;
+    }
+  }
 }
 
 void updateSkybox() {
@@ -1890,6 +2278,8 @@ void savePreferences() {
   j["radiance"]["materialRoughness"] =
       preferences.radianceSettings.materialRoughness;
   j["radiance"]["enableBVH"] = preferences.radianceSettings.enableBVH;
+  j["radiance"]["enableTwoLevelBVH"] =
+      preferences.radianceSettings.enableTwoLevelBVH;
   j["radiance"]["showBVHDebug"] = preferences.radianceSettings.showBVHDebug;
   j["radiance"]["bvhDebugMaxDepth"] =
       preferences.radianceSettings.bvhDebugMaxDepth;
@@ -1956,6 +2346,7 @@ void applyPreferencesToProgram() {
   // touched (the GUI syncs these on change).
   radianceSettings = preferences.radianceSettings;
   enableBVH = preferences.radianceSettings.enableBVH;
+  enableTwoLevelBVH = preferences.radianceSettings.enableTwoLevelBVH;
   showBVHDebug = preferences.radianceSettings.showBVHDebug;
   ambientStrengthFromSkybox = preferences.ambientStrengthFromSkybox;
 
@@ -2461,6 +2852,8 @@ void loadPreferences() {
           j["radiance"].value("materialRoughness", 0.5f);
       preferences.radianceSettings.enableBVH =
           j["radiance"].value("enableBVH", true);
+      preferences.radianceSettings.enableTwoLevelBVH =
+          j["radiance"].value("enableTwoLevelBVH", true);
       preferences.radianceSettings.showBVHDebug =
           j["radiance"].value("showBVHDebug", false);
       preferences.radianceSettings.bvhDebugMaxDepth =
@@ -3364,7 +3757,10 @@ int main() {
       finishGizmoDrag();
     }
     bindGizmoTargetToSelection();
-    if (transformGizmo.enabled && transformGizmo.hasTarget()) {
+    // The gizmo is only interactive while Ctrl is held; an active drag keeps
+    // running until the mouse is released even if Ctrl is let go.
+    if (transformGizmo.enabled && transformGizmo.hasTarget() &&
+        (ctrlPressed || gizmoDragging)) {
       glm::vec3 gRayOrigin, gRayDir, gRayNear, gRayFar;
       calculateMouseRay(lastX, lastY, gRayOrigin, gRayDir, gRayNear, gRayFar,
                         aspectRatio);
@@ -3734,22 +4130,19 @@ int main() {
       }
     }
 
-    // ---- Screenshot: handle a capture armed on the previous frame ----
-    // When excluding the UI, hide the GUI for this single frame so the captured
-    // image holds only the rendered scene. savedShowGuiForCapture restores it
-    // right after the pixels are read (just before the buffer swap).
+    // ---- Screenshot / snapshot: handle a capture armed on the previous frame ----
+    // A clean (GUI-free) image is obtained by reading the viewer sub-rectangle
+    // from the freshly composited back buffer *before* the GUI is drawn on top
+    // (see the capture block right after the scene composite). The GUI is no
+    // longer hidden for a frame: hiding it zeroed the reserved dock insets,
+    // which grew the viewport to the full window and rebuilt the HDR/bloom/SSAO
+    // framebuffers every capture -- the cause of the one-frame flash and the
+    // intermittent "HDR Framebuffer not complete" black captures.
     bool captureThisFrame = screenshotArmed;
     std::string captureThisFramePath = screenshotArmedPath;
     bool captureSnapshotThisFrame = snapshotArmed;
     std::string snapshotThisFrameName = snapshotArmedName;
     uint32_t snapshotThisFrameFlags = snapshotArmedFlags;
-    bool savedShowGuiForCapture = showGui;
-    // Snapshots always want a clean viewer image (GUI hidden), as do screenshots
-    // when the UI is excluded.
-    if ((captureThisFrame && !preferences.screenshotIncludeUI) ||
-        captureSnapshotThisFrame) {
-      showGui = false;
-    }
     screenshotArmed = false;
     snapshotArmed = false;
 
@@ -3987,6 +4380,54 @@ int main() {
         }
       }
 
+      // ---- Capture a clean (GUI-free) viewer image before drawing the GUI ----
+      // Read the freshly composited scene from the viewport sub-rectangle now,
+      // before any GUI (docked panels or floating tool windows) is drawn over
+      // it. Snapshots and UI-excluded screenshots use this clean image; a
+      // UI-included screenshot is taken after the GUI is drawn (below). Because
+      // the GUI stays visible, the viewport is not resized for the capture, so
+      // the HDR/bloom/SSAO targets are not rebuilt (no flash, no black frames).
+      if (captureSnapshotThisFrame ||
+          (captureThisFrame && !preferences.screenshotIncludeUI)) {
+        GLenum capBuffer = isStereoWindow ? GL_BACK_LEFT : GL_BACK;
+
+        if (captureSnapshotThisFrame) {
+          std::vector<unsigned char> px;
+          int pw = 0, ph = 0;
+          if (Engine::Screenshot::captureToMemory(g_viewportX, 0, g_viewportWidth,
+                                                   g_viewportHeight, capBuffer,
+                                                   px, pw, ph)) {
+            Core::SnapshotManager::instance().create(
+                snapshotThisFrameName, snapshotThisFrameFlags, camera,
+                currentScene, pointLights, spotLights, sun, brushTool,
+                measurementTool, clipPlaneTool, px, pw, ph);
+            GUI::ShowToast("Snapshot saved: " + snapshotThisFrameName,
+                           GUI::ToastType::Success);
+          } else {
+            GUI::ShowToast("Failed to capture snapshot", GUI::ToastType::Error);
+          }
+          captureSnapshotThisFrame = false;
+        }
+
+        if (captureThisFrame) {
+          std::string path = captureThisFramePath;
+          if (path.empty())
+            path = Engine::Screenshot::makeTimestampedPath("screenshots");
+          if (Engine::Screenshot::captureToPNG(path, g_viewportX, 0,
+                                               g_viewportWidth, g_viewportHeight,
+                                               capBuffer)) {
+            std::cout << "Screenshot saved: " << path << std::endl;
+            GUI::ShowToast("Screenshot saved: " +
+                               std::filesystem::path(path).filename().string(),
+                           GUI::ToastType::Success);
+          } else {
+            std::cerr << "Failed to save screenshot: " << path << std::endl;
+            GUI::ShowToast("Failed to save screenshot", GUI::ToastType::Error);
+          }
+          captureThisFrame = false;
+        }
+      }
+
       // Now render GUI on top of the composed HDR result
       if (showGui) {
         // Ensure we're rendering to the default framebuffer
@@ -4057,6 +4498,9 @@ int main() {
     }
 
     // ---- Screenshot: read the finished frame before swapping ----
+    // Reached for UI-included screenshots (whole window, captured after the GUI)
+    // and, in the non-HDR fallback path, for UI-excluded screenshots that the
+    // pre-GUI capture above did not handle (viewer sub-rectangle).
     if (captureThisFrame) {
       // Read the left/primary color buffer (GL_BACK is invalid on a
       // quad-buffer stereo window, so pick the left eye there).
@@ -4065,8 +4509,12 @@ int main() {
       if (path.empty()) {
         path = Engine::Screenshot::makeTimestampedPath("screenshots");
       }
-      bool ok = Engine::Screenshot::captureToPNG(path, 0, 0, windowWidth,
-                                                 windowHeight, readBuffer);
+      bool includeUI = preferences.screenshotIncludeUI;
+      int cx = includeUI ? 0 : g_viewportX;
+      int cw = includeUI ? windowWidth : g_viewportWidth;
+      int ch = includeUI ? windowHeight : g_viewportHeight;
+      bool ok =
+          Engine::Screenshot::captureToPNG(path, cx, 0, cw, ch, readBuffer);
       if (ok) {
         std::cout << "Screenshot saved: " << path << std::endl;
         GUI::ShowToast("Screenshot saved: " +
@@ -4076,16 +4524,19 @@ int main() {
         std::cerr << "Failed to save screenshot: " << path << std::endl;
         GUI::ShowToast("Failed to save screenshot", GUI::ToastType::Error);
       }
-      showGui = savedShowGuiForCapture;
     }
 
-    // ---- Snapshot: read the clean frame and store it ----
+    // ---- Snapshot (non-HDR fallback): read the clean frame and store it ----
+    // The HDR path captures snapshots before the GUI is drawn (above); this
+    // path remains for non-HDR rendering, which draws its GUI inside renderEye.
+    // Read the viewer sub-rectangle so the docked panels are excluded.
     if (captureSnapshotThisFrame) {
       GLenum readBuffer = isStereoWindow ? GL_BACK_LEFT : GL_BACK;
       std::vector<unsigned char> px;
       int pw = 0, ph = 0;
       bool ok = Engine::Screenshot::captureToMemory(
-          0, 0, windowWidth, windowHeight, readBuffer, px, pw, ph);
+          g_viewportX, 0, g_viewportWidth, g_viewportHeight, readBuffer, px, pw,
+          ph);
       if (ok) {
         Core::SnapshotManager::instance().create(
             snapshotThisFrameName, snapshotThisFrameFlags, camera, currentScene,
@@ -4096,7 +4547,6 @@ int main() {
       } else {
         GUI::ShowToast("Failed to capture snapshot", GUI::ToastType::Error);
       }
-      showGui = savedShowGuiForCapture;
     }
 
     // Arm a capture for the next frame if one was requested this frame.
@@ -4158,6 +4608,7 @@ void cleanup() {
   // Delete triangle buffer resources
   cleanupTriangleBuffer();
   cleanupBVHBuffers();
+  cleanupTwoLevelBuffers();
 
   // Cleanup DDGI volume
   if (ddgiVolume) {
@@ -4294,7 +4745,12 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     }
 
     glm::vec3 boundsMin, boundsMax;
-    if (bvhBuilt && !gpuBVHNodes.empty()) {
+    if (enableTwoLevelBVH && twoLevelBuilt && !gpuTLASNodes.empty()) {
+      // TLAS root spans the whole scene in world space.
+      const auto &rootNode = gpuTLASNodes[0];
+      boundsMin = glm::vec3(rootNode.minX, rootNode.minY, rootNode.minZ);
+      boundsMax = glm::vec3(rootNode.maxX, rootNode.maxY, rootNode.maxZ);
+    } else if (!enableTwoLevelBVH && bvhBuilt && !gpuBVHNodes.empty()) {
       const auto &rootNode = gpuBVHNodes[0];
       boundsMin = glm::vec3(rootNode.minX, rootNode.minY, rootNode.minZ);
       boundsMax = glm::vec3(rootNode.maxX, rootNode.maxY, rootNode.maxZ);
@@ -4951,6 +5407,57 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     // Declare triangle count outside conditional to use in shader uniforms
     static int triangleCount = 0;
 
+    // Force the newly-active path to (re)build when the toggle flips, since the
+    // two paths share SSBO bindings 0/1/2 with different contents.
+    static bool lastTwoLevelMode = false;
+    if (enableTwoLevelBVH != lastTwoLevelMode) {
+      triangleDataUploaded = false;
+      bvhBuffersUploaded = false;
+      twoLevelBuilt = false;
+      lastTwoLevelMode = enableTwoLevelBVH;
+    }
+
+    if (enableTwoLevelBVH) {
+      // ---- Two-level (TLAS/BLAS) geometry path ----
+      // Distinguish a geometry/structure change (model added/removed or a mesh
+      // edited) from a plain transform move. Only the former rebuilds the BLAS
+      // layer (bindings 0/1/2); a move just refreshes the instance table + TLAS.
+      bool structureChanged =
+          !twoLevelBuilt || blasCache.size() != currentScene.models.size();
+      if (!structureChanged) {
+        for (size_t i = 0; i < currentScene.models.size(); i++) {
+          if (!blasCache[i].valid ||
+              blasCache[i].geomSignature !=
+                  computeModelGeomSignature(currentScene.models[i])) {
+            structureChanged = true;
+            break;
+          }
+        }
+      }
+
+      if (structureChanged) {
+        // Geometry topology changed: rebuild the BLAS layer + instances + TLAS
+        // and re-upload everything. Cached probe irradiance/visibility is no
+        // longer valid, so reset DDGI and re-voxelize.
+        buildTwoLevelBVH(currentScene);
+        updateTwoLevelBuffers();
+        if (ddgiVolume && ddgiVolume->isInitialized())
+          ddgiVolume->clear();
+        if (voxelizer)
+          voxelizer->markDirty();
+        lastSceneState.update(currentScene);
+      } else if (sceneChanged) {
+        // Transform-only move (the Step 2 fast path): O(#objects) refresh of the
+        // instance matrices + TLAS, uploading just bindings 3/4/5. DDGI is NOT
+        // cleared -- the probes adapt over a few frames via the normal per-frame
+        // update, which looks smoother (and is cheaper) than a full reset.
+        refreshInstanceTransforms(currentScene);
+        updateInstanceAndTLASBuffers();
+        lastSceneState.update(currentScene);
+      }
+      triangleCount = twoLevelTriangleCount;
+    } else {
+    // ---- Single-level (flat world-space BVH) geometry path ----
     // Only extract and upload triangle data if scene changed or data hasn't
     // been uploaded
     if (sceneChanged || !triangleDataUploaded) {
@@ -5141,13 +5648,40 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       lastRenderMode = preferences.radianceSettings.bvhDebugRenderMode;
     }
 
+    } // end single-level geometry path
+
+    // ---- Geometry uniforms (shared by the radiance draw + DDGI trace) ----
     shader->setInt("numTriangles", triangleCount);
-    shader->setInt("numBVHNodes", static_cast<int>(gpuBVHNodes.size()));
-    shader->setBool("enableBVH", enableBVH && bvhBuilt);
+    shader->setInt("numBVHNodes",
+                   enableTwoLevelBVH
+                       ? static_cast<int>(twoLevelBLASNodes.size())
+                       : static_cast<int>(gpuBVHNodes.size()));
+    shader->setBool("enableBVH",
+                    enableTwoLevelBVH ? true : (enableBVH && bvhBuilt));
+    shader->setInt("numTLASNodes", enableTwoLevelBVH
+                                       ? static_cast<int>(gpuTLASNodes.size())
+                                       : 0);
+    shader->setInt("numInstances", enableTwoLevelBVH
+                                       ? static_cast<int>(gpuInstances.size())
+                                       : 0);
+    shader->setBool("enableTwoLevel", enableTwoLevelBVH && twoLevelBuilt);
 
     // Disable ground plane for pure raytracing (was causing unwanted
     // lighting)
     shader->setBool("hasGroundPlane", false);
+
+    // Re-establish geometry SSBO binding-point state for the upcoming lit draw.
+    // Point-cloud passes reuse binding 1, and the active path's buffers are only
+    // bound during a build/upload (which may not happen this frame), so rebind
+    // here every frame/eye to keep the radiance fragment shader reading the
+    // correct geometry.
+    if (enableTwoLevelBVH) {
+      bindTwoLevelBuffers();
+    } else if (bvhBuilt) {
+      glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, triangleSSBO);
+      glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, bvhNodeSSBO);
+      glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, triangleIndexSSBO);
+    }
 
     // ---- DDGI: trace probe rays and update the probe atlases ----
     // Runs entirely on the GPU each frame: (1) trace rays from every probe
@@ -5194,10 +5728,14 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
 
       // --- Pass 1: trace rays into the ray-data SSBO (binding 6) ---
       ddgiTraceShader->use();
-      glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, triangleSSBO);
-      if (enableBVH && bvhBuilt) {
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, bvhNodeSSBO);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, triangleIndexSSBO);
+      if (enableTwoLevelBVH) {
+        bindTwoLevelBuffers();
+      } else {
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, triangleSSBO);
+        if (enableBVH && bvhBuilt) {
+          glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, bvhNodeSSBO);
+          glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, triangleIndexSSBO);
+        }
       }
       ddgiVolume->bindRayBuffer(6);
       ddgiVolume->bindTexturesForSampling(0, 1); // previous-frame atlases
@@ -5205,8 +5743,19 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       ddgiTraceShader->setFloat("ddgi_normalBias", normalBiasWorld);
       ddgiTraceShader->setInt("numTriangles", triangleCount);
       ddgiTraceShader->setInt("numBVHNodes",
-                              static_cast<int>(gpuBVHNodes.size()));
-      ddgiTraceShader->setBool("enableBVH", enableBVH && bvhBuilt);
+                              enableTwoLevelBVH
+                                  ? static_cast<int>(twoLevelBLASNodes.size())
+                                  : static_cast<int>(gpuBVHNodes.size()));
+      ddgiTraceShader->setBool(
+          "enableBVH", enableTwoLevelBVH ? true : (enableBVH && bvhBuilt));
+      ddgiTraceShader->setInt(
+          "numTLASNodes",
+          enableTwoLevelBVH ? static_cast<int>(gpuTLASNodes.size()) : 0);
+      ddgiTraceShader->setInt(
+          "numInstances",
+          enableTwoLevelBVH ? static_cast<int>(gpuInstances.size()) : 0);
+      ddgiTraceShader->setBool("enableTwoLevel",
+                               enableTwoLevelBVH && twoLevelBuilt);
       ddgiTraceShader->setFloat("rayMaxDistance",
                                 radianceSettings.rayMaxDistance);
       ddgiTraceShader->setFloat("emissiveIntensity",
@@ -5525,8 +6074,19 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
                                      isStereo, leftProjection, leftView,
                                      rightProjection, rightView);
 
-  // Update SpaceMouse cursor anchor when cursor position changes
+  // Update SpaceMouse cursor anchor when cursor position changes (uses the raw
+  // scene-depth cursor, before any gizmo snap below, so navigation isn't pulled
+  // onto a transient hover target).
   updateSpaceMouseCursorAnchor();
+
+  // While the transform gizmo is hovered or being dragged, glue the 3D cursor
+  // onto the handle at its true depth. The gizmo is drawn always-on-top, so
+  // without this the cursor would sink to whatever geometry sits behind it and
+  // the two tools would disagree about where the handle is in space.
+  if (transformGizmo.enabled && transformGizmo.hasTarget() &&
+      (ctrlPressed || gizmoDragging) && transformGizmo.hasInteractionPoint()) {
+    cursorManager.setForcedCursorPosition(transformGizmo.interactionPoint());
+  }
 
   // Update shader uniforms for cursors (use active shader, not original
   // shader)
@@ -5585,7 +6145,10 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   }
 
   // Render the transform gizmo overlay for the selected object (per eye).
-  transformGizmo.render(projection, view, camera.Position);
+  // Only shown while Ctrl is held (or while an in-progress drag keeps it alive).
+  if (ctrlPressed || gizmoDragging) {
+    transformGizmo.render(projection, view, camera.Position);
+  }
 
   // Render the section/clip-plane overlay (translucent quad + normal arrow);
   // only while the tool is active (panel/toolbar open).
@@ -7279,14 +7842,14 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
       bool ctrlPressed = (mods & GLFW_MOD_CONTROL);
       bool altPressed = (mods & GLFW_MOD_ALT);
 
-      // Transform gizmo: if a handle is under the cursor, start a constrained
-      // drag and consume the click. This works with or without modifiers, so a
-      // plain click on an axis/ring/plane manipulates the object while a click
-      // on empty space still orbits and Ctrl/Alt body-drag still free-moves.
+      // Transform gizmo: only active while Ctrl is held (the gizmo is hidden
+      // otherwise). If a handle is under the cursor, start a constrained drag
+      // and consume the click; a Ctrl-click on empty space or the object body
+      // still falls through to selection / body-drag free-move below.
       // Re-bind first so the target pointer reflects the current selection even
       // if a scene container was reallocated since the last frame.
       bindGizmoTargetToSelection();
-      if (transformGizmo.enabled && transformGizmo.hasTarget()) {
+      if (ctrlPressed && transformGizmo.enabled && transformGizmo.hasTarget()) {
         glm::vec3 gRayOrigin, gRayDir, gRayNear, gRayFar;
         calculateMouseRay(lastX, lastY, gRayOrigin, gRayDir, gRayNear, gRayFar,
                           aspectRatio);
@@ -8022,8 +8585,13 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
     }
   }
 
-  // Check if this key press matches any shortcut action
-  auto actionOpt = shortcutManager.getActionForKey(key, mods);
+  // Check if this key press matches any shortcut action. Translate the physical
+  // key to its layout label first so letter/number shortcuts trigger on the key
+  // the user actually sees (e.g. Ctrl+Z = Undo on the key labeled "Z" on QWERTY,
+  // QWERTZ, AZERTY, ...) rather than the physical US-layout position.
+  int labelKey =
+      StereoVista::ShortcutManager::normalizeKeyToLayout(key, scancode);
+  auto actionOpt = shortcutManager.getActionForKey(labelKey, mods);
 
   if (actionOpt.has_value()) {
     StereoVista::ShortcutAction shortcutAction = actionOpt.value();

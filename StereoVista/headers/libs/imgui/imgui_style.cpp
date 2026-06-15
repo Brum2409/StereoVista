@@ -266,6 +266,12 @@ bool InitializeImGuiWithFonts(GLFWwindow *window, bool isDarkTheme) {
     iconConfig->PixelSnapH = true;
     iconConfig->GlyphMinAdvanceX = iconFontSize;
     iconConfig->GlyphRanges = icon_ranges;
+    // Merge the icon glyphs into the regular (default) font. Without DstFont,
+    // MergeMode targets the last-added font (mono), leaving the default font
+    // without icon glyphs -- so ICON_FA_* embedded directly in Button()/Text()
+    // labels rendered as '?' (e.g. the Snapshots tool's Capture/Restore/Edit/
+    // Delete buttons). Merging into regular makes inline icons render anywhere.
+    iconConfig->DstFont = g_Fonts.regular;
 
     // Try multiple paths for FontAwesome solid font
     const char *iconFontPaths[] = {"fonts/fa-solid-900.ttf",
@@ -577,6 +583,12 @@ void RebuildImGuiFontAtlas(bool isDarkTheme) {
     iconConfig->PixelSnapH = true;
     iconConfig->GlyphMinAdvanceX = iconFontSize;
     iconConfig->GlyphRanges = icon_ranges;
+    // Merge the icon glyphs into the regular (default) font. Without DstFont,
+    // MergeMode targets the last-added font (mono), leaving the default font
+    // without icon glyphs -- so ICON_FA_* embedded directly in Button()/Text()
+    // labels rendered as '?' (e.g. the Snapshots tool's Capture/Restore/Edit/
+    // Delete buttons). Merging into regular makes inline icons render anywhere.
+    iconConfig->DstFont = g_Fonts.regular;
 
     // Try multiple paths for FontAwesome solid font
     const char *iconFontPaths[] = {"fonts/fa-solid-900.ttf",

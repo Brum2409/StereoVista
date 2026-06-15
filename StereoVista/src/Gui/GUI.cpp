@@ -90,6 +90,9 @@ void addClipPlaneAxisAligned(int axis);
 // Transform gizmo
 extern Tools::TransformGizmo transformGizmo;
 
+// Defined later in this file; used by the gizmo controls below.
+static void DrawHelpMarker(const char *desc);
+
 // Shared transform-gizmo controls (mode / space / snap), drawn inside the
 // Transform panel of any selectable object.
 static void DrawTransformGizmoControls(bool canRotateScale) {
@@ -133,8 +136,11 @@ static void DrawTransformGizmoControls(bool canRotateScale) {
     ImGui::DragFloat("Scale Snap", &transformGizmo.snapScale, 0.01f, 0.001f,
                      10.0f, "%.3f");
   }
-  ImGui::DragFloat("Gizmo Size", &transformGizmo.screenSize, 0.005f, 0.04f,
+  ImGui::DragFloat("Gizmo Size", &transformGizmo.screenSize, 0.005f, 0.08f,
                    0.5f, "%.3f");
+  ImGui::SameLine();
+  DrawHelpMarker("On-screen gizmo size as a fraction of the viewport height. "
+                 "Constant apparent size regardless of zoom, distance or FOV.");
   ImGui::TextDisabled(
       "Default keys: 1 Move  2 Rotate  3 Scale  4 World/Local");
   ImGui::TextDisabled("(rebindable in Settings > Shortcuts)");
@@ -190,7 +196,10 @@ static void renderGizmoViewportToolbar() {
 
   if (ImGui::Begin("##GizmoToolbar", nullptr, flags)) {
     const ImVec4 accent = ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive);
-    const ImVec2 btn(0.0f, 26.0f * scale);
+    // Use the natural frame height (fontSize + 2*FramePadding.y). Forcing a
+    // shorter fixed height stops ImGui from vertically centering the label,
+    // which made the button text sit too low.
+    const ImVec2 btn(0.0f, ImGui::GetFrameHeight());
 
     auto modeBtn = [&](const char *label, G::Mode m, bool enabledBtn, SA act) {
       bool active = (transformGizmo.mode() == m);
@@ -281,7 +290,10 @@ static void renderViewModeToolbar() {
 
   if (ImGui::Begin("##ViewModeToolbar", nullptr, flags)) {
     const ImVec4 accent = ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive);
-    const ImVec2 btn(0.0f, 26.0f * scale);
+    // Use the natural frame height (fontSize + 2*FramePadding.y). Forcing a
+    // shorter fixed height stops ImGui from vertically centering the label,
+    // which made the button text sit too low.
+    const ImVec2 btn(0.0f, ImGui::GetFrameHeight());
 
     auto toggleBtn = [&](const char *label, bool active, const char *tip,
                          SA act) {
@@ -324,6 +336,7 @@ extern bool enableShadows;
 extern GUI::VCTSettings vctSettings;
 extern GUI::ApplicationPreferences::RadianceSettings radianceSettings;
 extern bool enableBVH;
+extern bool enableTwoLevelBVH;
 extern bool showBVHDebug;
 extern Engine::BVHDebugRenderer bvhDebugRenderer;
 extern bool g_ddgiResetRequested; // set by GUI, consumed in the render loop
@@ -479,6 +492,35 @@ static void DrawPanelTitle(const char *icon, const std::string &title) {
   DrawInlineIcon(icon, g_StyleColors.accent);
   ImGui::TextUnformatted(title.c_str());
   ImGui::Separator();
+}
+
+// Vertical divider for the main menu bar. ImGui::Separator() in a menu bar
+// draws a hard, full-height line in the heavy default separator color, which
+// reads as a harsh cut across the whole bar. This draws a softer, rounded pill
+// inset from the top and bottom edges and tinted from the text color (so it
+// adapts to the active theme) at low opacity — gently grouping the menus rather
+// than chopping the bar in two.
+static void MenuBarSeparator() {
+  float scale = g_GuiScale.currentScale;
+  float barTop = ImGui::GetWindowPos().y;
+  float barHeight = ImGui::GetFrameHeight();
+  float thickness = 2.0f * scale;
+  float padX = 5.0f * scale;   // horizontal breathing room either side
+  float insetY = 6.0f * scale; // shrink in from the top and bottom edges
+
+  ImVec2 cursor = ImGui::GetCursorScreenPos();
+  float x = cursor.x + padX + thickness * 0.5f;
+  float y0 = barTop + insetY;
+  float y1 = barTop + barHeight - insetY;
+
+  ImVec4 col = ImGui::GetStyleColorVec4(ImGuiCol_Text);
+  col.w = 0.20f;
+  ImGui::GetWindowDrawList()->AddRectFilled(
+      ImVec2(x - thickness * 0.5f, y0), ImVec2(x + thickness * 0.5f, y1),
+      ImGui::GetColorU32(col), thickness * 0.5f);
+
+  // Reserve the horizontal slot so the following menu flows past the divider.
+  ImGui::Dummy(ImVec2(padX * 2.0f + thickness, 0.0f));
 }
 
 // Vertical sidebar navigation entry (icon + label). Returns true when clicked.
@@ -1837,6 +1879,10 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       ImGui::EndMenu();
     }
 
+    // Divider: scene/document menus (File/Edit/Create) | display menus
+    // (View/Camera/Cursor).
+    MenuBarSeparator();
+
     // View Menu
     if (ImGui::BeginMenu("View")) {
       ImGui::MenuItem("Show GUI", "G", &showGui);
@@ -1990,45 +2036,42 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       ImGui::EndMenu();
     }
 
-    // Tooltip helper for the bare tool buttons in the menu bar, so first-time
-    // users can tell what each one opens without clicking.
+    // Divider: display menus | tool windows.
+    MenuBarSeparator();
+
+    // Tooltip helper for menu entries that open a tool window.
     auto menuButtonTooltip = [](const char *desc) {
       if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         ImGui::SetTooltip("%s", desc);
     };
 
-    // Settings Menu
-    if (ImGui::MenuItem("Settings")) {
-      showSettingsWindow = true;
+    // Tools Menu — collapses the tool windows that used to sit as separate bare
+    // buttons cluttering the bar. Each entry toggles its window; the check mark
+    // reflects whether that window is currently open.
+    if (ImGui::BeginMenu("Tools")) {
+      ImGui::MenuItem("Brush Tool", nullptr, &showBrushToolWindow);
+      menuButtonTooltip("Scatter copies of a model across surfaces with the "
+                        "paint brush");
+
+      ImGui::MenuItem("Measure", nullptr, &showMeasurementToolWindow);
+      menuButtonTooltip("Measure distances, angles and coordinates in the scene");
+
+      ImGui::MenuItem("Section Planes", nullptr, &showClipPlaneToolWindow);
+      menuButtonTooltip("Slice the scene with clipping planes to inspect "
+                        "interiors");
+
+      ImGui::MenuItem("Snapshots", nullptr, &showSnapshotsWindow);
+      menuButtonTooltip("Save and restore camera / scene / tool snapshots");
+
+      ImGui::EndMenu();
     }
+
+    // Divider before the app-level Settings entry.
+    MenuBarSeparator();
+
+    ImGui::MenuItem("Settings", nullptr, &showSettingsWindow);
     menuButtonTooltip("Application settings: rendering, camera, environment, "
                       "input and shortcuts");
-
-    // Brush Tool Menu
-    if (ImGui::MenuItem("Brush Tool")) {
-      showBrushToolWindow = true;
-    }
-    menuButtonTooltip("Scatter copies of a model across surfaces with the "
-                      "paint brush");
-
-    // Measurement Tool Menu
-    if (ImGui::MenuItem("Measure")) {
-      showMeasurementToolWindow = true;
-    }
-    menuButtonTooltip("Measure distances, angles and coordinates in the scene");
-
-    // Section / Clip Plane Tool Menu
-    if (ImGui::MenuItem("Section Planes")) {
-      showClipPlaneToolWindow = true;
-    }
-    menuButtonTooltip("Slice the scene with clipping planes to inspect "
-                      "interiors");
-
-    // Snapshots Menu
-    if (ImGui::MenuItem("Snapshots")) {
-      showSnapshotsWindow = true;
-    }
-    menuButtonTooltip("Save and restore camera viewpoints of the scene");
 
     ImGui::EndMainMenuBar();
   }
@@ -3638,6 +3681,17 @@ void renderSettingsWindow() {
         ImGui::SameLine();
         DrawHelpMarker(
             "Bounding Volume Hierarchy for faster ray-triangle tests");
+
+        if (ImGui::Checkbox("Two-Level BVH (TLAS/BLAS)",
+                            &preferences.radianceSettings.enableTwoLevelBVH)) {
+          ::enableTwoLevelBVH = preferences.radianceSettings.enableTwoLevelBVH;
+          settingsChanged = true;
+        }
+        ImGui::SameLine();
+        DrawHelpMarker(
+            "Per-object BLAS (built once, cached) + a small TLAS rebuilt when "
+            "objects move. Avoids rebuilding the whole-scene BVH on every "
+            "transform. Mutually exclusive with the single-level BVH above.");
 
         if (ImGui::Checkbox("Debug BVH",
                             &preferences.radianceSettings.showBVHDebug)) {
@@ -5431,7 +5485,12 @@ void renderSettingsWindow() {
                 continue;
               }
 
-              StereoVista::KeyBinding newBinding(key, ctrl, alt, shift);
+              // Record the binding by its layout label rather than the physical
+              // US-layout key position, so it matches at runtime on any keyboard
+              // layout (see ShortcutManager::normalizeKeyToLayout).
+              int labelKey =
+                  StereoVista::ShortcutManager::normalizeKeyToLayout(key);
+              StereoVista::KeyBinding newBinding(labelKey, ctrl, alt, shift);
               StereoVista::ShortcutAction targetAction =
                   static_cast<StereoVista::ShortcutAction>(captureActionIndex);
 

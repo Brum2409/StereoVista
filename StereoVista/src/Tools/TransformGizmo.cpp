@@ -125,6 +125,7 @@ void TransformGizmo::clearTarget() {
     m_rotation = nullptr;
     m_scale = nullptr;
     m_hover = Handle::None;
+    m_hasInteractionPoint = false;
 }
 
 void TransformGizmo::setMode(Mode m) { m_mode = m; }
@@ -166,7 +167,12 @@ void TransformGizmo::computeAxes(glm::vec3 outAxes[3], Mode forMode) const {
 float TransformGizmo::gizmoScale(const glm::vec3& cameraPos) const {
     if (!m_position) return 1.0f;
     float dist = glm::distance(cameraPos, *m_position);
-    return std::max(dist * screenSize, 1e-3f);
+    // Constant apparent size: project a fixed fraction of the viewport
+    // half-height back into world units at the pivot distance. Folding in
+    // tan(fovY/2) makes the on-screen size field-of-view-independent so a wider
+    // FOV no longer balloons the gizmo. The result is the gizmo's outer radius
+    // in world units (~= screenSize/2 of the full viewport height on screen).
+    return std::max(dist * m_tanHalfFov * screenSize, 1e-3f);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -174,7 +180,8 @@ float TransformGizmo::gizmoScale(const glm::vec3& cameraPos) const {
 // ────────────────────────────────────────────────────────────────────────────
 TransformGizmo::Handle
 TransformGizmo::hitTest(const glm::vec3& o, const glm::vec3& d,
-                        const glm::vec3& cameraPos) const {
+                        const glm::vec3& cameraPos,
+                        glm::vec3* outHitPoint) const {
     if (!enabled || !hasTarget()) return Handle::None;
 
     const glm::vec3 pivot = *m_position;
@@ -191,12 +198,27 @@ TransformGizmo::hitTest(const glm::vec3& o, const glm::vec3& d,
 
     if (m == Mode::Rotate) {
         const Handle ringH[3] = {Handle::RingX, Handle::RingY, Handle::RingZ};
+        glm::vec3 bestHit(0.0f);
         for (int i = 0; i < 3; ++i) {
             glm::vec3 hit; float t;
             if (!rayPlane(o, d, pivot, axes[i], hit, t)) continue;
             float radial = glm::length(hit - pivot);
-            if (std::fabs(radial - RING_R * s) < RING_PICK * s) consider(ringH[i], t);
+            if (std::fabs(radial - RING_R * s) < RING_PICK * s) {
+                consider(ringH[i], t);
+                if (best == ringH[i]) {
+                    // Snap onto the ring circle (radius RING_R) so the cursor /
+                    // marker sit on the visible ring exactly where a drag would
+                    // grab. The plane intersection alone can sit off the ring or
+                    // jump when the ring is viewed edge-on.
+                    bestHit = (radial > 1e-5f)
+                                  ? pivot + (hit - pivot) * (RING_R * s / radial)
+                                  : hit;
+                }
+            }
         }
+        // This branch returns early, so write the hit point here rather than
+        // falling through to the shared assignment below.
+        if (outHitPoint && best != Handle::None) *outHitPoint = bestHit;
         return best;
     }
 
@@ -247,6 +269,12 @@ TransformGizmo::hitTest(const glm::vec3& o, const glm::vec3& d,
         }
     }
 
+    // `bestDepth` is the ray parameter (distance along the unit ray) to the
+    // picked handle, so the point on the view ray at that depth is where the
+    // handle sits under the cursor — exactly the spot to snap the 3D cursor to.
+    if (outHitPoint && best != Handle::None)
+        *outHitPoint = o + d * bestDepth;
+
     return best;
 }
 
@@ -254,7 +282,10 @@ TransformGizmo::Handle
 TransformGizmo::updateHover(const glm::vec3& o, const glm::vec3& d,
                             const glm::vec3& cameraPos) {
     if (isDragging()) return m_activeHandle;
-    m_hover = hitTest(o, d, cameraPos);
+    glm::vec3 hitPoint;
+    m_hover = hitTest(o, d, cameraPos, &hitPoint);
+    m_hasInteractionPoint = (m_hover != Handle::None);
+    if (m_hasInteractionPoint) m_interactionPoint = hitPoint;
     return m_hover;
 }
 
@@ -341,6 +372,10 @@ bool TransformGizmo::beginDrag(Handle handle, const glm::vec3& o,
     }
 
     m_activeHandle = handle;
+    // Seed the interaction point so the 3D cursor snaps to the handle on the
+    // very first frame; updateDrag refines it to the live grab point below.
+    m_interactionPoint = pivot;
+    m_hasInteractionPoint = true;
     return true;
 }
 
@@ -354,6 +389,7 @@ void TransformGizmo::updateDrag(const glm::vec3& o, const glm::vec3& d,
     case Handle::AxisX: case Handle::AxisY: case Handle::AxisZ: {
         float sRay, tLine;
         closestRayLine(o, d, pivot, m_dragAxis, sRay, tLine);
+        if (sRay > 0.0f) m_interactionPoint = o + d * sRay;
         float delta = tLine - m_startProj;
         if (effectiveMode() == Mode::Scale && m_scale) {
             float factor = 1.0f + delta / m_gizmoScaleAtDrag;
@@ -372,6 +408,7 @@ void TransformGizmo::updateDrag(const glm::vec3& o, const glm::vec3& d,
     case Handle::ScreenMove: {
         glm::vec3 hit; float t;
         if (rayPlane(o, d, pivot, m_dragPlaneNormal, hit, t)) {
+            m_interactionPoint = hit;
             glm::vec3 delta = hit - m_dragStartHit;
             if (snap) {
                 delta.x = std::round(delta.x / snapTranslate) * snapTranslate;
@@ -386,6 +423,15 @@ void TransformGizmo::updateDrag(const glm::vec3& o, const glm::vec3& d,
         if (!m_rotation) break;
         glm::vec3 hit; float t;
         if (!rayPlane(o, d, pivot, m_dragAxis, hit, t)) break;
+        // Snap the cursor onto the ring itself (clamp the in-plane hit to the
+        // ring radius) rather than the unbounded plane intersection.
+        {
+            glm::vec3 radial = hit - pivot;
+            float rl = glm::length(radial);
+            m_interactionPoint = (rl > 1e-5f)
+                ? pivot + radial * (RING_R * m_gizmoScaleAtDrag / rl)
+                : hit;
+        }
         glm::vec3 v = glm::normalize(hit - pivot);
         float ang = std::atan2(glm::dot(v, m_planeV), glm::dot(v, m_planeU));
         // Track full turns for continuous multi-revolution dragging.
@@ -409,6 +455,7 @@ void TransformGizmo::updateDrag(const glm::vec3& o, const glm::vec3& d,
         if (!m_scale) break;
         glm::vec3 hit; float t;
         if (rayPlane(o, d, pivot, m_dragPlaneNormal, hit, t)) {
+            m_interactionPoint = hit;
             float len = glm::length(hit - pivot);
             float factor = std::max(
                 0.01f, 1.0f + (len - m_startRadius) / m_gizmoScaleAtDrag);
@@ -430,6 +477,9 @@ void TransformGizmo::updateDrag(const glm::vec3& o, const glm::vec3& d,
 void TransformGizmo::endDrag() {
     m_activeHandle = Handle::None;
     m_dragAxisIndex = -1;
+    // Drop the snap so the 3D cursor falls back to scene depth until the next
+    // hover re-establishes a handle.
+    m_hasInteractionPoint = false;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -536,6 +586,21 @@ void TransformGizmo::ensureInit() {
         m_quadCount = (int)v.size() / 3;
         upload(m_quadVAO, m_quadVBO, v);
     }
+    // Disc: filled unit circle in XY (triangle fan baked into triangles). Used
+    // as the camera-facing cursor marker pinned to the active handle point.
+    {
+        const int DSEG = 28;
+        std::vector<float> v;
+        for (int i = 0; i < DSEG; ++i) {
+            float a0 = TAU * i / DSEG, a1 = TAU * (i + 1) / DSEG;
+            glm::vec3 tri[3] = {glm::vec3(0.0f),
+                                glm::vec3(std::cos(a0), std::sin(a0), 0.0f),
+                                glm::vec3(std::cos(a1), std::sin(a1), 0.0f)};
+            for (auto& p : tri) { v.push_back(p.x); v.push_back(p.y); v.push_back(p.z); }
+        }
+        m_discCount = (int)v.size() / 3;
+        upload(m_discVAO, m_discVBO, v);
+    }
 }
 
 void TransformGizmo::drawMesh(unsigned int vao, int count, unsigned int prim,
@@ -552,6 +617,12 @@ void TransformGizmo::render(const glm::mat4& projection, const glm::mat4& view,
                             const glm::vec3& cameraPos) {
     if (!enabled || !hasTarget()) return;
     ensureInit();
+
+    // Cache the vertical FOV so gizmoScale() keeps a constant on-screen size.
+    // For symmetric and stereo off-axis frustums alike the vertical scale
+    // projection[1][1] == 1 / tan(fovY/2); clamp to guard degenerate matrices.
+    if (projection[1][1] != 0.0f)
+        m_tanHalfFov = std::clamp(1.0f / std::fabs(projection[1][1]), 0.05f, 3.0f);
 
     const glm::vec3 pivot = *m_position;
     const float s = gizmoScale(cameraPos);
@@ -572,13 +643,41 @@ void TransformGizmo::render(const glm::mat4& projection, const glm::mat4& view,
 
     glUseProgram(m_program);
 
-    auto colorFor = [&](Handle h, const glm::vec3& base) {
-        bool active = (m_activeHandle == h);
-        bool hovered = (m_activeHandle == Handle::None && m_hover == h);
-        return (active || hovered) ? kHighlight : base;
+    // Which handle is "hot": being dragged, or hovered while idle. Highlighting
+    // keys off this so the part under the cursor is unambiguous.
+    const bool engaged =
+        (m_activeHandle != Handle::None) || (m_hover != Handle::None);
+    auto isHot = [&](Handle h) {
+        return (m_activeHandle == h) ||
+               (m_activeHandle == Handle::None && m_hover == h);
+    };
+    // Opaque handles: the hot one turns bright; the rest are darkened (not made
+    // translucent) when something is engaged so the active handle clearly pops
+    // while the others recede but stay readable.
+    auto solidColor = [&](Handle h, const glm::vec3& axisCol) {
+        if (isHot(h)) return kHighlight;
+        return engaged ? axisCol * 0.55f : axisCol;
     };
     auto alignY = [](const glm::vec3& a) {
         return glm::toMat4(glm::rotation(glm::vec3(0, 1, 0), a));
+    };
+
+    // The overlay carries no depth buffer of its own, so collect every part and
+    // paint them far-to-near. That gives correct self-occlusion between handles
+    // (you can tell which axis is in front); hot handles are forced last so the
+    // one under the cursor is never hidden behind a sibling.
+    struct Cmd {
+        unsigned int vao; int count; unsigned int prim;
+        glm::mat4 mvp; glm::vec3 color; float alpha; float lineWidth;
+        float sortKey; bool hot;
+    };
+    std::vector<Cmd> cmds;
+    cmds.reserve(12);
+    auto push = [&](unsigned int vao, int count, unsigned int prim,
+                    const glm::mat4& model, const glm::vec3& color, float alpha,
+                    const glm::vec3& repPoint, bool hot, float lineWidth = 1.0f) {
+        cmds.push_back({vao, count, prim, viewProj * model, color, alpha,
+                        lineWidth, glm::distance(cameraPos, repPoint), hot});
     };
 
     const Handle axisH[3] = {Handle::AxisX, Handle::AxisY, Handle::AxisZ};
@@ -586,44 +685,59 @@ void TransformGizmo::render(const glm::mat4& projection, const glm::mat4& view,
 
     if (m == Mode::Rotate) {
         for (int i = 0; i < 3; ++i) {
+            bool hot = isHot(ringH[i]);
             glm::mat4 model = glm::translate(glm::mat4(1.0f), pivot) *
                               glm::toMat4(glm::rotation(glm::vec3(0, 0, 1), axes[i])) *
                               glm::scale(glm::mat4(1.0f), glm::vec3(RING_R * s));
-            glLineWidth(3.0f);
-            drawMesh(m_ringVAO, m_ringCount, GL_LINE_LOOP, viewProj * model,
-                     glm::vec4(colorFor(ringH[i], kAxisColor[i]), 1.0f), 1.0f);
+            // Sort by the ring's nearest arc point so the closest ring wins the
+            // (otherwise tied) shared-centre ordering.
+            glm::vec3 toCam = cameraPos - pivot;
+            glm::vec3 inPlane = toCam - axes[i] * glm::dot(toCam, axes[i]);
+            glm::vec3 rep = (glm::length(inPlane) > 1e-5f)
+                                ? pivot + glm::normalize(inPlane) * (RING_R * s)
+                                : pivot;
+            push(m_ringVAO, m_ringCount, GL_LINE_LOOP, model,
+                 solidColor(ringH[i], kAxisColor[i]), 1.0f, rep, hot,
+                 hot ? 5.5f : 3.0f);
         }
     } else {
-        // Axis shafts + tips (translate cones / scale cubes).
+        // Axis shafts + tips (translate cones / scale cubes). The hot axis is
+        // also fattened so it reads as raised toward the cursor.
         for (int i = 0; i < 3; ++i) {
-            glm::vec3 col = colorFor(axisH[i], kAxisColor[i]);
+            bool hot = isHot(axisH[i]);
+            glm::vec3 col = solidColor(axisH[i], kAxisColor[i]);
             glm::mat4 R = alignY(axes[i]);
+            float shaftR = SHAFT_R * (hot ? 1.7f : 1.0f);
             glm::mat4 shaft = glm::translate(glm::mat4(1.0f), pivot) * R *
                               glm::scale(glm::mat4(1.0f),
-                                         glm::vec3(SHAFT_R * s, SHAFT_LEN * s, SHAFT_R * s));
-            drawMesh(m_cylVAO, m_cylCount, GL_TRIANGLES, viewProj * shaft,
-                     glm::vec4(col, 1.0f), 1.0f);
+                                         glm::vec3(shaftR * s, SHAFT_LEN * s, shaftR * s));
+            push(m_cylVAO, m_cylCount, GL_TRIANGLES, shaft, col, 1.0f,
+                 pivot + axes[i] * (SHAFT_LEN * 0.5f * s), hot);
 
             glm::vec3 tipPos = pivot + axes[i] * (SHAFT_LEN * s);
             if (m == Mode::Scale) {
+                float k = SCALE_TIP * 2.0f * (hot ? 1.4f : 1.0f);
                 glm::mat4 tip = glm::translate(glm::mat4(1.0f), tipPos) *
-                                glm::scale(glm::mat4(1.0f), glm::vec3(SCALE_TIP * 2.0f * s));
-                drawMesh(m_cubeVAO, m_cubeCount, GL_TRIANGLES, viewProj * tip,
-                         glm::vec4(col, 1.0f), 1.0f);
+                                glm::scale(glm::mat4(1.0f), glm::vec3(k * s));
+                push(m_cubeVAO, m_cubeCount, GL_TRIANGLES, tip, col, 1.0f, tipPos, hot);
             } else {
+                float tr = TIP_R * (hot ? 1.35f : 1.0f);
+                float tl = TIP_LEN * (hot ? 1.15f : 1.0f);
                 glm::mat4 tip = glm::translate(glm::mat4(1.0f), tipPos) * R *
                                 glm::scale(glm::mat4(1.0f),
-                                           glm::vec3(TIP_R * s, TIP_LEN * s, TIP_R * s));
-                drawMesh(m_coneVAO, m_coneCount, GL_TRIANGLES, viewProj * tip,
-                         glm::vec4(col, 1.0f), 1.0f);
+                                           glm::vec3(tr * s, tl * s, tr * s));
+                push(m_coneVAO, m_coneCount, GL_TRIANGLES, tip, col, 1.0f, tipPos, hot);
             }
         }
 
         if (m == Mode::Translate) {
-            // Two-axis plane quads (coloured by their normal axis).
+            // Two-axis plane quads (coloured by their normal axis). The hot quad
+            // jumps to a high opacity; idle quads stay faint, and recede further
+            // when another handle is engaged.
             const Handle planeH[3] = {Handle::PlaneYZ, Handle::PlaneZX, Handle::PlaneXY};
             const int ai[3] = {1, 2, 0}, aj[3] = {2, 0, 1}, nk[3] = {0, 1, 2};
             for (int k = 0; k < 3; ++k) {
+                bool hot = isHot(planeH[k]);
                 glm::vec3 center = pivot +
                     (axes[ai[k]] + axes[aj[k]]) * (PLANE_OFF * s);
                 glm::mat4 basis(1.0f);
@@ -632,19 +746,59 @@ void TransformGizmo::render(const glm::mat4& projection, const glm::mat4& view,
                 basis[2] = glm::vec4(axes[nk[k]], 0.0f);
                 glm::mat4 model = glm::translate(glm::mat4(1.0f), center) * basis *
                                   glm::scale(glm::mat4(1.0f), glm::vec3(PLANE_HALF * s));
-                glm::vec3 col = colorFor(planeH[k], kAxisColor[nk[k]]);
-                drawMesh(m_quadVAO, m_quadCount, GL_TRIANGLES, viewProj * model,
-                         glm::vec4(col, 1.0f), 0.35f);
+                glm::vec3 col = hot ? kHighlight : kAxisColor[nk[k]];
+                float alpha = hot ? 0.6f : (engaged ? 0.16f : 0.32f);
+                push(m_quadVAO, m_quadCount, GL_TRIANGLES, model, col, alpha, center, hot);
             }
         }
 
         // Centre handle.
         Handle centreH = (m == Mode::Scale) ? Handle::ScaleUniform
                                             : Handle::ScreenMove;
+        bool hotC = isHot(centreH);
+        float ch = CENTER_HALF * 2.0f * (hotC ? 1.25f : 1.0f);
         glm::mat4 cube = glm::translate(glm::mat4(1.0f), pivot) *
-                         glm::scale(glm::mat4(1.0f), glm::vec3(CENTER_HALF * 2.0f * s));
-        drawMesh(m_cubeVAO, m_cubeCount, GL_TRIANGLES, viewProj * cube,
-                 glm::vec4(colorFor(centreH, kCenterColor), 1.0f), 1.0f);
+                         glm::scale(glm::mat4(1.0f), glm::vec3(ch * s));
+        glm::vec3 cc = hotC ? kHighlight
+                            : (engaged ? kCenterColor * 0.55f : kCenterColor);
+        push(m_cubeVAO, m_cubeCount, GL_TRIANGLES, cube, cc, 1.0f, pivot, hotC);
+    }
+
+    std::sort(cmds.begin(), cmds.end(), [](const Cmd& a, const Cmd& b) {
+        if (a.hot != b.hot) return !a.hot;  // non-hot first, hot painted last
+        return a.sortKey > b.sortKey;       // otherwise farther first
+    });
+    for (const Cmd& c : cmds) {
+        if (c.prim == GL_LINE_LOOP) glLineWidth(c.lineWidth);
+        drawMesh(c.vao, c.count, c.prim, c.mvp, glm::vec4(c.color, 1.0f), c.alpha);
+    }
+
+    // Cursor marker: a camera-facing dot pinned to the engaged handle point and
+    // painted above every handle. The 3D cursor is snapped to this same point
+    // but gets occluded by the always-on-top handles, so this marker is what
+    // keeps the cursor visible -- the cursor literally becomes the gizmo.
+    if (m_hasInteractionPoint) {
+        glm::vec3 camRight = glm::normalize(
+            glm::vec3(view[0][0], view[1][0], view[2][0]));
+        glm::vec3 camUp = glm::normalize(
+            glm::vec3(view[0][1], view[1][1], view[2][1]));
+        glm::vec3 camFwd = glm::normalize(glm::cross(camRight, camUp));
+        auto billboard = [&](float r) {
+            glm::mat4 mdl(1.0f);
+            mdl[0] = glm::vec4(camRight * r, 0.0f);
+            mdl[1] = glm::vec4(camUp * r, 0.0f);
+            mdl[2] = glm::vec4(camFwd * r, 0.0f);
+            mdl[3] = glm::vec4(m_interactionPoint, 1.0f);
+            return viewProj * mdl;
+        };
+        // Dark halo for contrast on any background, then a bright white core
+        // ringed in the highlight colour so it reads as "the active handle".
+        drawMesh(m_discVAO, m_discCount, GL_TRIANGLES, billboard(0.085f * s),
+                 glm::vec4(0.04f, 0.04f, 0.05f, 1.0f), 0.85f);
+        drawMesh(m_discVAO, m_discCount, GL_TRIANGLES, billboard(0.065f * s),
+                 glm::vec4(kHighlight, 1.0f), 1.0f);
+        drawMesh(m_discVAO, m_discCount, GL_TRIANGLES, billboard(0.038f * s),
+                 glm::vec4(1.0f, 1.0f, 1.0f, 1.0f), 1.0f);
     }
 
     glBindVertexArray(0);
@@ -658,10 +812,12 @@ void TransformGizmo::render(const glm::mat4& projection, const glm::mat4& view,
 void TransformGizmo::cleanup() {
     if (!m_initialized) return;
     if (m_program) glDeleteProgram(m_program);
-    unsigned int vaos[] = {m_cylVAO, m_coneVAO, m_cubeVAO, m_ringVAO, m_quadVAO};
-    unsigned int vbos[] = {m_cylVBO, m_coneVBO, m_cubeVBO, m_ringVBO, m_quadVBO};
-    glDeleteVertexArrays(5, vaos);
-    glDeleteBuffers(5, vbos);
+    unsigned int vaos[] = {m_cylVAO, m_coneVAO, m_cubeVAO, m_ringVAO, m_quadVAO,
+                           m_discVAO};
+    unsigned int vbos[] = {m_cylVBO, m_coneVBO, m_cubeVBO, m_ringVBO, m_quadVBO,
+                           m_discVBO};
+    glDeleteVertexArrays(6, vaos);
+    glDeleteBuffers(6, vbos);
     m_program = 0;
     m_initialized = false;
 }

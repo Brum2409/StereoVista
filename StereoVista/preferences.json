@@ -2,7 +2,7 @@
     "camera": {
         "alwaysShowOrbitCenter": false,
         "autoConvergence": true,
-        "convergence": 9.20367431640625,
+        "convergence": 8.671202659606934,
         "convergenceCapMax": 39.0,
         "convergenceCapMin": 0.800000011920929,
         "convergenceDistanceFactor": 1.2999999523162842,
@@ -44,15 +44,22 @@
     "hdr": {
         "bloomIntensity": 0.1770000010728836,
         "bloomThreshold": 0.33000001311302185,
+        "contrast": 1.0199999809265137,
         "enableBloom": false,
         "enableFXAA": true,
+        "enableVignette": true,
         "enabled": true,
-        "exposure": 1.8600000143051147,
-        "fxaaEdgeThreshold": 0.11999999731779099,
-        "fxaaSubpixel": 0.7099999785423279,
-        "toneMapOperator": 3
+        "exposure": 1.9299999475479126,
+        "fxaaEdgeThreshold": 0.1770000010728836,
+        "fxaaSubpixel": 0.27000001072883606,
+        "saturation": 0.8500000238418579,
+        "toneMapOperator": 1,
+        "vignetteIntensity": 0.46000000834465027,
+        "vignetteRadius": 0.5400000214576721,
+        "vignetteSoftness": 0.49000000953674316
     },
     "lighting": {
+        "ambientStrength": 0.10000000149011612,
         "enableShadows": true,
         "mode": 0
     },
@@ -61,7 +68,7 @@
         "enableNormalMapping": true,
         "enablePBR": true,
         "enableParallaxMapping": true,
-        "heightScale": 0.014499999582767487,
+        "heightScale": 0.015799999237060547,
         "metallicFactor": 1.0,
         "normalScale": 0.7400000095367432,
         "roughnessFactor": 0.0
@@ -103,21 +110,22 @@
         "bvhDebugMaxDepth": 8,
         "bvhDebugRenderMode": 0,
         "ddgiDepthSharpness": 50,
-        "ddgiGIIntensity": 0.210999995470047,
+        "ddgiGIIntensity": 0.578000009059906,
         "ddgiHysteresis": 0.9900000095367432,
-        "ddgiNormalBias": 1.0,
+        "ddgiNormalBias": 0.6399999856948853,
         "ddgiProbeCountX": 24,
         "ddgiProbeCountY": 24,
         "ddgiProbeCountZ": 24,
-        "ddgiRaysPerProbe": 28,
+        "ddgiRaysPerProbe": 16,
         "ddgiShowProbes": false,
-        "ddgiVisibilityStrength": 0.800000011920929,
+        "ddgiVisibilityStrength": 0.550000011920929,
         "emissiveIntensity": 1.2899999618530273,
         "enableBVH": true,
         "enableDDGI": true,
         "enableEmissiveLighting": true,
         "enableIndirectLighting": true,
         "enableRaytracing": true,
+        "enableTwoLevelBVH": true,
         "indirectIntensity": 0.30000001192092896,
         "materialRoughness": 0.5,
         "maxBounces": 2,
@@ -129,14 +137,11 @@
         "skyIntensity": 0.11999999731779099
     },
     "shadows": {
-        "cascadeSplitLambda": 0.5,
-        "enableCascades": false,
-        "enableIndirectLighting": true,
+        "enableIndirectLighting": false,
         "enablePCSS": false,
-        "lightSize": 0.03400000184774399,
-        "numCascades": 4,
-        "pcfKernelSize": 7,
-        "shadowSoftness": 0.5600000023841858
+        "lightSize": 0.13099999725818634,
+        "pcfKernelSize": 9,
+        "shadowSoftness": 16.579999923706055
     },
     "skybox": {
         "exposure": 0.05999999865889549,
@@ -182,22 +187,51 @@
         "translationSensitivity": 1.0
     },
     "ssao": {
-        "bias": 0.024000000208616257,
+        "bias": 0.007000000216066837,
         "enabled": true,
         "kernelSize": 64,
-        "power": 0.699999988079071,
-        "radius": 0.23999999463558197
+        "power": 1.399999976158142,
+        "radius": 0.10999999940395355
     },
     "startup": {
         "loadScene": false,
         "sceneLoadingBehavior": 0,
         "scenePath": "C:\\Users\\Benbrem\\Downloads\\DEMO\\Scenes\\POINT TEST\\POINT.scene"
     },
+    "sun": {
+        "color": [
+            1.0,
+            0.9800000190734863,
+            0.949999988079071
+        ],
+        "direction": [
+            -0.40824833512306213,
+            -0.8164966702461243,
+            -0.40824833512306213
+        ],
+        "enabled": true,
+        "intensity": 0.1599999964237213
+    },
     "ui": {
+        "cursorKeepLastDepthOnBackground": false,
         "darkTheme": true,
         "enableSpawnAnimation": false,
         "guiScaleFactor": 1.0,
+        "screenshotIncludeUI": false,
         "show3DCursor": true,
-        "showFPS": true
+        "showFPS": true,
+        "theme": 3,
+        "vsync": false
+    },
+    "vct": {
+        "diffuseConeCount": 6,
+        "directLight": true,
+        "indirectDiffuseLight": true,
+        "indirectSpecularLight": true,
+        "shadowSampleCount": 18,
+        "shadowStepMultiplier": 0.15000000596046448,
+        "shadows": true,
+        "tracingMaxDistance": 1.4142135381698608,
+        "voxelSize": 0.015625
     }
 }

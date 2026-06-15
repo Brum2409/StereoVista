@@ -56,7 +56,8 @@ namespace Tools {
         float snapTranslate = 0.25f; // world units
         float snapRotateDeg = 15.0f; // degrees
         float snapScale = 0.1f;      // scale increments
-        float screenSize = 0.14f;    // on-screen constant size (fraction of dist)
+        float screenSize = 0.18f;    // apparent size as a fraction of the viewport
+                                     // half-height (FOV-independent, see gizmoScale)
 
         Mode mode() const { return m_mode; }
         void setMode(Mode m);
@@ -74,8 +75,12 @@ namespace Tools {
                            const glm::vec3& cameraPos);
 
         // Return the handle under the ray, or Handle::None. Pure query.
+        // When outHitPoint is given it receives the world-space point on the
+        // view ray at the picked handle's depth (only written when a handle is
+        // hit), so callers can snap the 3D cursor onto the gizmo.
         Handle hitTest(const glm::vec3& rayOrigin, const glm::vec3& rayDir,
-                       const glm::vec3& cameraPos) const;
+                       const glm::vec3& cameraPos,
+                       glm::vec3* outHitPoint = nullptr) const;
 
         // Begin / update / end a drag on the given handle. updateDrag writes the
         // new transform straight into the bound target pointers.
@@ -86,6 +91,13 @@ namespace Tools {
         void endDrag();
         bool isDragging() const { return m_activeHandle != Handle::None; }
         Handle activeHandle() const { return m_activeHandle; }
+
+        // World-space point on the handle currently under the cursor (while
+        // hovering) or being dragged. Valid only while a handle is engaged;
+        // lets the caller place the 3D cursor at the gizmo's depth so the two
+        // tools agree about where the handle sits in space.
+        bool hasInteractionPoint() const { return m_hasInteractionPoint; }
+        const glm::vec3& interactionPoint() const { return m_interactionPoint; }
 
         // ── Rendering ───────────────────────────────────────────────────────
         // World-space overlay; call once per eye with that eye's matrices.
@@ -101,6 +113,10 @@ namespace Tools {
         Mode   m_mode = Mode::Translate;
         Handle m_hover = Handle::None;
         Handle m_activeHandle = Handle::None;
+
+        // Cached world point on the engaged handle (see interactionPoint()).
+        glm::vec3 m_interactionPoint = glm::vec3(0.0f);
+        bool      m_hasInteractionPoint = false;
 
         // Geometry size at the pivot for the current camera distance.
         float gizmoScale(const glm::vec3& cameraPos) const;
@@ -124,6 +140,11 @@ namespace Tools {
         int   m_turnCount = 0;                         // ring full-turn counter
         float m_startRadius = 1.0f;                    // uniform-scale reference
         float m_gizmoScaleAtDrag = 1.0f;
+        // tan(verticalFOV/2), cached from the projection each render() so the
+        // screen-constant size stays correct when the field of view changes.
+        // Hit-testing (which runs in the input callbacks, before render) reads
+        // last frame's value, which is fine as the FOV rarely changes per frame.
+        float m_tanHalfFov = 0.4142f;                  // ≈ tan(22.5°) for a 45° FOV
         int   m_dragAxisIndex = -1;                    // 0/1/2 for scale
 
         // ── GL resources (lazy, embedded shaders) ──────────────────────────
@@ -140,6 +161,7 @@ namespace Tools {
         unsigned int m_cubeVAO = 0, m_cubeVBO = 0; int m_cubeCount = 0; // centred
         unsigned int m_ringVAO = 0, m_ringVBO = 0; int m_ringCount = 0; // XY loop
         unsigned int m_quadVAO = 0, m_quadVBO = 0; int m_quadCount = 0; // XY quad
+        unsigned int m_discVAO = 0, m_discVBO = 0; int m_discCount = 0; // XY disc
     };
 
 } // namespace Tools

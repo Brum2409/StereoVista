@@ -517,6 +517,25 @@ const ShortcutProfile *ShortcutManager::getActiveProfile() const {
   return nullptr;
 }
 
+int ShortcutManager::normalizeKeyToLayout(int key, int scancode) {
+  // glfwGetKeyName returns the character the physical key produces in the
+  // current layout (e.g. on QWERTZ the GLFW_KEY_Y position is labeled "z").
+  // When 'key' is a known token GLFW ignores 'scancode' and looks the name up
+  // from the layout directly, so this works for both real key events and the
+  // GUI capture path (which has no scancode).
+  const char *name = glfwGetKeyName(key, scancode);
+  if (name && name[0] != '\0' && name[1] == '\0') {
+    char c = name[0];
+    if (c >= 'a' && c <= 'z')
+      return GLFW_KEY_A + (c - 'a');
+    if (c >= 'A' && c <= 'Z')
+      return GLFW_KEY_A + (c - 'A');
+    if (c >= '0' && c <= '9')
+      return GLFW_KEY_0 + (c - '0');
+  }
+  return key;
+}
+
 std::optional<ShortcutAction> ShortcutManager::getActionForKey(int key,
                                                                int mods) const {
   const ShortcutProfile *profile = getActiveProfile();
