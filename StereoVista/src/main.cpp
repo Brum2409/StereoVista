@@ -4285,11 +4285,19 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   glBindTexture(GL_TEXTURE_2D, 0);
   glBindTexture(GL_TEXTURE_3D, 0);
 
-  // Detect scene changes (model transforms) and mark voxelizer dirty.
-  // This must happen before voxelizer->update() and independently of
-  // lighting mode / BVH, so that voxelization refreshes whenever any
-  // object is moved, rotated, or scaled -- matching BVH behavior.
-  {
+  // 1. Update the voxel grid if voxel visualization is enabled or we're using
+  // voxel cone tracing.
+  // Shadow Mapping mode's indirect lighting is now DDGI (probe-traced via the
+  // BVH), not voxel cone tracing, so it no longer needs the voxel grid.
+  bool needsVoxelization =
+      (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) ||
+      voxelizer->showDebugVisualization;
+  if (needsVoxelization) {
+    // Detect scene changes (model transforms) and mark voxelizer dirty so it
+    // re-voxelizes. Only relevant when the voxel grid is actually consumed; for
+    // the shadow-mapping default this scene scan would run every eye for
+    // nothing. The tracked state is not advanced while voxelization is off, so
+    // the first frame it is needed again still reports "changed" and refreshes.
     static SceneState lastVoxelSceneState;
     if (lastVoxelSceneState.hasChanged(currentScene)) {
       if (voxelizer) {
@@ -4297,16 +4305,7 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       }
       lastVoxelSceneState.update(currentScene);
     }
-  }
 
-  // 1. Update the voxel grid if voxel visualization is enabled or we're using
-  // voxel cone tracing or shadow mapping with indirect lighting
-  // Shadow Mapping mode's indirect lighting is now DDGI (probe-traced via the
-  // BVH), not voxel cone tracing, so it no longer needs the voxel grid.
-  bool needsVoxelization =
-      (currentLightingMode == GUI::LIGHTING_VOXEL_CONE_TRACING) ||
-      voxelizer->showDebugVisualization;
-  if (needsVoxelization) {
     // Keep voxelizer lights in sync with the scene so voxelized
     // lighting matches the actual point lights (not just the default).
     voxelizer->setLights(pointLights);
@@ -4369,6 +4368,10 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       glEnable(GL_POLYGON_OFFSET_FILL);
       glPolygonOffset(0.5f, 1.0f);
 
+      // The program never changes inside the loop, so activate it once here
+      // instead of re-binding it for every light.
+      pointShadowShader->use();
+
       for (int li = 0; li < pointLights.size() && li < MAX_LIGHTS; ++li) {
         // Skip generating shadow map for lights that don't cast shadows
         if (!pointLights[li].castShadows)
@@ -4391,7 +4394,6 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
                                      glm::vec3(0, -1, 0)),
         };
 
-        pointShadowShader->use();
         char smName[32];
         for (unsigned int i = 0; i < 6; ++i) {
           snprintf(smName, sizeof(smName), "shadowMatrices[%u]", i);
@@ -4488,24 +4490,12 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     Engine::BloomSettings &bloomSettings = bloomRenderer->getSettings();
     glBindFramebuffer(GL_FRAMEBUFFER, bloomSettings.hdrFBO);
 
-    // Validate HDR framebuffer is complete
-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-      std::cerr << "ERROR: HDR framebuffer not complete in renderEye!"
-                << std::endl;
-      glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    } else {
-      // Ensure MRT is set up correctly
-      GLuint attachments[2] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
-      glDrawBuffers(2, attachments);
-
-      // Verify MRT setup
-      GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-      if (status != GL_FRAMEBUFFER_COMPLETE) {
-        std::cerr << "ERROR: HDR framebuffer with MRT not complete!"
-                  << std::endl;
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-      }
-    }
+    // FBO completeness is validated once after init/resize via hdrFboValid in
+    // the main loop; re-querying glCheckFramebufferStatus here (twice) on every
+    // eye every frame is a redundant driver sync. Just set up the MRT for the
+    // two color attachments (HDR color + bright/bloom).
+    GLuint attachments[2] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
+    glDrawBuffers(2, attachments);
   } else {
     // Bind default framebuffer for non-HDR rendering
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -4523,63 +4513,66 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
   shader->setMat4("view", view);
   shader->setVec3("viewPos", camera.Position);
 
-  // Schütz Phase 1: point cloud per-frame uniforms for screen-space point size
-  shader->setFloat("pointCloudBaseSize", preferences.pointCloudBaseSize);
-  shader->setFloat("screenHeight", static_cast<float>(g_viewportHeight));
-  shader->setFloat("fieldOfView", glm::radians(preferences.fov));
+  // Frame-constant scene uniforms: identical for both eyes and preserved in the
+  // program object between them (nothing in the intervening post-process pass nor
+  // renderModels() overwrites these), so set them once per frame on the first
+  // eye. g_sharedPassesDone is false during the first eye and is set true (near
+  // the end of renderEye) before the second eye reaches this point -- the same
+  // guard the shared shadow-map / DDGI passes use.
+  if (!g_sharedPassesDone) {
+    // Schütz Phase 1: point cloud per-frame uniforms for screen-space point size
+    shader->setFloat("pointCloudBaseSize", preferences.pointCloudBaseSize);
+    shader->setFloat("screenHeight", static_cast<float>(g_viewportHeight));
+    shader->setFloat("fieldOfView", glm::radians(preferences.fov));
 
-  // Set lighting mode uniforms - this is always needed
-  shader->setInt("lightingMode", static_cast<int>(currentLightingMode));
-  shader->setBool("enableShadows", enableShadows);
-  // Unlit view mode (albedo only). Harmless no-op on shaders lacking the
-  // uniform; only the shadow-mapping shader implements the unlit path.
-  shader->setBool("unlitMode", g_unlitMode);
+    // Unlit view mode (albedo only). Harmless no-op on shaders lacking the
+    // uniform; only the shadow-mapping shader implements the unlit path.
+    shader->setBool("unlitMode", g_unlitMode);
 
-  // Set HDR settings uniforms
-  shader->setBool("hdrSettings.enabled", preferences.hdrSettings.enabled);
-  shader->setFloat("hdrSettings.exposure", preferences.hdrSettings.exposure);
-  shader->setFloat("hdrSettings.bloomThreshold",
-                   preferences.hdrSettings.bloomThreshold);
-  shader->setFloat("hdrSettings.bloomIntensity",
-                   preferences.hdrSettings.bloomIntensity);
-  shader->setInt("hdrSettings.toneMapOperator",
-                 preferences.hdrSettings.toneMapOperator);
-  shader->setBool("hdrSettings.enableBloom",
-                  preferences.hdrSettings.enableBloom);
+    // Set HDR settings uniforms
+    shader->setBool("hdrSettings.enabled", preferences.hdrSettings.enabled);
+    shader->setFloat("hdrSettings.exposure", preferences.hdrSettings.exposure);
+    shader->setFloat("hdrSettings.bloomThreshold",
+                     preferences.hdrSettings.bloomThreshold);
+    shader->setFloat("hdrSettings.bloomIntensity",
+                     preferences.hdrSettings.bloomIntensity);
+    shader->setInt("hdrSettings.toneMapOperator",
+                   preferences.hdrSettings.toneMapOperator);
+    shader->setBool("hdrSettings.enableBloom",
+                    preferences.hdrSettings.enableBloom);
 
-  // Set shadow quality settings uniforms
-  shader->setInt("shadowSettings.pcfKernelSize",
-                 preferences.shadowSettings.pcfKernelSize);
-  shader->setBool("shadowSettings.enablePCSS",
-                  preferences.shadowSettings.enablePCSS);
-  shader->setFloat("shadowSettings.lightSize",
-                   preferences.shadowSettings.lightSize);
-  shader->setFloat("shadowSettings.shadowSoftness",
-                   preferences.shadowSettings.shadowSoftness);
+    // Set shadow quality settings uniforms
+    shader->setInt("shadowSettings.pcfKernelSize",
+                   preferences.shadowSettings.pcfKernelSize);
+    shader->setBool("shadowSettings.enablePCSS",
+                    preferences.shadowSettings.enablePCSS);
+    shader->setFloat("shadowSettings.lightSize",
+                     preferences.shadowSettings.lightSize);
+    shader->setFloat("shadowSettings.shadowSoftness",
+                     preferences.shadowSettings.shadowSoftness);
 
-  // Set material enhancement uniforms (for enhanced material properties)
-  shader->setBool("materialSettings.enablePBR",
-                  preferences.materialSettings.enablePBR);
-  shader->setBool("materialSettings.enableAO",
-                  preferences.materialSettings.enableAO);
-  shader->setBool("materialSettings.enableNormalMapping",
-                  preferences.materialSettings.enableNormalMapping);
-  shader->setBool("materialSettings.enableParallaxMapping",
-                  preferences.materialSettings.enableParallaxMapping);
-  shader->setFloat("materialSettings.normalScale",
-                   preferences.materialSettings.normalScale);
-  shader->setFloat("materialSettings.heightScale",
-                   preferences.materialSettings.heightScale);
-  shader->setFloat("materialSettings.metallicFactor",
-                   preferences.materialSettings.metallicFactor);
-  shader->setFloat("materialSettings.roughnessFactor",
-                   preferences.materialSettings.roughnessFactor);
+    // Set material enhancement uniforms (for enhanced material properties)
+    shader->setBool("materialSettings.enablePBR",
+                    preferences.materialSettings.enablePBR);
+    shader->setBool("materialSettings.enableAO",
+                    preferences.materialSettings.enableAO);
+    shader->setBool("materialSettings.enableNormalMapping",
+                    preferences.materialSettings.enableNormalMapping);
+    shader->setBool("materialSettings.enableParallaxMapping",
+                    preferences.materialSettings.enableParallaxMapping);
+    shader->setFloat("materialSettings.normalScale",
+                     preferences.materialSettings.normalScale);
+    shader->setFloat("materialSettings.heightScale",
+                     preferences.materialSettings.heightScale);
+    shader->setFloat("materialSettings.metallicFactor",
+                     preferences.materialSettings.metallicFactor);
+    shader->setFloat("materialSettings.roughnessFactor",
+                     preferences.materialSettings.roughnessFactor);
+  }
 
-  // Set common light properties - these are needed for both modes
-  shader->setVec3("sun.direction", sun.direction);
-  shader->setVec3("sun.color", sun.color);
-  shader->setFloat("sun.intensity", sun.intensity);
-  shader->setBool("sun.enabled", sun.enabled);
+  // lightingMode / enableShadows / sun are pushed per-eye by renderModels() (the
+  // shared authority used by the radar pass too) and, for Radiance, by its branch
+  // below -- so they are intentionally not set here.
 
   // Shadow mapping specific setup
   if (currentLightingMode == GUI::LIGHTING_SHADOW_MAPPING) {
@@ -4599,46 +4592,51 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
       shader->setFloat("far_plane", far_plane);
     }
 
-    // Set point light uniforms
-    {
-      char buf[64];
-      for (int i = 0; i < (int)pointLights.size() && i < MAX_LIGHTS; i++) {
-        snprintf(buf, sizeof(buf), "lights[%d].position", i);
-        shader->setVec3(buf, pointLights[i].position);
-        snprintf(buf, sizeof(buf), "lights[%d].color", i);
-        shader->setVec3(buf, pointLights[i].color);
-        snprintf(buf, sizeof(buf), "lights[%d].intensity", i);
-        shader->setFloat(buf, pointLights[i].intensity);
-        snprintf(buf, sizeof(buf), "lights[%d].linear", i);
-        shader->setFloat(buf, pointLights[i].linear);
-        snprintf(buf, sizeof(buf), "lights[%d].quadratic", i);
-        shader->setFloat(buf, pointLights[i].quadratic);
-        snprintf(buf, sizeof(buf), "lightsCastShadows[%d]", i);
-        shader->setBool(buf, pointLights[i].castShadows);
+    // Point/spot light uniforms are frame-constant; set them once per frame on
+    // the first eye (they persist in the program object for the second eye).
+    if (!g_sharedPassesDone) {
+      // Set point light uniforms
+      {
+        char buf[64];
+        for (int i = 0; i < (int)pointLights.size() && i < MAX_LIGHTS; i++) {
+          snprintf(buf, sizeof(buf), "lights[%d].position", i);
+          shader->setVec3(buf, pointLights[i].position);
+          snprintf(buf, sizeof(buf), "lights[%d].color", i);
+          shader->setVec3(buf, pointLights[i].color);
+          snprintf(buf, sizeof(buf), "lights[%d].intensity", i);
+          shader->setFloat(buf, pointLights[i].intensity);
+          snprintf(buf, sizeof(buf), "lights[%d].linear", i);
+          shader->setFloat(buf, pointLights[i].linear);
+          snprintf(buf, sizeof(buf), "lights[%d].quadratic", i);
+          shader->setFloat(buf, pointLights[i].quadratic);
+          snprintf(buf, sizeof(buf), "lightsCastShadows[%d]", i);
+          shader->setBool(buf, pointLights[i].castShadows);
+        }
       }
-    }
-    shader->setInt("numLights", std::min((int)pointLights.size(), MAX_LIGHTS));
+      shader->setInt("numLights",
+                     std::min((int)pointLights.size(), MAX_LIGHTS));
 
-    // Set spot light uniforms
-    {
-      char buf[64];
-      for (int i = 0; i < (int)spotLights.size() && i < MAX_LIGHTS; i++) {
-        snprintf(buf, sizeof(buf), "spotLights[%d].position", i);
-        shader->setVec3(buf, spotLights[i].position);
-        snprintf(buf, sizeof(buf), "spotLights[%d].direction", i);
-        shader->setVec3(buf, spotLights[i].direction);
-        snprintf(buf, sizeof(buf), "spotLights[%d].color", i);
-        shader->setVec3(buf, spotLights[i].color);
-        snprintf(buf, sizeof(buf), "spotLights[%d].intensity", i);
-        shader->setFloat(buf, spotLights[i].intensity);
-        snprintf(buf, sizeof(buf), "spotLights[%d].innerCutOff", i);
-        shader->setFloat(buf, spotLights[i].innerCutOff);
-        snprintf(buf, sizeof(buf), "spotLights[%d].outerCutOff", i);
-        shader->setFloat(buf, spotLights[i].outerCutOff);
+      // Set spot light uniforms
+      {
+        char buf[64];
+        for (int i = 0; i < (int)spotLights.size() && i < MAX_LIGHTS; i++) {
+          snprintf(buf, sizeof(buf), "spotLights[%d].position", i);
+          shader->setVec3(buf, spotLights[i].position);
+          snprintf(buf, sizeof(buf), "spotLights[%d].direction", i);
+          shader->setVec3(buf, spotLights[i].direction);
+          snprintf(buf, sizeof(buf), "spotLights[%d].color", i);
+          shader->setVec3(buf, spotLights[i].color);
+          snprintf(buf, sizeof(buf), "spotLights[%d].intensity", i);
+          shader->setFloat(buf, spotLights[i].intensity);
+          snprintf(buf, sizeof(buf), "spotLights[%d].innerCutOff", i);
+          shader->setFloat(buf, spotLights[i].innerCutOff);
+          snprintf(buf, sizeof(buf), "spotLights[%d].outerCutOff", i);
+          shader->setFloat(buf, spotLights[i].outerCutOff);
+        }
       }
+      shader->setInt("numSpotLights",
+                     std::min((int)spotLights.size(), MAX_LIGHTS));
     }
-    shader->setInt("numSpotLights",
-                   std::min((int)spotLights.size(), MAX_LIGHTS));
 
     // ---- DDGI indirect diffuse (replaces the old VCT GI in shadow mapping) ----
     // Shadow Mapping keeps its shadow-mapped direct lighting; only the indirect
@@ -4712,46 +4710,51 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     shader->setBool("enableVoxelVisualization",
                     voxelizer->showDebugVisualization);
 
-    // Set point light uniforms
-    {
-      char buf[64];
-      for (int i = 0; i < (int)pointLights.size() && i < MAX_LIGHTS; i++) {
-        snprintf(buf, sizeof(buf), "lights[%d].position", i);
-        shader->setVec3(buf, pointLights[i].position);
-        snprintf(buf, sizeof(buf), "lights[%d].color", i);
-        shader->setVec3(buf, pointLights[i].color);
-        snprintf(buf, sizeof(buf), "lights[%d].intensity", i);
-        shader->setFloat(buf, pointLights[i].intensity);
-        snprintf(buf, sizeof(buf), "lights[%d].linear", i);
-        shader->setFloat(buf, pointLights[i].linear);
-        snprintf(buf, sizeof(buf), "lights[%d].quadratic", i);
-        shader->setFloat(buf, pointLights[i].quadratic);
-        snprintf(buf, sizeof(buf), "lightsCastShadows[%d]", i);
-        shader->setBool(buf, pointLights[i].castShadows);
+    // Point/spot light uniforms are frame-constant; set them once per frame on
+    // the first eye (they persist in the program object for the second eye).
+    if (!g_sharedPassesDone) {
+      // Set point light uniforms
+      {
+        char buf[64];
+        for (int i = 0; i < (int)pointLights.size() && i < MAX_LIGHTS; i++) {
+          snprintf(buf, sizeof(buf), "lights[%d].position", i);
+          shader->setVec3(buf, pointLights[i].position);
+          snprintf(buf, sizeof(buf), "lights[%d].color", i);
+          shader->setVec3(buf, pointLights[i].color);
+          snprintf(buf, sizeof(buf), "lights[%d].intensity", i);
+          shader->setFloat(buf, pointLights[i].intensity);
+          snprintf(buf, sizeof(buf), "lights[%d].linear", i);
+          shader->setFloat(buf, pointLights[i].linear);
+          snprintf(buf, sizeof(buf), "lights[%d].quadratic", i);
+          shader->setFloat(buf, pointLights[i].quadratic);
+          snprintf(buf, sizeof(buf), "lightsCastShadows[%d]", i);
+          shader->setBool(buf, pointLights[i].castShadows);
+        }
       }
-    }
-    shader->setInt("numLights", std::min((int)pointLights.size(), MAX_LIGHTS));
+      shader->setInt("numLights",
+                     std::min((int)pointLights.size(), MAX_LIGHTS));
 
-    // Set spot light uniforms
-    {
-      char buf[64];
-      for (int i = 0; i < (int)spotLights.size() && i < MAX_LIGHTS; i++) {
-        snprintf(buf, sizeof(buf), "spotLights[%d].position", i);
-        shader->setVec3(buf, spotLights[i].position);
-        snprintf(buf, sizeof(buf), "spotLights[%d].direction", i);
-        shader->setVec3(buf, spotLights[i].direction);
-        snprintf(buf, sizeof(buf), "spotLights[%d].color", i);
-        shader->setVec3(buf, spotLights[i].color);
-        snprintf(buf, sizeof(buf), "spotLights[%d].intensity", i);
-        shader->setFloat(buf, spotLights[i].intensity);
-        snprintf(buf, sizeof(buf), "spotLights[%d].innerCutOff", i);
-        shader->setFloat(buf, spotLights[i].innerCutOff);
-        snprintf(buf, sizeof(buf), "spotLights[%d].outerCutOff", i);
-        shader->setFloat(buf, spotLights[i].outerCutOff);
+      // Set spot light uniforms
+      {
+        char buf[64];
+        for (int i = 0; i < (int)spotLights.size() && i < MAX_LIGHTS; i++) {
+          snprintf(buf, sizeof(buf), "spotLights[%d].position", i);
+          shader->setVec3(buf, spotLights[i].position);
+          snprintf(buf, sizeof(buf), "spotLights[%d].direction", i);
+          shader->setVec3(buf, spotLights[i].direction);
+          snprintf(buf, sizeof(buf), "spotLights[%d].color", i);
+          shader->setVec3(buf, spotLights[i].color);
+          snprintf(buf, sizeof(buf), "spotLights[%d].intensity", i);
+          shader->setFloat(buf, spotLights[i].intensity);
+          snprintf(buf, sizeof(buf), "spotLights[%d].innerCutOff", i);
+          shader->setFloat(buf, spotLights[i].innerCutOff);
+          snprintf(buf, sizeof(buf), "spotLights[%d].outerCutOff", i);
+          shader->setFloat(buf, spotLights[i].outerCutOff);
+        }
       }
+      shader->setInt("numSpotLights",
+                     std::min((int)spotLights.size(), MAX_LIGHTS));
     }
-    shader->setInt("numSpotLights",
-                   std::min((int)spotLights.size(), MAX_LIGHTS));
   }
   // Radiance rendering specific setup
   else if (currentLightingMode == GUI::LIGHTING_RADIANCE) {
@@ -4805,53 +4808,59 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
 
     // No camera matrices needed - using rasterized fragment positions
 
-    // Set point light uniforms
-    {
-      char buf[64];
-      for (int i = 0; i < (int)pointLights.size() && i < MAX_LIGHTS; i++) {
-        snprintf(buf, sizeof(buf), "pointLights[%d].position", i);
-        shader->setVec3(buf, pointLights[i].position);
-        snprintf(buf, sizeof(buf), "pointLights[%d].color", i);
-        shader->setVec3(buf, pointLights[i].color);
-        snprintf(buf, sizeof(buf), "pointLights[%d].intensity", i);
-        shader->setFloat(buf, pointLights[i].intensity);
-        snprintf(buf, sizeof(buf), "pointLights[%d].linear", i);
-        shader->setFloat(buf, pointLights[i].linear);
-        snprintf(buf, sizeof(buf), "pointLights[%d].quadratic", i);
-        shader->setFloat(buf, pointLights[i].quadratic);
-        snprintf(buf, sizeof(buf), "lightsCastShadows[%d]", i);
-        shader->setBool(buf, pointLights[i].castShadows);
+    // Point/spot light + sun uniforms are frame-constant; set them once per
+    // frame on the first eye (they persist in the program object for the second
+    // eye). Radiance does not get its sun pushed by renderModels(), so it is set
+    // here.
+    if (!g_sharedPassesDone) {
+      // Set point light uniforms
+      {
+        char buf[64];
+        for (int i = 0; i < (int)pointLights.size() && i < MAX_LIGHTS; i++) {
+          snprintf(buf, sizeof(buf), "pointLights[%d].position", i);
+          shader->setVec3(buf, pointLights[i].position);
+          snprintf(buf, sizeof(buf), "pointLights[%d].color", i);
+          shader->setVec3(buf, pointLights[i].color);
+          snprintf(buf, sizeof(buf), "pointLights[%d].intensity", i);
+          shader->setFloat(buf, pointLights[i].intensity);
+          snprintf(buf, sizeof(buf), "pointLights[%d].linear", i);
+          shader->setFloat(buf, pointLights[i].linear);
+          snprintf(buf, sizeof(buf), "pointLights[%d].quadratic", i);
+          shader->setFloat(buf, pointLights[i].quadratic);
+          snprintf(buf, sizeof(buf), "lightsCastShadows[%d]", i);
+          shader->setBool(buf, pointLights[i].castShadows);
+        }
       }
-    }
 
-    // Set spot light uniforms
-    {
-      char buf[64];
-      for (int i = 0; i < (int)spotLights.size() && i < MAX_LIGHTS; i++) {
-        snprintf(buf, sizeof(buf), "spotLights[%d].position", i);
-        shader->setVec3(buf, spotLights[i].position);
-        snprintf(buf, sizeof(buf), "spotLights[%d].direction", i);
-        shader->setVec3(buf, spotLights[i].direction);
-        snprintf(buf, sizeof(buf), "spotLights[%d].color", i);
-        shader->setVec3(buf, spotLights[i].color);
-        snprintf(buf, sizeof(buf), "spotLights[%d].intensity", i);
-        shader->setFloat(buf, spotLights[i].intensity);
-        snprintf(buf, sizeof(buf), "spotLights[%d].innerCutOff", i);
-        shader->setFloat(buf, spotLights[i].innerCutOff);
-        snprintf(buf, sizeof(buf), "spotLights[%d].outerCutOff", i);
-        shader->setFloat(buf, spotLights[i].outerCutOff);
+      // Set spot light uniforms
+      {
+        char buf[64];
+        for (int i = 0; i < (int)spotLights.size() && i < MAX_LIGHTS; i++) {
+          snprintf(buf, sizeof(buf), "spotLights[%d].position", i);
+          shader->setVec3(buf, spotLights[i].position);
+          snprintf(buf, sizeof(buf), "spotLights[%d].direction", i);
+          shader->setVec3(buf, spotLights[i].direction);
+          snprintf(buf, sizeof(buf), "spotLights[%d].color", i);
+          shader->setVec3(buf, spotLights[i].color);
+          snprintf(buf, sizeof(buf), "spotLights[%d].intensity", i);
+          shader->setFloat(buf, spotLights[i].intensity);
+          snprintf(buf, sizeof(buf), "spotLights[%d].innerCutOff", i);
+          shader->setFloat(buf, spotLights[i].innerCutOff);
+          snprintf(buf, sizeof(buf), "spotLights[%d].outerCutOff", i);
+          shader->setFloat(buf, spotLights[i].outerCutOff);
+        }
       }
-    }
-    shader->setInt("numPointLights",
-                   std::min((int)pointLights.size(), MAX_LIGHTS));
-    shader->setInt("numSpotLights",
-                   std::min((int)spotLights.size(), MAX_LIGHTS));
+      shader->setInt("numPointLights",
+                     std::min((int)pointLights.size(), MAX_LIGHTS));
+      shader->setInt("numSpotLights",
+                     std::min((int)spotLights.size(), MAX_LIGHTS));
 
-    // Set sun properties
-    shader->setBool("sun.enabled", sun.enabled);
-    shader->setVec3("sun.direction", sun.direction);
-    shader->setVec3("sun.color", sun.color);
-    shader->setFloat("sun.intensity", sun.intensity);
+      // Set sun properties
+      shader->setBool("sun.enabled", sun.enabled);
+      shader->setVec3("sun.direction", sun.direction);
+      shader->setVec3("sun.color", sun.color);
+      shader->setFloat("sun.intensity", sun.intensity);
+    }
 
     // DIAGNOSTIC: Verify critical uniforms once on first frame
     static bool shaderDebugLogged = false;
@@ -5753,9 +5762,24 @@ void renderPointClouds(Engine::Shader *shader, const glm::mat4 &view,
   if (shader == simpleDepthShader)
     return;
 
-  // Schütz compute rasterizer: one clear + one dispatch per cloud + one resolve
-  bool useCompute =
-      computePointCloudRenderer && computePointCloudRenderer->isInitialized();
+  // Schütz compute rasterizer: one clear + one dispatch per cloud + one resolve.
+  // Only engage it when the scene actually has a visible point cloud to draw.
+  // beginFrame()/endFrame() always cost a memory barrier plus a full-viewport
+  // resolve pass that writes gl_FragDepth for every pixel, so running them for a
+  // model-only scene (the common default) is pure waste. The framebuffer SSBO is
+  // pre-cleared at allocation and re-cleared by every endFrame(), and skipped
+  // frames never touch it, so the "already cleared" invariant beginFrame() relies
+  // on still holds whenever a point cloud reappears.
+  bool hasVisibleCloud = false;
+  for (const auto &pc : currentScene.pointClouds) {
+    if (pc.visible) {
+      hasVisibleCloud = true;
+      break;
+    }
+  }
+  bool useCompute = computePointCloudRenderer &&
+                    computePointCloudRenderer->isInitialized() &&
+                    hasVisibleCloud;
   if (useCompute) {
     // Feed the active section/clip planes to the compute rasterizer so clipped
     // points are discarded (point clouds don't use gl_ClipDistance).
