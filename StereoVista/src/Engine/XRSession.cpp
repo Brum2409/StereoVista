@@ -4,11 +4,6 @@
 
 #include "Engine/XRSession.h"
 
-// GLFW native access (needed to retrieve HDC/HGLRC from the window handle).
-#define GLFW_EXPOSE_NATIVE_WIN32
-#define GLFW_EXPOSE_NATIVE_WGL
-#include <GLFW/glfw3native.h>
-
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/quaternion.hpp>
@@ -59,17 +54,18 @@ void XRSession::destroy() {
         eyes_[i].images.clear();
     }
 
+    // XrSpace is a child of XrSession — must be destroyed before the session.
+    if (referenceSpace_ != XR_NULL_HANDLE) {
+        xrDestroySpace(referenceSpace_);
+        referenceSpace_ = XR_NULL_HANDLE;
+    }
+
     if (session_ != XR_NULL_HANDLE) {
         if (running_) {
             xrRequestExitSession(session_);
         }
         xrDestroySession(session_);
         session_ = XR_NULL_HANDLE;
-    }
-
-    if (referenceSpace_ != XR_NULL_HANDLE) {
-        xrDestroySpace(referenceSpace_);
-        referenceSpace_ = XR_NULL_HANDLE;
     }
 
     if (instance_ != XR_NULL_HANDLE) {
@@ -429,11 +425,9 @@ bool XRSession::createGLObjects() {
     glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
                               GL_RENDERBUFFER, depthRbo_);
+    // No colour attachment yet — that is attached per-eye per-frame in the main loop.
+    // GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT is expected at this point.
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-    // GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT is expected here because
-    // we haven't attached a colour texture yet; that happens per-eye-per-frame.
     return true;
 }
 
@@ -471,9 +465,12 @@ glm::mat4 XRSession::poseToView(const XrPosef &pose, float worldScale) {
                 pose.orientation.x,
                 pose.orientation.y,
                 pose.orientation.z);
-    glm::vec3 p(pose.position.x * worldScale,
-                pose.position.y * worldScale,
-                pose.position.z * worldScale);
+    // worldScale is in metres-per-scene-unit (e.g. 0.01 for a cm scene, 1.0 for m).
+    // XR positions are in metres → divide by worldScale to get scene units.
+    // Example: worldScale=0.01 (cm scene), XR pos=1.0m → 100 scene units.
+    glm::vec3 p(pose.position.x / worldScale,
+                pose.position.y / worldScale,
+                pose.position.z / worldScale);
 
     // world-from-eye = translation * rotation
     glm::mat4 worldFromEye = glm::translate(glm::mat4(1.0f), p) * glm::mat4_cast(q);
