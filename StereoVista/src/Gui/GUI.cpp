@@ -5835,7 +5835,63 @@ void renderCursorSettingsWindow() {
         "Instead of switching to the Windows cursor over the background,\n"
         "the 3D cursor stays at the last valid depth and follows the mouse\n"
         "at that distance until it hits geometry again.\n"
-        "Useful for sparse point clouds.");
+        "Useful for sparse models and point clouds.");
+  }
+
+  // Cache-expiry options for the behavior above. Only relevant while it's on.
+  if (keepLastDepth) {
+    ImGui::Indent();
+
+    const char *cacheModes[] = {"Indefinite", "Timed", "Distance"};
+    int cacheMode = cursorManager.getBackgroundCacheMode();
+    ImGui::SetNextItemWidth(220.0f);
+    if (ImGui::Combo("Cache Duration", &cacheMode, cacheModes,
+                     IM_ARRAYSIZE(cacheModes))) {
+      cursorManager.setBackgroundCacheMode(cacheMode);
+      preferences.cursorBackgroundCacheMode = cacheMode;
+      savePreferences();
+    }
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip(
+          "How long the cursor stays at the cached depth over the background:\n"
+          "  Indefinite - never give up; hold the depth until geometry is hit\n"
+          "  Timed      - revert to the Windows cursor after a time limit\n"
+          "  Distance   - revert once the mouse travels too far from the\n"
+          "               point where it left the geometry");
+    }
+
+    if (cacheMode == GUI::CURSOR_CACHE_TIMED) {
+      float cacheTime = cursorManager.getBackgroundCacheTime();
+      ImGui::SetNextItemWidth(220.0f);
+      if (ImGui::SliderFloat("Cache Time (s)", &cacheTime, 0.1f, 10.0f,
+                             "%.1f")) {
+        cursorManager.setBackgroundCacheTime(cacheTime);
+        preferences.cursorBackgroundCacheTime = cacheTime;
+        savePreferences();
+      }
+      if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Seconds the cursor keeps the cached depth after leaving geometry\n"
+            "before reverting to the Windows cursor.");
+      }
+    } else if (cacheMode == GUI::CURSOR_CACHE_DISTANCE) {
+      float cacheDist = cursorManager.getBackgroundCacheDistance();
+      ImGui::SetNextItemWidth(220.0f);
+      if (ImGui::SliderFloat("Cache Distance (px)", &cacheDist, 20.0f, 2000.0f,
+                             "%.0f")) {
+        cursorManager.setBackgroundCacheDistance(cacheDist);
+        preferences.cursorBackgroundCacheDistance = cacheDist;
+        savePreferences();
+      }
+      if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "How far (in screen pixels) the mouse may travel over the\n"
+            "background from where it left the geometry before the cursor\n"
+            "reverts to the Windows cursor.");
+      }
+    }
+
+    ImGui::Unindent();
   }
 
   ImGui::Spacing();

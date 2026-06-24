@@ -139,6 +139,22 @@ public:
     return m_keepLastDepthOnBackground;
   }
 
+  // How the cached depth expires while the mouse is over the background.
+  // Mode values mirror GUI::CursorBackgroundCacheMode (0 = indefinite,
+  // 1 = timed, 2 = distance); kept as an int so this class stays free of the
+  // GUI headers. Time is in seconds off geometry, distance in screen pixels of
+  // mouse travel from the last geometry hit.
+  void setBackgroundCacheMode(int mode) { m_backgroundCacheMode = mode; }
+  int getBackgroundCacheMode() const { return m_backgroundCacheMode; }
+  void setBackgroundCacheTime(float seconds) {
+    m_backgroundCacheTime = seconds;
+  }
+  float getBackgroundCacheTime() const { return m_backgroundCacheTime; }
+  void setBackgroundCacheDistance(float pixels) {
+    m_backgroundCacheDistance = pixels;
+  }
+  float getBackgroundCacheDistance() const { return m_backgroundCacheDistance; }
+
 private:
   std::unique_ptr<SphereCursor> m_sphereCursor;
   std::unique_ptr<FragmentCursor> m_fragmentCursor;
@@ -186,6 +202,14 @@ private:
   bool m_keepLastDepthOnBackground = false;
   float m_lastValidDepth = 0.5f; // depth buffer value of the last geometry hit
   bool m_hasLastValidDepth = false;
+  // Cache-expiry policy + the reference state captured at the last geometry hit
+  // so the timed / distance modes can decide when to give up the cached depth.
+  int m_backgroundCacheMode = 0;          // GUI::CursorBackgroundCacheMode
+  float m_backgroundCacheTime = 1.0f;     // seconds (timed mode)
+  float m_backgroundCacheDistance = 250.0f; // screen pixels (distance mode)
+  double m_lastHitTime = 0.0;             // glfwGetTime() at the last hit
+  float m_lastHitScreenX = 0.0f;          // window-space mouse pos at last hit
+  float m_lastHitScreenY = 0.0f;
 
   // Helper function to calculate background cursor position
   glm::vec3 calculateBackgroundCursorPosition(GLFWwindow *window,
