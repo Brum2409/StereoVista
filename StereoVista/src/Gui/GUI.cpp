@@ -3949,7 +3949,6 @@ void renderSettingsWindow() {
                                     : g_xrStatusMsg.c_str());
       }
 
-      bool xrEnabledPrev = preferences.openxrSettings.enabled;
       if (ImGui::Checkbox("Enable OpenXR (VR Headset)", &preferences.openxrSettings.enabled)) {
         xrSessionEnable(preferences.openxrSettings.enabled);
         settingsChanged = true;

@@ -4502,12 +4502,13 @@ int main() {
       glfwSwapBuffers(window);
       continue; // Skip the normal desktop render path this frame.
     }
-    // XR is running but mirror is disabled: show GUI on a cleared desktop window.
+    // XR is running but mirror is disabled: clear the desktop window and show
+    // the GUI overlay so the user can still interact with the settings panel.
     if (xrFrameRendered && !preferences.openxrSettings.mirrorToWindow) {
+      glBindFramebuffer(GL_FRAMEBUFFER, 0);
+      glViewport(0, 0, windowWidth, windowHeight);
+      glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
       if (showGui) {
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        glViewport(0, 0, windowWidth, windowHeight);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         if (isStereoWindow) {
           glDrawBuffer(GL_BACK_LEFT);
           renderGUI(true, viewport, windowFlags, activeShader);
