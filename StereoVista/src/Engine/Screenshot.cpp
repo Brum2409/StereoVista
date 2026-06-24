@@ -207,6 +207,88 @@ bool captureToPNG(const std::string &path, int x, int y, int width, int height,
   return writePNG(path, w, h, 3, flipped.data());
 }
 
+std::vector<unsigned char>
+combineStereo(const std::vector<unsigned char> &left,
+              const std::vector<unsigned char> &right, int width, int height,
+              int channels, StereoLayout layout, int &outWidth,
+              int &outHeight) {
+  std::vector<unsigned char> out;
+  if (width <= 0 || height <= 0 || (channels != 3 && channels != 4))
+    return out;
+
+  const size_t rowBytes = static_cast<size_t>(width) * channels;
+
+  if (layout == StereoLayout::AboveBelow) {
+    // Left image stacked above the right image: same width, double height.
+    outWidth = width;
+    outHeight = height * 2;
+    out.resize(static_cast<size_t>(outWidth) * outHeight * channels);
+    std::copy(left.begin(), left.end(), out.begin());
+    std::copy(right.begin(), right.end(),
+              out.begin() + static_cast<size_t>(height) * rowBytes);
+    return out;
+  }
+
+  // SideBySide: left image then right image per scanline; double width.
+  outWidth = width * 2;
+  outHeight = height;
+  out.resize(static_cast<size_t>(outWidth) * outHeight * channels);
+  const size_t outRowBytes = static_cast<size_t>(outWidth) * channels;
+  for (int row = 0; row < height; ++row) {
+    const size_t srcOff = static_cast<size_t>(row) * rowBytes;
+    const size_t dstOff = static_cast<size_t>(row) * outRowBytes;
+    std::copy(left.begin() + srcOff, left.begin() + srcOff + rowBytes,
+              out.begin() + dstOff);
+    std::copy(right.begin() + srcOff, right.begin() + srcOff + rowBytes,
+              out.begin() + dstOff + rowBytes);
+  }
+  return out;
+}
+
+namespace {
+// Insert a suffix before the file extension, e.g. ("a/b.png", "_L") ->
+// "a/b_L.png". If there is no extension the suffix is simply appended.
+std::string insertSuffix(const std::string &path, const std::string &suffix) {
+  std::filesystem::path p(path);
+  std::filesystem::path stem = p.stem();
+  std::string ext = p.extension().string();
+  std::filesystem::path out = p.parent_path();
+  out /= (stem.string() + suffix + ext);
+  return out.string();
+}
+} // namespace
+
+bool captureStereoToPNG(const std::string &path, int x, int y, int width,
+                        int height, unsigned int leftBuffer,
+                        unsigned int rightBuffer, StereoLayout layout) {
+  std::vector<unsigned char> left, right;
+  int lw = 0, lh = 0, rw = 0, rh = 0;
+  if (!captureToMemory(x, y, width, height, leftBuffer, left, lw, lh))
+    return false;
+  if (!captureToMemory(x, y, width, height, rightBuffer, right, rw, rh))
+    return false;
+  if (lw != rw || lh != rh) {
+    std::cerr << "captureStereoToPNG: eye dimensions differ" << std::endl;
+    return false;
+  }
+
+  const int channels = 3; // captureToMemory returns RGB
+
+  if (layout == StereoLayout::Separate) {
+    bool okL = writePNG(insertSuffix(path, "_L"), lw, lh, channels, left.data());
+    bool okR =
+        writePNG(insertSuffix(path, "_R"), rw, rh, channels, right.data());
+    return okL && okR;
+  }
+
+  int outW = 0, outH = 0;
+  std::vector<unsigned char> combined =
+      combineStereo(left, right, lw, lh, channels, layout, outW, outH);
+  if (combined.empty())
+    return false;
+  return writePNG(path, outW, outH, channels, combined.data());
+}
+
 std::string makeTimestampedPath(const std::string &directory) {
   std::error_code ec;
   std::filesystem::create_directories(directory, ec);

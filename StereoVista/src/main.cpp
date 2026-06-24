@@ -207,6 +207,34 @@ bool showFPS = true;
 // Screenshot) and the keyboard shortcut set these.
 bool g_requestScreenshot = false;
 std::string g_screenshotPath;
+
+// Capture a screenshot honoring the configured stereo screenshot mode. For
+// MONO (or any non-stereo window) this is the legacy single-eye capture. The
+// stereo modes read both back buffers and write a combined Full-SBS /
+// Above-Below image, or two separate "_L"/"_R" files. `flipEyes` accounts for
+// the left/right buffer swap so the saved image always has the true left eye on
+// the left (or top). Returns true on success.
+static bool captureScreenshotForMode(const std::string &path, int x, int width,
+                                     int height, bool isStereoWindow,
+                                     bool flipEyes,
+                                     GUI::StereoScreenshotMode mode) {
+  if (!isStereoWindow || mode == GUI::STEREO_SHOT_MONO) {
+    GLenum buf = isStereoWindow ? GL_BACK_LEFT : GL_BACK;
+    return Engine::Screenshot::captureToPNG(path, x, 0, width, height, buf);
+  }
+
+  GLenum leftBuf = flipEyes ? GL_BACK_RIGHT : GL_BACK_LEFT;
+  GLenum rightBuf = flipEyes ? GL_BACK_LEFT : GL_BACK_RIGHT;
+  Engine::Screenshot::StereoLayout layout =
+      Engine::Screenshot::StereoLayout::SideBySide;
+  if (mode == GUI::STEREO_SHOT_ABOVE_BELOW)
+    layout = Engine::Screenshot::StereoLayout::AboveBelow;
+  else if (mode == GUI::STEREO_SHOT_SEPARATE)
+    layout = Engine::Screenshot::StereoLayout::Separate;
+  return Engine::Screenshot::captureStereoToPNG(path, x, 0, width, height,
+                                                leftBuf, rightBuf, layout);
+}
+
 // ---- Snapshots ----
 // Set by the GUI to request a snapshot capture on the next clean (GUI-free)
 // frame. The flags select which aspects (camera/scene/tools) to store; the
@@ -2047,6 +2075,8 @@ void savePreferences() {
   j["ui"]["enableSpawnAnimation"] = preferences.enableSpawnAnimation;
   j["ui"]["guiScaleFactor"] = preferences.guiScaleFactor;
   j["ui"]["screenshotIncludeUI"] = preferences.screenshotIncludeUI;
+  j["ui"]["stereoScreenshotMode"] =
+      static_cast<int>(preferences.stereoScreenshotMode);
 
   // Radar settings
   j["radar"]["enabled"] = preferences.radarEnabled;
@@ -2515,6 +2545,9 @@ void loadPreferences() {
       preferences.guiScaleFactor = j["ui"].value("guiScaleFactor", 1.0f);
       preferences.screenshotIncludeUI =
           j["ui"].value("screenshotIncludeUI", false);
+      preferences.stereoScreenshotMode = static_cast<GUI::StereoScreenshotMode>(
+          j["ui"].value("stereoScreenshotMode",
+                        static_cast<int>(GUI::STEREO_SHOT_MONO)));
     }
 
     // Radar settings
@@ -4387,8 +4420,13 @@ int main() {
       // UI-included screenshot is taken after the GUI is drawn (below). Because
       // the GUI stays visible, the viewport is not resized for the capture, so
       // the HDR/bloom/SSAO targets are not rebuilt (no flash, no black frames).
+      // Stereo-3D screenshots always read both eyes here (UI is excluded), since
+      // both back buffers hold the freshly composited per-eye scene.
+      bool stereoShot = isStereoWindow &&
+                        preferences.stereoScreenshotMode != GUI::STEREO_SHOT_MONO;
       if (captureSnapshotThisFrame ||
-          (captureThisFrame && !preferences.screenshotIncludeUI)) {
+          (captureThisFrame &&
+           (stereoShot || !preferences.screenshotIncludeUI))) {
         GLenum capBuffer = isStereoWindow ? GL_BACK_LEFT : GL_BACK;
 
         if (captureSnapshotThisFrame) {
@@ -4413,9 +4451,10 @@ int main() {
           std::string path = captureThisFramePath;
           if (path.empty())
             path = Engine::Screenshot::makeTimestampedPath("screenshots");
-          if (Engine::Screenshot::captureToPNG(path, g_viewportX, 0,
-                                               g_viewportWidth, g_viewportHeight,
-                                               capBuffer)) {
+          if (captureScreenshotForMode(path, g_viewportX, g_viewportWidth,
+                                       g_viewportHeight, isStereoWindow,
+                                       preferences.flipEyes,
+                                       preferences.stereoScreenshotMode)) {
             std::cout << "Screenshot saved: " << path << std::endl;
             GUI::ShowToast("Screenshot saved: " +
                                std::filesystem::path(path).filename().string(),
@@ -4502,19 +4541,31 @@ int main() {
     // and, in the non-HDR fallback path, for UI-excluded screenshots that the
     // pre-GUI capture above did not handle (viewer sub-rectangle).
     if (captureThisFrame) {
-      // Read the left/primary color buffer (GL_BACK is invalid on a
-      // quad-buffer stereo window, so pick the left eye there).
-      GLenum readBuffer = isStereoWindow ? GL_BACK_LEFT : GL_BACK;
       std::string path = captureThisFramePath;
       if (path.empty()) {
         path = Engine::Screenshot::makeTimestampedPath("screenshots");
       }
-      bool includeUI = preferences.screenshotIncludeUI;
-      int cx = includeUI ? 0 : g_viewportX;
-      int cw = includeUI ? windowWidth : g_viewportWidth;
-      int ch = includeUI ? windowHeight : g_viewportHeight;
-      bool ok =
-          Engine::Screenshot::captureToPNG(path, cx, 0, cw, ch, readBuffer);
+      bool stereoShot =
+          isStereoWindow &&
+          preferences.stereoScreenshotMode != GUI::STEREO_SHOT_MONO;
+      bool ok;
+      if (stereoShot) {
+        // Stereo modes always capture the clean 3D viewer sub-rectangle
+        // (UI excluded) from both eyes.
+        ok = captureScreenshotForMode(path, g_viewportX, g_viewportWidth,
+                                      g_viewportHeight, isStereoWindow,
+                                      preferences.flipEyes,
+                                      preferences.stereoScreenshotMode);
+      } else {
+        // Read the left/primary color buffer (GL_BACK is invalid on a
+        // quad-buffer stereo window, so pick the left eye there).
+        GLenum readBuffer = isStereoWindow ? GL_BACK_LEFT : GL_BACK;
+        bool includeUI = preferences.screenshotIncludeUI;
+        int cx = includeUI ? 0 : g_viewportX;
+        int cw = includeUI ? windowWidth : g_viewportWidth;
+        int ch = includeUI ? windowHeight : g_viewportHeight;
+        ok = Engine::Screenshot::captureToPNG(path, cx, 0, cw, ch, readBuffer);
+      }
       if (ok) {
         std::cout << "Screenshot saved: " << path << std::endl;
         GUI::ShowToast("Screenshot saved: " +
