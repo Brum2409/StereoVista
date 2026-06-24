@@ -47,6 +47,17 @@ enum CursorScalingMode {
   CURSOR_LOGARITHMIC
 };
 
+// When the 3D cursor would fall off geometry onto the background (skybox /
+// empty space), this controls how long it keeps following the mouse at the
+// last valid depth before giving up and reverting to the Windows cursor.
+// Avoids the cursor flickering between 2D and 3D over sparse models / point
+// clouds where the depth buffer is mostly background.
+enum CursorBackgroundCacheMode {
+  CURSOR_CACHE_INDEFINITE, // Never give up; stay at last depth until a new hit
+  CURSOR_CACHE_TIMED,      // Give up after a time limit (seconds off geometry)
+  CURSOR_CACHE_DISTANCE    // Give up after the mouse travels too far (pixels)
+};
+
 enum SpaceMouseAnchorMode {
   SPACEMOUSE_ANCHOR_DISABLED,   // Use scene center (default)
   SPACEMOUSE_ANCHOR_ON_START,   // Set anchor when navigation starts, keep it
@@ -130,8 +141,14 @@ struct ApplicationPreferences {
   bool show3DCursor = true;
   // Keep the 3D cursor at the last valid depth when the mouse is over the
   // background instead of switching to the Windows cursor (helps with sparse
-  // point clouds).
+  // point clouds). Master enable for the depth-cache behavior below.
   bool cursorKeepLastDepthOnBackground = false;
+  // How the cached depth expires while the mouse stays over the background
+  // (see CursorBackgroundCacheMode) and the limits used by the timed / distance
+  // modes. Ignored when cursorKeepLastDepthOnBackground is false.
+  int cursorBackgroundCacheMode = CURSOR_CACHE_INDEFINITE;
+  float cursorBackgroundCacheTime = 1.0f;       // seconds (TIMED mode)
+  float cursorBackgroundCacheDistance = 250.0f; // screen pixels (DISTANCE mode)
   bool useNewStereoMethod = true;
   float fov = 45.0f;
 

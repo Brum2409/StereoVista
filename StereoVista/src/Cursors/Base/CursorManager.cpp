@@ -1,5 +1,7 @@
 #include "Cursors/Base/CursorManager.h"
+#include "Gui/GuiTypes.h"
 #include <GLFW/glfw3.h>
+#include <cmath>
 #include <imgui.h>
 #include <iostream>
 
@@ -159,18 +161,39 @@ void CursorManager::updateCursorPosition(
   if (isHit) {
     // Remember the depth of the last geometry hit so the cursor can stay at
     // this depth while the mouse passes over the background (sparse point
-    // clouds would otherwise make it flicker between 2D and 3D).
+    // clouds would otherwise make it flicker between 2D and 3D). Also capture
+    // the mouse position and time so the timed / distance cache modes can
+    // measure how long / how far we've been off geometry.
     m_lastValidDepth = depth;
     m_hasLastValidDepth = true;
+    m_lastHitTime = glfwGetTime();
+    m_lastHitScreenX = m_lastX;
+    m_lastHitScreenY = m_lastY;
   } else if (m_keepLastDepthOnBackground && m_hasLastValidDepth &&
              anyCursorVisible) {
-    // Over background: re-project the mouse position at the cached depth so
-    // the 3D cursor keeps following the mouse at the last known distance from
-    // the camera until it hits geometry again.
-    ndc.z = m_lastValidDepth * 2.0f - 1.0f;
-    worldPosH = vpInv * ndc;
-    worldPos = worldPosH / worldPosH.w;
-    isHit = true;
+    // Over background: decide whether the cached depth is still "fresh" enough
+    // to keep using, based on the configured expiry mode. INDEFINITE always
+    // keeps it; TIMED expires after a number of seconds off geometry; DISTANCE
+    // expires once the mouse has travelled too far from the last hit point.
+    bool cacheValid = true;
+    if (m_backgroundCacheMode == GUI::CURSOR_CACHE_TIMED) {
+      cacheValid =
+          (glfwGetTime() - m_lastHitTime) <= m_backgroundCacheTime;
+    } else if (m_backgroundCacheMode == GUI::CURSOR_CACHE_DISTANCE) {
+      float dx = m_lastX - m_lastHitScreenX;
+      float dy = m_lastY - m_lastHitScreenY;
+      cacheValid =
+          std::sqrt(dx * dx + dy * dy) <= m_backgroundCacheDistance;
+    }
+    if (cacheValid) {
+      // Re-project the mouse position at the cached depth so the 3D cursor
+      // keeps following the mouse at the last known distance from the camera
+      // until it hits geometry again (or the cache expires).
+      ndc.z = m_lastValidDepth * 2.0f - 1.0f;
+      worldPosH = vpInv * ndc;
+      worldPos = worldPosH / worldPosH.w;
+      isHit = true;
+    }
   }
 
   // Update cursor properties based on whether it hit geometry
