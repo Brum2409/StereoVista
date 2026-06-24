@@ -76,6 +76,12 @@ namespace Tools {
         // Format a world-space length with the configured unit scale/suffix.
         std::string formatLength(float worldLength) const;
 
+        // Export all committed measurements to a CSV file (tidy/long format:
+        // one row per point, with the measurement's summary value repeated).
+        // Lengths are written in the configured display units. Returns false if
+        // the file could not be opened for writing.
+        bool exportToCSV(const std::string& path) const;
+
     private:
         void commitActive();
         void appendLine(std::vector<float>& out, const glm::vec3& a,

@@ -3,6 +3,7 @@
 #endif
 #include "Tools/MeasurementTool.h"
 #include <cstdio>
+#include <fstream>
 #include <iostream>
 
 namespace Tools {
@@ -239,6 +240,68 @@ void main() {
         std::snprintf(buf, sizeof(buf), "%.3f %s",
                       worldLength * unitScale, unitSuffix.c_str());
         return buf;
+    }
+
+    bool MeasurementTool::exportToCSV(const std::string& path) const {
+        std::ofstream file(path, std::ios::out | std::ios::trunc);
+        if (!file.is_open()) {
+            std::cerr << "[MeasurementTool] failed to open '" << path
+                      << "' for writing" << std::endl;
+            return false;
+        }
+
+        // Quote a field and escape embedded quotes per RFC 4180 so names with
+        // commas/quotes survive a round trip through spreadsheet software.
+        auto csvQuote = [](const std::string& s) {
+            std::string out = "\"";
+            for (char c : s) {
+                if (c == '"') out += "\"\"";
+                else out += c;
+            }
+            out += "\"";
+            return out;
+        };
+
+        file << "Name,Type,Summary,Unit,PointIndex,X,Y,Z\n";
+
+        if (m_measurements) {
+            for (const auto& m : *m_measurements) {
+                const char* typeName =
+                    (m.type == Engine::Measurement::Type::Angle) ? "Angle" :
+                    (m.type == Engine::Measurement::Type::Point) ? "Point" : "Distance";
+
+                // Summary value + unit, depending on measurement type. Lengths
+                // are converted to the configured display units; points have no
+                // scalar summary (their coordinates are the value).
+                char summary[48] = "";
+                const char* unit = "";
+                if (m.type == Engine::Measurement::Type::Distance) {
+                    std::snprintf(summary, sizeof(summary), "%.6f",
+                                  m.totalLength() * unitScale);
+                    unit = unitSuffix.c_str();
+                } else if (m.type == Engine::Measurement::Type::Angle) {
+                    std::snprintf(summary, sizeof(summary), "%.4f", m.angleDegrees());
+                    unit = "deg";
+                }
+
+                if (m.points.empty()) {
+                    file << csvQuote(m.name) << ',' << typeName << ','
+                         << summary << ',' << csvQuote(unit) << ",,,,\n";
+                    continue;
+                }
+                for (size_t i = 0; i < m.points.size(); i++) {
+                    const glm::vec3& p = m.points[i];
+                    char coords[96];
+                    std::snprintf(coords, sizeof(coords), "%.6f,%.6f,%.6f",
+                                  p.x, p.y, p.z);
+                    file << csvQuote(m.name) << ',' << typeName << ','
+                         << summary << ',' << csvQuote(unit) << ',' << i << ','
+                         << coords << '\n';
+                }
+            }
+        }
+
+        return file.good();
     }
 
     void MeasurementTool::appendLine(std::vector<float>& out, const glm::vec3& a,

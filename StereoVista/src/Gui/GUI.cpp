@@ -6412,6 +6412,22 @@ void renderMeasurementToolWindow() {
     }
 
     ImGui::Spacing();
+    if (ImGui::Button("Export to CSV...", ImVec2(-1, 0))) {
+      auto destination =
+          pfd::save_file("Export measurements", "measurements.csv",
+                         {"CSV File", "*.csv", "All Files", "*"})
+              .result();
+      if (!destination.empty()) {
+        if (std::filesystem::path(destination).extension() != ".csv")
+          destination += ".csv";
+        if (!measurementTool.exportToCSV(destination))
+          std::cerr << "Failed to export measurements to " << destination
+                    << std::endl;
+      }
+    }
+    DrawHelpMarker("Write all measurements (coordinates + lengths/angles) to a "
+                   "CSV file for use in reports or spreadsheets.");
+
     if (ImGui::Button("Clear All Measurements", ImVec2(-1, 0))) {
       measurementTool.clearAll();
     }
