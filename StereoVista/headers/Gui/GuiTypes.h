@@ -65,6 +65,16 @@ enum SceneLoadingBehavior {
   SCENE_LOAD_ALWAYS_MERGE    // Always keep existing scene
 };
 
+// How a screenshot is captured on a quad-buffer stereo window. MONO keeps the
+// legacy behavior (single/left-eye image); the others read both eyes and write
+// a stereo-3D image either combined into one file or as two separate files.
+enum StereoScreenshotMode {
+  STEREO_SHOT_MONO,        // Single (left) eye only - default, legacy behavior
+  STEREO_SHOT_FULL_SBS,    // Full side-by-side: left | right (2*width x height)
+  STEREO_SHOT_ABOVE_BELOW, // Above/below: left on top, right below (width x 2*height)
+  STEREO_SHOT_SEPARATE     // Two separate image files (_L / _R suffixes)
+};
+
 // Structure definitions
 struct SkyboxConfig {
   SkyboxType type = SKYBOX_HDR;
@@ -291,6 +301,12 @@ struct ApplicationPreferences {
   // Screenshot export: when true the GUI overlay is included in saved
   // screenshots; when false only the rendered 3D scene is captured.
   bool screenshotIncludeUI = false;
+
+  // Stereo-3D screenshot layout. On a quad-buffer stereo window the screenshot
+  // can capture both eyes and write them as a Full Side-by-Side, Above/Below,
+  // or two separate images. MONO (default) keeps the legacy single-eye capture.
+  // Stereo modes always capture the clean 3D viewer (UI is excluded).
+  StereoScreenshotMode stereoScreenshotMode = STEREO_SHOT_MONO;
 
   bool enableSpawnAnimation = true;
 

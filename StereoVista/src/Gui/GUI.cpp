@@ -1625,6 +1625,38 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       ImGui::MenuItem("Include UI in Screenshot", nullptr,
                       &preferences.screenshotIncludeUI);
 
+      // Stereo-3D screenshot layout. On a quad-buffer stereo window the
+      // screenshot can capture both eyes and write a Full Side-by-Side,
+      // Above/Below, or two separate (_L/_R) images. "Single (Left Eye)" keeps
+      // the legacy single-eye capture. Stereo modes always capture the clean 3D
+      // viewer (the "Include UI" option is ignored for them).
+      if (ImGui::BeginMenu("Stereo-3D Screenshot")) {
+        if (ImGui::MenuItem("Single (Left Eye)", nullptr,
+                            preferences.stereoScreenshotMode ==
+                                GUI::STEREO_SHOT_MONO)) {
+          preferences.stereoScreenshotMode = GUI::STEREO_SHOT_MONO;
+        }
+        if (ImGui::MenuItem("Full Side-by-Side (SBS)", nullptr,
+                            preferences.stereoScreenshotMode ==
+                                GUI::STEREO_SHOT_FULL_SBS)) {
+          preferences.stereoScreenshotMode = GUI::STEREO_SHOT_FULL_SBS;
+        }
+        if (ImGui::MenuItem("Above/Below", nullptr,
+                            preferences.stereoScreenshotMode ==
+                                GUI::STEREO_SHOT_ABOVE_BELOW)) {
+          preferences.stereoScreenshotMode = GUI::STEREO_SHOT_ABOVE_BELOW;
+        }
+        if (ImGui::MenuItem("Two Separate Images (_L / _R)", nullptr,
+                            preferences.stereoScreenshotMode ==
+                                GUI::STEREO_SHOT_SEPARATE)) {
+          preferences.stereoScreenshotMode = GUI::STEREO_SHOT_SEPARATE;
+        }
+        ImGui::Separator();
+        ImGui::TextDisabled("Stereo modes require a stereo (quad-buffer)\n"
+                            "window and capture both eyes without UI.");
+        ImGui::EndMenu();
+      }
+
       ImGui::Separator();
 
       if (ImGui::MenuItem("Exit", "Esc")) {

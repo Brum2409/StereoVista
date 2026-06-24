@@ -31,6 +31,32 @@ bool captureToMemory(int x, int y, int width, int height,
 bool captureToPNG(const std::string &path, int x, int y, int width, int height,
                   unsigned int readBuffer);
 
+// Layout for combining a stereo (two-eye) capture into the output image(s).
+enum class StereoLayout {
+  SideBySide, // left | right, one image of size (2*width x height)
+  AboveBelow, // left on top, right below, one image of size (width x 2*height)
+  Separate    // two images: "<name>_L.png" and "<name>_R.png"
+};
+
+// Combine two equally-sized RGB(A) images into a single buffer. SideBySide
+// places `left` then `right` horizontally; AboveBelow places `left` above
+// `right`. `outWidth`/`outHeight` receive the combined dimensions. Both inputs
+// must be `width*height*channels` bytes, rows top-to-bottom. (Not valid for
+// Separate, which produces two files rather than one buffer.)
+std::vector<unsigned char>
+combineStereo(const std::vector<unsigned char> &left,
+              const std::vector<unsigned char> &right, int width, int height,
+              int channels, StereoLayout layout, int &outWidth, int &outHeight);
+
+// Capture both eyes from the default framebuffer and write a stereo-3D image.
+// `leftBuffer`/`rightBuffer` select the source color buffers (e.g.
+// GL_BACK_LEFT / GL_BACK_RIGHT). For SideBySide/AboveBelow a single combined
+// PNG is written to `path`; for Separate two PNGs are written with "_L"/"_R"
+// inserted before the extension of `path`. Returns true on success.
+bool captureStereoToPNG(const std::string &path, int x, int y, int width,
+                        int height, unsigned int leftBuffer,
+                        unsigned int rightBuffer, StereoLayout layout);
+
 // Build a unique, timestamped PNG path inside `directory` (created if it does
 // not exist), e.g. "screenshots/StereoVista_2026-06-14_08-22-38.png".
 std::string makeTimestampedPath(const std::string &directory);
