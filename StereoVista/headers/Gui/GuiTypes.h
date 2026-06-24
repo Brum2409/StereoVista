@@ -376,6 +376,18 @@ struct ApplicationPreferences {
         5.0f; // Maximum bounding sphere radius before auto-scaling
   } modelImportSettings;
 
+  // OpenXR / VR settings
+  struct OpenXRSettings {
+    bool  enabled    = false; // master toggle; session is created/destroyed live
+    float worldScale = 1.0f; // metres per scene unit (1.0 = scene is in metres)
+    bool  mirrorToWindow = true; // blit left eye to the desktop window as a mirror
+    // Near / far planes used for XR projection (may differ from the desktop
+    // planes for comfort reasons, e.g. a tighter near for close-up inspection).
+    bool  useScenePlanes = true; // when true, inherit nearPlane / farPlane
+    float nearPlane = 0.05f;
+    float farPlane  = 200.0f;
+  } openxrSettings;
+
   // Brush Tool Settings
   struct BrushToolSettings {
     bool enabled = false;        // Brush tool enabled/disabled

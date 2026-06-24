@@ -83,6 +83,14 @@ extern bool showClipPlaneToolWindow;
 
 // Snapshots
 extern bool showSnapshotsWindow;
+
+// OpenXR integration (defined in main.cpp; strings come from XRSession)
+extern bool        g_xrAvailable;   // true once init() succeeded at least once
+extern std::string g_xrStatusMsg;   // current status/error text
+extern std::string g_xrRuntimeName; // name of the runtime (e.g. "SteamVR")
+// Called by the GUI toggle to create / destroy the XR session.
+void xrSessionEnable(bool enable);
+
 // Defined in main.cpp: place planes using the 3D cursor / selection context.
 void addClipPlaneAtCursor();
 void addClipPlaneAxisAligned(int axis);
@@ -3920,6 +3928,84 @@ void renderSettingsWindow() {
       ImGui::SameLine();
       DrawHelpMarker(
           "Swaps the left and right eye views for stereoscopic display");
+
+      // ---- OpenXR / VR section ----
+      DrawSectionHeader("OpenXR / VR");
+
+      // Status indicator dot
+      {
+        bool active = preferences.openxrSettings.enabled && g_xrAvailable;
+        ImVec4 dotCol = active
+                          ? ImVec4(0.2f, 0.9f, 0.2f, 1.0f)  // green = running
+                          : (preferences.openxrSettings.enabled
+                               ? ImVec4(0.9f, 0.5f, 0.1f, 1.0f) // orange = error
+                               : ImVec4(0.5f, 0.5f, 0.5f, 1.0f)); // grey = off
+        ImGui::PushStyleColor(ImGuiCol_Text, dotCol);
+        ImGui::Text(active ? "[VR]" : "[--]");
+        ImGui::PopStyleColor();
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", g_xrStatusMsg.empty()
+                                    ? "OpenXR disabled"
+                                    : g_xrStatusMsg.c_str());
+      }
+
+      bool xrEnabledPrev = preferences.openxrSettings.enabled;
+      if (ImGui::Checkbox("Enable OpenXR (VR Headset)", &preferences.openxrSettings.enabled)) {
+        xrSessionEnable(preferences.openxrSettings.enabled);
+        settingsChanged = true;
+      }
+      ImGui::SameLine();
+      DrawHelpMarker(
+          "Renders to a connected VR headset via OpenXR. Requires an OpenXR "
+          "runtime (SteamVR, Meta Quest Link, Windows Mixed Reality, etc.) and "
+          "a compatible HMD. The normal desktop window continues to render as a "
+          "mirror when 'Mirror to Window' is enabled.");
+
+      if (preferences.openxrSettings.enabled) {
+        if (!g_xrRuntimeName.empty()) {
+          ImGui::TextDisabled("Runtime: %s", g_xrRuntimeName.c_str());
+        }
+
+        if (ImGui::Checkbox("Mirror to Window", &preferences.openxrSettings.mirrorToWindow)) {
+          settingsChanged = true;
+        }
+        ImGui::SameLine();
+        DrawHelpMarker("Blits the left-eye VR image to the desktop window. "
+                       "Useful for demos; disable for maximum VR performance.");
+
+        if (ImGui::SliderFloat("World Scale", &preferences.openxrSettings.worldScale,
+                               0.01f, 10.0f, "%.3f m/unit")) {
+          settingsChanged = true;
+        }
+        ImGui::SameLine();
+        DrawHelpMarker(
+            "Metres per scene unit. Set to 1.0 when your scene is in metres, "
+            "0.01 when in centimetres, etc. Affects how head-tracking "
+            "translates into scene movement.");
+
+        if (ImGui::Checkbox("Use Scene Near/Far Planes", &preferences.openxrSettings.useScenePlanes)) {
+          settingsChanged = true;
+        }
+        ImGui::SameLine();
+        DrawHelpMarker("When enabled, the VR projection uses the same near/far "
+                       "planes as the desktop view. Disable to set custom values "
+                       "for comfort.");
+
+        if (!preferences.openxrSettings.useScenePlanes) {
+          if (ImGui::SliderFloat("VR Near Plane##xr", &preferences.openxrSettings.nearPlane,
+                                 0.001f, 1.0f, "%.3f")) {
+            settingsChanged = true;
+          }
+          if (ImGui::SliderFloat("VR Far Plane##xr", &preferences.openxrSettings.farPlane,
+                                 1.0f, 1000.0f, "%.0f")) {
+            settingsChanged = true;
+          }
+        }
+
+        ImGui::Spacing();
+        ImGui::TextDisabled("Camera movement (WASD / SpaceMouse) works in VR.");
+        ImGui::TextDisabled("Head tracking is composited on top of camera orbit.");
+      }
 
       DrawSectionHeader("Movement");
 
