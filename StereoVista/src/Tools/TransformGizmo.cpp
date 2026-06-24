@@ -477,9 +477,13 @@ void TransformGizmo::updateDrag(const glm::vec3& o, const glm::vec3& d,
 void TransformGizmo::endDrag() {
     m_activeHandle = Handle::None;
     m_dragAxisIndex = -1;
-    // Drop the snap so the 3D cursor falls back to scene depth until the next
-    // hover re-establishes a handle.
-    m_hasInteractionPoint = false;
+    // Keep the last interaction point latched so the 3D cursor stays exactly
+    // where the handle was when the drag finished, rather than snapping back to
+    // scene-geometry depth. updateHover() refreshes (or clears) it on the next
+    // idle frame, but when hover is suppressed -- e.g. the right mouse button is
+    // held for a camera rotate -- the latch prevents the cursor from jumping on
+    // release.
+    // (m_hasInteractionPoint / m_interactionPoint intentionally preserved.)
 }
 
 // ────────────────────────────────────────────────────────────────────────────
