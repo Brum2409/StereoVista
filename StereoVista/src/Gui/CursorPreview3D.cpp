@@ -486,7 +486,7 @@ void CursorPreview3D::render(Cursor::BaseCursor* cursor) {
     glBindFramebuffer(GL_READ_FRAMEBUFFER, m_msaaFBO);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_resolveFBO);
     glBlitFramebuffer(0, 0, m_width, m_height, 0, 0, m_width, m_height,
-                      GL_COLOR_BUFFER_BIT, GL_LINEAR);
+                      GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
     // Restore caller state and a neutral default render state.
     glBindFramebuffer(GL_FRAMEBUFFER, prevFBO);
