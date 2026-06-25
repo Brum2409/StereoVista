@@ -21,6 +21,11 @@ namespace Engine {
         static bool exportToHDF5(const PointCloud& pointCloud, const std::string& filePath,
                                  bool applyTransform = true);
         static PointCloud loadFromBinary(const std::string& filePath);
+        // Header-driven reader for binary PLY (binary_little_endian /
+        // binary_big_endian). Streams the fixed-stride vertex records straight
+        // into the compute SSBOs, like the text loader. ASCII PLY is still
+        // handled by the generic text parser in loadPointCloudFile.
+        static PointCloud loadFromBinaryPLY(const std::string& filePath, size_t downsampleFactor = 1);
         static PointCloud loadFromHDF5(const std::string& filePath, size_t downsampleFactor = 1);
         static PointCloud loadFromLAS(const std::string& filePath, size_t downsampleFactor = 1,
                                       const glm::dvec3* globalCenter = nullptr);
