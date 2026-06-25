@@ -11,9 +11,17 @@ namespace Engine {
 
 namespace Cursor {
     class BaseCursor;
+    class SphereCursor;
+    class FragmentCursor;
+    class PlaneCursor;
 }
 
 namespace GUI {
+    // Renders a small, self-contained 3D preview of the active cursor sitting on
+    // a lit reference cube. The preview is independent of the main scene: it owns
+    // its own framebuffer (multisampled for smooth edges), geometry and shaders,
+    // so it faithfully reproduces every cursor type and every appearance value
+    // without disturbing the live render state.
     class CursorPreview3D {
     public:
         CursorPreview3D();
@@ -31,48 +39,49 @@ namespace GUI {
         void updateRotation(float deltaX, float deltaY);
 
     private:
+        // Setup helpers
         void generateCubeGeometry();
         void generateSphereGeometry();
-        void generatePlaneGeometry();
+        void generateQuadGeometry();
         void setupFramebuffer();
-        void renderCube();
-        void renderFallbackReference();
         void setupCamera();
-        void renderPreviewSphere(const glm::vec4& color, float radius, bool showInner, const glm::vec4& innerColor, float innerFactor, const glm::vec3& position, float transparency, float edgeSoftness, float centerTransparency);
-        void renderPreviewFragmentCursor(float radius, const glm::vec4& color, const glm::vec3& position);
-        void renderPreviewPlaneCursor(float diameter, const glm::vec4& color, const glm::vec3& position);
+        bool compileShaders();
 
-        // OpenGL objects
-        GLuint m_framebuffer;
+        // Per-frame drawing
+        void drawBackground();
+        void drawReferenceCube(const glm::mat4& modelRotation);
+        void drawSphereCursor(Cursor::SphereCursor* cursor, const glm::mat4& modelRotation);
+        void drawFragmentCursor(Cursor::FragmentCursor* cursor);
+        void drawPlaneCursor(Cursor::PlaneCursor* cursor);
+
+        // Framebuffer (multisampled -> resolved color texture for ImGui)
+        GLuint m_msaaFBO;
+        GLuint m_msaaColorRBO;
+        GLuint m_msaaDepthRBO;
+        GLuint m_resolveFBO;
         GLuint m_colorTexture;
-        GLuint m_depthTexture;
+        int m_samples;
+
+        // Geometry
         GLuint m_cubeVAO, m_cubeVBO, m_cubeEBO;
         GLuint m_sphereVAO, m_sphereVBO, m_sphereEBO;
-        GLuint m_planeVAO, m_planeVBO, m_planeEBO;
+        GLuint m_quadVAO, m_quadVBO;
+        GLsizei m_cubeIndexCount;
+        GLsizei m_sphereIndexCount;
 
-        // Cube geometry
-        std::vector<float> m_cubeVertices;
-        std::vector<unsigned int> m_cubeIndices;
-
-        // Sphere geometry
-        std::vector<float> m_sphereVertices;
-        std::vector<unsigned int> m_sphereIndices;
-
-        // Plane geometry
-        std::vector<float> m_planeVertices;
-        std::vector<unsigned int> m_planeIndices;
-
-        // Rendering properties
+        // View / interaction
         int m_width, m_height;
         float m_rotationX, m_rotationY;
+        glm::vec3 m_cameraPosition;
         glm::mat4 m_projectionMatrix;
         glm::mat4 m_viewMatrix;
-        glm::vec3 m_cameraPosition;
 
-        // Shaders
-        Engine::Shader* m_cubeShader;
-        Engine::Shader* m_sphereShader;
-        Engine::Shader* m_planeShader;
+        // Shaders (owned; compiled from embedded source)
+        Engine::Shader* m_litShader;      // reference cube
+        Engine::Shader* m_sphereShader;   // sphere cursor
+        Engine::Shader* m_discShader;     // plane cursor (camera-facing disc)
+        Engine::Shader* m_ringShader;     // fragment cursor (concentric rings)
+        Engine::Shader* m_gradientShader; // background
 
         bool m_initialized;
     };
