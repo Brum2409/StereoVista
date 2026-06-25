@@ -8,6 +8,7 @@
 #include <mutex>
 #include <atomic>
 #include <glad/glad.h>
+#include <cstring>
 #include <filesystem>
 #include <future>
 #include <map>
@@ -239,27 +240,27 @@ namespace Engine {
             return loadFromLAS(filePath, downsampleFactor);
         }
         else if (extension == ".ply") {
-            // Only ASCII PLY is supported: it falls through to the text parser
-            // below, which skips the (non-numeric) header lines and reads the
-            // "x y z [r g b]" vertex rows. Binary PLY would be parsed as garbage
-            // by the text path, so detect it up front and fail with a clear
-            // message instead of loading nonsense.
+            // PLY comes in ASCII and binary variants. ASCII PLY falls through to
+            // the text parser below, which skips the (non-numeric) header lines
+            // and reads the "x y z [r g b]" vertex rows. Binary PLY is dispatched
+            // to a dedicated header-driven reader (loadFromBinaryPLY).
             std::ifstream header(filePath, std::ios::binary);
             std::string line;
+            bool isBinaryPly = false;
             if (header.is_open() && std::getline(header, line)) {
                 // First non-empty line of a PLY file is the "ply" magic; the
                 // "format" line that follows states ascii vs binary_*.
                 while (std::getline(header, line)) {
                     if (line.rfind("format", 0) == 0) {
-                        if (line.find("binary") != std::string::npos) {
-                            std::cerr << "[PLY] Binary PLY is not supported. "
-                                         "Please re-export as ASCII PLY (or XYZ/TXT). File: "
-                                      << filePath << "\n";
-                            return PointCloud{};
-                        }
-                        break; // ASCII PLY -> fall through to the text parser
+                        if (line.find("binary") != std::string::npos) isBinaryPly = true;
+                        break;
                     }
                 }
+            }
+            header.close();
+            if (isBinaryPly) {
+                std::cout << "[DEBUG] Loading as binary PLY file" << std::endl;
+                return loadFromBinaryPLY(filePath, downsampleFactor);
             }
             // ASCII PLY continues into the default text handling below.
         }
@@ -490,6 +491,313 @@ namespace Engine {
 
         std::cout << "[TextPC] Loaded " << totalPoints << " points into "
                   << batchIndex << " compute batches (no octree, no CPU copy)\n";
+
+        return std::move(pointCloud);
+    }
+
+    // =========================================================================
+    // Binary PLY support
+    // =========================================================================
+    // Most point clouds exported by scanners and tools (CloudCompare, MeshLab,
+    // PDAL, …) use binary PLY, not ASCII. We parse the ASCII header to learn the
+    // vertex record layout, then stream-read the fixed-stride binary records
+    // straight into the compute SSBOs, exactly like the text loader.
+    namespace {
+        enum class PlyType { Invalid, Int8, Uint8, Int16, Uint16, Int32, Uint32, Float32, Float64 };
+
+        int plyTypeSize(PlyType t) {
+            switch (t) {
+                case PlyType::Int8:  case PlyType::Uint8:                       return 1;
+                case PlyType::Int16: case PlyType::Uint16:                      return 2;
+                case PlyType::Int32: case PlyType::Uint32: case PlyType::Float32: return 4;
+                case PlyType::Float64:                                          return 8;
+                default:                                                        return 0;
+            }
+        }
+
+        PlyType parsePlyType(const std::string& s) {
+            if (s == "char"   || s == "int8")    return PlyType::Int8;
+            if (s == "uchar"  || s == "uint8")   return PlyType::Uint8;
+            if (s == "short"  || s == "int16")   return PlyType::Int16;
+            if (s == "ushort" || s == "uint16")  return PlyType::Uint16;
+            if (s == "int"    || s == "int32")   return PlyType::Int32;
+            if (s == "uint"   || s == "uint32")  return PlyType::Uint32;
+            if (s == "float"  || s == "float32") return PlyType::Float32;
+            if (s == "double" || s == "float64") return PlyType::Float64;
+            return PlyType::Invalid;
+        }
+
+        // Read one scalar of type t from p, byte-swapping when the file's
+        // endianness differs from the host, and return it as a double.
+        double readPlyValue(const char* p, PlyType t, bool swap) {
+            const int n = plyTypeSize(t);
+            char b[8];
+            if (swap) { for (int i = 0; i < n; i++) b[i] = p[n - 1 - i]; p = b; }
+            switch (t) {
+                case PlyType::Int8:    { int8_t   v; std::memcpy(&v, p, 1); return static_cast<double>(v); }
+                case PlyType::Uint8:   { uint8_t  v; std::memcpy(&v, p, 1); return static_cast<double>(v); }
+                case PlyType::Int16:   { int16_t  v; std::memcpy(&v, p, 2); return static_cast<double>(v); }
+                case PlyType::Uint16:  { uint16_t v; std::memcpy(&v, p, 2); return static_cast<double>(v); }
+                case PlyType::Int32:   { int32_t  v; std::memcpy(&v, p, 4); return static_cast<double>(v); }
+                case PlyType::Uint32:  { uint32_t v; std::memcpy(&v, p, 4); return static_cast<double>(v); }
+                case PlyType::Float32: { float    v; std::memcpy(&v, p, 4); return static_cast<double>(v); }
+                case PlyType::Float64: { double   v; std::memcpy(&v, p, 8); return v; }
+                default:               return 0.0;
+            }
+        }
+
+        struct PlyProp    { std::string name; PlyType type = PlyType::Invalid; bool isList = false; PlyType countType = PlyType::Invalid; };
+        struct PlyElement { std::string name; size_t count = 0; std::vector<PlyProp> props; };
+
+        // Convert a colour/intensity channel to [0,1] based on its storage type.
+        // Integer channels are normalised by their full range; floating-point
+        // channels are assumed to already be in [0,1] by PLY convention.
+        float plyChannelToUnit(double v, PlyType t) {
+            switch (t) {
+                case PlyType::Uint8:   return static_cast<float>(v / 255.0);
+                case PlyType::Int8:    return static_cast<float>(v / 127.0);
+                case PlyType::Uint16:  return static_cast<float>(v / 65535.0);
+                case PlyType::Int16:   return static_cast<float>(v / 32767.0);
+                case PlyType::Float32:
+                case PlyType::Float64: return static_cast<float>(v);
+                default:               return static_cast<float>(v / 255.0);
+            }
+        }
+    } // anonymous namespace
+
+    PointCloud PointCloudLoader::loadFromBinaryPLY(const std::string& filePath, size_t downsampleFactor) {
+        std::cout << "[PLY] Loading binary PLY: " << filePath << std::endl;
+        std::ifstream f(filePath, std::ios::binary);
+        if (!f.is_open()) {
+            std::cerr << "[PLY] Failed to open: " << filePath << "\n";
+            return PointCloud{};
+        }
+
+        // ── Parse the ASCII header ──────────────────────────────────────────
+        bool sawMagic      = false;
+        bool isBinary      = false;
+        bool fileBigEndian = false;
+        std::vector<PlyElement> elements;
+        std::string line;
+
+        while (std::getline(f, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            std::istringstream ss(line);
+            std::string tok;
+            if (!(ss >> tok)) continue;                       // blank line
+            if (tok == "ply")     { sawMagic = true; continue; }
+            if (tok == "comment" || tok == "obj_info") continue;
+            if (tok == "format") {
+                std::string fmt; ss >> fmt;
+                if      (fmt == "binary_little_endian") { isBinary = true;  fileBigEndian = false; }
+                else if (fmt == "binary_big_endian")    { isBinary = true;  fileBigEndian = true;  }
+                else                                    { isBinary = false; } // ascii
+                continue;
+            }
+            if (tok == "element") {
+                PlyElement e;
+                ss >> e.name >> e.count;
+                elements.push_back(std::move(e));
+                continue;
+            }
+            if (tok == "property") {
+                if (elements.empty()) continue;               // malformed; ignore
+                std::string t1; ss >> t1;
+                PlyProp p;
+                if (t1 == "list") {
+                    std::string ctype, vtype, name;
+                    ss >> ctype >> vtype >> name;
+                    p.isList    = true;
+                    p.countType = parsePlyType(ctype);
+                    p.type      = parsePlyType(vtype);
+                    p.name      = name;
+                } else {
+                    std::string name; ss >> name;
+                    p.type = parsePlyType(t1);
+                    p.name = name;
+                }
+                elements.back().props.push_back(std::move(p));
+                continue;
+            }
+            if (tok == "end_header") break;
+        }
+
+        if (!sawMagic) { std::cerr << "[PLY] Not a PLY file: " << filePath << "\n"; return PointCloud{}; }
+        if (!isBinary) { std::cerr << "[PLY] loadFromBinaryPLY called on non-binary PLY: " << filePath << "\n"; return PointCloud{}; }
+
+        const std::streampos dataStart = f.tellg();
+        if (dataStart == std::streampos(-1)) {
+            std::cerr << "[PLY] Could not locate binary data start in " << filePath << "\n";
+            return PointCloud{};
+        }
+
+        // ── Locate the vertex element and its layout ────────────────────────
+        int vertexIdx = -1;
+        for (size_t i = 0; i < elements.size(); i++)
+            if (elements[i].name == "vertex") { vertexIdx = static_cast<int>(i); break; }
+        if (vertexIdx < 0) { std::cerr << "[PLY] No 'vertex' element in " << filePath << "\n"; return PointCloud{}; }
+
+        // Skip any fixed-size elements that precede vertex (rare). A list
+        // property before vertex makes the offset un-computable -> bail out.
+        std::streamoff skipBytes = 0;
+        for (int i = 0; i < vertexIdx; i++) {
+            size_t es = 0;
+            for (const auto& p : elements[i].props) {
+                if (p.isList) {
+                    std::cerr << "[PLY] Unsupported: list property in element '" << elements[i].name
+                              << "' before vertex in " << filePath << "\n";
+                    return PointCloud{};
+                }
+                es += plyTypeSize(p.type);
+            }
+            skipBytes += static_cast<std::streamoff>(elements[i].count) * static_cast<std::streamoff>(es);
+        }
+
+        const PlyElement& V = elements[vertexIdx];
+        int     offX=-1, offY=-1, offZ=-1, offR=-1, offG=-1, offB=-1, offI=-1;
+        PlyType tX=PlyType::Invalid, tY=PlyType::Invalid, tZ=PlyType::Invalid;
+        PlyType tR=PlyType::Invalid, tG=PlyType::Invalid, tB=PlyType::Invalid, tI=PlyType::Invalid;
+        size_t  cur = 0;
+        for (const auto& p : V.props) {
+            if (p.isList) {
+                std::cerr << "[PLY] Unsupported: list property in vertex element of " << filePath << "\n";
+                return PointCloud{};
+            }
+            const int sz = plyTypeSize(p.type);
+            if (sz == 0) { std::cerr << "[PLY] Unknown property type for '" << p.name << "' in " << filePath << "\n"; return PointCloud{}; }
+            std::string n = p.name;
+            std::transform(n.begin(), n.end(), n.begin(), ::tolower);
+            if      (n == "x") { offX = static_cast<int>(cur); tX = p.type; }
+            else if (n == "y") { offY = static_cast<int>(cur); tY = p.type; }
+            else if (n == "z") { offZ = static_cast<int>(cur); tZ = p.type; }
+            else if (n == "red"   || n == "r" || n == "diffuse_red")   { offR = static_cast<int>(cur); tR = p.type; }
+            else if (n == "green" || n == "g" || n == "diffuse_green") { offG = static_cast<int>(cur); tG = p.type; }
+            else if (n == "blue"  || n == "b" || n == "diffuse_blue")  { offB = static_cast<int>(cur); tB = p.type; }
+            else if (n == "intensity" || n == "scalar_intensity")      { offI = static_cast<int>(cur); tI = p.type; }
+            cur += static_cast<size_t>(sz);
+        }
+        const size_t stride = cur;
+        if (offX < 0 || offY < 0 || offZ < 0 || stride == 0) {
+            std::cerr << "[PLY] vertex element missing x/y/z in " << filePath << "\n";
+            return PointCloud{};
+        }
+        const bool hasColor     = (offR >= 0 && offG >= 0 && offB >= 0);
+        const bool hasIntensity = (offI >= 0);
+
+        // Detect host endianness at runtime; byte-swap only when it differs.
+        const uint16_t endianProbe = 1;
+        const bool hostBig = (*reinterpret_cast<const char*>(&endianProbe) == 0);
+        const bool swap    = (fileBigEndian != hostBig);
+
+        // ── Set up the cloud and pre-allocate SSBOs ─────────────────────────
+        PointCloud pointCloud;
+        pointCloud.name     = "PointCloud_" + std::filesystem::path(filePath).filename().string();
+        pointCloud.position = glm::vec3(0.0f);
+        pointCloud.rotation = glm::vec3(0.0f);
+        pointCloud.scale    = glm::vec3(1.0f);
+
+        const size_t vertexCount = V.count;
+        if (vertexCount == 0) {
+            std::cerr << "[PLY] vertex element has 0 points in " << filePath << "\n";
+            return std::move(pointCloud);
+        }
+        const size_t allocPoints = (downsampleFactor > 1)
+                                  ? (vertexCount / downsampleFactor + 1)
+                                  : vertexCount;
+        allocateComputeSSBOs(pointCloud, allocPoints);
+
+        f.clear();
+        f.seekg(dataStart + skipBytes);
+        if (!f) {
+            std::cerr << "[PLY] Failed to seek to vertex data in " << filePath << "\n";
+            deleteComputeSSBOs(pointCloud);
+            return std::move(pointCloud);
+        }
+
+        // ── Stream-read fixed-stride vertex records into compute batches ────
+        std::vector<PointCloudPoint> batchBuf;
+        batchBuf.reserve(PointCloud::kComputeBatchSize);
+
+        int    batchIndex  = 0;
+        size_t totalPoints = 0;
+        glm::vec3 gMin( FLT_MAX), gMax(-FLT_MAX);
+
+        auto flushBatch = [&]() {
+            if (batchBuf.empty()) return;
+            uploadComputeBatch(pointCloud, batchBuf.data(),
+                               static_cast<int>(batchBuf.size()),
+                               batchIndex, static_cast<int>(totalPoints));
+            totalPoints += batchBuf.size();
+            batchIndex++;
+            batchBuf.clear();
+            if (batchIndex % 1000 == 0)
+                std::cout << "[PLY] " << totalPoints << " points uploaded...\n";
+        };
+
+        // Read whole records only: buffer holds an integral number of records
+        // plus one record of headroom for any partial record carried over a
+        // read boundary (truncated files).
+        const size_t recordsPerRead = 65536;
+        const size_t bufBytes       = recordsPerRead * stride;
+        std::vector<char> buf(bufBytes + stride);
+        size_t carryLen    = 0;
+        size_t recordsRead = 0;
+
+        while (recordsRead < vertexCount) {
+            f.read(buf.data() + carryLen, static_cast<std::streamsize>(bufBytes));
+            const std::streamsize got = f.gcount();
+            const size_t avail = carryLen + static_cast<size_t>(got);
+            size_t nRec = avail / stride;
+            if (recordsRead + nRec > vertexCount) nRec = vertexCount - recordsRead; // ignore trailing (e.g. face) data
+
+            for (size_t i = 0; i < nRec; i++) {
+                const size_t globalIdx = recordsRead + i;
+                if (downsampleFactor > 1 && (globalIdx % downsampleFactor) != 0) continue;
+
+                const char* rec = buf.data() + i * stride;
+                PointCloudPoint pt;
+                pt.position = glm::vec3(
+                    static_cast<float>(readPlyValue(rec + offX, tX, swap)),
+                    static_cast<float>(readPlyValue(rec + offY, tY, swap)),
+                    static_cast<float>(readPlyValue(rec + offZ, tZ, swap)));
+                pt.color = hasColor
+                    ? glm::vec3(plyChannelToUnit(readPlyValue(rec + offR, tR, swap), tR),
+                                plyChannelToUnit(readPlyValue(rec + offG, tG, swap), tG),
+                                plyChannelToUnit(readPlyValue(rec + offB, tB, swap), tB))
+                    : glm::vec3(1.0f);
+                pt.intensity = hasIntensity
+                    ? plyChannelToUnit(readPlyValue(rec + offI, tI, swap), tI)
+                    : 1.0f;
+
+                gMin = glm::min(gMin, pt.position);
+                gMax = glm::max(gMax, pt.position);
+                batchBuf.push_back(pt);
+                if (static_cast<int>(batchBuf.size()) == PointCloud::kComputeBatchSize)
+                    flushBatch();
+            }
+
+            recordsRead += nRec;
+            const size_t consumed = nRec * stride;
+            carryLen = avail - consumed;
+            if (carryLen > 0 && recordsRead < vertexCount)
+                std::memmove(buf.data(), buf.data() + consumed, carryLen);
+            if (got == 0) break; // EOF / truncated file
+        }
+
+        flushBatch();
+        f.close();
+
+        if (totalPoints < allocPoints) trimComputeSSBOs(pointCloud, totalPoints);
+
+        pointCloud.numBatches      = static_cast<uint32_t>(batchIndex);
+        pointCloud.totalPointCount = static_cast<uint32_t>(totalPoints);
+        pointCloud.boundsMin       = gMin;
+        pointCloud.boundsMax       = gMax;
+
+        std::cout << "[PLY] Loaded " << totalPoints << " of " << vertexCount
+                  << " binary-PLY points into " << batchIndex << " compute batches"
+                  << (hasColor ? " (with colour)" : "")
+                  << (hasIntensity ? " (with intensity)" : "") << "\n";
 
         return std::move(pointCloud);
     }
