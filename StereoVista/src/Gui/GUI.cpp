@@ -15,6 +15,7 @@
 #include "Tools/ClipPlaneTool.h"
 #include "Tools/MeasurementTool.h"
 #include "Tools/TransformGizmo.h"
+#include "Plugins/PluginManager.h"
 #include "imgui/IconsFontAwesome5.h"
 #include "imgui/imgui_sytle.h"
 #include "libs/portable-file-dialogs.h"
@@ -80,6 +81,12 @@ extern bool showMeasurementToolWindow;
 // Section / clip plane tool
 extern Tools::ClipPlaneTool clipPlaneTool;
 extern bool showClipPlaneToolWindow;
+
+// Plugin system (owned by main.cpp). g_pluginContext is a reference to the
+// concrete services API; both are used to dispatch the Tools-menu entries and
+// the plugin ImGui windows.
+extern Plugins::PluginManager g_pluginManager;
+extern Plugins::PluginContext &g_pluginContext;
 
 // Snapshots
 extern bool showSnapshotsWindow;
@@ -2093,8 +2100,8 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       menuButtonTooltip("Scatter copies of a model across surfaces with the "
                         "paint brush");
 
-      ImGui::MenuItem("Measure", nullptr, &showMeasurementToolWindow);
-      menuButtonTooltip("Measure distances, angles and coordinates in the scene");
+      // "Measure" is now contributed by MeasurementPlugin through the plugin
+      // menu dispatch below, alongside any other registered plugins.
 
       ImGui::MenuItem("Section Planes", nullptr, &showClipPlaneToolWindow);
       menuButtonTooltip("Slice the scene with clipping planes to inspect "
@@ -2102,6 +2109,10 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
 
       ImGui::MenuItem("Snapshots", nullptr, &showSnapshotsWindow);
       menuButtonTooltip("Save and restore camera / scene / tool snapshots");
+
+      // Plugin-contributed tool entries (each toggles its own window).
+      ImGui::Separator();
+      g_pluginManager.renderMenu(g_pluginContext);
 
       ImGui::EndMenu();
     }
@@ -2805,9 +2816,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
     renderBrushToolWindow();
   }
 
-  if (showMeasurementToolWindow) {
-    renderMeasurementToolWindow();
-  }
+  // Plugin ImGui windows (MeasurementPlugin draws the measurement window here,
+  // gated by showMeasurementToolWindow; other plugins draw their own windows).
+  g_pluginManager.renderUI(g_pluginContext);
 
   if (showClipPlaneToolWindow) {
     renderClipPlaneToolWindow();

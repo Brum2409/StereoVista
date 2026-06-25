@@ -138,6 +138,15 @@
     <ClCompile Include="src\Tools\TransformGizmo.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\Plugins\PluginManager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Plugins\MeasurementPlugin.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Plugins\Examples\CrosshairPlugin.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\Engine\DDGIVolume.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -504,6 +513,24 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\Tools\TransformGizmo.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Plugins\Plugin.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Plugins\PluginContext.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Plugins\PluginManager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Plugins\PluginRegistry.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Plugins\MeasurementPlugin.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Plugins\Examples\CrosshairPlugin.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\Loaders\ModelLoader.h">
