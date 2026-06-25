@@ -41,12 +41,22 @@ struct PluginRegistrar {
 
 } // namespace Plugins
 
+// Token-paste helpers: build a unique registrar name from __LINE__. The extra
+// indirection is required so __LINE__ is expanded before pasting. Pasting the
+// line number (not the type) lets REGISTER_PLUGIN accept a namespace-qualified
+// type, e.g. REGISTER_PLUGIN(Plugins::CrosshairPlugin), without producing an
+// invalid identifier.
+#define PLUGIN_REGISTRY_CONCAT_(a, b) a##b
+#define PLUGIN_REGISTRY_CONCAT(a, b) PLUGIN_REGISTRY_CONCAT_(a, b)
+
 // Register a Plugin subclass so the PluginManager instantiates it at startup.
-// Use in the plugin's .cpp, at file scope, e.g.  REGISTER_PLUGIN(CrosshairPlugin);
+// Use in the plugin's .cpp, at file scope, e.g.
+//   REGISTER_PLUGIN(Plugins::CrosshairPlugin);
 #define REGISTER_PLUGIN(Type)                                                  \
     namespace {                                                                \
-    const ::Plugins::PluginRegistrar s_pluginRegistrar_##Type(                 \
-        []() -> std::unique_ptr<::Plugins::Plugin> {                           \
-            return std::make_unique<Type>();                                   \
-        });                                                                    \
+    const ::Plugins::PluginRegistrar                                           \
+        PLUGIN_REGISTRY_CONCAT(s_pluginRegistrar_, __LINE__)(                  \
+            []() -> std::unique_ptr<::Plugins::Plugin> {                       \
+                return std::make_unique<Type>();                              \
+            });                                                                \
     }
