@@ -225,6 +225,9 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClCompile Include="src\Tools\ClipPlaneTool.cpp" />
     <ClCompile Include="src\Tools\MeasurementTool.cpp" />
     <ClCompile Include="src\Tools\TransformGizmo.cpp" />
+    <ClCompile Include="src\Plugins\PluginManager.cpp" />
+    <ClCompile Include="src\Plugins\MeasurementPlugin.cpp" />
+    <ClCompile Include="src\Plugins\Examples\CrosshairPlugin.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="headers\core.h" />
@@ -256,6 +259,12 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClInclude Include="headers\Tools\ClipPlaneTool.h" />
     <ClInclude Include="headers\Tools\MeasurementTool.h" />
     <ClInclude Include="headers\Tools\TransformGizmo.h" />
+    <ClInclude Include="headers\Plugins\Plugin.h" />
+    <ClInclude Include="headers\Plugins\PluginContext.h" />
+    <ClInclude Include="headers\Plugins\PluginManager.h" />
+    <ClInclude Include="headers\Plugins\PluginRegistry.h" />
+    <ClInclude Include="headers\Plugins\MeasurementPlugin.h" />
+    <ClInclude Include="headers\Plugins\Examples\CrosshairPlugin.h" />
     <ClInclude Include="headers\libs\assimp\aabb.h" />
     <ClInclude Include="headers\libs\assimp\ai_assert.h" />
     <ClInclude Include="headers\libs\assimp\anim.h" />

@@ -93,10 +93,15 @@ StereoVista/
 
 ### Core Patterns
 
-- **Manager pattern:** `CursorManager`, `SceneManager`, `ShortcutManager`
+- **Manager pattern:** `CursorManager`, `SceneManager`, `ShortcutManager`, `PluginManager`
 - **Renderer pattern:** `BloomRenderer`, `SSAORenderer`, `ComputePointCloudRenderer`
+- **Plugin pattern:** tools are `Plugins::Plugin` subclasses that self-register (`REGISTER_PLUGIN`) and are driven by `Plugins::PluginManager` through a `Plugins::PluginContext` services API (`headers/Plugins/`). See **Plugin System** below.
 - **Enum-based configuration:** `SkyboxType`, `LightingMode`, `CursorScalingMode` in `headers/Gui/GuiTypes.h`
 - **JSON persistence:** Preferences, cursor presets, and scene files serialized to JSON at runtime
+
+### Plugin System
+
+New tools are added as **static (compile-time) plugins** rather than hand-wired globals. A plugin is a `Plugins::Plugin` subclass (`headers/Plugins/Plugin.h`) that overrides only the hooks it needs (lifecycle, `onRenderViewport` per eye, `onRenderUI`, `onRenderMenu`, and `bool`-returning `onMouseButton`/`onScroll`/`onKey` input hooks) and self-registers with `REGISTER_PLUGIN(Type)` in its `.cpp`. Each hook receives a `Plugins::PluginContext&` exposing common services (scene, camera, picking/3D-cursor, preferences, undo, toasts, and a `compileOverlayProgram` GL helper); the concrete context lives in `main.cpp` as `MainPluginContext` over the existing globals. `Plugins::PluginManager` (globals `g_pluginManager` / `g_pluginContext` in `main.cpp`) owns the plugins and is driven from a few integration points in `main.cpp`/`GUI.cpp`. Adding a tool = one header + one `.cpp` + a `REGISTER_PLUGIN` line + listing both files in the `.vcxproj`/`.filters` (no edits to `main.cpp`/`GUI.cpp`). `Tools::MeasurementTool` is migrated onto this system via the `Plugins::MeasurementPlugin` adapter; `CrosshairPlugin` (`headers/Plugins/Examples/`) is the copy-me template. **Full guide: `docs/PLUGINS.md`.**
 
 ### Rendering Pipeline
 

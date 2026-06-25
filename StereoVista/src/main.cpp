@@ -36,6 +36,7 @@
 #include "Tools/MeasurementTool.h"
 #include "Tools/ClipPlaneTool.h"
 #include "Tools/TransformGizmo.h"
+#include "Plugins/PluginManager.h"
 
 // ---- OpenXR (Windows only; zero overhead when disabled) ----
 #ifdef _WIN32
@@ -392,6 +393,95 @@ int g_viewportHeight = 1080;
 // Last size the offscreen render targets were sized to, for change detection.
 static int g_lastViewportW = -1;
 static int g_lastViewportH = -1;
+
+// ── Plugin system ───────────────────────────────────────────────────────────
+// The PluginManager owns every plugin/tool and is driven from the handful of
+// integration points below (init, shutdown, per-eye render, ImGui pass, Tools
+// menu and the GLFW input callbacks). MainPluginContext is the concrete
+// services API handed to plugins: it simply forwards to the application globals
+// declared above, keeping the plugin layer decoupled from this translation
+// unit. Both g_pluginManager and g_pluginContext are referenced from GUI.cpp
+// (see the externs there).
+struct MainPluginContext : public Plugins::PluginContext {
+  Engine::Scene &scene() override { return currentScene; }
+  const Camera &camera() const override { return ::camera; }
+  glm::vec3 cameraPosition() const override { return ::camera.Position; }
+  GUI::ApplicationPreferences &preferences() override { return ::preferences; }
+  Engine::UndoManager &undo() override { return Engine::UndoManager::instance(); }
+
+  Plugins::PickRay mouseRay() const override {
+    Plugins::PickRay r;
+    glm::vec3 rayNear, rayFar;
+    calculateMouseRay(lastX, lastY, r.origin, r.direction, rayNear, rayFar,
+                      aspectRatio);
+    return r;
+  }
+  bool cursorWorldPos(glm::vec3 &out) const override {
+    if (!cursorManager.isCursorPositionValid())
+      return false;
+    out = cursorManager.getCursorPosition();
+    return true;
+  }
+  Plugins::RayHit raycastModels() const override {
+    Plugins::RayHit best;
+    const Plugins::PickRay ray = mouseRay();
+    float closest = FLT_MAX;
+    for (int i = 0; i < static_cast<int>(currentScene.models.size()); i++) {
+      float distance;
+      glm::vec3 normal;
+      if (rayIntersectsModel(ray.origin, ray.direction, currentScene.models[i],
+                             distance, normal) &&
+          distance < closest) {
+        closest = distance;
+        best.hit = true;
+        best.distance = distance;
+        best.position = ray.origin + ray.direction * distance;
+        best.normal = normal;
+        best.modelIndex = i;
+      }
+    }
+    return best;
+  }
+
+  glm::vec2 mousePos() const override {
+    return glm::vec2(static_cast<float>(lastX), static_cast<float>(lastY));
+  }
+  int keyMods() const override {
+    int mods = 0;
+    GLFWwindow *w = Engine::Window::nativeWindow;
+    if (!w)
+      return 0;
+    if (glfwGetKey(w, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
+        glfwGetKey(w, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS)
+      mods |= GLFW_MOD_CONTROL;
+    if (glfwGetKey(w, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
+        glfwGetKey(w, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS)
+      mods |= GLFW_MOD_SHIFT;
+    if (glfwGetKey(w, GLFW_KEY_LEFT_ALT) == GLFW_PRESS ||
+        glfwGetKey(w, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS)
+      mods |= GLFW_MOD_ALT;
+    return mods;
+  }
+  glm::vec2 viewportSize() const override {
+    return glm::vec2(static_cast<float>(g_viewportWidth),
+                     static_cast<float>(g_viewportHeight));
+  }
+
+  void toast(const std::string &message, Plugins::ToastLevel level) override {
+    GUI::ToastType type = GUI::ToastType::Info;
+    switch (level) {
+    case Plugins::ToastLevel::Success: type = GUI::ToastType::Success; break;
+    case Plugins::ToastLevel::Warning: type = GUI::ToastType::Warning; break;
+    case Plugins::ToastLevel::Error:   type = GUI::ToastType::Error;   break;
+    case Plugins::ToastLevel::Info:    type = GUI::ToastType::Info;    break;
+    }
+    GUI::ShowToast(message, type);
+  }
+};
+
+Plugins::PluginManager g_pluginManager;
+static MainPluginContext g_pluginContextImpl;
+Plugins::PluginContext &g_pluginContext = g_pluginContextImpl;
 
 // Map an OS cursor position (window pixels, top-left origin) to viewport NDC.
 static inline glm::vec2 WindowToViewportNDC(double mx, double my) {
@@ -3769,6 +3859,14 @@ int main() {
   glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
   glfwSwapInterval(preferences.vsyncEnabled ? 1 : 0);
 
+  // ---- Plugins ----
+  // Instantiate every statically-registered plugin (REGISTER_PLUGIN), bridge
+  // the legacy MeasurementTool onto the same pipeline, then create their GL
+  // resources now that a context exists. After this point new tools are driven
+  // entirely through g_pluginManager from the integration points below.
+  g_pluginManager.loadRegisteredPlugins(g_pluginContext);
+  g_pluginManager.initializeAllGL(g_pluginContext);
+
   // ---- Main Loop ----
   // Screenshot capture is deferred by one frame: when a request comes in we
   // arm a capture for the *next* frame. That way the captured back buffer never
@@ -3876,6 +3974,9 @@ int main() {
 
     // Keep the clip-plane tool bound to the current scene's plane storage.
     clipPlaneTool.setPlanes(&currentScene.clipPlanes);
+
+    // ---- Plugins: per-frame logic update ----
+    g_pluginManager.update(g_pluginContext, deltaTime);
 
     // ---- Transform Gizmo: bind target + process hover / constrained drag ----
     // Safety net: if the mouse-up landed over an ImGui panel (whose callback
@@ -4972,6 +5073,9 @@ void cleanup() {
 
   // Clean up cursor preview before GUI shutdown
   cursorPreview3D.cleanup();
+
+  // Clean up plugin GL resources while the context is still valid.
+  g_pluginManager.shutdownAllGL();
 
   // Clean up measurement tool GL resources while the context is still valid
   measurementTool.cleanup();
@@ -6447,17 +6551,12 @@ void renderEye(GLenum drawBuffer, const glm::mat4 &projection,
     cursorManager.renderCursors(projection, view);
   }
 
-  // Render measurement overlay (committed measurements always; rubber-band
-  // preview only while the tool is active and the cursor is on geometry)
-  {
-    glm::vec3 measurePreviewPos;
-    const glm::vec3 *measurePreview = nullptr;
-    if (measurementTool.isEnabled() && cursorManager.isCursorPositionValid()) {
-      measurePreviewPos = cursorManager.getCursorPosition();
-      measurePreview = &measurePreviewPos;
-    }
-    measurementTool.render(projection, view, measurePreview);
-  }
+  // Plugin world-space overlays (called once per eye with this eye's matrices).
+  // The migrated MeasurementTool draws its measurement overlay here via its
+  // MeasurementPlugin adapter; other plugins (e.g. the Crosshair example) draw
+  // alongside it.
+  g_pluginManager.renderViewport(g_pluginContext, projection, view,
+                                 camera.Position);
 
   // Render the transform gizmo overlay for the selected object (per eye).
   // Only shown while Ctrl is held (or while an in-progress drag keeps it alive).
@@ -7833,6 +7932,11 @@ void framebuffer_size_callback(GLFWwindow *window, int width, int height) {
 
 void scroll_callback(GLFWwindow *window, double xoffset, double yoffset) {
   if (!ImGui::GetIO().WantCaptureMouse && !spaceMouseActive) {
+    // Offer the scroll to plugins first; a plugin that consumes it stops the
+    // host's built-in scroll handling (clip-plane nudge, model depth, zoom).
+    if (g_pluginManager.dispatchScroll(g_pluginContext, xoffset, yoffset))
+      return;
+
     // Clip-plane scrubbing: while the tool is active with a selected plane,
     // scroll nudges the plane along its normal (mirrors model scroll-to-depth)
     // so the user can quickly slice through the model.
@@ -8151,6 +8255,12 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
     return;
   }
 
+  // Offer the event to plugins first; a plugin that consumes it (e.g. the
+  // MeasurementTool placing a point, or the Crosshair example dropping a
+  // marker) stops the host's built-in selection / navigation handling.
+  if (g_pluginManager.dispatchMouseButton(g_pluginContext, button, action, mods))
+    return;
+
   if (button == GLFW_MOUSE_BUTTON_LEFT) {
     if (action == GLFW_PRESS) {
       // Check if Ctrl or Alt is held down
@@ -8177,15 +8287,8 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
         }
       }
 
-      // Measurement tool: place a point at the 3D cursor position and consume
-      // the click (no orbiting/selection while measuring). Ctrl/Alt clicks
-      // still fall through to object selection.
-      if (!ctrlPressed && !altPressed && measurementTool.isEnabled()) {
-        if (cursorManager.isCursorPositionValid()) {
-          measurementTool.addPoint(cursorManager.getCursorPosition());
-        }
-        return;
-      }
+      // (Measurement-tool point placement is now handled by MeasurementPlugin
+      // via the plugin mouse-button dispatch at the top of this callback.)
 
       // Handle brush tool painting (when enabled and no modifiers pressed)
       if (!ctrlPressed && !altPressed &&
@@ -8735,12 +8838,8 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
     }
   } else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
     if (action == GLFW_PRESS) {
-      // Measurement tool: right-click finishes the in-progress polyline
-      // instead of starting a camera rotation.
-      if (measurementTool.isEnabled() && measurementTool.hasActive()) {
-        measurementTool.finishActive();
-        return;
-      }
+      // (Measurement-tool right-click finish is now handled by MeasurementPlugin
+      // via the plugin mouse-button dispatch at the top of this callback.)
 
       rightMousePressed = true;
 
@@ -8882,23 +8981,13 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
     return; // Only handle PRESS actions below for other keys
   }
 
-  // Measurement tool editing keys (only while a measurement is in progress).
+  // Offer the (PRESS) key event to plugins. MeasurementPlugin consumes its
+  // editing keys (Enter finishes, Delete cancels, Backspace removes the last
+  // point) while a measurement is in progress.
   // Note: Escape can't be used to cancel — Input::handleKeyInput closes the
   // application on Escape.
-  if (measurementTool.isEnabled() && measurementTool.hasActive()) {
-    if (key == GLFW_KEY_ENTER || key == GLFW_KEY_KP_ENTER) {
-      measurementTool.finishActive();
-      return;
-    }
-    if (key == GLFW_KEY_DELETE) {
-      measurementTool.cancelActive();
-      return;
-    }
-    if (key == GLFW_KEY_BACKSPACE) {
-      measurementTool.undoLastPoint();
-      return;
-    }
-  }
+  if (g_pluginManager.dispatchKey(g_pluginContext, key, scancode, action, mods))
+    return;
 
   // Check if this key press matches any shortcut action. Translate the physical
   // key to its layout label first so letter/number shortcuts trigger on the key
