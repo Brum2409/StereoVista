@@ -2128,8 +2128,7 @@ namespace Engine {
         (void)lasMin; (void)lasMax;
         buildComputeCloud(pointCloud, batchBuf);
 
-        std::cout << "[LAS] Loaded " << pointCloud.totalPointCount
-                  << " points (no octree, no CPU copy)\n";
+        std::cout << "[LAS] Loaded " << pointCloud.totalPointCount << " points\n";
         return pointCloud;
     }
 
