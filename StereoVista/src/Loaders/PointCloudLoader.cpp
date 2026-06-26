@@ -232,27 +232,11 @@ namespace Engine {
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     }
 
-    // ── Morton (Z-order) vertex reordering ───────────────────────────────────
-    // First half of Schütz's vertex-order optimisation (the block shuffle below
-    // is the second half): sort the points along a 3D Morton curve so that each
-    // fixed-size batch becomes a tight, spatially-local cube.  Tight batch AABBs
-    // make the per-batch frustum cull actually reject off-screen batches, give the
-    // precision-LOD selection a meaningful bounding sphere, and improve GPU cache
-    // coherency — exactly the wins reported in the Schütz papers and the Magnopus
-    // article.
-    //
-    // The reference renderers do this offline during point-cloud conversion.  This
-    // codebase streams arbitrary formats straight to GPU (peak CPU RAM = one
-    // batch), so instead we run it as a uniform POST-LOAD pass: decode the points
-    // back from the just-uploaded compute SSBOs, sort, and re-batch through the
-    // normal upload path.  That keeps it in one place for every loader.  It is
-    // skipped above a RAM budget, where the full decode would be too large — such
-    // clouds keep their on-disk order (and should be Morton-ordered offline).
-    static constexpr size_t kMortonSortMaxPoints = 50'000'000; // ~2 GB transient RAM
-
-    // libmorton "magic bits" split: spread the low 21 bits of `a` out to every
-    // third bit of a 63-bit value (after libmorton / Fabian Giesen).  Interleaving
-    // three of these yields a 63-bit 3D Morton code.
+    // ── libmorton "magic bits" 3D Morton (Z-order) encode ─────────────────────
+    // Spread the low 21 bits of an axis to every third bit of a 63-bit value, then
+    // interleave x/y/z (after libmorton / Fabian Giesen).  Sorting points by this
+    // code lays them out along a Z-order curve so spatially-near points are
+    // adjacent in memory.
     static inline uint64_t mortonSplitBy3(uint32_t a) {
         uint64_t x = static_cast<uint64_t>(a) & 0x1fffffULL;        // keep 21 bits
         x = (x | x << 32) & 0x1f00000000ffffULL;
@@ -266,77 +250,142 @@ namespace Engine {
         return mortonSplitBy3(x) | (mortonSplitBy3(y) << 1) | (mortonSplitBy3(z) << 2);
     }
 
-    static void mortonReorderComputeCloud(PointCloud& pc) {
-        const size_t total = pc.totalPointCount;
-        if (total < 2 || pc.numBatches == 0 || pc.computeBatchSSBO == 0) return;
-        if (total > kMortonSortMaxPoints) {
-            std::cout << "[Morton] Skipping Z-order reorder for " << total
-                      << " points (over " << kMortonSortMaxPoints
-                      << " budget); keeping on-disk order.\n";
-            return;
+    // ── Build the compute SSBOs from a cloud's full in-memory point list ──────
+    // Schütz's vertex-order optimisation, applied once at load:
+    //   1. sort points along a 3D Morton (Z-order) curve   → spatial locality;
+    //   2. cut the sorted sequence into fixed-size batches  → tight batch AABBs
+    //      (so the per-batch frustum cull and precision-LOD actually work, and
+    //       neighbouring points share cache lines);
+    //   3. randomly relocate whole batches, keeping each batch's internal order,
+    //      so that spatially-adjacent batches are no longer dispatched together —
+    //      this is what removes the atomicMin contention they would otherwise
+    //      cause (the dominant cost of the rasterize pass).
+    // The shuffled layout is written straight into the coordinate/colour SSBOs, so
+    // batch t owns the contiguous range [firstPoint, firstPoint+count) and the
+    // rasterizer needs no separate dispatch permutation.
+    //
+    // This replaces the old per-batch streaming uploads (and the post-load GPU
+    // decode round-trip) with a parallel quantise plus one bulk upload per SSBO —
+    // the bulk of the load-time speed-up.  `points` is consumed (freed) on success;
+    // quantisation matches the rasterize shader exactly (per-batch 30-bit, three
+    // 10-bit tiers; the RGBA alpha byte carries point intensity).
+    static void buildComputeCloud(PointCloud& pc, std::vector<PointCloudPoint>& points) {
+        deleteComputeSSBOs(pc);
+        if (pc.vbo) { glDeleteBuffers(1, &pc.vbo); pc.vbo = 0; }
+        if (pc.vao) { glDeleteVertexArrays(1, &pc.vao); pc.vao = 0; }
+        pc.numBatches      = 0;
+        pc.totalPointCount = 0;
+
+        const size_t N = points.size();
+        if (N == 0) return;
+
+        // ── 1. Global bounds ──────────────────────────────────────────────────
+        glm::vec3 gMin( FLT_MAX), gMax(-FLT_MAX);
+        for (const auto& p : points) { gMin = glm::min(gMin, p.position); gMax = glm::max(gMax, p.position); }
+        pc.boundsMin = gMin;
+        pc.boundsMax = gMax;
+
+        // ── 2. Morton-code sort (parallel) ────────────────────────────────────
+        const glm::vec3 ext = glm::max(gMax - gMin, glm::vec3(1e-9f));
+        constexpr uint32_t MAXQ = (1u << 21) - 1u;     // 21 bits/axis → 63-bit code
+        std::vector<std::pair<uint64_t, uint32_t>> order(N);
+        #pragma omp parallel for schedule(static)
+        for (long long i = 0; i < static_cast<long long>(N); ++i) {
+            const glm::vec3 n = glm::clamp((points[i].position - gMin) / ext, 0.0f, 1.0f);
+            const uint32_t qx = static_cast<uint32_t>(n.x * static_cast<float>(MAXQ));
+            const uint32_t qy = static_cast<uint32_t>(n.y * static_cast<float>(MAXQ));
+            const uint32_t qz = static_cast<uint32_t>(n.z * static_cast<float>(MAXQ));
+            order[static_cast<size_t>(i)] =
+                { mortonEncode3D(qx, qy, qz), static_cast<uint32_t>(i) };
         }
-
-        // ── 1. Decode every point back from the per-batch quantised SSBOs ──────
-        // forEachPointBatch streams one decoded batch at a time; collect them all.
-        std::vector<PointCloudPoint> pts;
-        pts.reserve(total);
-        const bool ok = PointCloudLoader::forEachPointBatch(pc,
-            [&](const PointCloudPoint* b, size_t n) { pts.insert(pts.end(), b, b + n); });
-        if (!ok || pts.size() < 2) return;   // original SSBOs untouched on failure
-
-        // ── 2. Sort by Morton code over the cloud's global bounds ──────────────
-        const glm::vec3 bMin = pc.boundsMin;
-        glm::vec3 ext = pc.boundsMax - pc.boundsMin;
-        ext = glm::max(ext, glm::vec3(1e-9f));
-        constexpr uint32_t MAXQ = (1u << 21) - 1u;   // 21 bits/axis → 63-bit code
-
-        std::vector<std::pair<uint64_t, uint32_t>> keyed(pts.size());
-        for (size_t i = 0; i < pts.size(); ++i) {
-            const glm::vec3 nrm = glm::clamp((pts[i].position - bMin) / ext, 0.0f, 1.0f);
-            const uint32_t qx = static_cast<uint32_t>(nrm.x * static_cast<float>(MAXQ));
-            const uint32_t qy = static_cast<uint32_t>(nrm.y * static_cast<float>(MAXQ));
-            const uint32_t qz = static_cast<uint32_t>(nrm.z * static_cast<float>(MAXQ));
-            keyed[i] = { mortonEncode3D(qx, qy, qz), static_cast<uint32_t>(i) };
-        }
-        std::sort(std::execution::par, keyed.begin(), keyed.end(),
+        std::sort(std::execution::par, order.begin(), order.end(),
                   [](const std::pair<uint64_t, uint32_t>& a,
                      const std::pair<uint64_t, uint32_t>& b) { return a.first < b.first; });
 
-        // ── 3. Re-batch the sorted points through the normal upload path ───────
-        // Fresh SSBOs (same point count); uploadComputeBatch recomputes each
-        // batch's tight AABB and re-quantises — now over Z-ordered, compact boxes.
-        allocateComputeSSBOs(pc, pts.size());
-        std::vector<PointCloudPoint> batch;
-        batch.reserve(PointCloud::kComputeBatchSize);
-        int    batchIndex = 0;
-        size_t first      = 0;
-        auto flush = [&]() {
-            if (batch.empty()) return;
-            uploadComputeBatch(pc, batch.data(), static_cast<int>(batch.size()),
-                               batchIndex, static_cast<int>(first));
-            first += batch.size();
-            ++batchIndex;
-            batch.clear();
-        };
-        for (const auto& kv : keyed) {
-            batch.push_back(pts[kv.second]);
-            if (static_cast<int>(batch.size()) == PointCloud::kComputeBatchSize) flush();
+        // ── 3. Partition into batches and randomly relocate them ──────────────
+        const int      B          = PointCloud::kComputeBatchSize;
+        const uint32_t numBatches = static_cast<uint32_t>((N + B - 1) / B);
+        std::vector<uint32_t> batchPerm(numBatches);
+        for (uint32_t i = 0; i < numBatches; ++i) batchPerm[i] = i;
+        std::mt19937 rng(0x5eed1234u);                 // fixed seed → reproducible
+        std::shuffle(batchPerm.begin(), batchPerm.end(), rng);
+
+        // Output offset of each post-shuffle batch (handles the partial last one).
+        std::vector<uint32_t> outFirst(numBatches);
+        for (uint32_t t = 0, off = 0; t < numBatches; ++t) {
+            const uint32_t src   = batchPerm[t];
+            const uint32_t count = static_cast<uint32_t>(
+                std::min<size_t>(static_cast<size_t>(B), N - static_cast<size_t>(src) * B));
+            outFirst[t] = off;
+            off += count;
         }
-        flush();
-        pc.numBatches      = static_cast<uint32_t>(batchIndex);
-        pc.totalPointCount = static_cast<uint32_t>(first);
 
-        std::cout << "[Morton] Z-ordered " << first << " points into "
-                  << batchIndex << " spatially-local batches\n";
-    }
+        // ── 4. Quantise into flat arrays, in final order (parallel over batches)
+        constexpr uint32_t STEPS_30BIT = 1u << 30;     // 2^30
+        constexpr uint32_t MASK_10BIT  = 1023u;
+        std::vector<uint32_t>     xyz4b(N), xyz8b(N), xyz12b(N), rgba(N);
+        std::vector<ComputeBatch> batches(numBatches);
 
-    // Post-load finalisation shared by every loader: Morton-sort the points so each
-    // batch is a tight spatial cube, then block-shuffle the dispatch order so
-    // spatially-adjacent (now atomic-colliding) batches are not in flight together.
-    // Together these are Schütz's full vertex-order optimisation.
-    static void finalizeComputeCloud(PointCloud& pc) {
-        mortonReorderComputeCloud(pc);
-        shuffleComputeBatchOrder(pc);
+        #pragma omp parallel for schedule(dynamic)
+        for (long long t = 0; t < static_cast<long long>(numBatches); ++t) {
+            const uint32_t src      = batchPerm[static_cast<size_t>(t)];
+            const size_t   srcStart = static_cast<size_t>(src) * B;
+            const uint32_t count    = static_cast<uint32_t>(std::min<size_t>(static_cast<size_t>(B), N - srcStart));
+            const uint32_t first    = outFirst[static_cast<size_t>(t)];
+
+            glm::vec3 bMin( FLT_MAX), bMax(-FLT_MAX);
+            for (uint32_t k = 0; k < count; ++k) {
+                const glm::vec3& p = points[order[srcStart + k].second].position;
+                bMin = glm::min(bMin, p);
+                bMax = glm::max(bMax, p);
+            }
+            const glm::vec3 sz = glm::max(bMax - bMin, glm::vec3(1e-6f));
+            batches[static_cast<size_t>(t)] = { bMin.x, bMin.y, bMin.z, bMax.x, bMax.y, bMax.z,
+                                                static_cast<int>(count), static_cast<int>(first) };
+
+            for (uint32_t k = 0; k < count; ++k) {
+                const PointCloudPoint& P = points[order[srcStart + k].second];
+                auto q = [&](float v, float lo, float s) -> uint32_t {
+                    const float nn = glm::clamp((v - lo) / s, 0.0f, 1.0f);
+                    return std::min(static_cast<uint32_t>(nn * static_cast<float>(STEPS_30BIT)),
+                                    STEPS_30BIT - 1u);
+                };
+                const uint32_t Xb = q(P.position.x, bMin.x, sz.x);
+                const uint32_t Yb = q(P.position.y, bMin.y, sz.y);
+                const uint32_t Zb = q(P.position.z, bMin.z, sz.z);
+                const uint32_t o  = first + k;
+                xyz4b [o] = ((Xb>>20)&MASK_10BIT) | (((Yb>>20)&MASK_10BIT)<<10) | (((Zb>>20)&MASK_10BIT)<<20);
+                xyz8b [o] = ((Xb>>10)&MASK_10BIT) | (((Yb>>10)&MASK_10BIT)<<10) | (((Zb>>10)&MASK_10BIT)<<20);
+                xyz12b[o] = (Xb&MASK_10BIT) | ((Yb&MASK_10BIT)<<10) | ((Zb&MASK_10BIT)<<20);
+                const uint32_t r8 = static_cast<uint32_t>(glm::clamp(P.color.r,    0.f, 1.f) * 255.f + 0.5f);
+                const uint32_t g8 = static_cast<uint32_t>(glm::clamp(P.color.g,    0.f, 1.f) * 255.f + 0.5f);
+                const uint32_t b8 = static_cast<uint32_t>(glm::clamp(P.color.b,    0.f, 1.f) * 255.f + 0.5f);
+                const uint32_t a8 = static_cast<uint32_t>(glm::clamp(P.intensity, 0.f, 1.f) * 255.f + 0.5f);
+                rgba[o] = (a8<<24)|(b8<<16)|(g8<<8)|r8;   // alpha carries intensity
+            }
+        }
+
+        // ── 5. Bulk upload: one glBufferData per SSBO ─────────────────────────
+        auto upload = [](GLuint& id, const void* data, GLsizeiptr bytes) {
+            glGenBuffers(1, &id);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, id);
+            glBufferData(GL_SHADER_STORAGE_BUFFER, bytes, data, GL_STATIC_DRAW);
+        };
+        upload(pc.computeBatchSSBO,  batches.data(), static_cast<GLsizeiptr>(batches.size() * sizeof(ComputeBatch)));
+        upload(pc.computeXyz4bSSBO,  xyz4b.data(),   static_cast<GLsizeiptr>(N * sizeof(uint32_t)));
+        upload(pc.computeXyz8bSSBO,  xyz8b.data(),   static_cast<GLsizeiptr>(N * sizeof(uint32_t)));
+        upload(pc.computeXyz12bSSBO, xyz12b.data(),  static_cast<GLsizeiptr>(N * sizeof(uint32_t)));
+        upload(pc.computeRGBASSBO,   rgba.data(),    static_cast<GLsizeiptr>(N * sizeof(uint32_t)));
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+        pc.numBatches             = numBatches;
+        pc.totalPointCount        = static_cast<uint32_t>(N);
+        pc.computePointsPerThread = (B + 127) / 128;
+
+        std::vector<PointCloudPoint>().swap(points);   // release CPU-side points
+
+        std::cout << "[ComputePC] Built " << N << " points into " << numBatches
+                  << " Morton-sorted, shuffled batches\n";
     }
 
     // Fast single-pass scan: count data lines in a text point cloud file.
@@ -461,12 +510,11 @@ namespace Engine {
         std::vector<char> ioBuf(IO_BUF);
         file.rdbuf()->pubsetbuf(ioBuf.data(), static_cast<std::streamsize>(IO_BUF));
 
-        // Batch accumulator – only one batch worth of points live in RAM
+        // Point accumulator – the whole cloud is collected here, then Morton-
+        // sorted, batch-shuffled, quantised and bulk-uploaded by buildComputeCloud.
         std::vector<PointCloudPoint> batchBuf;
-        batchBuf.reserve(PointCloud::kComputeBatchSize);
+        batchBuf.reserve(allocPoints);
 
-        int    batchIndex  = 0;
-        size_t totalPoints = 0;
         size_t lineCounter = 0;   // global line counter for downsampling
 
         // Global bounds tracking (updated per-point, negligible cost)
@@ -476,20 +524,10 @@ namespace Engine {
         std::string carryOver;
         carryOver.reserve(512);
 
-        auto flushBatch = [&]() {
-            if (batchBuf.empty()) return;
-            uploadComputeBatch(pointCloud,
-                               batchBuf.data(),
-                               static_cast<int>(batchBuf.size()),
-                               batchIndex,
-                               static_cast<int>(totalPoints));
-            totalPoints += batchBuf.size();
-            batchIndex++;
-            batchBuf.clear();
-
-            if (batchIndex % 1000 == 0)
-                std::cout << "[TextPC] " << totalPoints << " points uploaded...\n";
-        };
+        // No per-batch flush any more: points accumulate in batchBuf and are
+        // built in a single pass below.  Kept as a no-op so the existing
+        // size-threshold call sites stay valid.
+        auto flushBatch = [&]() {};
 
         constexpr size_t READ_CHUNK = 8 * 1024 * 1024; // 8 MB per read
         std::vector<char> readBuf(READ_CHUNK);
@@ -631,22 +669,12 @@ namespace Engine {
             }
         }
 
-        flushBatch(); // Upload last partial batch
         file.close();
 
-        // Trim SSBOs if we over-allocated (header lines, blank lines, etc.)
-        if (totalPoints < allocPoints) {
-            trimComputeSSBOs(pointCloud, totalPoints);
-        }
+        // Morton-sort + batch-shuffle + quantise + bulk-upload in one pass.
+        buildComputeCloud(pointCloud, batchBuf);
 
-        pointCloud.numBatches      = static_cast<uint32_t>(batchIndex);
-        pointCloud.totalPointCount = static_cast<uint32_t>(totalPoints);
-        pointCloud.boundsMin       = gMin;
-        pointCloud.boundsMax       = gMax;
-        finalizeComputeCloud(pointCloud); // Morton Z-order reorder + block shuffle
-
-        std::cout << "[TextPC] Loaded " << totalPoints << " points into "
-                  << batchIndex << " compute batches (no octree, no CPU copy)\n";
+        std::cout << "[TextPC] Loaded " << pointCloud.totalPointCount << " points\n";
 
         return std::move(pointCloud);
     }
@@ -870,25 +898,13 @@ namespace Engine {
             return std::move(pointCloud);
         }
 
-        // ── Stream-read fixed-stride vertex records into compute batches ────
+        // ── Read fixed-stride vertex records into one point accumulator ─────
         std::vector<PointCloudPoint> batchBuf;
-        batchBuf.reserve(PointCloud::kComputeBatchSize);
-
-        int    batchIndex  = 0;
-        size_t totalPoints = 0;
+        batchBuf.reserve(allocPoints);
         glm::vec3 gMin( FLT_MAX), gMax(-FLT_MAX);
 
-        auto flushBatch = [&]() {
-            if (batchBuf.empty()) return;
-            uploadComputeBatch(pointCloud, batchBuf.data(),
-                               static_cast<int>(batchBuf.size()),
-                               batchIndex, static_cast<int>(totalPoints));
-            totalPoints += batchBuf.size();
-            batchIndex++;
-            batchBuf.clear();
-            if (batchIndex % 1000 == 0)
-                std::cout << "[PLY] " << totalPoints << " points uploaded...\n";
-        };
+        // No per-batch flush: points accumulate in batchBuf and are built below.
+        auto flushBatch = [&]() {};
 
         // Read whole records only: buffer holds an integral number of records
         // plus one record of headroom for any partial record carried over a
@@ -940,19 +956,13 @@ namespace Engine {
             if (got == 0) break; // EOF / truncated file
         }
 
-        flushBatch();
         f.close();
 
-        if (totalPoints < allocPoints) trimComputeSSBOs(pointCloud, totalPoints);
+        // Morton-sort + batch-shuffle + quantise + bulk-upload in one pass.
+        buildComputeCloud(pointCloud, batchBuf);
 
-        pointCloud.numBatches      = static_cast<uint32_t>(batchIndex);
-        pointCloud.totalPointCount = static_cast<uint32_t>(totalPoints);
-        pointCloud.boundsMin       = gMin;
-        pointCloud.boundsMax       = gMax;
-        finalizeComputeCloud(pointCloud); // Morton Z-order reorder + block shuffle
-
-        std::cout << "[PLY] Loaded " << totalPoints << " of " << vertexCount
-                  << " binary-PLY points into " << batchIndex << " compute batches"
+        std::cout << "[PLY] Loaded " << pointCloud.totalPointCount << " of " << vertexCount
+                  << " binary-PLY points"
                   << (hasColor ? " (with colour)" : "")
                   << (hasIntensity ? " (with intensity)" : "") << "\n";
 
@@ -1208,17 +1218,14 @@ namespace Engine {
             // The binary format stores each point as: vec3 | uint32_t | u8vec3
             constexpr size_t PT_SIZE = sizeof(glm::vec3) + sizeof(uint32_t) + sizeof(glm::u8vec3);
 
-            std::vector<PointCloudPoint> batchBuf;
-            batchBuf.reserve(PointCloud::kComputeBatchSize);
+            std::vector<PointCloudPoint> points;
+            points.reserve(numPoints);
 
-            // Raw read buffer: holds exactly kComputeBatchSize raw points
+            // Raw read buffer: holds one chunk of kComputeBatchSize raw points
             const size_t rawChunkBytes = static_cast<size_t>(PointCloud::kComputeBatchSize) * PT_SIZE;
             std::vector<char> rawBuf(rawChunkBytes);
 
-            int    batchIdx    = 0;
-            size_t uploadedPts = 0;
-            size_t remaining   = numPoints;
-            glm::vec3 gMin( FLT_MAX), gMax(-FLT_MAX);
+            size_t remaining = numPoints;
 
             while (remaining > 0) {
                 const size_t toRead      = std::min(remaining,
@@ -1230,9 +1237,6 @@ namespace Engine {
                 const size_t actualPts   = actualBytes / PT_SIZE;
 
                 if (actualPts == 0) break;
-
-                batchBuf.clear();
-                batchBuf.reserve(actualPts);
 
                 const char* src = rawBuf.data();
                 for (size_t i = 0; i < actualPts; i++) {
@@ -1250,32 +1254,17 @@ namespace Engine {
                     pt.color = glm::vec3(c) / 255.0f;
                     src += sizeof(c);
 
-                    gMin = glm::min(gMin, pt.position);
-                    gMax = glm::max(gMax, pt.position);
-                    batchBuf.push_back(pt);
+                    points.push_back(pt);
                 }
 
-                uploadComputeBatch(pointCloud, batchBuf.data(),
-                                   static_cast<int>(batchBuf.size()),
-                                   batchIdx, static_cast<int>(uploadedPts));
-                uploadedPts += batchBuf.size();
-                batchIdx++;
-                remaining   -= actualPts;
-
-                if (batchIdx % 2000 == 0)
-                    std::cout << "[PCB] " << uploadedPts << " points uploaded...\n";
+                remaining -= actualPts;
             }
 
             file.close();
 
-            pointCloud.numBatches      = static_cast<uint32_t>(batchIdx);
-            pointCloud.totalPointCount = static_cast<uint32_t>(uploadedPts);
-            pointCloud.boundsMin       = gMin;
-            pointCloud.boundsMax       = gMax;
-            finalizeComputeCloud(pointCloud); // Morton Z-order reorder + block shuffle
+            buildComputeCloud(pointCloud, points);
 
-            std::cout << "[PCB] Streamed " << uploadedPts << " points into "
-                      << batchIdx << " compute batches\n";
+            std::cout << "[PCB] Loaded " << pointCloud.totalPointCount << " points\n";
         }
         catch (const std::exception& e) {
             std::cerr << "[PCB] Error: " << e.what() << "\n";
@@ -1296,32 +1285,9 @@ namespace Engine {
         if (!pointCloud.points.empty() && pointCloud.numBatches == 0) {
             const size_t N = pointCloud.points.size();
 
-            // Compute bounds before clearing the CPU vector
-            glm::vec3 bMin(FLT_MAX), bMax(-FLT_MAX);
-            for (const auto& p : pointCloud.points) {
-                bMin = glm::min(bMin, p.position);
-                bMax = glm::max(bMax, p.position);
-            }
-
-            allocateComputeSSBOs(pointCloud, N);
-
-            const int batchSz = PointCloud::kComputeBatchSize;
-            int batchIdx = 0;
-            for (size_t first = 0; first < N; first += batchSz, batchIdx++) {
-                int count = static_cast<int>(std::min((size_t)batchSz, N - first));
-                uploadComputeBatch(pointCloud,
-                                   pointCloud.points.data() + first,
-                                   count, batchIdx, static_cast<int>(first));
-            }
-            pointCloud.numBatches       = static_cast<uint32_t>(batchIdx);
-            pointCloud.totalPointCount  = static_cast<uint32_t>(N);
-            pointCloud.boundsMin        = bMin;
-            pointCloud.boundsMax        = bMax;
-            finalizeComputeCloud(pointCloud); // Morton Z-order reorder + block shuffle
-
-            // Release CPU-side storage – the GPU now owns all the data
-            pointCloud.points.clear();
-            pointCloud.points.shrink_to_fit();
+            // Morton-sort + batch-shuffle + quantise + bulk-upload (consumes the
+            // CPU-side points vector, releasing it on success).
+            buildComputeCloud(pointCloud, pointCloud.points);
 
             std::cout << "[ComputePC] setupPointCloudGLBuffers: built "
                       << pointCloud.numBatches << " batches (" << N << " points)\n";
@@ -1832,14 +1798,11 @@ namespace Engine {
                 // Read in chunks of kComputeBatchSize and upload each chunk
                 // directly to GPU via uploadComputeBatch.  This keeps CPU RAM
                 // usage at ~280 KB regardless of file size.
-                allocateComputeSSBOs(pointCloud, static_cast<size_t>(pointsToRead));
-
                 constexpr hsize_t CHUNK = static_cast<hsize_t>(PointCloud::kComputeBatchSize);
                 std::vector<PointCloudPoint> chunkBuf(CHUNK);
 
-                int       batchIdx    = 0;
-                size_t    uploadedPts = 0;
-                glm::vec3 gMin( FLT_MAX), gMax(-FLT_MAX);
+                std::vector<PointCloudPoint> points;
+                points.reserve(static_cast<size_t>(pointsToRead));
 
                 for (hsize_t readSoFar = 0; readSoFar < pointsToRead; ) {
                     hsize_t toRead = std::min(CHUNK, pointsToRead - readSoFar);
@@ -1855,28 +1818,15 @@ namespace Engine {
                     dataspace.selectHyperslab(H5S_SELECT_SET, cnt, fileStart, stride, block);
                     dataset.read(chunkBuf.data(), pointType, memspace, dataspace);
 
-                    // Update global bounds from this chunk
-                    for (hsize_t i = 0; i < toRead; i++) {
-                        gMin = glm::min(gMin, chunkBuf[i].position);
-                        gMax = glm::max(gMax, chunkBuf[i].position);
-                    }
-
-                    uploadComputeBatch(pointCloud, chunkBuf.data(),
-                                       static_cast<int>(toRead), batchIdx,
-                                       static_cast<int>(uploadedPts));
-                    uploadedPts += toRead;
-                    batchIdx++;
+                    points.insert(points.end(), chunkBuf.begin(),
+                                  chunkBuf.begin() + static_cast<std::ptrdiff_t>(toRead));
                     readSoFar += toRead;
                 }
 
-                pointCloud.numBatches      = static_cast<uint32_t>(batchIdx);
-                pointCloud.totalPointCount = static_cast<uint32_t>(uploadedPts);
-                pointCloud.boundsMin       = gMin;
-                pointCloud.boundsMax       = gMax;
-                finalizeComputeCloud(pointCloud); // Morton Z-order reorder + block shuffle
+                // Morton-sort + batch-shuffle + quantise + bulk-upload in one pass.
+                buildComputeCloud(pointCloud, points);
 
-                std::cout << "[HDF5] Streamed " << uploadedPts << " points into "
-                          << batchIdx << " compute batches\n";
+                std::cout << "[HDF5] Loaded " << pointCloud.totalPointCount << " points\n";
 
             } else {
                 // Handle separate arrays format (like f5 files)
@@ -2005,20 +1955,11 @@ namespace Engine {
                             allocateComputeSSBOs(pointCloud, static_cast<size_t>(ptsToUpload));
 
                             std::vector<PointCloudPoint> batchBuf;
-                            batchBuf.reserve(PointCloud::kComputeBatchSize);
-                            int       batchIdx    = 0;
-                            size_t    uploadedPts = 0;
+                            batchBuf.reserve(static_cast<size_t>(ptsToUpload));
                             glm::vec3 gMin( FLT_MAX), gMax(-FLT_MAX);
 
-                            auto flushF5Batch = [&]() {
-                                if (batchBuf.empty()) return;
-                                uploadComputeBatch(pointCloud, batchBuf.data(),
-                                                   static_cast<int>(batchBuf.size()),
-                                                   batchIdx, static_cast<int>(uploadedPts));
-                                uploadedPts += batchBuf.size();
-                                batchIdx++;
-                                batchBuf.clear();
-                            };
+                            // Points accumulate in batchBuf; built in one pass below.
+                            auto flushF5Batch = [&]() {};
 
                             for (hsize_t i = 0; i < ptsToUpload; i++) {
                                 const hsize_t src = i * static_cast<hsize_t>(downsampleFactor);
@@ -2045,9 +1986,7 @@ namespace Engine {
                                 if (static_cast<int>(batchBuf.size()) == PointCloud::kComputeBatchSize)
                                     flushF5Batch();
                             }
-                            flushF5Batch();
-
-                            // Release the large coordinate vectors
+                            // Release the large coordinate vectors before building.
                             { std::vector<float>().swap(xCoords); }
                             { std::vector<float>().swap(yCoords); }
                             { std::vector<float>().swap(zCoords); }
@@ -2056,14 +1995,11 @@ namespace Engine {
                             { std::vector<float>().swap(bColors); }
                             { std::vector<float>().swap(intensities); }
 
-                            pointCloud.numBatches      = static_cast<uint32_t>(batchIdx);
-                            pointCloud.totalPointCount = static_cast<uint32_t>(uploadedPts);
-                            pointCloud.boundsMin       = gMin;
-                            pointCloud.boundsMax       = gMax;
-                            finalizeComputeCloud(pointCloud); // Morton Z-order reorder + block shuffle
+                            // Morton-sort + batch-shuffle + quantise + bulk-upload.
+                            buildComputeCloud(pointCloud, batchBuf);
 
-                            std::cout << "[HDF5-f5] Streamed " << uploadedPts
-                                      << " points into " << batchIdx << " compute batches\n";
+                            std::cout << "[HDF5-f5] Loaded " << pointCloud.totalPointCount
+                                      << " points\n";
 
                             file.close();
                             return std::move(pointCloud);
@@ -2314,25 +2250,10 @@ namespace Engine {
         laszip_get_point_pointer(reader, &lp);
 
         std::vector<PointCloudPoint> batchBuf;
-        batchBuf.reserve(PointCloud::kComputeBatchSize);
+        batchBuf.reserve(static_cast<size_t>(expectedPts));
 
-        int    batchIndex  = 0;
-        size_t totalPoints = 0;
-
-        auto flushBatch = [&]() {
-            if (batchBuf.empty()) return;
-            uploadComputeBatch(pointCloud,
-                               batchBuf.data(),
-                               static_cast<int>(batchBuf.size()),
-                               batchIndex,
-                               static_cast<int>(totalPoints));
-            totalPoints += batchBuf.size();
-            batchIndex++;
-            batchBuf.clear();
-
-            if (batchIndex % 2000 == 0)
-                std::cout << "[LAS] " << totalPoints << " points uploaded...\n";
-        };
+        // Points accumulate in batchBuf; built in one pass below.
+        auto flushBatch = [&]() {};
 
         for (int64_t i = 0; i < nPoints; ++i) {
             if (laszip_read_point(reader)) {
@@ -2379,18 +2300,14 @@ namespace Engine {
         laszip_destroy(reader);
         reader = nullptr; // prevent any accidental re-use
 
-        // Trim if downsampling caused us to use fewer batches than allocated
-        if (totalPoints < static_cast<size_t>(expectedPts) * 9 / 10)
-            trimComputeSSBOs(pointCloud, totalPoints);
+        // Morton-sort + batch-shuffle + quantise + bulk-upload in one pass.
+        // (boundsMin/Max are recomputed from the actual points by buildComputeCloud;
+        //  the header bounds lasMin/lasMax are no longer needed.)
+        (void)lasMin; (void)lasMax;
+        buildComputeCloud(pointCloud, batchBuf);
 
-        pointCloud.numBatches      = static_cast<uint32_t>(batchIndex);
-        pointCloud.totalPointCount = static_cast<uint32_t>(totalPoints);
-        pointCloud.boundsMin       = lasMin;
-        pointCloud.boundsMax       = lasMax;
-        finalizeComputeCloud(pointCloud); // Morton Z-order reorder + block shuffle
-
-        std::cout << "[LAS] Streamed " << totalPoints << " points into "
-                  << batchIndex << " compute batches (no octree, no CPU copy)\n";
+        std::cout << "[LAS] Loaded " << pointCloud.totalPointCount
+                  << " points (no octree, no CPU copy)\n";
         return pointCloud;
     }
 
