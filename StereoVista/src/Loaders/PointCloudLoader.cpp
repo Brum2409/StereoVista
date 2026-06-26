@@ -19,6 +19,7 @@
 #include <random>
 #include <execution>
 #include <algorithm>
+#include <cmath>
 
 #include <Utils/octree.h>
 
@@ -112,6 +113,53 @@ namespace Engine {
         trimBuffer(pc.computeRGBASSBO,   static_cast<GLsizeiptr>(actualPoints  * sizeof(uint32_t)));
         glBindBuffer(GL_COPY_READ_BUFFER, 0);
         glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
+    }
+
+    // Decorrelate the order in which workgroups (one per batch) are dispatched so
+    // that batches which are *spatially* close — and therefore rasterise into the
+    // same screen region — are not in flight at the same time.  The GPU launches
+    // workgroups roughly in ascending gl_WorkGroupID order, so a stride-interleave
+    // permutation of the batch-descriptor array spreads each window of co-resident
+    // workgroups across the whole cloud, scattering their atomicMin writes over the
+    // framebuffer instead of piling them onto one tile.  This is the "block
+    // shuffle" from Magnopus's large-point-cloud renderer (and the spirit of
+    // Schütz's vertex-order optimisation): it cuts atomic contention — the dominant
+    // cost of the rasterize pass — with zero per-frame overhead.
+    //
+    // Only the small ComputeBatch descriptor array is reordered; the bulk
+    // coordinate/RGBA buffers are untouched, because every batch addresses its
+    // points through `firstPoint`.  The absolute point indices the shader packs
+    // into the framebuffer payload (and that the export readback in
+    // forEachPointBatch decodes) are therefore unaffected — this is a pure
+    // dispatch-order change, invisible to the rest of the pipeline.
+    static void shuffleComputeBatchOrder(PointCloud& pc) {
+        const uint32_t n = pc.numBatches;
+        if (n < 3 || pc.computeBatchSSBO == 0) return;   // nothing to gain
+
+        std::vector<ComputeBatch> oldOrder(n);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, pc.computeBatchSSBO);
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                           static_cast<GLsizeiptr>(n * sizeof(ComputeBatch)),
+                           oldOrder.data());
+
+        // stride ≈ sqrt(n): a window of W consecutive dispatch slots then spans
+        // ~W·stride original batches, i.e. broadly across the whole cloud.
+        uint32_t stride = static_cast<uint32_t>(
+            std::lround(std::sqrt(static_cast<double>(n))));
+        if (stride < 2) stride = 2;
+
+        std::vector<ComputeBatch> newOrder;
+        newOrder.reserve(n);
+        for (uint32_t start = 0; start < stride; ++start)
+            for (uint32_t i = start; i < n; i += stride)
+                newOrder.push_back(oldOrder[i]);
+        // Each i falls in exactly one residue class (i % stride), so newOrder is a
+        // full permutation of all n descriptors — no batch is dropped or doubled.
+
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                        static_cast<GLsizeiptr>(n * sizeof(ComputeBatch)),
+                        newOrder.data());
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     }
 
     // Upload one batch of count points to the pre-allocated SSBOs.
@@ -488,6 +536,7 @@ namespace Engine {
         pointCloud.totalPointCount = static_cast<uint32_t>(totalPoints);
         pointCloud.boundsMin       = gMin;
         pointCloud.boundsMax       = gMax;
+        shuffleComputeBatchOrder(pointCloud); // block-shuffle dispatch order
 
         std::cout << "[TextPC] Loaded " << totalPoints << " points into "
                   << batchIndex << " compute batches (no octree, no CPU copy)\n";
@@ -793,6 +842,7 @@ namespace Engine {
         pointCloud.totalPointCount = static_cast<uint32_t>(totalPoints);
         pointCloud.boundsMin       = gMin;
         pointCloud.boundsMax       = gMax;
+        shuffleComputeBatchOrder(pointCloud); // block-shuffle dispatch order
 
         std::cout << "[PLY] Loaded " << totalPoints << " of " << vertexCount
                   << " binary-PLY points into " << batchIndex << " compute batches"
@@ -1115,6 +1165,7 @@ namespace Engine {
             pointCloud.totalPointCount = static_cast<uint32_t>(uploadedPts);
             pointCloud.boundsMin       = gMin;
             pointCloud.boundsMax       = gMax;
+            shuffleComputeBatchOrder(pointCloud); // block-shuffle dispatch order
 
             std::cout << "[PCB] Streamed " << uploadedPts << " points into "
                       << batchIdx << " compute batches\n";
@@ -1159,6 +1210,7 @@ namespace Engine {
             pointCloud.totalPointCount  = static_cast<uint32_t>(N);
             pointCloud.boundsMin        = bMin;
             pointCloud.boundsMax        = bMax;
+            shuffleComputeBatchOrder(pointCloud); // block-shuffle dispatch order
 
             // Release CPU-side storage – the GPU now owns all the data
             pointCloud.points.clear();
@@ -1714,6 +1766,7 @@ namespace Engine {
                 pointCloud.totalPointCount = static_cast<uint32_t>(uploadedPts);
                 pointCloud.boundsMin       = gMin;
                 pointCloud.boundsMax       = gMax;
+                shuffleComputeBatchOrder(pointCloud); // block-shuffle dispatch order
 
                 std::cout << "[HDF5] Streamed " << uploadedPts << " points into "
                           << batchIdx << " compute batches\n";
@@ -1900,6 +1953,7 @@ namespace Engine {
                             pointCloud.totalPointCount = static_cast<uint32_t>(uploadedPts);
                             pointCloud.boundsMin       = gMin;
                             pointCloud.boundsMax       = gMax;
+                            shuffleComputeBatchOrder(pointCloud); // block-shuffle dispatch order
 
                             std::cout << "[HDF5-f5] Streamed " << uploadedPts
                                       << " points into " << batchIdx << " compute batches\n";
@@ -2226,6 +2280,7 @@ namespace Engine {
         pointCloud.totalPointCount = static_cast<uint32_t>(totalPoints);
         pointCloud.boundsMin       = lasMin;
         pointCloud.boundsMax       = lasMax;
+        shuffleComputeBatchOrder(pointCloud); // block-shuffle dispatch order
 
         std::cout << "[LAS] Streamed " << totalPoints << " points into "
                   << batchIndex << " compute batches (no octree, no CPU copy)\n";

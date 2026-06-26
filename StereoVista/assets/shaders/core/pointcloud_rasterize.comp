@@ -187,16 +187,24 @@ float getBatchSpacing(vec3 boxSize, int numPoints) {
 }
 
 // ── Pixel write (depth-test via atomicMin) ────────────────────────────────────
-// DIAGNOSTIC: non-atomic pre-read REMOVED.  The pre-read was supposed to skip
-// the atomic for points behind already-rendered closer points, but it forces
-// every point to do an extra global memory load.  Going straight to atomicMin
-// trades one read for potentially more atomic conflicts — which is faster
-// depends on hardware/workload.  Testing whether removing it helps.
+// EARLY-DEPTH REJECT (Schütz "cheap early-z test before atomicMin").
+// Before issuing the atomic, do a cheap non-atomic read of the pixel's current
+// winner.  `newEntry` packs depth in its high 32 bits, so `newEntry < current`
+// is true only when this point is strictly closer than whatever already owns the
+// pixel.  When it is NOT closer, the atomicMin would be a guaranteed no-op, so we
+// skip it entirely — trading one coalesced global load for an avoided atomic.
+// On dense / occluded views the overwhelming majority of points lose their pixel,
+// so this culls almost all of the redundant atomic traffic (the actual
+// bottleneck).  The framebuffer is declared `coherent` precisely so this pre-read
+// stays fresh across the workgroup; without it the read could be stale and let
+// redundant atomics through (see the binding-1 buffer comment above).
 void writePixel(ivec2 px, uint64_t newEntry, int radius) {
     // Fast path: single pixel (unchanged behaviour when splatting is off / far).
     if (radius <= 0) {
         ivec2 p = clamp(px, ivec2(0), uImageSize - ivec2(1));
-        atomicMin(framebuffer[p.y * uImageSize.x + p.x], newEntry);
+        int fbIdx = p.y * uImageSize.x + p.x;
+        if (newEntry < framebuffer[fbIdx])          // early-depth reject
+            atomicMin(framebuffer[fbIdx], newEntry);
         return;
     }
 
@@ -212,7 +220,9 @@ void writePixel(ivec2 px, uint64_t newEntry, int radius) {
             ivec2 p = px + ivec2(dx, dy);
             if (p.x < 0 || p.y < 0 || p.x >= uImageSize.x || p.y >= uImageSize.y)
                 continue;
-            atomicMin(framebuffer[p.y * uImageSize.x + p.x], newEntry);
+            int fbIdx = p.y * uImageSize.x + p.x;
+            if (newEntry < framebuffer[fbIdx])      // early-depth reject (see above)
+                atomicMin(framebuffer[fbIdx], newEntry);
         }
     }
 }
