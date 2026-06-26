@@ -128,6 +128,18 @@ bool InitializeImGuiWithFonts(GLFWwindow *window, bool isDarkTheme) {
 
   // Enable additional ImGui features
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+
+  // --- Docking-branch features -------------------------------------------
+  // Docking: let the floating tool/settings windows be docked together into
+  // tab groups or split layouts.
+  io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+  // Multi-viewport: let windows (Settings, tool panels, ...) be dragged out of
+  // the main application window and live as independent OS windows.
+  // NOTE: These flags must be set BEFORE the GLFW/OpenGL backends are
+  // initialized below -- the backends only create their platform/viewport
+  // interface when ImGuiConfigFlags_ViewportsEnable is already set at init.
+  io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+
   io.ConfigWindowsMoveFromTitleBarOnly = true;
 
   // Initialize GLFW and OpenGL backends
@@ -722,6 +734,16 @@ static void ApplyStyleGeometry(ImGuiStyle &style) {
   style.ColorButtonPosition = ImGuiDir_Right;
   style.ButtonTextAlign = ImVec2(0.5f, 0.5f);
   style.SelectableTextAlign = ImVec2(0.0f, 0.0f);
+
+  // Multi-viewport: a window dragged out of the main window becomes a real,
+  // opaque OS window. Rounded window corners would leave that window's
+  // framebuffer corners uncovered (rendering as black), so square off
+  // top-level windows when viewports are enabled. This also matches the
+  // docked-panel aesthetic. Inner widgets keep their rounding.
+  if (ImGui::GetCurrentContext() &&
+      (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable)) {
+    style.WindowRounding = 0.0f;
+  }
 }
 
 // Dark-theme color engine. Reads the four background levels and accents from
