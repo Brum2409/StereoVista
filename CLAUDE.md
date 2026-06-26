@@ -79,7 +79,7 @@ StereoVista/
 | GLFW | Windowing and input | `dependencies/` |
 | GLM | Math library | `dependencies/` |
 | Assimp | 3D model loading (OBJ, FBX, GLTF, …) | `dependencies/` |
-| ImGui | Immediate-mode GUI | `headers/libs/imgui/` |
+| ImGui (**docking branch**, v1.91.1) | Immediate-mode GUI with docking + multi-viewport | `headers/libs/imgui/` |
 | nlohmann/json | JSON parsing | `headers/libs/json.h` |
 | stb_image | Image loading | `headers/libs/stb_image.h` |
 | HDF5 + HighFive | Point cloud HDF5 format | `dependencies/` |
@@ -139,6 +139,7 @@ New tools are added as **static (compile-time) plugins** rather than hand-wired 
 **General:**
 - C++17 features are used and expected
 - ImGui is used directly (no abstraction layer) for all GUI panels
+- ImGui is the **docking branch** (vendored at v1.91.1, matching the previous non-docking version so no existing GUI code needed changes). Docking and multi-viewport are enabled in `InitializeImGuiWithFonts` (`headers/libs/imgui/imgui_style.cpp`) via `ImGuiConfigFlags_DockingEnable | ImGuiConfigFlags_ViewportsEnable`. Floating windows (Settings, tool panels, …) can be docked together or **dragged out of the main window into their own OS windows**. Each frame, after the main GUI is rendered, `main.cpp` calls `ImGui::UpdatePlatformWindows()` / `ImGui::RenderPlatformWindowsDefault()` (wrapped in the `renderImGuiPlatformWindows` lambda, with GL-context backup/restore) before `glfwSwapBuffers`. The Scene Hierarchy stays a fixed left panel (it publishes `g_dockLeftWidth` to reserve viewport space); `WindowRounding` is forced to 0 when viewports are enabled so dragged-out OS windows have clean corners. Only the core `imgui*`/backend files are upstream; `imgui_style.cpp`, `imgui_sytle.h`, `imgui_incl.h`, `IconsFontAwesome5.h` are project-local and must be preserved across future ImGui updates.
 - Shader programs are managed through the `Shader` class (`headers/Engine/Shader.h`)
 - GPU buffers and texture units are abstracted in `Buffers` (`headers/Engine/Buffers.h`)
 

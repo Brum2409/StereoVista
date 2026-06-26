@@ -3363,6 +3363,16 @@ int main() {
     }
   }
 
+  // GLFW window hints are sticky. The stereo hint above is left set when the
+  // quad-buffer main window is created successfully, so reset it now: ImGui
+  // multi-viewport creates secondary GLFW windows (for dragged-out panels) with
+  // glfwCreateWindow() and would otherwise inherit GLFW_STEREO, requesting a
+  // quad-buffer context per panel -- wasteful, and a hard creation failure
+  // (NULL window -> crash) on drivers that cap the number of stereo contexts.
+  // The UI panels only need a plain mono window; they still share the main GL
+  // context (and thus the font atlas) regardless of this pixel-format change.
+  glfwWindowHint(GLFW_STEREO, GLFW_FALSE);
+
   glfwMakeContextCurrent(window);
   Window::nativeWindow = window;
 
@@ -3657,6 +3667,22 @@ int main() {
                                  ImGuiWindowFlags_NoSavedSettings |
                                  ImGuiWindowFlags_NoNavFocus;
   ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+
+  // Multi-viewport (docking branch): once the main window's ImGui draw data has
+  // been rendered for the frame, update and draw any windows the user dragged
+  // out into their own OS windows. This must run once per frame, after
+  // ImGui::Render(); RenderPlatformWindowsDefault() makes each platform
+  // window's GL context current, so we back up and restore the main context
+  // afterwards to keep the following glfwSwapBuffers() targeting the main window.
+  auto renderImGuiPlatformWindows = [&]() {
+    ImGuiIO &guiIO = ImGui::GetIO();
+    if (guiIO.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+      GLFWwindow *backupContext = glfwGetCurrentContext();
+      ImGui::UpdatePlatformWindows();
+      ImGui::RenderPlatformWindowsDefault();
+      glfwMakeContextCurrent(backupContext);
+    }
+  };
 
   vctSettings.indirectSpecularLight = true;
   vctSettings.indirectDiffuseLight = true;
@@ -4616,6 +4642,7 @@ int main() {
         } else {
           renderGUI(true, viewport, windowFlags, activeShader);
         }
+        renderImGuiPlatformWindows();
       }
       glfwSwapBuffers(window);
       continue; // Skip the normal desktop render path this frame.
@@ -4635,6 +4662,7 @@ int main() {
         } else {
           renderGUI(true, viewport, windowFlags, activeShader);
         }
+        renderImGuiPlatformWindows();
       }
       glfwSwapBuffers(window);
       continue;
@@ -4958,6 +4986,12 @@ int main() {
       g_pendingSnapshotName.clear();
       g_pendingSnapshotFlags = 0;
     }
+
+    // ---- Multi-viewport: draw any dragged-out windows before presenting ----
+    // Only when the GUI was actually submitted this frame (matches the showGui
+    // guards on the renderGUI calls in both the HDR and non-HDR paths above).
+    if (showGui)
+      renderImGuiPlatformWindows();
 
     // ---- Swap Buffers ----
     glfwSwapBuffers(window);
