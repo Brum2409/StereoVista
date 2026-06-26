@@ -62,175 +62,6 @@ namespace Engine {
         del(pc.computeRGBASSBO);
     }
 
-    // Pre-allocate all five SSBOs for totalPoints without uploading data.
-    // GL_DYNAMIC_DRAW because we fill them incrementally with glBufferSubData.
-    static void allocateComputeSSBOs(PointCloud& pc, size_t totalPoints) {
-        deleteComputeSSBOs(pc);
-        if (pc.vbo) { glDeleteBuffers(1, &pc.vbo); pc.vbo = 0; }
-        if (pc.vao) { glDeleteVertexArrays(1, &pc.vao); pc.vao = 0; }
-        if (totalPoints == 0) return;
-
-        const size_t numBatches =
-            (totalPoints + PointCloud::kComputeBatchSize - 1) / PointCloud::kComputeBatchSize;
-
-        auto alloc = [](GLuint& id, GLsizeiptr bytes) {
-            glGenBuffers(1, &id);
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, id);
-            glBufferData(GL_SHADER_STORAGE_BUFFER, bytes, nullptr, GL_DYNAMIC_DRAW);
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-        };
-
-        alloc(pc.computeBatchSSBO,  static_cast<GLsizeiptr>(numBatches  * sizeof(ComputeBatch)));
-        alloc(pc.computeXyz4bSSBO,  static_cast<GLsizeiptr>(totalPoints * sizeof(uint32_t)));
-        alloc(pc.computeXyz8bSSBO,  static_cast<GLsizeiptr>(totalPoints * sizeof(uint32_t)));
-        alloc(pc.computeXyz12bSSBO, static_cast<GLsizeiptr>(totalPoints * sizeof(uint32_t)));
-        alloc(pc.computeRGBASSBO,   static_cast<GLsizeiptr>(totalPoints * sizeof(uint32_t)));
-        pc.computePointsPerThread = (PointCloud::kComputeBatchSize + 127) / 128;
-    }
-
-    // Trim over-allocated SSBOs to actualPoints using GPU-side copy.
-    static void trimComputeSSBOs(PointCloud& pc, size_t actualPoints) {
-        if (actualPoints == 0) { deleteComputeSSBOs(pc); return; }
-
-        const size_t actualBatches =
-            (actualPoints + PointCloud::kComputeBatchSize - 1) / PointCloud::kComputeBatchSize;
-
-        auto trimBuffer = [](GLuint& id, GLsizeiptr newBytes) {
-            GLuint newId = 0;
-            glGenBuffers(1, &newId);
-            glBindBuffer(GL_COPY_WRITE_BUFFER, newId);
-            glBufferData(GL_COPY_WRITE_BUFFER, newBytes, nullptr, GL_STATIC_DRAW);
-            glBindBuffer(GL_COPY_READ_BUFFER, id);
-            glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER, 0, 0, newBytes);
-            glDeleteBuffers(1, &id);
-            id = newId;
-        };
-
-        trimBuffer(pc.computeBatchSSBO,  static_cast<GLsizeiptr>(actualBatches * sizeof(ComputeBatch)));
-        trimBuffer(pc.computeXyz4bSSBO,  static_cast<GLsizeiptr>(actualPoints  * sizeof(uint32_t)));
-        trimBuffer(pc.computeXyz8bSSBO,  static_cast<GLsizeiptr>(actualPoints  * sizeof(uint32_t)));
-        trimBuffer(pc.computeXyz12bSSBO, static_cast<GLsizeiptr>(actualPoints  * sizeof(uint32_t)));
-        trimBuffer(pc.computeRGBASSBO,   static_cast<GLsizeiptr>(actualPoints  * sizeof(uint32_t)));
-        glBindBuffer(GL_COPY_READ_BUFFER, 0);
-        glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
-    }
-
-    // Decorrelate the order in which workgroups (one per batch) are dispatched so
-    // that batches which are *spatially* close — and therefore rasterise into the
-    // same screen region — are not in flight at the same time.  The GPU launches
-    // workgroups roughly in ascending gl_WorkGroupID order, so a stride-interleave
-    // permutation of the batch-descriptor array spreads each window of co-resident
-    // workgroups across the whole cloud, scattering their atomicMin writes over the
-    // framebuffer instead of piling them onto one tile.  This is the "block
-    // shuffle" from Magnopus's large-point-cloud renderer (and the spirit of
-    // Schütz's vertex-order optimisation): it cuts atomic contention — the dominant
-    // cost of the rasterize pass — with zero per-frame overhead.
-    //
-    // Only the small ComputeBatch descriptor array is reordered; the bulk
-    // coordinate/RGBA buffers are untouched, because every batch addresses its
-    // points through `firstPoint`.  The absolute point indices the shader packs
-    // into the framebuffer payload (and that the export readback in
-    // forEachPointBatch decodes) are therefore unaffected — this is a pure
-    // dispatch-order change, invisible to the rest of the pipeline.
-    static void shuffleComputeBatchOrder(PointCloud& pc) {
-        const uint32_t n = pc.numBatches;
-        if (n < 3 || pc.computeBatchSSBO == 0) return;   // nothing to gain
-
-        std::vector<ComputeBatch> oldOrder(n);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, pc.computeBatchSSBO);
-        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-                           static_cast<GLsizeiptr>(n * sizeof(ComputeBatch)),
-                           oldOrder.data());
-
-        // stride ≈ sqrt(n): a window of W consecutive dispatch slots then spans
-        // ~W·stride original batches, i.e. broadly across the whole cloud.
-        uint32_t stride = static_cast<uint32_t>(
-            std::lround(std::sqrt(static_cast<double>(n))));
-        if (stride < 2) stride = 2;
-
-        std::vector<ComputeBatch> newOrder;
-        newOrder.reserve(n);
-        for (uint32_t start = 0; start < stride; ++start)
-            for (uint32_t i = start; i < n; i += stride)
-                newOrder.push_back(oldOrder[i]);
-        // Each i falls in exactly one residue class (i % stride), so newOrder is a
-        // full permutation of all n descriptors — no batch is dropped or doubled.
-
-        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-                        static_cast<GLsizeiptr>(n * sizeof(ComputeBatch)),
-                        newOrder.data());
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-    }
-
-    // Upload one batch of count points to the pre-allocated SSBOs.
-    //   batchIndex – 0-based batch index
-    //   firstPoint – absolute point offset of pts[0] within the full cloud
-    static void uploadComputeBatch(PointCloud& pc,
-                                   const PointCloudPoint* pts,
-                                   int count, int batchIndex, int firstPoint)
-    {
-        if (count <= 0) return;
-
-        constexpr int      STEPS_30BIT = 1073741824; // 2^30 (exactly representable)
-        constexpr uint32_t MASK_10BIT  = 1023u;
-
-        glm::vec3 bMin = pts[0].position, bMax = pts[0].position;
-        for (int i = 1; i < count; i++) {
-            bMin = glm::min(bMin, pts[i].position);
-            bMax = glm::max(bMax, pts[i].position);
-        }
-        glm::vec3 sz = bMax - bMin;
-        if (sz.x < 1e-6f) sz.x = 1e-6f;
-        if (sz.y < 1e-6f) sz.y = 1e-6f;
-        if (sz.z < 1e-6f) sz.z = 1e-6f;
-
-        const ComputeBatch batchDesc = {
-            bMin.x, bMin.y, bMin.z, bMax.x, bMax.y, bMax.z, count, firstPoint
-        };
-
-        std::vector<uint32_t> xyz4b(count), xyz8b(count), xyz12b(count), rgba(count);
-
-        for (int i = 0; i < count; i++) {
-            const glm::vec3& p = pts[i].position;
-            auto q = [&](float v, float lo, float s) -> uint32_t {
-                float n = glm::clamp((v - lo) / s, 0.0f, 1.0f);
-                return std::min(static_cast<uint32_t>(n * static_cast<float>(STEPS_30BIT)),
-                                static_cast<uint32_t>(STEPS_30BIT - 1));
-            };
-            const uint32_t Xb = q(p.x, bMin.x, sz.x);
-            const uint32_t Yb = q(p.y, bMin.y, sz.y);
-            const uint32_t Zb = q(p.z, bMin.z, sz.z);
-            xyz4b [i] = ((Xb>>20)&MASK_10BIT) | (((Yb>>20)&MASK_10BIT)<<10) | (((Zb>>20)&MASK_10BIT)<<20);
-            xyz8b [i] = ((Xb>>10)&MASK_10BIT) | (((Yb>>10)&MASK_10BIT)<<10) | (((Zb>>10)&MASK_10BIT)<<20);
-            xyz12b[i] = (Xb&MASK_10BIT) | ((Yb&MASK_10BIT)<<10) | ((Zb&MASK_10BIT)<<20);
-            const auto& c = pts[i].color;
-            const uint32_t r8 = static_cast<uint32_t>(glm::clamp(c.r,0.f,1.f)*255.f+0.5f);
-            const uint32_t g8 = static_cast<uint32_t>(glm::clamp(c.g,0.f,1.f)*255.f+0.5f);
-            const uint32_t b8 = static_cast<uint32_t>(glm::clamp(c.b,0.f,1.f)*255.f+0.5f);
-            // The resolve shader ignores the alpha byte, so it is repurposed to
-            // carry the point intensity (8-bit, [0,1]) for GPU readback/export.
-            const uint32_t a8 = static_cast<uint32_t>(glm::clamp(pts[i].intensity,0.f,1.f)*255.f+0.5f);
-            rgba[i] = (a8<<24)|(b8<<16)|(g8<<8)|r8;
-        }
-
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, pc.computeBatchSSBO);
-        glBufferSubData(GL_SHADER_STORAGE_BUFFER,
-                        static_cast<GLintptr>(batchIndex)*sizeof(ComputeBatch),
-                        sizeof(ComputeBatch), &batchDesc);
-
-        const GLintptr   off = static_cast<GLintptr>(firstPoint)*sizeof(uint32_t);
-        const GLsizeiptr byt = static_cast<GLsizeiptr>(count)*sizeof(uint32_t);
-
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, pc.computeXyz4bSSBO);
-        glBufferSubData(GL_SHADER_STORAGE_BUFFER, off, byt, xyz4b.data());
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, pc.computeXyz8bSSBO);
-        glBufferSubData(GL_SHADER_STORAGE_BUFFER, off, byt, xyz8b.data());
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, pc.computeXyz12bSSBO);
-        glBufferSubData(GL_SHADER_STORAGE_BUFFER, off, byt, xyz12b.data());
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, pc.computeRGBASSBO);
-        glBufferSubData(GL_SHADER_STORAGE_BUFFER, off, byt, rgba.data());
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-    }
 
     // ── libmorton "magic bits" 3D Morton (Z-order) encode ─────────────────────
     // Spread the low 21 bits of an axis to every third bit of a 63-bit value, then
@@ -495,7 +326,6 @@ namespace Engine {
             return std::move(pointCloud);
         }
 
-        allocateComputeSSBOs(pointCloud, allocPoints);
 
         // ── Pass 2: stream-parse and upload ─────────────────────────────────
         std::ifstream file(filePath, std::ios::binary);
@@ -888,7 +718,6 @@ namespace Engine {
         const size_t allocPoints = (downsampleFactor > 1)
                                   ? (vertexCount / downsampleFactor + 1)
                                   : vertexCount;
-        allocateComputeSSBOs(pointCloud, allocPoints);
 
         f.clear();
         f.seekg(dataStart + skipBytes);
@@ -1035,8 +864,8 @@ namespace Engine {
             glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, off, byt, rgba.data());
 
             // Decode the 30-bit quantised coordinates back to floats using the
-            // batch bounds (inverse of uploadComputeBatch). +0.5 centres the
-            // value inside its quantisation step to minimise round-trip error.
+            // batch bounds (inverse of buildComputeCloud's quantiser). +0.5 centres
+            // the value inside its quantisation step to minimise round-trip error.
             const glm::dvec3 bMin(batch.min_x, batch.min_y, batch.min_z);
             const glm::dvec3 bSize(
                 std::max(static_cast<double>(batch.max_x) - bMin.x, 1e-6),
@@ -1211,8 +1040,6 @@ namespace Engine {
             file.read(reinterpret_cast<char*>(&numPoints), sizeof(numPoints));
             std::cout << "[PCB] " << numPoints << " points in " << filePath << "\n";
 
-            // ── Allocate SSBOs up-front using exact header count ─────────────
-            allocateComputeSSBOs(pointCloud, numPoints);
 
             // ── Stream-read in batches ────────────────────────────────────────
             // The binary format stores each point as: vec3 | uint32_t | u8vec3
@@ -1276,12 +1103,10 @@ namespace Engine {
 
 
     void PointCloudLoader::setupPointCloudGLBuffers(PointCloud& pointCloud) {
-        // The compute rasterizer path does not use a VAO/VBO.
-        // SSBOs are built incrementally by the streaming loaders via
-        // allocateComputeSSBOs / uploadComputeBatch.  This function is kept
-        // for any legacy callers and handles the rare case where a loader
-        // has already populated pointCloud.points (e.g. the f5 separate-arrays
-        // path).  For normal streaming loads, this is a no-op.
+        // The compute rasterizer path does not use a VAO/VBO; the SSBOs are
+        // built by buildComputeCloud.  This function is kept for the rare case
+        // where a loader has already populated pointCloud.points (e.g. the f5
+        // separate-arrays path).  For loaders that build directly, it is a no-op.
         if (!pointCloud.points.empty() && pointCloud.numBatches == 0) {
             const size_t N = pointCloud.points.size();
 
@@ -1794,10 +1619,9 @@ namespace Engine {
             H5T_class_t typeClass = dtype.getClass();
 
             if (typeClass == H5T_COMPOUND) {
-                // ── Streaming compound-type read ─────────────────────────────
-                // Read in chunks of kComputeBatchSize and upload each chunk
-                // directly to GPU via uploadComputeBatch.  This keeps CPU RAM
-                // usage at ~280 KB regardless of file size.
+                // ── Compound-type read ───────────────────────────────────────
+                // Read the dataset in chunks of kComputeBatchSize and collect
+                // them into one point vector for buildComputeCloud.
                 constexpr hsize_t CHUNK = static_cast<hsize_t>(PointCloud::kComputeBatchSize);
                 std::vector<PointCloudPoint> chunkBuf(CHUNK);
 
@@ -1952,7 +1776,6 @@ namespace Engine {
                                                          ? numCoordPoints / static_cast<hsize_t>(downsampleFactor)
                                                          : numCoordPoints;
 
-                            allocateComputeSSBOs(pointCloud, static_cast<size_t>(ptsToUpload));
 
                             std::vector<PointCloudPoint> batchBuf;
                             batchBuf.reserve(static_cast<size_t>(ptsToUpload));
@@ -2243,7 +2066,6 @@ namespace Engine {
         const int64_t expectedPts = (downsampleFactor > 1)
                                   ? (nPoints / static_cast<int64_t>(downsampleFactor) + 1)
                                   : nPoints;
-        allocateComputeSSBOs(pointCloud, static_cast<size_t>(expectedPts));
 
         // ── Pass 2: stream-read → batch → upload ─────────────────────────────
         laszip_point_struct* lp = nullptr;
