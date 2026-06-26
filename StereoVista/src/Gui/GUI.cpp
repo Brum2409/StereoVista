@@ -40,6 +40,24 @@ void renderPointLightManipulationPanel();
 void renderSpotLightManipulationPanel();
 static void drawMeasurementLabels();
 
+// With ImGuiConfigFlags_ViewportsEnable (docking branch) ImGui window positions
+// are desktop-absolute, not main-window-relative. The HUD chrome below (corner
+// overlays, toasts, the empty-scene hint and the fixed Scene Hierarchy panel)
+// is authored in main-window-relative pixels (0,0 = top-left of the app
+// window's client area), so it must be offset by the main viewport origin and
+// pinned to the main viewport -- otherwise it would jump to the primary
+// monitor's origin whenever the application window is moved or lives on a
+// second monitor. When the window sits at the desktop origin this is a no-op,
+// so it is also correct without viewports enabled.
+static void SetNextWindowPosInMainWindow(const ImVec2 &relPos,
+                                         ImGuiCond cond = 0,
+                                         const ImVec2 &pivot = ImVec2(0, 0)) {
+  const ImGuiViewport *mvp = ImGui::GetMainViewport();
+  ImGui::SetNextWindowViewport(mvp->ID);
+  ImGui::SetNextWindowPos(ImVec2(mvp->Pos.x + relPos.x, mvp->Pos.y + relPos.y),
+                          cond, pivot);
+}
+
 // Application globals used throughout the GUI system
 extern int windowWidth;
 extern int windowHeight;
@@ -193,7 +211,7 @@ static void renderGizmoViewportToolbar() {
 
   const float scale = g_GuiScale.currentScale;
   const float margin = 12.0f * scale;
-  ImGui::SetNextWindowPos(
+  SetNextWindowPosInMainWindow(
       ImVec2(g_viewportX + g_viewportWidth - margin, g_viewportTopInset + margin),
       ImGuiCond_Always, ImVec2(1.0f, 0.0f));
   ImGui::SetNextWindowBgAlpha(0.78f);
@@ -287,7 +305,7 @@ static void renderViewModeToolbar() {
 
   const float scale = g_GuiScale.currentScale;
   const float margin = 12.0f * scale;
-  ImGui::SetNextWindowPos(
+  SetNextWindowPosInMainWindow(
       ImVec2(g_viewportX + margin, g_viewportTopInset + margin),
       ImGuiCond_Always, ImVec2(0.0f, 0.0f));
   ImGui::SetNextWindowBgAlpha(0.78f);
@@ -909,8 +927,8 @@ static void renderToasts() {
       break;
     }
 
-    ImGui::SetNextWindowPos(ImVec2(windowWidth * 0.5f, y), ImGuiCond_Always,
-                            ImVec2(0.5f, 1.0f));
+    SetNextWindowPosInMainWindow(ImVec2(windowWidth * 0.5f, y), ImGuiCond_Always,
+                                 ImVec2(0.5f, 1.0f));
     ImGui::SetNextWindowBgAlpha(0.92f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f * scale);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
@@ -977,7 +995,7 @@ static void renderPerformanceOverlay() {
   float fps = io.Framerate;
   float frameMs = fps > 0.0f ? 1000.0f / fps : 0.0f;
 
-  ImGui::SetNextWindowPos(
+  SetNextWindowPosInMainWindow(
       ImVec2(windowWidth - 12.0f * scale, windowHeight - 12.0f * scale),
       ImGuiCond_Always, ImVec2(1.0f, 1.0f));
   ImGui::SetNextWindowBgAlpha(0.6f);
@@ -1076,8 +1094,8 @@ static void renderEmptySceneHint() {
     ImGui::TextDisabled("%s", text);
   };
 
-  ImGui::SetNextWindowPos(ImVec2(centerX, centerY), ImGuiCond_Always,
-                          ImVec2(0.5f, 0.5f));
+  SetNextWindowPosInMainWindow(ImVec2(centerX, centerY), ImGuiCond_Always,
+                               ImVec2(0.5f, 0.5f));
   ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.75f);
   ImGui::Begin("EmptySceneHint", nullptr,
                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
@@ -2133,7 +2151,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
   // ========================
   // SCENE HIERARCHY PANEL
   // ========================
-  ImGui::SetNextWindowPos(ImVec2(0, ImGui::GetFrameHeight()));
+  SetNextWindowPosInMainWindow(ImVec2(0, ImGui::GetFrameHeight()));
   ImGui::SetNextWindowSize(ImVec2(320 * g_GuiScale.currentScale,
                                   viewport->Size.y - ImGui::GetFrameHeight()));
   // Ensure only the Scene Hierarchy window itself has square corners (keep
@@ -7278,6 +7296,12 @@ static void drawMeasurementLabels() {
       camera.GetViewMatrix();
   ImDrawList *drawList = ImGui::GetForegroundDrawList();
 
+  // GetForegroundDrawList() targets the main viewport, whose coordinate space
+  // is desktop-absolute when multi-viewport is enabled. The projection below
+  // yields main-window-relative pixels, so shift by the main viewport origin
+  // (a no-op when the window sits at the desktop origin).
+  const ImVec2 vpOrigin = ImGui::GetMainViewport()->Pos;
+
   auto project = [&](const glm::vec3 &world, ImVec2 &out) -> bool {
     glm::vec4 clip = viewProj * glm::vec4(world, 1.0f);
     if (clip.w <= 1e-4f)
@@ -7285,9 +7309,9 @@ static void drawMeasurementLabels() {
     const glm::vec3 ndc = glm::vec3(clip) / clip.w;
     if (ndc.x < -1.1f || ndc.x > 1.1f || ndc.y < -1.1f || ndc.y > 1.1f)
       return false;
-    out = ImVec2(static_cast<float>(g_viewportX) +
+    out = ImVec2(vpOrigin.x + static_cast<float>(g_viewportX) +
                      (ndc.x + 1.0f) * 0.5f * static_cast<float>(g_viewportWidth),
-                 static_cast<float>(g_viewportTopInset) +
+                 vpOrigin.y + static_cast<float>(g_viewportTopInset) +
                      (1.0f - ndc.y) * 0.5f *
                          static_cast<float>(g_viewportHeight));
     return true;
