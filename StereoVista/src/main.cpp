@@ -3363,6 +3363,16 @@ int main() {
     }
   }
 
+  // GLFW window hints are sticky. The stereo hint above is left set when the
+  // quad-buffer main window is created successfully, so reset it now: ImGui
+  // multi-viewport creates secondary GLFW windows (for dragged-out panels) with
+  // glfwCreateWindow() and would otherwise inherit GLFW_STEREO, requesting a
+  // quad-buffer context per panel -- wasteful, and a hard creation failure
+  // (NULL window -> crash) on drivers that cap the number of stereo contexts.
+  // The UI panels only need a plain mono window; they still share the main GL
+  // context (and thus the font atlas) regardless of this pixel-format change.
+  glfwWindowHint(GLFW_STEREO, GLFW_FALSE);
+
   glfwMakeContextCurrent(window);
   Window::nativeWindow = window;
 
