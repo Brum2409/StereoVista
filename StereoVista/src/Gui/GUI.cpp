@@ -1275,9 +1275,12 @@ static void SceneReportToast(const std::string &sceneFile,
   GUI::ShowToast(std::string("Scene ") + verb + ": " + name,
                  GUI::ToastType::Success);
   int failed = report.modelsFailed + report.pointCloudsFailed;
-  if (failed > 0 || report.hasWarnings()) {
+  if (failed > 0) {
     GUI::ShowToast(std::to_string(failed) +
                        " object(s) could not be loaded - see log for details",
+                   GUI::ToastType::Warning);
+  } else if (report.hasWarnings()) {
+    GUI::ShowToast("Scene loaded with warnings - see log for details",
                    GUI::ToastType::Warning);
   }
 }
@@ -1291,14 +1294,29 @@ static bool SceneSaveTo(const std::string &destination) {
     captureSceneEnvironment(currentScene);
     Engine::saveScene(destination, currentScene, camera,
                       SceneOptionsFromPrefs());
-    if (preferences.sceneSaveSettings.includeSnapshots)
-      Core::SnapshotManager::instance().saveToScene(destination);
 
     std::filesystem::path p(destination);
     if (p.extension() != ".scene")
       p.replace_extension(".scene");
+
+    if (preferences.sceneSaveSettings.includeSnapshots) {
+      Core::SnapshotManager::instance().saveToScene(p.string());
+    } else {
+      // Snapshot saving is off: drop any snapshot index left in this scene's
+      // folder so a later load doesn't restore stale snapshots.
+      std::error_code ec;
+      std::filesystem::remove(p.parent_path() / p.stem() / "snapshots.json", ec);
+    }
+
     g_currentScenePath = p.string();
     g_sceneDirty = false;
+    // Reflect the timestamps the file was actually written with so the Scene
+    // Manager panel shows them without needing a reload. Guard on a non-empty
+    // modifiedAt so a chunked scene (whose header carries no metadata) doesn't
+    // wipe the description/author the user just entered.
+    Engine::SceneInfo info = Engine::loadSceneInfo(g_currentScenePath);
+    if (info.valid && !info.metadata.modifiedAt.empty())
+      currentScene.metadata = info.metadata;
     SceneAddRecent(g_currentScenePath);
     GUI::UpdateWindowTitleForScene(g_currentScenePath);
     GUI::ShowToast("Scene saved: " + p.filename().string(),
@@ -7101,6 +7119,7 @@ void renderSceneManagerWindow() {
     row("Spot Lights", spotLights.size());
     row("Measurements", currentScene.measurements.size());
     row("Section Planes", currentScene.clipPlanes.size());
+    row("Snapshots", Core::SnapshotManager::instance().snapshots().size());
     ImGui::EndTable();
   }
 
@@ -7141,6 +7160,9 @@ void renderSceneManagerWindow() {
   changed |= ImGui::Checkbox("Measurements", &opt.includeMeasurements);
   changed |= ImGui::Checkbox("Section planes", &opt.includeClipPlanes);
   changed |= ImGui::Checkbox("Snapshots", &opt.includeSnapshots);
+  ImGui::SameLine();
+  DrawHelpMarker("Save named snapshots (metadata + thumbnails) into the "
+                 "scene folder so they reload with the scene.");
   changed |= ImGui::Checkbox("Compact (minified) JSON", &opt.compact);
   ImGui::SameLine();
   DrawHelpMarker("Write the scene's .scene file without indentation. Smaller "
@@ -7167,7 +7189,11 @@ void renderSceneManagerWindow() {
   if (preferences.recentScenes.empty()) {
     ImGui::TextDisabled("No recent scenes.");
   } else {
+    // Defer all mutating actions until after the loop: loading a scene calls
+    // SceneAddRecent(), which rewrites preferences.recentScenes and would
+    // invalidate the iterator / dangling `recent` reference mid-iteration.
     std::string toRemove;
+    std::string toLoad;
     bool clearAll = false;
     for (const auto &recent : preferences.recentScenes) {
       ImGui::PushID(recent.c_str());
@@ -7177,7 +7203,7 @@ void renderSceneManagerWindow() {
       if (!exists)
         ImGui::BeginDisabled();
       if (ImGui::Button("Load"))
-        SceneRequestLoad(recent);
+        toLoad = recent;
       if (!exists)
         ImGui::EndDisabled();
 
@@ -7205,6 +7231,8 @@ void renderSceneManagerWindow() {
       auto &r = preferences.recentScenes;
       r.erase(std::remove(r.begin(), r.end(), toRemove), r.end());
       savePreferences();
+    } else if (!toLoad.empty()) {
+      SceneRequestLoad(toLoad);
     }
   }
 
