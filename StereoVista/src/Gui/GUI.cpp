@@ -6498,12 +6498,12 @@ void renderMeasurementToolWindow() {
   }
   ImGui::SameLine();
   DrawHelpMarker("While enabled, LEFT CLICK places a measurement point at the "
-                 "3D cursor. RIGHT CLICK or ENTER finishes a polyline, "
+                 "3D cursor. RIGHT CLICK or ENTER finishes a polyline/polygon, "
                  "BACKSPACE removes the last point, DELETE cancels.");
 
   int mode = static_cast<int>(measurementTool.getMode());
   const char *modeNames[] = {"Distance (polyline)", "Angle (3 points)",
-                             "Point (coordinates)"};
+                             "Point (coordinates)", "Area (polygon)"};
   if (ImGui::Combo("Mode", &mode, modeNames, IM_ARRAYSIZE(modeNames))) {
     measurementTool.setMode(static_cast<Engine::Measurement::Type>(mode));
   }
@@ -6522,6 +6522,13 @@ void renderMeasurementToolWindow() {
         active.points.size() >= 2) {
       ImGui::Text("Length so far: %s",
                   measurementTool.formatLength(active.totalLength()).c_str());
+    }
+    if (active.type == Engine::Measurement::Type::Area &&
+        active.points.size() >= 3) {
+      ImGui::Text("Area so far: %s",
+                  measurementTool.formatArea(active.area()).c_str());
+      ImGui::Text("Perimeter: %s",
+                  measurementTool.formatLength(active.perimeter()).c_str());
     }
     if (ImGui::Button("Finish", ImVec2(100, 0))) {
       measurementTool.finishActive();
@@ -6594,6 +6601,9 @@ void renderMeasurementToolWindow() {
                    m.points[0].y, m.points[0].z);
           value = buf;
         }
+        break;
+      case Engine::Measurement::Type::Area:
+        value = measurementTool.formatArea(m.area());
         break;
       case Engine::Measurement::Type::Distance:
       default:
@@ -7347,6 +7357,12 @@ static void drawMeasurementLabels() {
         drawLabel(m.points[0], buf, color);
       }
       break;
+    case Engine::Measurement::Type::Area:
+      if (m.points.size() >= 3) {
+        drawLabel(m.centroid(),
+                  measurementTool.formatArea(m.area()), color);
+      }
+      break;
     case Engine::Measurement::Type::Distance:
     default: {
       const size_t segments = m.points.size() >= 2 ? m.points.size() - 1 : 0;
@@ -7390,6 +7406,13 @@ static void drawMeasurementLabels() {
         char buf[32];
         snprintf(buf, sizeof(buf), "%.1f\xC2\xB0", tmp.angleDegrees());
         drawLabel(tmp.points[1], buf, liveColor);
+      } else if (active.type == Engine::Measurement::Type::Area &&
+                 active.points.size() >= 2) {
+        // Live area preview with the cursor closing the polygon.
+        Engine::Measurement tmp = active;
+        tmp.points.push_back(preview);
+        drawLabel(tmp.centroid(),
+                  measurementTool.formatArea(tmp.area()), liveColor);
       } else if (active.type == Engine::Measurement::Type::Distance) {
         const float len = glm::length(preview - active.points.back());
         drawLabel((active.points.back() + preview) * 0.5f,

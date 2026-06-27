@@ -76,6 +76,10 @@ namespace Tools {
         // Format a world-space length with the configured unit scale/suffix.
         std::string formatLength(float worldLength) const;
 
+        // Format a world-space area with the configured unit scale/suffix
+        // (length scale is squared, suffix gets a superscript ²).
+        std::string formatArea(float worldArea) const;
+
         // Export all committed measurements to a CSV file (tidy/long format:
         // one row per point, with the measurement's summary value repeated).
         // Lengths are written in the configured display units. Returns false if
@@ -88,9 +92,14 @@ namespace Tools {
                         const glm::vec3& b, const glm::vec3& color) const;
         void appendPoint(std::vector<float>& out, const glm::vec3& p,
                          const glm::vec3& color) const;
+        // Triangulate a polygon (centroid fan) into the triangle vertex buffer
+        // so Area measurements show a translucent fill.
+        void appendFan(std::vector<float>& out, const std::vector<glm::vec3>& pts,
+                       const glm::vec3& color) const;
         void drawBuffers(const glm::mat4& projection, const glm::mat4& view,
                          const std::vector<float>& lineVerts,
-                         const std::vector<float>& pointVerts);
+                         const std::vector<float>& pointVerts,
+                         const std::vector<float>& triVerts);
 
         bool m_enabled = false;
         Engine::Measurement::Type m_mode = Engine::Measurement::Type::Distance;
@@ -107,6 +116,7 @@ namespace Tools {
         bool   m_initialized = false;
         GLuint m_lineVAO = 0, m_lineVBO = 0;
         GLuint m_pointVAO = 0, m_pointVBO = 0;
+        GLuint m_triVAO = 0, m_triVBO = 0;
         GLuint m_lineProgram = 0;
         GLuint m_pointProgram = 0;
     };

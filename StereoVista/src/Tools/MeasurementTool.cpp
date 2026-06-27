@@ -134,6 +134,7 @@ void main() {
 
         makeBuffers(m_lineVAO, m_lineVBO);
         makeBuffers(m_pointVAO, m_pointVBO);
+        makeBuffers(m_triVAO, m_triVBO);
 
         m_lineProgram = compileProgram(kLineVertexSrc, kLineFragmentSrc, "line");
         m_pointProgram = compileProgram(kPointVertexSrc, kPointFragmentSrc, "point");
@@ -146,6 +147,8 @@ void main() {
         if (m_lineVBO) { glDeleteBuffers(1, &m_lineVBO); m_lineVBO = 0; }
         if (m_pointVAO) { glDeleteVertexArrays(1, &m_pointVAO); m_pointVAO = 0; }
         if (m_pointVBO) { glDeleteBuffers(1, &m_pointVBO); m_pointVBO = 0; }
+        if (m_triVAO) { glDeleteVertexArrays(1, &m_triVAO); m_triVAO = 0; }
+        if (m_triVBO) { glDeleteBuffers(1, &m_triVBO); m_triVBO = 0; }
         if (m_lineProgram) { glDeleteProgram(m_lineProgram); m_lineProgram = 0; }
         if (m_pointProgram) { glDeleteProgram(m_pointProgram); m_pointProgram = 0; }
         m_initialized = false;
@@ -174,7 +177,8 @@ void main() {
             m_nameCounter++;
             const char* prefix =
                 (m_mode == Engine::Measurement::Type::Angle) ? "Angle" :
-                (m_mode == Engine::Measurement::Type::Point) ? "Point" : "Distance";
+                (m_mode == Engine::Measurement::Type::Point) ? "Point" :
+                (m_mode == Engine::Measurement::Type::Area)  ? "Area"  : "Distance";
             m_active.name = std::string(prefix) + " " + std::to_string(m_nameCounter);
             m_hasActive = true;
         }
@@ -194,6 +198,7 @@ void main() {
         if (!m_hasActive) return;
         const size_t required =
             (m_active.type == Engine::Measurement::Type::Angle) ? 3 :
+            (m_active.type == Engine::Measurement::Type::Area)  ? 3 :
             (m_active.type == Engine::Measurement::Type::Point) ? 1 : 2;
         if (m_active.points.size() >= required) {
             commitActive();
@@ -242,6 +247,15 @@ void main() {
         return buf;
     }
 
+    std::string MeasurementTool::formatArea(float worldArea) const {
+        char buf[64];
+        // Area scales with the square of the length unit; "\xC2\xB2" is the
+        // UTF-8 superscript two so the suffix reads e.g. "m²".
+        std::snprintf(buf, sizeof(buf), "%.3f %s\xC2\xB2",
+                      worldArea * unitScale * unitScale, unitSuffix.c_str());
+        return buf;
+    }
+
     bool MeasurementTool::exportToCSV(const std::string& path) const {
         std::ofstream file(path, std::ios::out | std::ios::trunc);
         if (!file.is_open()) {
@@ -268,13 +282,15 @@ void main() {
             for (const auto& m : *m_measurements) {
                 const char* typeName =
                     (m.type == Engine::Measurement::Type::Angle) ? "Angle" :
-                    (m.type == Engine::Measurement::Type::Point) ? "Point" : "Distance";
+                    (m.type == Engine::Measurement::Type::Point) ? "Point" :
+                    (m.type == Engine::Measurement::Type::Area)  ? "Area"  : "Distance";
 
                 // Summary value + unit, depending on measurement type. Lengths
                 // are converted to the configured display units; points have no
                 // scalar summary (their coordinates are the value).
                 char summary[48] = "";
                 const char* unit = "";
+                std::string areaUnit; // backing store for the squared-unit suffix
                 if (m.type == Engine::Measurement::Type::Distance) {
                     std::snprintf(summary, sizeof(summary), "%.6f",
                                   m.totalLength() * unitScale);
@@ -282,6 +298,11 @@ void main() {
                 } else if (m.type == Engine::Measurement::Type::Angle) {
                     std::snprintf(summary, sizeof(summary), "%.4f", m.angleDegrees());
                     unit = "deg";
+                } else if (m.type == Engine::Measurement::Type::Area) {
+                    std::snprintf(summary, sizeof(summary), "%.6f",
+                                  m.area() * unitScale * unitScale);
+                    areaUnit = unitSuffix + "^2"; // plain ASCII for spreadsheets
+                    unit = areaUnit.c_str();
                 }
 
                 if (m.points.empty()) {
@@ -315,12 +336,32 @@ void main() {
         out.insert(out.end(), { p.x, p.y, p.z, color.r, color.g, color.b });
     }
 
+    void MeasurementTool::appendFan(std::vector<float>& out,
+                                    const std::vector<glm::vec3>& pts,
+                                    const glm::vec3& color) const {
+        if (pts.size() < 3) return;
+        glm::vec3 c(0.0f);
+        for (const auto& p : pts) c += p;
+        c /= static_cast<float>(pts.size());
+        // Fan from the centroid so the fill covers convex polygons fully and
+        // star-shaped ones reasonably; the fill is purely illustrative.
+        for (size_t i = 0; i < pts.size(); i++) {
+            const glm::vec3& a = pts[i];
+            const glm::vec3& b = pts[(i + 1) % pts.size()];
+            out.insert(out.end(), {
+                c.x, c.y, c.z, color.r, color.g, color.b,
+                a.x, a.y, a.z, color.r, color.g, color.b,
+                b.x, b.y, b.z, color.r, color.g, color.b });
+        }
+    }
+
     void MeasurementTool::render(const glm::mat4& projection, const glm::mat4& view,
                                  const glm::vec3* previewPoint) {
         if (!m_initialized) initialize();
 
         std::vector<float> lineVerts;
         std::vector<float> pointVerts;
+        std::vector<float> triVerts;
 
         // Committed measurements (scene data)
         if (m_measurements) {
@@ -328,6 +369,11 @@ void main() {
                 if (!m.visible) continue;
                 for (size_t i = 1; i < m.points.size(); i++)
                     appendLine(lineVerts, m.points[i - 1], m.points[i], m.color);
+                // Area polygons close back to the first vertex and get a fill.
+                if (m.type == Engine::Measurement::Type::Area && m.points.size() >= 3) {
+                    appendLine(lineVerts, m.points.back(), m.points.front(), m.color);
+                    appendFan(triVerts, m.points, m.color);
+                }
                 for (const auto& p : m.points)
                     appendPoint(pointVerts, p, m.color);
             }
@@ -347,20 +393,37 @@ void main() {
             m_previewPoint = *previewPoint;
             m_previewValid = true;
             if (m_hasActive && !m_active.points.empty()) {
-                appendLine(lineVerts, m_active.points.back(), m_previewPoint,
-                           glm::mix(activeColor, glm::vec3(1.0f), 0.5f));
+                const glm::vec3 previewColor = glm::mix(activeColor, glm::vec3(1.0f), 0.5f);
+                appendLine(lineVerts, m_active.points.back(), m_previewPoint, previewColor);
+                // For an in-progress area, also rubber-band the closing edge and
+                // preview-fill the polygon the cursor is sketching.
+                if (m_active.type == Engine::Measurement::Type::Area &&
+                    m_active.points.size() >= 2) {
+                    appendLine(lineVerts, m_previewPoint, m_active.points.front(),
+                               previewColor);
+                    std::vector<glm::vec3> ghost = m_active.points;
+                    ghost.push_back(m_previewPoint);
+                    appendFan(triVerts, ghost, activeColor);
+                }
             }
             appendPoint(pointVerts, m_previewPoint, glm::vec3(1.0f));
+        } else if (m_hasActive && m_active.type == Engine::Measurement::Type::Area &&
+                   m_active.points.size() >= 3) {
+            // No live cursor: still close + fill the placed area outline.
+            appendLine(lineVerts, m_active.points.back(), m_active.points.front(),
+                       activeColor);
+            appendFan(triVerts, m_active.points, activeColor);
         }
 
-        if (lineVerts.empty() && pointVerts.empty()) return;
+        if (lineVerts.empty() && pointVerts.empty() && triVerts.empty()) return;
 
-        drawBuffers(projection, view, lineVerts, pointVerts);
+        drawBuffers(projection, view, lineVerts, pointVerts, triVerts);
     }
 
     void MeasurementTool::drawBuffers(const glm::mat4& projection, const glm::mat4& view,
                                       const std::vector<float>& lineVerts,
-                                      const std::vector<float>& pointVerts) {
+                                      const std::vector<float>& pointVerts,
+                                      const std::vector<float>& triVerts) {
         // Save the GL state we touch.
         GLint prevDepthFunc = GL_LESS;
         glGetIntegerv(GL_DEPTH_FUNC, &prevDepthFunc);
@@ -368,16 +431,34 @@ void main() {
         glGetBooleanv(GL_DEPTH_WRITEMASK, &prevDepthMask);
         const GLboolean prevBlend = glIsEnabled(GL_BLEND);
         const GLboolean prevPointSize = glIsEnabled(GL_PROGRAM_POINT_SIZE);
+        const GLboolean prevCull = glIsEnabled(GL_CULL_FACE);
 
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glEnable(GL_PROGRAM_POINT_SIZE);
+        // Area fills are double-sided; never let back-face culling drop them.
+        glDisable(GL_CULL_FACE);
         // Overlay must never write depth: the cursor system samples scene depth
         // from this buffer.
         glDepthMask(GL_FALSE);
         glLineWidth(lineWidth);
 
         const glm::mat4 viewProj = projection * view;
+
+        // Translucent area fill, drawn under the outlines/markers.
+        auto drawFill = [&](float alpha) {
+            if (triVerts.empty()) return;
+            glUseProgram(m_lineProgram);
+            glUniformMatrix4fv(glGetUniformLocation(m_lineProgram, "uViewProj"),
+                               1, GL_FALSE, &viewProj[0][0]);
+            glUniform1f(glGetUniformLocation(m_lineProgram, "uAlpha"), alpha);
+            glBindVertexArray(m_triVAO);
+            glBindBuffer(GL_ARRAY_BUFFER, m_triVBO);
+            glBufferData(GL_ARRAY_BUFFER,
+                         static_cast<GLsizeiptr>(triVerts.size() * sizeof(float)),
+                         triVerts.data(), GL_DYNAMIC_DRAW);
+            glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(triVerts.size() / 6));
+        };
 
         auto drawPass = [&](float alpha) {
             if (!lineVerts.empty()) {
@@ -410,12 +491,14 @@ void main() {
 
         // Pass 1: normally depth-tested, fully opaque.
         glDepthFunc(GL_LEQUAL);
+        drawFill(0.18f);
         drawPass(1.0f);
 
         // Pass 2: occluded parts re-drawn ghosted so measurements stay legible
         // through geometry.
         if (xRay) {
             glDepthFunc(GL_GREATER);
+            drawFill(0.07f);
             drawPass(0.22f);
         }
 
@@ -424,6 +507,7 @@ void main() {
         glDepthMask(prevDepthMask);
         if (!prevBlend) glDisable(GL_BLEND);
         if (!prevPointSize) glDisable(GL_PROGRAM_POINT_SIZE);
+        if (prevCull) glEnable(GL_CULL_FACE);
         glBindVertexArray(0);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         glUseProgram(0);
