@@ -1690,7 +1690,16 @@ void applyLoadedSceneEnvironment(const Engine::Scene &scene) {
   if (!env.skyboxHdrPath.empty()) {
     skyboxConfig.hdrPath = env.skyboxHdrPath;
   }
+
+  // Mirror the live skybox config into preferences so they stay fully in sync
+  // (the skybox settings panel keeps both aligned, and only a complete mirror
+  // avoids a half-updated persisted state on the next launch).
   preferences.skyboxType = skyboxConfig.type;
+  preferences.skyboxSolidColor = skyboxConfig.solidColor;
+  preferences.skyboxGradientTop = skyboxConfig.gradientTopColor;
+  preferences.skyboxGradientBottom = skyboxConfig.gradientBottomColor;
+  preferences.selectedCubemap = skyboxConfig.selectedCubemap;
+  preferences.skyboxHdrPath = skyboxConfig.hdrPath;
   preferences.skyboxExposure = env.skyboxExposure;
 
   updateSkybox();
