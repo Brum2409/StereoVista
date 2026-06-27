@@ -7,6 +7,8 @@
 #include <thread>
 #include <mutex>
 #include <atomic>
+#include <queue>
+#include <condition_variable>
 #include <glad/glad.h>
 #include <cstring>
 #include <filesystem>
@@ -217,6 +219,212 @@ namespace Engine {
 
         std::cout << "[ComputePC] Built " << N << " points into " << numBatches
                   << " Morton-sorted, shuffled batches\n";
+    }
+
+    // =========================================================================
+    // Progressive (streaming) LAS/LAZ loading – Schütz "compute_loop_las" style
+    // =========================================================================
+    // Mirrors m-schuetz/compute_rasterizer's LasLoaderSparse:
+    //   • a background worker thread reads the file in chunks and produces
+    //     ready-to-upload GPU staging ("StreamChunk"s);
+    //   • the GL/main thread drains those chunks every frame in updateStreaming()
+    //     via glBufferSubData into SSBOs that were pre-allocated to the exact
+    //     header point count, growing pc.numBatches as data arrives so the
+    //     existing compute rasterizer draws the cloud while it is still loading.
+    //
+    // Unlike Schütz's pure file-order streaming, each chunk is Morton-sorted and
+    // its batches shuffled (the same transform buildComputeCloud applies, but
+    // scoped to the chunk).  This keeps per-batch bounding boxes tight regardless
+    // of the file's on-disk ordering, so frustum culling / adaptive precision /
+    // early-z stay exactly as fast as the one-shot path – at bounded CPU RAM.
+    //
+    // The LAS header is exploited up front: exact point count (precise SSBO
+    // pre-allocation + progress, no counting pass) and exact bounds (camera
+    // framing and SpaceMouse extents are valid before a single point is read).
+
+    struct StreamChunk {
+        uint32_t firstPoint = 0;   // base offset into the per-point SSBOs
+        uint32_t firstBatch = 0;   // base offset into the batch-descriptor SSBO
+        uint32_t numPoints  = 0;
+        std::vector<ComputeBatch> batches;
+        std::vector<uint32_t>     xyz4b, xyz8b, xyz12b, rgba; // chunk-local arrays
+    };
+
+    // Background-thread + producer/consumer state for one streaming cloud.
+    // Heap-allocated and owned by PointCloud via shared_ptr; the worker holds a
+    // raw pointer that stays valid because ~PointCloudStream joins the thread
+    // before the object is destroyed.  PointCloud only ever moves the shared_ptr,
+    // never this object, so the raw pointer survives vector reallocations.
+    struct PointCloudStream {
+        std::thread             worker;
+        std::mutex              mtx;
+        std::condition_variable cv;          // signals both produce and consume
+        std::queue<StreamChunk> ready;       // produced chunks awaiting upload
+        std::atomic<bool>       stop{false}; // request worker exit (cloud removed)
+        std::atomic<bool>       finished{false};
+        std::atomic<bool>       failed{false};
+        size_t                  maxInFlight = 4; // backpressure → bounds CPU RAM
+        uint32_t                targetPoints  = 0;
+        uint32_t                targetBatches = 0;
+
+        ~PointCloudStream() {
+            stop.store(true);
+            cv.notify_all();
+            if (worker.joinable()) worker.join();
+        }
+    };
+
+    // Build one StreamChunk from a run of decoded points using exactly the
+    // Morton-sort + per-batch shuffle + 10/20/30-bit quantisation of
+    // buildComputeCloud, scoped to the chunk.  globalFirstPoint/globalFirstBatch
+    // are this chunk's base offsets in the pre-allocated SSBOs; batch.firstPoint
+    // is written as a *global* index so the rasterizer indexes the SSBOs directly.
+    static void buildStreamChunk(std::vector<PointCloudPoint>& pts,
+                                 uint32_t globalFirstPoint,
+                                 uint32_t globalFirstBatch,
+                                 StreamChunk& out) {
+        const size_t N = pts.size();
+        out.firstPoint = globalFirstPoint;
+        out.firstBatch = globalFirstBatch;
+        out.numPoints  = static_cast<uint32_t>(N);
+        if (N == 0) return;
+
+        glm::vec3 gMin( FLT_MAX), gMax(-FLT_MAX);
+        for (const auto& p : pts) { gMin = glm::min(gMin, p.position); gMax = glm::max(gMax, p.position); }
+        const glm::vec3 ext = glm::max(gMax - gMin, glm::vec3(1e-9f));
+        constexpr uint32_t MAXQ = (1u << 21) - 1u;
+
+        std::vector<std::pair<uint64_t, uint32_t>> order(N);
+        for (size_t i = 0; i < N; ++i) {
+            const glm::vec3 n = glm::clamp((pts[i].position - gMin) / ext, 0.0f, 1.0f);
+            order[i] = { mortonEncode3D(static_cast<uint32_t>(n.x * static_cast<float>(MAXQ)),
+                                        static_cast<uint32_t>(n.y * static_cast<float>(MAXQ)),
+                                        static_cast<uint32_t>(n.z * static_cast<float>(MAXQ))),
+                         static_cast<uint32_t>(i) };
+        }
+        std::sort(order.begin(), order.end(),
+                  [](const std::pair<uint64_t, uint32_t>& a,
+                     const std::pair<uint64_t, uint32_t>& b) { return a.first < b.first; });
+
+        const int      B    = PointCloud::kComputeBatchSize;
+        const uint32_t numB = static_cast<uint32_t>((N + B - 1) / B);
+        std::vector<uint32_t> perm(numB);
+        for (uint32_t i = 0; i < numB; ++i) perm[i] = i;
+        std::mt19937 rng(0x5eed1234u ^ globalFirstBatch);  // per-chunk reproducible
+        std::shuffle(perm.begin(), perm.end(), rng);
+
+        std::vector<uint32_t> outFirst(numB);
+        for (uint32_t t = 0, off = 0; t < numB; ++t) {
+            const uint32_t src   = perm[t];
+            const uint32_t count = static_cast<uint32_t>(std::min<size_t>(static_cast<size_t>(B), N - static_cast<size_t>(src) * B));
+            outFirst[t] = off;
+            off += count;
+        }
+
+        out.xyz4b.resize(N); out.xyz8b.resize(N); out.xyz12b.resize(N); out.rgba.resize(N);
+        out.batches.resize(numB);
+        constexpr uint32_t STEPS_30BIT = 1u << 30;
+        constexpr uint32_t MASK_10BIT  = 1023u;
+
+        for (uint32_t t = 0; t < numB; ++t) {
+            const uint32_t src   = perm[t];
+            const size_t   s     = static_cast<size_t>(src) * B;
+            const uint32_t count = static_cast<uint32_t>(std::min<size_t>(static_cast<size_t>(B), N - s));
+            const uint32_t first = outFirst[t];
+
+            glm::vec3 bMin( FLT_MAX), bMax(-FLT_MAX);
+            for (uint32_t k = 0; k < count; ++k) {
+                const glm::vec3& p = pts[order[s + k].second].position;
+                bMin = glm::min(bMin, p); bMax = glm::max(bMax, p);
+            }
+            const glm::vec3 sz = glm::max(bMax - bMin, glm::vec3(1e-6f));
+            out.batches[t] = { bMin.x, bMin.y, bMin.z, bMax.x, bMax.y, bMax.z,
+                               static_cast<int>(count),
+                               static_cast<int>(globalFirstPoint + first) };
+
+            for (uint32_t k = 0; k < count; ++k) {
+                const PointCloudPoint& P = pts[order[s + k].second];
+                auto q = [&](float v, float lo, float ss) -> uint32_t {
+                    const float nn = glm::clamp((v - lo) / ss, 0.0f, 1.0f);
+                    return std::min(static_cast<uint32_t>(nn * static_cast<float>(STEPS_30BIT)), STEPS_30BIT - 1u);
+                };
+                const uint32_t Xb = q(P.position.x, bMin.x, sz.x);
+                const uint32_t Yb = q(P.position.y, bMin.y, sz.y);
+                const uint32_t Zb = q(P.position.z, bMin.z, sz.z);
+                const uint32_t o  = first + k;
+                out.xyz4b [o] = ((Xb>>20)&MASK_10BIT) | (((Yb>>20)&MASK_10BIT)<<10) | (((Zb>>20)&MASK_10BIT)<<20);
+                out.xyz8b [o] = ((Xb>>10)&MASK_10BIT) | (((Yb>>10)&MASK_10BIT)<<10) | (((Zb>>10)&MASK_10BIT)<<20);
+                out.xyz12b[o] = (Xb&MASK_10BIT) | ((Yb&MASK_10BIT)<<10) | ((Zb&MASK_10BIT)<<20);
+                const uint32_t r8 = static_cast<uint32_t>(glm::clamp(P.color.r,    0.f, 1.f) * 255.f + 0.5f);
+                const uint32_t g8 = static_cast<uint32_t>(glm::clamp(P.color.g,    0.f, 1.f) * 255.f + 0.5f);
+                const uint32_t b8 = static_cast<uint32_t>(glm::clamp(P.color.b,    0.f, 1.f) * 255.f + 0.5f);
+                const uint32_t a8 = static_cast<uint32_t>(glm::clamp(P.intensity, 0.f, 1.f) * 255.f + 0.5f);
+                out.rgba[o] = (a8<<24)|(b8<<16)|(g8<<8)|r8;
+            }
+        }
+    }
+
+    // Worker thread body: decode the LAS/LAZ file in chunks, build each chunk,
+    // and hand it to the consumer with backpressure (waits when too many chunks
+    // are already queued).  Pure CPU work – no GL calls happen here.
+    static void streamWorkerLAS(PointCloudStream* S, std::string filePath, size_t downsample,
+                                double sx, double sy, double sz,
+                                double ox, double oy, double oz,
+                                double cx, double cy, double cz,
+                                bool hasColor, float colorScale, int64_t nPoints) {
+        auto bail = [&]() { S->failed.store(true); S->finished.store(true); S->cv.notify_all(); };
+
+        laszip_POINTER reader = nullptr; laszip_BOOL comp = 0;
+        if (laszip_create(&reader)) { bail(); return; }
+        if (laszip_open_reader(reader, filePath.c_str(), &comp)) { laszip_destroy(reader); bail(); return; }
+        laszip_point_struct* lp = nullptr; laszip_get_point_pointer(reader, &lp);
+
+        const int    B     = PointCloud::kComputeBatchSize;
+        const size_t CHUNK = static_cast<size_t>(64) * B;   // ~655k points / chunk
+        std::vector<PointCloudPoint> buf; buf.reserve(CHUNK);
+        uint32_t outPoint = 0, outBatch = 0;
+
+        auto flush = [&]() {
+            if (buf.empty()) return;
+            StreamChunk ck;
+            buildStreamChunk(buf, outPoint, outBatch, ck);
+            outPoint += ck.numPoints;
+            outBatch += static_cast<uint32_t>(ck.batches.size());
+            std::unique_lock<std::mutex> lk(S->mtx);
+            S->cv.wait(lk, [&] { return S->stop.load() || S->ready.size() < S->maxInFlight; });
+            if (S->stop.load()) return;
+            S->ready.push(std::move(ck));
+            lk.unlock();
+            S->cv.notify_all();
+            buf.clear();
+        };
+
+        for (int64_t i = 0; i < nPoints; ++i) {
+            if (S->stop.load()) break;
+            if (laszip_read_point(reader)) break;
+            if (downsample > 1 && (static_cast<size_t>(i) % downsample) != 0) continue;
+
+            PointCloudPoint pt;
+            pt.position.x = static_cast<float>(lp->X * sx + ox - cx);
+            pt.position.y = static_cast<float>(lp->Y * sy + oy - cy);
+            pt.position.z = static_cast<float>(lp->Z * sz + oz - cz);
+            pt.intensity  = lp->intensity / 65535.0f;
+            if (hasColor) {
+                pt.color.r = lp->rgb[0] / colorScale;
+                pt.color.g = lp->rgb[1] / colorScale;
+                pt.color.b = lp->rgb[2] / colorScale;
+            } else {
+                pt.color = glm::vec3(pt.intensity);
+            }
+            buf.push_back(pt);
+            if (buf.size() >= CHUNK) flush();
+        }
+        if (!S->stop.load()) flush();
+
+        laszip_close_reader(reader);
+        laszip_destroy(reader);
+        S->finished.store(true);
+        S->cv.notify_all();
     }
 
     // Fast single-pass scan: count data lines in a text point cloud file.
@@ -2197,6 +2405,213 @@ namespace Engine {
             }
         }
         return result;
+    }
+
+    // -------------------------------------------------------------------------
+    // Progressive single-file LAS/LAZ loader
+    // Reads the header on the calling (GL) thread to learn the exact point count
+    // and bounds, pre-allocates the compute SSBOs to that size, then spawns a
+    // background worker that streams the points in.  Returns immediately with a
+    // PointCloud whose bounds are already valid and whose batches grow each frame
+    // (via updateStreaming).  globalCenter shares a centre across a multi-file
+    // load so tiles stay correctly positioned relative to each other.
+    // -------------------------------------------------------------------------
+    PointCloud PointCloudLoader::beginLoadLASProgressive(const std::string& filePath,
+                                                         size_t downsampleFactor,
+                                                         const glm::dvec3* globalCenter) {
+        PointCloud pc;
+        pc.name     = std::filesystem::path(filePath).stem().string();
+        pc.filePath = filePath;
+        pc.position  = glm::vec3(0.0f);
+        pc.rotation  = glm::vec3(-90.0f, 0.0f, 0.0f);
+        pc.scale     = glm::vec3(0.1f);
+
+        laszip_POINTER reader = nullptr; laszip_BOOL comp = 0;
+        if (laszip_create(&reader)) { std::cerr << "[LAS-Stream] laszip_create failed\n"; return pc; }
+        if (laszip_open_reader(reader, filePath.c_str(), &comp)) {
+            std::cerr << "[LAS-Stream] Cannot open '" << filePath << "'\n";
+            laszip_destroy(reader); return pc;
+        }
+        laszip_header_struct* hdr = nullptr; laszip_get_header_pointer(reader, &hdr);
+
+        const double sx = hdr->x_scale_factor, sy = hdr->y_scale_factor, sz = hdr->z_scale_factor;
+        const double ox = hdr->x_offset,       oy = hdr->y_offset,       oz = hdr->z_offset;
+        const laszip_U8 fmt = hdr->point_data_format;
+        const bool hasColor = (fmt == 2 || fmt == 3 || fmt == 5 || fmt == 7 || fmt == 8 || fmt == 10);
+        const int64_t nPoints =
+            (hdr->version_minor >= 4 && hdr->extended_number_of_point_records > 0)
+                ? static_cast<int64_t>(hdr->extended_number_of_point_records)
+                : static_cast<int64_t>(hdr->number_of_point_records);
+        const double cx = globalCenter ? globalCenter->x : (hdr->min_x + hdr->max_x) * 0.5;
+        const double cy = globalCenter ? globalCenter->y : (hdr->min_y + hdr->max_y) * 0.5;
+        const double cz = globalCenter ? globalCenter->z : (hdr->min_z + hdr->max_z) * 0.5;
+
+        // Header bounds → valid extents before any point is read (camera framing,
+        // SpaceMouse) in the cloud's local space (world − centre).
+        pc.boundsMin = glm::vec3(static_cast<float>(hdr->min_x - cx),
+                                 static_cast<float>(hdr->min_y - cy),
+                                 static_cast<float>(hdr->min_z - cz));
+        pc.boundsMax = glm::vec3(static_cast<float>(hdr->max_x - cx),
+                                 static_cast<float>(hdr->max_y - cy),
+                                 static_cast<float>(hdr->max_z - cz));
+
+        // Detect 8- vs 16-bit colour from a tiny sample (matches loadFromLAS).
+        float colorScale = 255.0f;
+        if (hasColor) {
+            laszip_point_struct* lp = nullptr; laszip_get_point_pointer(reader, &lp);
+            const int64_t lim = std::min(static_cast<int64_t>(2000), nPoints);
+            laszip_U16 mx = 0;
+            for (int64_t i = 0; i < lim; ++i) {
+                if (laszip_read_point(reader)) break;
+                mx = std::max({ mx, lp->rgb[0], lp->rgb[1], lp->rgb[2] });
+                if (mx > 255) break;
+            }
+            colorScale = (mx > 255) ? 65535.0f : 255.0f;
+        }
+        laszip_close_reader(reader);
+        laszip_destroy(reader);
+        reader = nullptr;
+
+        if (nPoints <= 0) { std::cerr << "[LAS-Stream] No points in " << filePath << "\n"; return pc; }
+
+        // Header count is exact; size the allocation for the kept points.
+        const uint32_t allocPoints = (downsampleFactor > 1)
+            ? static_cast<uint32_t>((nPoints + static_cast<int64_t>(downsampleFactor) - 1) / static_cast<int64_t>(downsampleFactor))
+            : static_cast<uint32_t>(nPoints);
+        const uint32_t allocBatches =
+            (allocPoints + PointCloud::kComputeBatchSize - 1) / PointCloud::kComputeBatchSize;
+
+        // Pre-allocate the 5 SSBOs to full size (NULL data).  VRAM use scales
+        // with the cloud (no artificial cap); allocation fails cleanly if the
+        // cloud exceeds available VRAM (Path B / out-of-core territory).
+        deleteComputeSSBOs(pc);
+        auto alloc = [&](GLuint& id, GLsizeiptr bytes) -> bool {
+            glGenBuffers(1, &id);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, id);
+            glBufferData(GL_SHADER_STORAGE_BUFFER, bytes, nullptr, GL_STATIC_DRAW);
+            return glGetError() == GL_NO_ERROR;
+        };
+        bool ok = true;
+        ok = alloc(pc.computeBatchSSBO,  static_cast<GLsizeiptr>(allocBatches) * sizeof(ComputeBatch)) && ok;
+        ok = alloc(pc.computeXyz4bSSBO,  static_cast<GLsizeiptr>(allocPoints)  * sizeof(uint32_t)) && ok;
+        ok = alloc(pc.computeXyz8bSSBO,  static_cast<GLsizeiptr>(allocPoints)  * sizeof(uint32_t)) && ok;
+        ok = alloc(pc.computeXyz12bSSBO, static_cast<GLsizeiptr>(allocPoints)  * sizeof(uint32_t)) && ok;
+        ok = alloc(pc.computeRGBASSBO,   static_cast<GLsizeiptr>(allocPoints)  * sizeof(uint32_t)) && ok;
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        if (!ok) {
+            std::cerr << "[LAS-Stream] GPU allocation failed for " << allocPoints
+                      << " points – file likely exceeds available VRAM\n";
+            deleteComputeSSBOs(pc);
+            pc.boundsMin = glm::vec3( FLT_MAX);
+            pc.boundsMax = glm::vec3(-FLT_MAX);
+            return pc; // isLoaded() == false → caller reports failure
+        }
+
+        pc.numBatches             = 0;
+        pc.totalPointCount        = 0;
+        pc.computePointsPerThread = (PointCloud::kComputeBatchSize + 127) / 128;
+        pc.streamTargetCount      = allocPoints;
+
+        pc.stream = std::make_shared<PointCloudStream>();
+        pc.stream->targetPoints  = allocPoints;
+        pc.stream->targetBatches = allocBatches;
+        PointCloudStream* S = pc.stream.get();
+        S->worker = std::thread(streamWorkerLAS, S, filePath, downsampleFactor,
+                                sx, sy, sz, ox, oy, oz, cx, cy, cz,
+                                hasColor, colorScale, nPoints);
+
+        std::cout << "[LAS-Stream] " << (comp ? "LAZ" : "LAS") << " " << filePath
+                  << " – streaming " << nPoints << " points (" << allocBatches << " batches)\n";
+        return pc;
+    }
+
+    // Multi-file progressive loader: scans every header for a shared centre, then
+    // kicks off one background stream per file.  All files load concurrently, so
+    // multi-tile sets fill in together instead of one-after-another.
+    std::vector<PointCloud> PointCloudLoader::beginLoadLASMultipleProgressive(
+        const std::vector<std::string>& filePaths, size_t downsampleFactor) {
+        if (filePaths.empty()) return {};
+
+        double gMinX =  DBL_MAX, gMinY =  DBL_MAX, gMinZ =  DBL_MAX;
+        double gMaxX = -DBL_MAX, gMaxY = -DBL_MAX, gMaxZ = -DBL_MAX;
+        int    valid = 0;
+        for (const auto& path : filePaths) {
+            laszip_POINTER r = nullptr; laszip_BOOL c = 0;
+            if (laszip_create(&r)) continue;
+            if (laszip_open_reader(r, path.c_str(), &c)) { laszip_destroy(r); continue; }
+            laszip_header_struct* h = nullptr; laszip_get_header_pointer(r, &h);
+            gMinX = std::min(gMinX, h->min_x); gMaxX = std::max(gMaxX, h->max_x);
+            gMinY = std::min(gMinY, h->min_y); gMaxY = std::max(gMaxY, h->max_y);
+            gMinZ = std::min(gMinZ, h->min_z); gMaxZ = std::max(gMaxZ, h->max_z);
+            ++valid;
+            laszip_close_reader(r); laszip_destroy(r);
+        }
+        if (valid == 0) { std::cerr << "[LAS-Stream-Multi] No valid headers\n"; return {}; }
+
+        const glm::dvec3 center((gMinX + gMaxX) * 0.5, (gMinY + gMaxY) * 0.5, (gMinZ + gMaxZ) * 0.5);
+        std::vector<PointCloud> out;
+        out.reserve(filePaths.size());
+        for (const auto& path : filePaths) {
+            PointCloud pc = beginLoadLASProgressive(path, downsampleFactor, &center);
+            if (pc.isLoaded()) { pc.filePath = path; out.push_back(std::move(pc)); }
+            else std::cerr << "[LAS-Stream-Multi] Failed to start: " << path << "\n";
+        }
+        return out;
+    }
+
+    // Per-frame pump (GL/main thread).  Drains ready chunks from the worker and
+    // uploads them into the pre-allocated SSBOs, growing numBatches so the
+    // rasterizer draws the newly-arrived points.  No-op for non-streaming clouds.
+    void PointCloudLoader::updateStreaming(PointCloud& pc) {
+        PointCloudStream* S = pc.stream.get();
+        if (!S) return;
+
+        constexpr int maxChunksPerFrame = 8; // cap upload work per frame
+        int processed = 0;
+        for (;;) {
+            StreamChunk ck;
+            {
+                std::unique_lock<std::mutex> lk(S->mtx);
+                if (S->ready.empty()) break;
+                ck = std::move(S->ready.front());
+                S->ready.pop();
+            }
+            S->cv.notify_all(); // release backpressure for the worker
+
+            const GLintptr   pOff = static_cast<GLintptr>(ck.firstPoint) * sizeof(uint32_t);
+            const GLsizeiptr pByt = static_cast<GLsizeiptr>(ck.numPoints) * sizeof(uint32_t);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, pc.computeXyz4bSSBO);  glBufferSubData(GL_SHADER_STORAGE_BUFFER, pOff, pByt, ck.xyz4b.data());
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, pc.computeXyz8bSSBO);  glBufferSubData(GL_SHADER_STORAGE_BUFFER, pOff, pByt, ck.xyz8b.data());
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, pc.computeXyz12bSSBO); glBufferSubData(GL_SHADER_STORAGE_BUFFER, pOff, pByt, ck.xyz12b.data());
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, pc.computeRGBASSBO);   glBufferSubData(GL_SHADER_STORAGE_BUFFER, pOff, pByt, ck.rgba.data());
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, pc.computeBatchSSBO);
+            glBufferSubData(GL_SHADER_STORAGE_BUFFER,
+                            static_cast<GLintptr>(ck.firstBatch) * sizeof(ComputeBatch),
+                            static_cast<GLsizeiptr>(ck.batches.size()) * sizeof(ComputeBatch),
+                            ck.batches.data());
+
+            pc.totalPointCount += ck.numPoints;
+            pc.numBatches      += static_cast<uint32_t>(ck.batches.size());
+            if (++processed >= maxChunksPerFrame) break;
+        }
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+        if (S->finished.load()) {
+            bool drained = false;
+            { std::lock_guard<std::mutex> lk(S->mtx); drained = S->ready.empty(); }
+            if (drained) {
+                const bool     failed = S->failed.load();
+                const uint32_t loaded = pc.totalPointCount;
+                const uint32_t nb     = pc.numBatches;
+                pc.stream.reset(); // dtor joins the (already-finished) worker
+                if (failed)
+                    std::cerr << "[LAS-Stream] '" << pc.name << "' finished with errors ("
+                              << loaded << " points loaded)\n";
+                else
+                    std::cout << "[LAS-Stream] '" << pc.name << "' complete: "
+                              << loaded << " points, " << nb << " batches\n";
+            }
+        }
     }
 
 } // namespace Engine

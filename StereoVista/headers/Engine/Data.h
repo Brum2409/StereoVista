@@ -112,6 +112,11 @@ namespace Engine {
         PointCloudChunkCache() : maxMemoryMB(8192), currentMemoryMB(0) {} // Default 8GB limit
     };
 
+    // Background streaming state for a progressively-loaded cloud (defined in
+    // PointCloudLoader.cpp).  Held by shared_ptr so PointCloud stays movable and
+    // the worker thread is joined when the last owner is destroyed.
+    struct PointCloudStream;
+
     struct PointCloud {
         std::string name;
         std::string filePath;
@@ -145,6 +150,14 @@ namespace Engine {
         GLuint computeRGBASSBO   = 0; // binding 44 – pre-packed uint RGBA
         uint32_t numBatches           = 0;
         int      computePointsPerThread = 0; // ceil(kComputeBatchSize / 128)
+
+        // ── Progressive streaming (compute_loop_las style) ───────────────────
+        // While `stream` is non-null the cloud is still loading: SSBOs are
+        // pre-allocated to streamTargetCount points and numBatches/totalPointCount
+        // grow each frame as PointCloudLoader::updateStreaming() uploads chunks.
+        // `stream` resets to null when loading completes.
+        std::shared_ptr<PointCloudStream> stream;
+        uint32_t streamTargetCount = 0; // expected final point count (0 = N/A)
 
         float basePointSize = 2.0f;
 
@@ -200,7 +213,9 @@ namespace Engine {
               computeXyz4bSSBO(other.computeXyz4bSSBO),
               computeRGBASSBO(other.computeRGBASSBO),
               numBatches(other.numBatches),
-              computePointsPerThread(other.computePointsPerThread) {
+              computePointsPerThread(other.computePointsPerThread),
+              stream(std::move(other.stream)),
+              streamTargetCount(other.streamTargetCount) {
 
             // Copy lodDistances array
             for (int i = 0; i < 5; i++) {
@@ -222,6 +237,7 @@ namespace Engine {
             other.computeRGBASSBO    = 0;
             other.numBatches         = 0;
             other.computePointsPerThread = 0;
+            other.streamTargetCount  = 0; // stream already nulled by std::move
         }
 
         // Move assignment operator
@@ -274,6 +290,8 @@ namespace Engine {
                 computeRGBASSBO         = other.computeRGBASSBO;
                 numBatches              = other.numBatches;
                 computePointsPerThread  = other.computePointsPerThread;
+                stream                  = std::move(other.stream);
+                streamTargetCount       = other.streamTargetCount;
 
                 // Reset other object
                 other.vao = 0;
@@ -290,6 +308,7 @@ namespace Engine {
                 other.computeRGBASSBO    = 0;
                 other.numBatches         = 0;
                 other.computePointsPerThread = 0;
+                other.streamTargetCount  = 0; // stream already nulled by std::move
             }
             return *this;
         }
@@ -309,9 +328,15 @@ namespace Engine {
         }
 
         // Returns true if point cloud data is loaded and ready to render.
+        // A streaming cloud counts as loaded as soon as its background load has
+        // started (stream != null), so it is kept in the scene and rendered as
+        // its batches fill in.
         bool isLoaded() const {
-            return numBatches > 0 || !points.empty();
+            return numBatches > 0 || !points.empty() || stream != nullptr;
         }
+
+        // True while the cloud is still streaming in from disk.
+        bool isStreaming() const { return stream != nullptr; }
 
         // Returns true if the bounds fields are valid (set by the loader).
         bool hasBounds() const {

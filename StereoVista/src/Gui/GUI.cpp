@@ -1211,12 +1211,19 @@ static void importPointCloudFile(const std::string &filePath) {
 static void importLASFiles(const std::vector<std::string> &lasFiles) {
   if (lasFiles.empty())
     return;
-  auto clouds = Engine::PointCloudLoader::loadFromLASMultiple(lasFiles);
+  // Progressive load: returns immediately with cloud stubs whose SSBOs are
+  // pre-sized from the LAS header and whose bounds are already valid.  The
+  // points stream in on background threads and are uploaded each frame by
+  // PointCloudLoader::updateStreaming() in the main loop, so the cloud appears
+  // almost instantly and fills in while remaining tiles keep loading.
+  auto clouds = Engine::PointCloudLoader::beginLoadLASMultipleProgressive(lasFiles);
   for (auto &pc : clouds) {
     currentScene.pointClouds.emplace_back(std::move(pc));
     Engine::Undo::recordPointCloudAdded(
         static_cast<int>(currentScene.pointClouds.size()) - 1);
   }
+  // Bounds come from the LAS headers, so SpaceMouse extents are correct
+  // immediately even though points are still streaming.
   updateSpaceMouseBounds();
 }
 

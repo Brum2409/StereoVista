@@ -4055,6 +4055,15 @@ int main() {
       continue;
     }
 
+    // ---- Pump progressive point-cloud streaming (GL thread) ----
+    // Uploads any chunks decoded by the background LAS/LAZ loaders into their
+    // pre-allocated SSBOs, growing each cloud so it renders while still loading.
+    for (auto &pointCloud : currentScene.pointClouds) {
+      if (pointCloud.isStreaming()) {
+        Engine::PointCloudLoader::updateStreaming(pointCloud);
+      }
+    }
+
     // ---- Update SpaceMouse Input ----
     if (spaceMouseInitialized) {
       bool wasSpaceMouseActive = spaceMouseActive;
