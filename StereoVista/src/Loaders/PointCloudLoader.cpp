@@ -399,27 +399,35 @@ namespace Engine {
             buf.clear();
         };
 
-        for (int64_t i = 0; i < nPoints; ++i) {
-            if (S->stop.load()) break;
-            if (laszip_read_point(reader)) break;
-            if (downsample > 1 && (static_cast<size_t>(i) % downsample) != 0) continue;
+        // Decode loop is wrapped so a std::bad_alloc (or any failure building a
+        // chunk) marks the stream failed instead of std::terminate-ing the app.
+        try {
+            for (int64_t i = 0; i < nPoints; ++i) {
+                if (S->stop.load()) break;
+                if (laszip_read_point(reader)) break;
+                if (downsample > 1 && (static_cast<size_t>(i) % downsample) != 0) continue;
 
-            PointCloudPoint pt;
-            pt.position.x = static_cast<float>(lp->X * sx + ox - cx);
-            pt.position.y = static_cast<float>(lp->Y * sy + oy - cy);
-            pt.position.z = static_cast<float>(lp->Z * sz + oz - cz);
-            pt.intensity  = lp->intensity / 65535.0f;
-            if (hasColor) {
-                pt.color.r = lp->rgb[0] / colorScale;
-                pt.color.g = lp->rgb[1] / colorScale;
-                pt.color.b = lp->rgb[2] / colorScale;
-            } else {
-                pt.color = glm::vec3(pt.intensity);
+                PointCloudPoint pt;
+                pt.position.x = static_cast<float>(lp->X * sx + ox - cx);
+                pt.position.y = static_cast<float>(lp->Y * sy + oy - cy);
+                pt.position.z = static_cast<float>(lp->Z * sz + oz - cz);
+                pt.intensity  = lp->intensity / 65535.0f;
+                if (hasColor) {
+                    pt.color.r = lp->rgb[0] / colorScale;
+                    pt.color.g = lp->rgb[1] / colorScale;
+                    pt.color.b = lp->rgb[2] / colorScale;
+                } else {
+                    pt.color = glm::vec3(pt.intensity);
+                }
+                buf.push_back(pt);
+                if (buf.size() >= CHUNK) flush();
             }
-            buf.push_back(pt);
-            if (buf.size() >= CHUNK) flush();
+            if (!S->stop.load()) flush();
+        } catch (const std::exception& e) {
+            std::cerr << "[LAS-Stream] worker exception for '" << filePath << "': "
+                      << e.what() << "\n";
+            S->failed.store(true);
         }
-        if (!S->stop.load()) flush();
 
         laszip_close_reader(reader);
         laszip_destroy(reader);
