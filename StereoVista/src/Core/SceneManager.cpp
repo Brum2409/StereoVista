@@ -6,12 +6,83 @@
 #include <filesystem>
 #include <unordered_set>
 #include <utility>
+#include <ctime>
 
 using json = nlohmann::json;
 
 namespace Engine {
 
-    void saveScene(const std::string& filename, const Scene& scene, const Camera& camera) {
+    namespace {
+        // Local "now" as an ISO-8601-ish string (YYYY-MM-DD HH:MM:SS). Used for
+        // the scene's created/modified metadata timestamps.
+        std::string currentTimestamp() {
+            std::time_t t = std::time(nullptr);
+            std::tm tmBuf{};
+#if defined(_WIN32)
+            localtime_s(&tmBuf, &t);
+#else
+            localtime_r(&t, &tmBuf);
+#endif
+            char buf[32];
+            std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tmBuf);
+            return std::string(buf);
+        }
+
+        // Read a 3-component array from json into a glm::vec3, leaving the
+        // destination untouched if the field is missing or malformed.
+        void readVec3(const json& parent, const char* key, glm::vec3& out) {
+            if (parent.contains(key) && parent[key].is_array() &&
+                parent[key].size() == 3) {
+                out = glm::vec3(parent[key][0].get<float>(),
+                                parent[key][1].get<float>(),
+                                parent[key][2].get<float>());
+            }
+        }
+
+        // Write `content` to `target` atomically: stream to a sibling .tmp file,
+        // flush, then rename over the destination. A crash mid-write therefore
+        // leaves the previous scene file intact instead of a truncated one.
+        void writeFileAtomic(const std::filesystem::path& target,
+                             const std::string& content) {
+            std::filesystem::path tmp = target;
+            tmp += ".tmp";
+            {
+                std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+                if (!out.is_open()) {
+                    throw std::runtime_error("Failed to create temp file: " +
+                                             tmp.string());
+                }
+                out.write(content.data(),
+                          static_cast<std::streamsize>(content.size()));
+                out.flush();
+                if (!out) {
+                    throw std::runtime_error("Failed while writing: " +
+                                             tmp.string());
+                }
+            }
+            std::error_code ec;
+            std::filesystem::rename(tmp, target, ec);
+            if (ec) {
+                // Some platforms refuse rename over an existing file; fall back
+                // to remove + rename, then to a direct copy.
+                std::filesystem::remove(target, ec);
+                std::filesystem::rename(tmp, target, ec);
+                if (ec) {
+                    std::filesystem::copy_file(
+                        tmp, target,
+                        std::filesystem::copy_options::overwrite_existing, ec);
+                    std::filesystem::remove(tmp, ec);
+                    if (ec) {
+                        throw std::runtime_error(
+                            "Failed to finalize scene file: " + target.string());
+                    }
+                }
+            }
+        }
+    } // namespace
+
+    void saveScene(const std::string& filename, const Scene& scene,
+                   const Camera& camera, const SceneSaveOptions& options) {
         try {
             // Ensure filename has .scene extension
             std::filesystem::path scenePath(filename);
@@ -29,7 +100,29 @@ namespace Engine {
             // Create scene data json
             json sceneJson;
 
+            // Format version + metadata header. Preserve the original creation
+            // timestamp if the scene already had one (round-tripped on load).
+            sceneJson["formatVersion"] = kSceneFormatVersion;
+            json metaJson;
+            metaJson["description"] = scene.metadata.description;
+            metaJson["author"] = scene.metadata.author;
+            metaJson["createdAt"] = scene.metadata.createdAt.empty()
+                                        ? currentTimestamp()
+                                        : scene.metadata.createdAt;
+            metaJson["modifiedAt"] = currentTimestamp();
+            metaJson["appVersion"] = "StereoVista";
+            metaJson["counts"] = {
+                {"models", scene.models.size()},
+                {"pointClouds", scene.pointClouds.size()},
+                {"pointLights", scene.pointLights.size()},
+                {"spotLights", scene.spotLights.size()},
+                {"measurements", scene.measurements.size()},
+                {"clipPlanes", scene.clipPlanes.size()},
+            };
+            sceneJson["metadata"] = metaJson;
+
             // Save current camera state
+            if (options.includeCamera) {
             auto cameraState = camera.GetState();
             sceneJson["camera"]["position"] = {cameraState.position.x, cameraState.position.y, cameraState.position.z};
             sceneJson["camera"]["front"] = {cameraState.front.x, cameraState.front.y, cameraState.front.z};
@@ -38,6 +131,7 @@ namespace Engine {
             sceneJson["camera"]["pitch"] = cameraState.pitch;
             sceneJson["camera"]["zoom"] = cameraState.zoom;
             sceneJson["camera"]["orientation"] = {cameraState.orientation.x, cameraState.orientation.y, cameraState.orientation.z, cameraState.orientation.w};
+            }
 
             // Save models
             json modelsJson = json::array();
@@ -238,6 +332,7 @@ namespace Engine {
             sceneJson["pointClouds"] = pointCloudsJson;
 
             // Save measurements (world-space annotation points)
+            if (options.includeMeasurements) {
             json measurementsJson = json::array();
             for (const auto& measurement : scene.measurements) {
                 json measurementJson;
@@ -253,8 +348,10 @@ namespace Engine {
                 measurementsJson.push_back(measurementJson);
             }
             sceneJson["measurements"] = measurementsJson;
+            }
 
             // Save section / clip planes (world-space)
+            if (options.includeClipPlanes) {
             json clipPlanesJson = json::array();
             for (const auto& plane : scene.clipPlanes) {
                 json planeJson;
@@ -266,6 +363,17 @@ namespace Engine {
                 clipPlanesJson.push_back(planeJson);
             }
             sceneJson["clipPlanes"] = clipPlanesJson;
+            }
+
+            // Save lighting (sun + point/spot lights)
+            if (options.includeLighting) {
+            // Sun (directional key light)
+            json sunJson;
+            sunJson["direction"] = { scene.sun.direction.x, scene.sun.direction.y, scene.sun.direction.z };
+            sunJson["color"] = { scene.sun.color.x, scene.sun.color.y, scene.sun.color.z };
+            sunJson["intensity"] = scene.sun.intensity;
+            sunJson["enabled"] = scene.sun.enabled;
+            sceneJson["sun"] = sunJson;
 
             // Save point lights
             json pointLightsJson = json::array();
@@ -274,6 +382,9 @@ namespace Engine {
                 pointLightJson["position"] = { pointLight.position.x, pointLight.position.y, pointLight.position.z };
                 pointLightJson["color"] = { pointLight.color.x, pointLight.color.y, pointLight.color.z };
                 pointLightJson["intensity"] = pointLight.intensity;
+                pointLightJson["linear"] = pointLight.linear;
+                pointLightJson["quadratic"] = pointLight.quadratic;
+                pointLightJson["castShadows"] = pointLight.castShadows;
                 pointLightsJson.push_back(pointLightJson);
             }
             sceneJson["pointLights"] = pointLightsJson;
@@ -288,9 +399,32 @@ namespace Engine {
                 spotLightJson["intensity"] = spotLight.intensity;
                 spotLightJson["innerCutOff"] = spotLight.innerCutOff;
                 spotLightJson["outerCutOff"] = spotLight.outerCutOff;
+                spotLightJson["castShadows"] = spotLight.castShadows;
                 spotLightsJson.push_back(spotLightJson);
             }
             sceneJson["spotLights"] = spotLightsJson;
+            }
+
+            // Save environment (skybox + lighting mode) so the scene reopens
+            // with the look it was authored in.
+            if (options.includeEnvironment) {
+                json envJson;
+                envJson["lightingMode"] = scene.environment.lightingMode;
+                envJson["skyboxType"] = scene.environment.skyboxType;
+                envJson["skyboxSolidColor"] = { scene.environment.skyboxSolidColor.r,
+                                                scene.environment.skyboxSolidColor.g,
+                                                scene.environment.skyboxSolidColor.b };
+                envJson["skyboxGradientTop"] = { scene.environment.skyboxGradientTop.r,
+                                                 scene.environment.skyboxGradientTop.g,
+                                                 scene.environment.skyboxGradientTop.b };
+                envJson["skyboxGradientBottom"] = { scene.environment.skyboxGradientBottom.r,
+                                                    scene.environment.skyboxGradientBottom.g,
+                                                    scene.environment.skyboxGradientBottom.b };
+                envJson["selectedCubemap"] = scene.environment.selectedCubemap;
+                envJson["skyboxHdrPath"] = scene.environment.skyboxHdrPath;
+                envJson["skyboxExposure"] = scene.environment.skyboxExposure;
+                sceneJson["environment"] = envJson;
+            }
 
             std::cout << "\n=== Scene Save Summary ===" << std::endl;
             std::cout << "Models saved: " << scene.models.size() << std::endl;
@@ -300,8 +434,10 @@ namespace Engine {
             std::cout << "Scene directory: " << sceneDir << std::endl;
             std::cout << "========================\n" << std::endl;
 
-            // Write scene file with chunking support
-            std::string jsonStr = sceneJson.dump(4);
+            // Write scene file with chunking support. The compact option
+            // minifies the JSON (no indentation) to shrink large scene files.
+            std::string jsonStr = options.compact ? sceneJson.dump()
+                                                   : sceneJson.dump(4);
             const size_t maxChunkSize = 100 * 1024 * 1024; // 100MB chunks
 
             if (jsonStr.size() > maxChunkSize) {
@@ -310,29 +446,20 @@ namespace Engine {
 
                 for (size_t i = 0; i < numChunks; i++) {
                     std::string chunkFilename = scenePath.string() + "." + std::to_string(i);
-                    std::ofstream chunkFile(chunkFilename);
-                    if (!chunkFile.is_open()) {
-                        throw std::runtime_error("Failed to create scene chunk file: " + chunkFilename);
-                    }
-
                     size_t start = i * maxChunkSize;
                     size_t length = std::min(maxChunkSize, jsonStr.size() - start);
-                    chunkFile << jsonStr.substr(start, length);
+                    writeFileAtomic(chunkFilename, jsonStr.substr(start, length));
                 }
 
-                // Write metadata file
-                std::ofstream metaFile(scenePath);
-                json metaJson;
-                metaJson["numChunks"] = numChunks;
-                metaFile << std::setw(4) << metaJson << std::endl;
+                // Write metadata file (atomic) pointing at the chunk count.
+                json chunkMeta;
+                chunkMeta["numChunks"] = numChunks;
+                writeFileAtomic(scenePath, chunkMeta.dump(4));
             }
             else {
-                // Write single file
-                std::ofstream sceneFile(scenePath);
-                if (!sceneFile.is_open()) {
-                    throw std::runtime_error("Failed to create scene file: " + scenePath.string());
-                }
-                sceneFile << jsonStr;
+                // Write single file atomically (temp + rename) so a crash
+                // mid-save never corrupts the previously saved scene.
+                writeFileAtomic(scenePath, jsonStr);
             }
         }
         catch (const std::exception& e) {
@@ -340,11 +467,19 @@ namespace Engine {
         }
     }
 
-    Scene loadScene(const std::string& filename, Camera& camera) {
+    Scene loadScene(const std::string& filename, Camera& camera,
+                    SceneLoadReport* report) {
         Scene scene;
         json sceneJson;
         std::filesystem::path scenePath;
         std::filesystem::path sceneDir;
+
+        // Helper to record a warning both to the console and (if requested) to
+        // the caller's report so the UI can surface partial loads.
+        auto warn = [&](const std::string& msg) {
+            std::cerr << msg << std::endl;
+            if (report) report->warnings.push_back(msg);
+        };
 
         try {
             // Check if this is a chunked file
@@ -386,6 +521,44 @@ namespace Engine {
 
             // Check if scene directory exists (it may not exist for scenes with no external assets)
             if (!std::filesystem::exists(sceneDir)) {
+            }
+
+            // Format version (untagged v1 files default to 1).
+            int formatVersion = sceneJson.value("formatVersion", 1);
+            if (report) report->formatVersion = formatVersion;
+
+            // Metadata header (v2+).
+            if (sceneJson.contains("metadata") && sceneJson["metadata"].is_object()) {
+                const auto& m = sceneJson["metadata"];
+                scene.metadata.description = m.value("description", std::string());
+                scene.metadata.author = m.value("author", std::string());
+                scene.metadata.createdAt = m.value("createdAt", std::string());
+                scene.metadata.modifiedAt = m.value("modifiedAt", std::string());
+                scene.metadata.appVersion = m.value("appVersion", std::string());
+            }
+
+            // Environment block (v2+): skybox + lighting mode.
+            if (sceneJson.contains("environment") && sceneJson["environment"].is_object()) {
+                const auto& e = sceneJson["environment"];
+                scene.environment.present = true;
+                scene.environment.lightingMode = e.value("lightingMode", 0);
+                scene.environment.skyboxType = e.value("skyboxType", 1);
+                readVec3(e, "skyboxSolidColor", scene.environment.skyboxSolidColor);
+                readVec3(e, "skyboxGradientTop", scene.environment.skyboxGradientTop);
+                readVec3(e, "skyboxGradientBottom", scene.environment.skyboxGradientBottom);
+                scene.environment.selectedCubemap = e.value("selectedCubemap", 0);
+                scene.environment.skyboxHdrPath = e.value("skyboxHdrPath", std::string());
+                scene.environment.skyboxExposure = e.value("skyboxExposure", 0.2f);
+            }
+
+            // Sun (v2+).
+            if (sceneJson.contains("sun") && sceneJson["sun"].is_object()) {
+                const auto& s = sceneJson["sun"];
+                readVec3(s, "direction", scene.sun.direction);
+                readVec3(s, "color", scene.sun.color);
+                scene.sun.intensity = s.value("intensity", scene.sun.intensity);
+                scene.sun.enabled = s.value("enabled", scene.sun.enabled);
+                scene.hasSun = true;
             }
 
             // Load camera state if it exists in the scene
@@ -463,7 +636,8 @@ namespace Engine {
 
                             // Verify model file exists
                             if (!std::filesystem::exists(modelPath)) {
-                                std::cerr << "Error: Model file not found: " << modelPath << std::endl;
+                                warn("Model file not found: " + modelPath.string());
+                                if (report) report->modelsFailed++;
                                 continue;
                             }
 
@@ -481,7 +655,8 @@ namespace Engine {
                             std::cout << "Loading model from: " << modelPath << std::endl;
                             Model* loadedModel = Engine::loadModel(modelPath.string());
                             if (!loadedModel) {
-                                std::cerr << "Error: Failed to load model: " << modelPath << std::endl;
+                                warn("Failed to load model: " + modelPath.string());
+                                if (report) report->modelsFailed++;
                                 continue;
                             }
 
@@ -635,7 +810,8 @@ namespace Engine {
                         scene.models.push_back(model);
                     }
                     catch (const std::exception& e) {
-                        std::cerr << "Failed to load model: " << e.what() << std::endl;
+                        warn(std::string("Failed to load model: ") + e.what());
+                        if (report) report->modelsFailed++;
                     }
                 }
             }
@@ -679,15 +855,16 @@ namespace Engine {
                         pointCloud.sourceScenePath = filename;
 
                         if (!pointCloud.isLoaded()) {
-                            std::cerr << "Warning: point cloud '" << pointCloud.name
-                                      << "' loaded with no points (data file: " << pcPath << ")"
-                                      << std::endl;
+                            warn("Point cloud '" + pointCloud.name +
+                                 "' loaded with no points (data file: " +
+                                 pcPath.string() + ")");
                         }
 
                         scene.pointClouds.push_back(std::move(pointCloud));
                     }
                     catch (const std::exception& e) {
-                        std::cerr << "Failed to load point cloud: " << e.what() << std::endl;
+                        warn(std::string("Failed to load point cloud: ") + e.what());
+                        if (report) report->pointCloudsFailed++;
                     }
                 }
             }
@@ -786,6 +963,9 @@ namespace Engine {
                             pointLightJson["color"][2].get<float>()
                         );
                         pointLight.intensity = pointLightJson.value("intensity", 1.0f);
+                        pointLight.linear = pointLightJson.value("linear", pointLight.linear);
+                        pointLight.quadratic = pointLightJson.value("quadratic", pointLight.quadratic);
+                        pointLight.castShadows = pointLightJson.value("castShadows", true);
 
                         // Set source scene path for grouping in GUI
                         pointLight.sourceScenePath = filename;
@@ -821,6 +1001,7 @@ namespace Engine {
                         spotLight.intensity = spotLightJson.value("intensity", 1.0f);
                         spotLight.innerCutOff = spotLightJson.value("innerCutOff", 0.9f);
                         spotLight.outerCutOff = spotLightJson.value("outerCutOff", 0.82f);
+                        spotLight.castShadows = spotLightJson.value("castShadows", true);
 
                         // Set source scene path for grouping in GUI
                         spotLight.sourceScenePath = filename;
@@ -832,6 +1013,15 @@ namespace Engine {
                     }
                 }
             }
+            if (report) {
+                report->modelsLoaded = static_cast<int>(scene.models.size());
+                report->pointCloudsLoaded = static_cast<int>(scene.pointClouds.size());
+                report->pointLightsLoaded = static_cast<int>(scene.pointLights.size());
+                report->spotLightsLoaded = static_cast<int>(scene.spotLights.size());
+                report->measurementsLoaded = static_cast<int>(scene.measurements.size());
+                report->clipPlanesLoaded = static_cast<int>(scene.clipPlanes.size());
+            }
+
             std::cout << "\n=== Scene Load Summary ===" << std::endl;
             std::cout << "Models loaded: " << scene.models.size() << std::endl;
             std::cout << "Point clouds loaded: " << scene.pointClouds.size() << std::endl;
@@ -895,6 +1085,59 @@ namespace Engine {
         catch (const std::exception& e) {
             throw std::runtime_error("Failed to save model data: " + std::string(e.what()));
         }
+    }
+
+    SceneInfo loadSceneInfo(const std::string& filename) {
+        SceneInfo info;
+        info.path = filename;
+        try {
+            std::ifstream file(filename);
+            if (!file.is_open()) {
+                return info; // valid stays false
+            }
+
+            json sceneJson;
+            file >> sceneJson;
+
+            // Chunked scenes only store {"numChunks": N} in the header file; we
+            // intentionally do not stitch the (potentially huge) chunks back
+            // together just to preview counts.
+            if (sceneJson.contains("numChunks")) {
+                info.valid = true;
+                info.formatVersion = sceneJson.value("formatVersion", 1);
+                return info;
+            }
+
+            info.valid = true;
+            info.formatVersion = sceneJson.value("formatVersion", 1);
+
+            if (sceneJson.contains("metadata") && sceneJson["metadata"].is_object()) {
+                const auto& m = sceneJson["metadata"];
+                info.metadata.description = m.value("description", std::string());
+                info.metadata.author = m.value("author", std::string());
+                info.metadata.createdAt = m.value("createdAt", std::string());
+                info.metadata.modifiedAt = m.value("modifiedAt", std::string());
+                info.metadata.appVersion = m.value("appVersion", std::string());
+            }
+
+            auto arraySize = [&](const char* key) -> int {
+                return (sceneJson.contains(key) && sceneJson[key].is_array())
+                           ? static_cast<int>(sceneJson[key].size())
+                           : 0;
+            };
+            info.modelCount = arraySize("models");
+            info.pointCloudCount = arraySize("pointClouds");
+            info.pointLightCount = arraySize("pointLights");
+            info.spotLightCount = arraySize("spotLights");
+            info.measurementCount = arraySize("measurements");
+            info.clipPlaneCount = arraySize("clipPlanes");
+        }
+        catch (const std::exception& e) {
+            std::cerr << "Failed to read scene info for '" << filename
+                      << "': " << e.what() << std::endl;
+            info.valid = false;
+        }
+        return info;
     }
 
 }  // namespace Engine
