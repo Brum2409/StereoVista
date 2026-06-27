@@ -161,6 +161,13 @@ static void finishGizmoDrag();
 // ---- Scene Management ----
 Engine::Scene currentScene;
 int currentModelIndex = -1;
+// Path of the .scene file backing the live scene ("" = untitled / never saved).
+// Used by quick-save (Ctrl+S) so it can re-save without prompting, and by the
+// Scene Manager panel / window title. g_sceneDirty tracks whether the live
+// scene has unsaved edits since the last save/load (set via the UndoManager
+// modified callback and the load/import paths, cleared on save/load).
+std::string g_currentScenePath;
+bool g_sceneDirty = false;
 std::string modelPath = "D:/OBJ/motorbike.obj";
 static char modelPathBuffer[256] = ""; // Buffer for ImGui model path input
 
@@ -259,6 +266,7 @@ bool showBrushToolWindow = false;
 bool showMeasurementToolWindow = false;
 bool showClipPlaneToolWindow = false;
 bool showSnapshotsWindow = false;
+bool showSceneManagerWindow = false;
 enum class SelectedType {
   None,
   Model,
@@ -1652,6 +1660,58 @@ void updateSkybox() {
   }
 }
 
+// Apply a freshly-loaded scene's persisted environment (skybox + lighting mode)
+// and sun to the live session. No-op for older scenes that did not store an
+// environment block, or when the user has disabled the behavior in settings.
+// Always restores the sun when the scene carries one, since old scenes simply
+// keep the previous sun. Safe to call only with a current GL context (it
+// rebuilds the skybox).
+void applyLoadedSceneEnvironment(const Engine::Scene &scene) {
+  // Restore the sun only when the scene actually carried one, so loading an
+  // older scene leaves the current sun untouched.
+  if (scene.hasSun) {
+    sun = scene.sun;
+  }
+
+  if (!scene.environment.present || !preferences.applySceneEnvironmentOnLoad) {
+    return;
+  }
+
+  const Engine::SceneEnvironment &env = scene.environment;
+
+  currentLightingMode = static_cast<GUI::LightingMode>(env.lightingMode);
+  preferences.lightingMode = currentLightingMode;
+
+  skyboxConfig.type = static_cast<GUI::SkyboxType>(env.skyboxType);
+  skyboxConfig.solidColor = env.skyboxSolidColor;
+  skyboxConfig.gradientTopColor = env.skyboxGradientTop;
+  skyboxConfig.gradientBottomColor = env.skyboxGradientBottom;
+  skyboxConfig.selectedCubemap = env.selectedCubemap;
+  if (!env.skyboxHdrPath.empty()) {
+    skyboxConfig.hdrPath = env.skyboxHdrPath;
+  }
+  preferences.skyboxType = skyboxConfig.type;
+  preferences.skyboxExposure = env.skyboxExposure;
+
+  updateSkybox();
+}
+
+// Capture the live environment (skybox + lighting mode + sun) into a scene so
+// it is written when the scene is saved.
+void captureSceneEnvironment(Engine::Scene &scene) {
+  scene.sun = sun;
+  Engine::SceneEnvironment &env = scene.environment;
+  env.present = true;
+  env.lightingMode = static_cast<int>(currentLightingMode);
+  env.skyboxType = static_cast<int>(skyboxConfig.type);
+  env.skyboxSolidColor = skyboxConfig.solidColor;
+  env.skyboxGradientTop = skyboxConfig.gradientTopColor;
+  env.skyboxGradientBottom = skyboxConfig.gradientBottomColor;
+  env.selectedCubemap = skyboxConfig.selectedCubemap;
+  env.skyboxHdrPath = skyboxConfig.hdrPath;
+  env.skyboxExposure = preferences.skyboxExposure;
+}
+
 void setupShadowMapping() {
   // Create shadow map framebuffer and texture
   glGenFramebuffers(1, &depthMapFBO);
@@ -2347,6 +2407,24 @@ void savePreferences() {
   j["startup"]["sceneLoadingBehavior"] =
       static_cast<int>(preferences.sceneLoadingBehavior);
 
+  // Scene save options + recent scenes + environment-on-load behavior.
+  j["scene"]["save"]["includeCamera"] =
+      preferences.sceneSaveSettings.includeCamera;
+  j["scene"]["save"]["includeLighting"] =
+      preferences.sceneSaveSettings.includeLighting;
+  j["scene"]["save"]["includeEnvironment"] =
+      preferences.sceneSaveSettings.includeEnvironment;
+  j["scene"]["save"]["includeMeasurements"] =
+      preferences.sceneSaveSettings.includeMeasurements;
+  j["scene"]["save"]["includeClipPlanes"] =
+      preferences.sceneSaveSettings.includeClipPlanes;
+  j["scene"]["save"]["includeSnapshots"] =
+      preferences.sceneSaveSettings.includeSnapshots;
+  j["scene"]["save"]["compact"] = preferences.sceneSaveSettings.compact;
+  j["scene"]["applyEnvironmentOnLoad"] =
+      preferences.applySceneEnvironmentOnLoad;
+  j["scene"]["recent"] = preferences.recentScenes;
+
   // Save lighting settings
   j["lighting"]["mode"] = static_cast<int>(preferences.lightingMode);
   j["lighting"]["enableShadows"] = preferences.enableShadows;
@@ -2902,6 +2980,28 @@ void loadPreferences() {
                              static_cast<int>(GUI::SCENE_LOAD_ALWAYS_ASK)));
     }
 
+    // Scene save options + recent scenes + environment-on-load behavior.
+    if (j.contains("scene")) {
+      const auto &sj = j["scene"];
+      if (sj.contains("save")) {
+        const auto &sv = sj["save"];
+        auto &opt = preferences.sceneSaveSettings;
+        opt.includeCamera = sv.value("includeCamera", true);
+        opt.includeLighting = sv.value("includeLighting", true);
+        opt.includeEnvironment = sv.value("includeEnvironment", true);
+        opt.includeMeasurements = sv.value("includeMeasurements", true);
+        opt.includeClipPlanes = sv.value("includeClipPlanes", true);
+        opt.includeSnapshots = sv.value("includeSnapshots", true);
+        opt.compact = sv.value("compact", false);
+      }
+      preferences.applySceneEnvironmentOnLoad =
+          sj.value("applyEnvironmentOnLoad", true);
+      if (sj.contains("recent") && sj["recent"].is_array()) {
+        preferences.recentScenes =
+            sj["recent"].get<std::vector<std::string>>();
+      }
+    }
+
     // Cursor settings
     if (j.contains("cursor")) {
       preferences.currentPresetName =
@@ -3446,6 +3546,10 @@ int main() {
     }
   });
 
+  // Any edit routed through the undo system marks the scene as having unsaved
+  // changes (used by the Scene Manager panel and the unsaved-changes guards).
+  UndoManager::instance().setModifiedCallback([]() { g_sceneDirty = true; });
+
   // ---- Initialize Shadow Mapping Shader ----
   try {
     shadowMappingShader =
@@ -3725,6 +3829,9 @@ int main() {
       }
       currentModelIndex = currentScene.models.empty() ? -1 : 0;
       updateSpaceMouseBounds();
+      applyLoadedSceneEnvironment(currentScene);
+      g_currentScenePath = preferences.startupScenePath;
+      g_sceneDirty = false;
       GUI::UpdateWindowTitleForScene(preferences.startupScenePath);
       GUI::ShowToast(
           "Scene loaded: " +

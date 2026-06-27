@@ -369,6 +369,27 @@ struct ApplicationPreferences {
   // Scene loading behavior
   SceneLoadingBehavior sceneLoadingBehavior = SCENE_LOAD_ALWAYS_ASK;
 
+  // What optional data is written when saving a scene (mirrors
+  // Engine::SceneSaveOptions; kept here so GuiTypes stays independent of the
+  // SceneManager header). Geometry is always saved; these gate the extras.
+  struct SceneSaveSettings {
+    bool includeCamera = true;       // saved viewpoint
+    bool includeLighting = true;     // sun + point/spot lights
+    bool includeEnvironment = true;  // skybox + lighting mode
+    bool includeMeasurements = true; // measurement annotations
+    bool includeClipPlanes = true;   // section planes
+    bool includeSnapshots = true;    // named snapshots (metadata + thumbnails)
+    bool compact = false;            // minified JSON (smaller, less readable)
+  } sceneSaveSettings;
+
+  // When loading a scene that stored an environment block, apply its skybox /
+  // lighting mode to the live session. Off keeps the current environment.
+  bool applySceneEnvironmentOnLoad = true;
+
+  // Most-recently-used scene files (newest first), surfaced in the File menu
+  // and the Scene Manager panel. Capped to a small number on insert.
+  std::vector<std::string> recentScenes;
+
   // Model Import Settings
   struct ModelImportSettings {
     bool flipUVs = false;        // Toggle UV coordinate flipping

@@ -76,6 +76,11 @@ namespace Engine {
         // (voxelizer, SpaceMouse bounds, selection state) can resynchronize.
         void setSceneChangedCallback(std::function<void()> callback);
 
+        // Invoked whenever the scene is mutated through the undo system
+        // (record / undo / redo). Used to flag the scene as having unsaved
+        // changes. Not called by clear() (which runs on scene load/shutdown).
+        void setModifiedCallback(std::function<void()> callback);
+
     private:
         UndoManager() = default;
         static constexpr size_t kMaxUndoEntries = 64;
@@ -83,6 +88,7 @@ namespace Engine {
         std::vector<std::unique_ptr<UndoCommand>> undoStack;
         std::vector<std::unique_ptr<UndoCommand>> redoStack;
         std::function<void()> sceneChangedCallback;
+        std::function<void()> modifiedCallback;
     };
 
     // -----------------------------------------------------------------------

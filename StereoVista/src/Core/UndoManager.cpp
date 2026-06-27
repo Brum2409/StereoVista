@@ -30,6 +30,7 @@ namespace Engine {
         }
         // A new action invalidates everything that was undone before it.
         redoStack.clear();
+        if (modifiedCallback) modifiedCallback();
     }
 
     bool UndoManager::undo() {
@@ -40,6 +41,7 @@ namespace Engine {
         std::cout << "Undo: " << command->description() << std::endl;
         redoStack.push_back(std::move(command));
         if (sceneChangedCallback) sceneChangedCallback();
+        if (modifiedCallback) modifiedCallback();
         return true;
     }
 
@@ -51,6 +53,7 @@ namespace Engine {
         std::cout << "Redo: " << command->description() << std::endl;
         undoStack.push_back(std::move(command));
         if (sceneChangedCallback) sceneChangedCallback();
+        if (modifiedCallback) modifiedCallback();
         return true;
     }
 
@@ -69,6 +72,10 @@ namespace Engine {
 
     void UndoManager::setSceneChangedCallback(std::function<void()> callback) {
         sceneChangedCallback = std::move(callback);
+    }
+
+    void UndoManager::setModifiedCallback(std::function<void()> callback) {
+        modifiedCallback = std::move(callback);
     }
 
     // ======================================================================
