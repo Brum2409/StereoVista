@@ -94,8 +94,10 @@ private:
     int  m_width  = 0;
     int  m_height = 0;
 
-    // Framebuffer SSBO: uint64_t[width*height] – packed (depth:32 | payload:32),
-    // payload = (cloudID:5 | localIndex:27).  Matches Schütz's ssFramebuffer (binding 1).
+    // Framebuffer SSBO: uint64_t[width*height] – packed (depth:24 | cloudID:8 | index:32).
+    // 24-bit depth (hardware-buffer precision) drives the atomicMin sort; 8-bit
+    // cloud id (≤256 clouds) selects the colour buffer; 32-bit index addresses up
+    // to ~4.29B points per cloud.  Based on Schütz's ssFramebuffer (binding 1).
     GLuint m_framebufferSSBO = 0;
 
     // Per-pixel resolved colour (packed RGBA8, binding 45).  Written by the

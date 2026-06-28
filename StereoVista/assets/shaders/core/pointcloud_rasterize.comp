@@ -64,7 +64,7 @@ uniform mat4  uModelView;       // view * model        – precision level (view
 uniform mat4  uProj;            // projection matrix   – precision level
 uniform ivec2 uImageSize;
 uniform int   uPointsPerThread; // ceil(kComputeBatchSize / 128)
-uniform uint  uCloudID;         // 5-bit id of this cloud → packed in framebuffer payload
+uniform uint  uCloudID;         // 8-bit id of this cloud → packed in framebuffer payload
 uniform int   uSplatMaxRadius;  // 0 = single-pixel (off); >0 = max adaptive round-splat radius (px)
 
 // User section/clip planes, expressed in this cloud's LOCAL space so they can be
@@ -379,25 +379,30 @@ void main() {
             splatRadius = clamp(int(splatScale / clip.w), 0, uSplatMaxRadius);
         }
 
-        // ── Depth + (cloudID | index) packed into 64 bits ────────────────────
-        // High 32 bits: NDC depth [0,1] — drives atomicMin sort + gl_FragDepth.
-        // Low  32 bits: payload = (cloudID:5 | localIndex:27).  The cloud id lets
-        //               the colour-lookup pass resolve each pixel against the
-        //               CORRECT cloud's ssRGBA buffer when several point clouds
-        //               share this framebuffer.  Without it, every pixel was
-        //               coloured with whichever cloud was bound last, so colours
-        //               bled across clouds.  27-bit index ⇒ ≤134,217,728 points
-        //               per cloud; 5-bit id ⇒ ≤32 clouds per frame.
+        // ── Depth + cloudID + index packed into 64 bits ──────────────────────
+        // Layout (MSB→LSB):  depth:24 | cloudID:8 | index:32
+        //   bits 40..63 : 24-bit NDC depth [0,1] — drives atomicMin sort (nearest
+        //                 point wins) and gl_FragDepth. 24 bits matches a standard
+        //                 hardware depth buffer, so there is no practical loss.
+        //   bits 32..39 :  8-bit cloud id — lets the colour-lookup pass resolve
+        //                 each pixel against the CORRECT cloud's ssRGBA buffer when
+        //                 several point clouds share this framebuffer (≤256 clouds).
+        //   bits  0..31 : 32-bit point index — full per-cloud range (≤4.29B pts),
+        //                 so large clouds no longer wrap (was 27-bit ⇒ 134M cap).
+        // Depth stays in the most-significant bits so the uint64 atomicMin sorts by
+        // depth first. depth24 is clamped below 0xFFFFFF so a real point can never
+        // collide with the 0xFFFF…FF empty sentinel.
         //
         // NOTE: We tested reading ssRGBA[index] here to eliminate the lookup pass.
         // Even though the access is coalesced (consecutive indices per workgroup),
         // it adds a data dependency before the atomicMin (can't start until color
         // is loaded) that stalls warp scheduling — measured +8ms for 13M points.
         // The lookup pass remains the correct architecture for the scatter step.
-        float    depth01 = ndc.z * 0.5 + 0.5;   // NDC z [-1,1] → OpenGL [0,1]
-        uint     depth   = floatBitsToUint(depth01);
-        uint     payload = (uCloudID << 27) | (index & 0x07FFFFFFu);
-        uint64_t entry   = (uint64_t(depth) << 32UL) | uint64_t(payload);
+        float    depth01 = clamp(ndc.z * 0.5 + 0.5, 0.0, 1.0); // NDC z → [0,1]
+        uint     depth24 = min(uint(depth01 * 16777215.0 + 0.5), 16777214u); // 24-bit
+        uint     hi      = (depth24 << 8) | (uCloudID & 0xFFu); // bits 32..63
+        uint64_t entry   = (uint64_t(hi) << 32UL) | uint64_t(index); // index = low 32
+
 
         // ── Write (single-pixel, or adaptive round-splat when zoomed in) ──────
         writePixel(px, entry, splatRadius);
