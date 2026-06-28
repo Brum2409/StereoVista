@@ -32,6 +32,48 @@ namespace Engine {
         static std::vector<PointCloud> loadFromLASMultiple(const std::vector<std::string>& filePaths,
                                                            size_t downsampleFactor = 1);
 
+        // ── Progressive (streaming) LAS/LAZ loading (Schütz compute_loop_las) ──
+        // Returns immediately: the SSBOs are pre-allocated from the LAS header's
+        // exact point count, header bounds are set so the cloud can be framed at
+        // once, and a background thread streams the points in.  The cloud renders
+        // and fills in progressively as updateStreaming() is pumped each frame on
+        // the GL thread.  beginLoadLASMultipleProgressive shares a global centre
+        // across tiles and loads all files concurrently.
+        // mortonResort=true (default) = two-phase: instant file-order display,
+        // then a background global Morton sort hot-swapped in for full render
+        // speed.  false = pure file-order (literal Schütz) with bounded RAM.
+        static PointCloud beginLoadLASProgressive(const std::string& filePath,
+                                                  size_t downsampleFactor = 1,
+                                                  const glm::dvec3* globalCenter = nullptr,
+                                                  bool mortonResort = true);
+        static std::vector<PointCloud> beginLoadLASMultipleProgressive(
+            const std::vector<std::string>& filePaths, size_t downsampleFactor = 1,
+            bool mortonResort = true);
+
+        // Pump pending GPU uploads for a streaming cloud.  Call once per frame
+        // per cloud on the thread that owns the GL context.  No-op when the cloud
+        // is not (or no longer) streaming.
+        static void updateStreaming(PointCloud& pointCloud);
+
+        // Live progress for a streaming cloud (for UI). active == false when the
+        // cloud is fully loaded (no longer streaming).
+        struct StreamProgress {
+            bool     active          = false; // still streaming?
+            bool     resorting       = false; // phase 2 (background Morton sort) running
+            uint32_t pointsLoaded    = 0;     // points uploaded so far
+            uint32_t pointsTotal     = 0;     // expected final point count
+            float    fraction        = 0.0f;  // phase-1 load fraction [0,1]
+            double   elapsedSeconds  = 0.0;
+            double   pointsPerSecond = 0.0;   // average load rate
+        };
+        static StreamProgress getStreamProgress(const PointCloud& pointCloud);
+
+        // Provide the GL extension loader (e.g. glfwGetProcAddress) so optional
+        // GL_ARB_sparse_buffer support can be probed. Call once from main after
+        // GLAD init; if not called (or null), streaming falls back to full
+        // (non-sparse) SSBO reservations.
+        static void initGLExtensions(void* (*procLoader)(const char*));
+
         // Streams every point of the cloud to the callback, one decoded batch
         // at a time (peak CPU RAM = one batch). Sources the legacy CPU vector
         // when populated, otherwise reads the quantised compute SSBOs back

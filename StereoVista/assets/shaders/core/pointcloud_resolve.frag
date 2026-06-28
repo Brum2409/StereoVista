@@ -1,9 +1,10 @@
 // Schütz compute rasterizer – final fragment resolve pass.
 //
-// At this point the framebuffer SSBO has been rewritten by
-// pointcloud_color_lookup.comp to contain (depth:32 | packedRGBA8:32) instead
-// of (depth:32 | point_index:32).  All scatter into ssRGBA happened in the
-// preceding compute pass, where memory parallelism is much higher.
+// The framebuffer entry is (depth:24 | cloudID:8 | index:32); the per-pixel
+// colour was scattered into a SEPARATE colour buffer by
+// pointcloud_color_lookup.comp (binding 45), where memory parallelism is much
+// higher.  This pass reads the depth from the entry and the colour from that
+// buffer.
 //
 // This shader does only the unavoidable per-fragment work:
 //   - read the per-pixel SSBO entry (1 contiguous read, cache-friendly)
@@ -20,11 +21,11 @@
 in  vec2 TexCoords;
 out vec4 FragColor;
 
-// Per-pixel framebuffer holding (depth:32 | (cloudID:5 | localIndex:27)).
+// Per-pixel framebuffer holding (depth:24 | cloudID:8 | index:32).
 // Sentinel 0xFFFFFFFFFFFFFFFF = no point.
 // Declared as uvec2 instead of uint64_t for cross-vendor fragment compatibility:
-//   .y = high 32 bits = depth
-//   .x = low  32 bits = (cloudID | localIndex) payload  (no longer the colour)
+//   .y = high 32 bits = (depth:24 | cloudID:8)
+//   .x = low  32 bits = point index  (no longer the colour)
 layout(std430, binding = 1) readonly buffer ssFramebuffer {
     uvec2 framebuffer[];
 };
@@ -45,8 +46,9 @@ void main() {
     uvec2 entry = framebuffer[pixelID];
     if (entry.x == 0xFFFFFFFFu && entry.y == 0xFFFFFFFFu) discard;
 
-    // Depth (high 32 bits = .y) → gl_FragDepth for hardware depth test
-    gl_FragDepth = uintBitsToFloat(entry.y);
+    // Depth = top 24 bits of .y (bits 40..63 of the entry) → gl_FragDepth.
+    // entry.y = (depth24 << 8) | cloudID, so depth24 = entry.y >> 8.
+    gl_FragDepth = float(entry.y >> 8u) / 16777215.0;
 
     // Colour was resolved per-cloud into the separate colour buffer.
     uint rgba = colorbuffer[pixelID];

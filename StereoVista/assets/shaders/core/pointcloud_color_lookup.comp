@@ -32,7 +32,7 @@
 
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
-// Framebuffer entry: (depth:32 | (cloudID:5 | localIndex:27)).  This pass only
+// Framebuffer entry: (depth:24 | cloudID:8 | index:32).  This pass only
 // READS the framebuffer — the payload must survive every per-cloud lookup pass,
 // so the resolved colour is written to a SEPARATE colour buffer instead.
 layout(std430, binding = 1) readonly buffer ssFramebufferBlock {
@@ -65,13 +65,12 @@ void main() {
     // Sentinel → no point here; leave colorbuffer untouched (resolve discards it).
     if (entry == 0xFFFFFFFFFFFFFFFFUL) return;
 
-    // Low 32 bits = (cloudID:5 | localIndex:27).  Only the cloud that owns this
+    // Layout: depth:24 | cloudID:8 | index:32.  Only the cloud that owns this
     // pixel resolves it, against its own ssRGBA buffer — so colours from one
     // cloud can never be looked up in another cloud's colour array.
-    uint payload = uint(entry & 0xFFFFFFFFUL);
-    uint cloudID = payload >> 27;
+    uint index   = uint(entry & 0xFFFFFFFFUL);        // bits  0..31
+    uint cloudID = uint((entry >> 32) & 0xFFUL);       // bits 32..39
     if (cloudID != uLookupCloudID) return;
 
-    uint idx = payload & 0x07FFFFFFu;
-    colorbuffer[pixelID] = ssRGBA[idx];
+    colorbuffer[pixelID] = ssRGBA[index];
 }

@@ -19,8 +19,8 @@ static const float kQuadVerts[] = {
 };
 
 // Max simultaneous point clouds per frame.  Must match the cloudID bit width in
-// pointcloud_rasterize.comp / pointcloud_color_lookup.comp (5 bits → 32).
-static constexpr uint32_t kMaxComputeClouds = 32;
+// pointcloud_rasterize.comp / pointcloud_color_lookup.comp (8 bits → 256).
+static constexpr uint32_t kMaxComputeClouds = 256;
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -223,7 +223,7 @@ void ComputePointCloudRenderer::renderNode(
     // Assign this cloud a stable per-frame id = its slot in the render order.
     // The id is packed into the framebuffer payload so endFrame() can resolve
     // each pixel's colour against the CORRECT cloud's rgba buffer.  Packed into
-    // 5 bits → at most kMaxComputeClouds clouds per frame.
+    // 8 bits → at most kMaxComputeClouds clouds per frame.
     uint32_t cloudID = static_cast<uint32_t>(m_frameRGBASSBOs.size());
     if (cloudID >= kMaxComputeClouds) {
         static bool warned = false;
