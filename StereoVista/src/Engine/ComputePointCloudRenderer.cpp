@@ -396,12 +396,12 @@ void ComputePointCloudRenderer::endFrame() {
         m_accLookup  += double(lk)  * 1e-6;
         m_accPass2   += double(p2)  * 1e-6;
         if (++m_accCount >= 120) {
-            double n = m_accCount;
-            std::cout << "[PC GPU] rasterize=" << (m_accCompute/n)
-                      << " ms  lookup=" << (m_accLookup/n)
-                      << " ms  resolve=" << (m_accPass2/n)
-                      << " ms  total=" << ((m_accCompute + m_accLookup + m_accPass2)/n)
-                      << " ms  (avg/eye)\n";
+            //double n = m_accCount;
+            //std::cout << "[PC GPU] rasterize=" << (m_accCompute/n)
+            //          << " ms  lookup=" << (m_accLookup/n)
+            //          << " ms  resolve=" << (m_accPass2/n)
+            //          << " ms  total=" << ((m_accCompute + m_accLookup + m_accPass2)/n)
+            //          << " ms  (avg/eye)\n";
             m_accCompute = m_accClear = m_accLookup = m_accPass2 = 0.0;
             m_accCount = 0;
         }

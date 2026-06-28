@@ -2676,6 +2676,13 @@ namespace Engine {
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
             return ok;
         };
+        // Drain any GL error left pending by earlier rendering so the per-buffer
+        // glGetError() checks reflect ONLY our allocation calls. Without this, a
+        // stale error from the previously-loaded cloud's rendering would make the
+        // first allocation check below report a false failure on every load after
+        // the first (the reported "second load doesn't start / no progress UI").
+        while (glGetError() != GL_NO_ERROR) { /* discard */ }
+
         bool ok = allocAll();
         if (!ok && useSparse) {
             // Sparse storage was reported available but the driver rejected it;
