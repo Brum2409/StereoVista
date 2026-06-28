@@ -328,7 +328,8 @@ namespace Engine {
         enum class Type {
             Distance = 0, // polyline: per-segment + total length
             Angle    = 1, // exactly 3 points: angle at the middle point
-            Point    = 2  // single point: world-coordinate annotation
+            Point    = 2, // single point: world-coordinate annotation
+            Area     = 3  // closed polygon (>= 3 points): planar surface area
         };
 
         Type type = Type::Distance;
@@ -353,6 +354,44 @@ namespace Engine {
             if (la < 1e-6f || lb < 1e-6f) return 0.0f;
             const float c = glm::clamp(glm::dot(a, b) / (la * lb), -1.0f, 1.0f);
             return glm::degrees(glm::acos(c));
+        }
+
+        // Planar surface area of an Area polygon, treating the points as a
+        // closed loop (the last vertex connects back to the first). Uses
+        // Newell's method, so it returns the true area for any planar polygon
+        // regardless of orientation and degrades gracefully (projected area)
+        // for slightly non-planar input. Returns 0 for fewer than 3 points.
+        float area() const {
+            const size_t count = points.size();
+            if (count < 3) return 0.0f;
+            glm::vec3 n(0.0f);
+            for (size_t i = 0; i < count; i++) {
+                const glm::vec3& cur = points[i];
+                const glm::vec3& nxt = points[(i + 1) % count];
+                n.x += (cur.y - nxt.y) * (cur.z + nxt.z);
+                n.y += (cur.z - nxt.z) * (cur.x + nxt.x);
+                n.z += (cur.x - nxt.x) * (cur.y + nxt.y);
+            }
+            return glm::length(n) * 0.5f;
+        }
+
+        // Perimeter of the closed Area polygon (total length plus the closing
+        // segment back to the first vertex). Returns 0 for fewer than 3 points.
+        float perimeter() const {
+            const size_t count = points.size();
+            if (count < 3) return 0.0f;
+            float len = totalLength();
+            len += glm::length(points.front() - points.back());
+            return len;
+        }
+
+        // Average of the vertices, used to place the area label at the polygon
+        // centre. Returns the origin for an empty point set.
+        glm::vec3 centroid() const {
+            if (points.empty()) return glm::vec3(0.0f);
+            glm::vec3 c(0.0f);
+            for (const auto& p : points) c += p;
+            return c / static_cast<float>(points.size());
         }
     };
 

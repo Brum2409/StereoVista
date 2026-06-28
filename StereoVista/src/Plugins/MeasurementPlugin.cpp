@@ -17,7 +17,7 @@ PluginInfo MeasurementPlugin::info() const {
     PluginInfo meta;
     meta.id          = "stereovista.measurement";
     meta.name        = "Measure";
-    meta.description = "Measure distances, angles and coordinates in the scene.";
+    meta.description = "Measure distances, angles, areas and coordinates in the scene.";
     meta.version     = "1.0.0";
     meta.category    = PluginCategory::Tool;
     meta.shortcut    = "M";

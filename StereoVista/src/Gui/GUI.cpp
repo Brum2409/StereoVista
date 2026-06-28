@@ -1220,6 +1220,287 @@ static void importLASFiles(const std::vector<std::string> &lasFiles) {
   updateSpaceMouseBounds();
 }
 
+// ===========================================================================
+// Scene file operations
+//
+// Shared by the File menu, the keyboard shortcuts and the Scene Manager window
+// so save / load / merge / new behave identically wherever they are invoked.
+// They operate on the live application globals (currentScene, lights, camera).
+// ===========================================================================
+
+// Live "current scene" bookkeeping owned by main.cpp.
+extern std::string g_currentScenePath;
+extern bool g_sceneDirty;
+extern bool showSceneManagerWindow;
+// Apply / capture the per-scene environment (skybox + lighting mode + sun).
+void applyLoadedSceneEnvironment(const Engine::Scene &scene);
+void captureSceneEnvironment(Engine::Scene &scene);
+
+// Insert `path` at the head of the recent-scenes list (newest first), removing
+// any earlier occurrence and capping the list. Persists preferences.
+static void SceneAddRecent(const std::string &path) {
+  if (path.empty())
+    return;
+  std::string normalized =
+      std::filesystem::path(path).lexically_normal().string();
+  auto &recents = preferences.recentScenes;
+  recents.erase(std::remove(recents.begin(), recents.end(), normalized),
+                recents.end());
+  recents.insert(recents.begin(), normalized);
+  constexpr size_t kMaxRecent = 12;
+  if (recents.size() > kMaxRecent)
+    recents.resize(kMaxRecent);
+  savePreferences();
+}
+
+// Build the engine save options from the user's preferences.
+static Engine::SceneSaveOptions SceneOptionsFromPrefs() {
+  Engine::SceneSaveOptions opt;
+  const auto &s = preferences.sceneSaveSettings;
+  opt.includeCamera = s.includeCamera;
+  opt.includeLighting = s.includeLighting;
+  opt.includeEnvironment = s.includeEnvironment;
+  opt.includeMeasurements = s.includeMeasurements;
+  opt.includeClipPlanes = s.includeClipPlanes;
+  opt.compact = s.compact;
+  return opt;
+}
+
+// Surface a load report as a toast: success with a count, plus a warning toast
+// when assets were missing / objects were dropped.
+static void SceneReportToast(const std::string &sceneFile,
+                             const Engine::SceneLoadReport &report,
+                             const char *verb) {
+  std::string name = std::filesystem::path(sceneFile).filename().string();
+  GUI::ShowToast(std::string("Scene ") + verb + ": " + name,
+                 GUI::ToastType::Success);
+  int failed = report.modelsFailed + report.pointCloudsFailed;
+  if (failed > 0) {
+    GUI::ShowToast(std::to_string(failed) +
+                       " object(s) could not be loaded - see log for details",
+                   GUI::ToastType::Warning);
+  } else if (report.hasWarnings()) {
+    GUI::ShowToast("Scene loaded with warnings - see log for details",
+                   GUI::ToastType::Warning);
+  }
+}
+
+// Save the live scene to `destination`. Returns true on success. Updates the
+// current-scene path, clears the dirty flag and refreshes the recent list.
+static bool SceneSaveTo(const std::string &destination) {
+  try {
+    currentScene.pointLights = pointLights;
+    currentScene.spotLights = spotLights;
+    captureSceneEnvironment(currentScene);
+    Engine::saveScene(destination, currentScene, camera,
+                      SceneOptionsFromPrefs());
+
+    std::filesystem::path p(destination);
+    if (p.extension() != ".scene")
+      p.replace_extension(".scene");
+
+    if (preferences.sceneSaveSettings.includeSnapshots) {
+      Core::SnapshotManager::instance().saveToScene(p.string());
+    } else {
+      // Snapshot saving is off: drop any snapshot index left in this scene's
+      // folder so a later load doesn't restore stale snapshots.
+      std::error_code ec;
+      std::filesystem::remove(p.parent_path() / p.stem() / "snapshots.json", ec);
+    }
+
+    g_currentScenePath = p.string();
+    g_sceneDirty = false;
+    // Reflect the timestamps the file was actually written with so the Scene
+    // Manager panel shows them without needing a reload. Guard on a non-empty
+    // modifiedAt so a chunked scene (whose header carries no metadata) doesn't
+    // wipe the description/author the user just entered.
+    Engine::SceneInfo info = Engine::loadSceneInfo(g_currentScenePath);
+    if (info.valid && !info.metadata.modifiedAt.empty())
+      currentScene.metadata = info.metadata;
+    SceneAddRecent(g_currentScenePath);
+    GUI::UpdateWindowTitleForScene(g_currentScenePath);
+    GUI::ShowToast("Scene saved: " + p.filename().string(),
+                   GUI::ToastType::Success);
+    return true;
+  } catch (const std::exception &e) {
+    std::cerr << "Failed to save scene: " << e.what() << std::endl;
+    GUI::ShowToast(std::string("Failed to save scene: ") + e.what(),
+                   GUI::ToastType::Error);
+    return false;
+  }
+}
+
+// Prompt for a destination and save (Save As...). Returns true if saved.
+static bool SceneSaveAsDialog() {
+  std::string suggested =
+      g_currentScenePath.empty()
+          ? std::string("scene.scene")
+          : std::filesystem::path(g_currentScenePath).filename().string();
+  auto destination = pfd::save_file("Save scene as", suggested,
+                                    {"Scene Files", "*.scene", "All Files", "*"})
+                         .result();
+  if (destination.empty())
+    return false;
+  return SceneSaveTo(destination);
+}
+
+// Quick save (Ctrl+S): re-save to the current path, or fall back to Save As
+// when the scene has never been saved.
+static bool SceneQuickSave() {
+  if (g_currentScenePath.empty())
+    return SceneSaveAsDialog();
+  return SceneSaveTo(g_currentScenePath);
+}
+
+// Replace the live scene with the contents of `sceneFile`.
+static void SceneReplaceFrom(const std::string &sceneFile) {
+  try {
+    // Recorded undo entries reference objects by index, which no longer match
+    // once a scene file replaces the containers.
+    Engine::UndoManager::instance().clear();
+
+    currentScene.models.clear();
+    currentScene.pointClouds.clear();
+    pointLights.clear();
+    spotLights.clear();
+    currentSelectedType = SelectedType::None;
+    currentSelectedIndex = -1;
+    currentSelectedMeshIndex = -1;
+
+    Engine::SceneLoadReport report;
+    currentScene = Engine::loadScene(sceneFile, camera, &report);
+    pointLights = currentScene.pointLights;
+    for (auto &pl : pointLights)
+      pl.castShadows = true;
+    spotLights = currentScene.spotLights;
+
+    Core::SnapshotManager::instance().loadFromScene(sceneFile);
+    applyLoadedSceneEnvironment(currentScene);
+
+    for (auto &model : currentScene.models) {
+      glm::vec3 targetScale = model.scale;
+      if (preferences.enableSpawnAnimation)
+        model.startSpawnAnimation(targetScale, 1.1f);
+    }
+    currentSelectedIndex = currentScene.models.empty() ? -1 : 0;
+    updateSpaceMouseBounds();
+    if (voxelizer)
+      voxelizer->markDirty();
+
+    g_currentScenePath = sceneFile;
+    g_sceneDirty = false;
+    SceneAddRecent(sceneFile);
+    GUI::UpdateWindowTitleForScene(sceneFile);
+    SceneReportToast(sceneFile, report, "loaded");
+  } catch (const std::exception &e) {
+    std::cerr << "Failed to load scene: " << e.what() << std::endl;
+    GUI::ShowToast(std::string("Failed to load scene: ") + e.what(),
+                   GUI::ToastType::Error);
+  }
+}
+
+// Merge the contents of `sceneFile` into the live scene (keep existing).
+static void SceneMergeFrom(const std::string &sceneFile) {
+  try {
+    // Bulk merges are not tracked, so drop the index-based undo history.
+    Engine::UndoManager::instance().clear();
+
+    Engine::SceneLoadReport report;
+    Engine::Scene newScene = Engine::loadScene(sceneFile, camera, &report);
+
+    for (auto &model : newScene.models) {
+      glm::vec3 targetScale = model.scale;
+      if (preferences.enableSpawnAnimation)
+        model.startSpawnAnimation(targetScale, 1.1f);
+      currentScene.models.push_back(model);
+    }
+    for (auto &pc : newScene.pointClouds)
+      currentScene.pointClouds.push_back(std::move(pc));
+    for (auto &pl : newScene.pointLights) {
+      pl.castShadows = true;
+      pointLights.push_back(pl);
+    }
+    for (auto &sl : newScene.spotLights)
+      spotLights.push_back(sl);
+
+    updateSpaceMouseBounds();
+    if (voxelizer)
+      voxelizer->markDirty();
+
+    g_sceneDirty = true; // merged content is unsaved
+    SceneAddRecent(sceneFile);
+    SceneReportToast(sceneFile, report, "merged");
+  } catch (const std::exception &e) {
+    std::cerr << "Failed to merge scene: " << e.what() << std::endl;
+    GUI::ShowToast(std::string("Failed to merge scene: ") + e.what(),
+                   GUI::ToastType::Error);
+  }
+}
+
+// Clear the live scene back to an empty, untitled state.
+static void SceneNew() {
+  Engine::UndoManager::instance().clear();
+  currentScene.models.clear();
+  currentScene.pointClouds.clear();
+  currentScene.measurements.clear();
+  currentScene.clipPlanes.clear();
+  pointLights.clear();
+  spotLights.clear();
+  currentScene.metadata = Engine::SceneMetadata{};
+  currentScene.environment = Engine::SceneEnvironment{};
+  currentSelectedType = SelectedType::None;
+  currentSelectedIndex = -1;
+  currentSelectedMeshIndex = -1;
+  Core::SnapshotManager::instance().clear();
+  updateSpaceMouseBounds();
+  if (voxelizer)
+    voxelizer->markDirty();
+  g_currentScenePath.clear();
+  g_sceneDirty = false;
+  GUI::UpdateWindowTitleForScene("");
+  GUI::ShowToast("New (empty) scene", GUI::ToastType::Info);
+}
+
+// Shared modal state. The modals themselves are drawn by renderGUI each frame;
+// these flags can be raised from anywhere (menu, shortcuts, Scene Manager).
+static std::string g_pendingSceneToLoad;
+static bool g_showLoadSceneDialog = false;
+static bool g_showNewSceneGuard = false;
+
+// Route a scene file through the user's replace / merge / ask preference.
+static void SceneRequestLoad(const std::string &sceneFile) {
+  bool hasExistingObjects = !currentScene.models.empty() ||
+                            !currentScene.pointClouds.empty() ||
+                            !pointLights.empty() || !spotLights.empty();
+  if (!hasExistingObjects ||
+      preferences.sceneLoadingBehavior == GUI::SCENE_LOAD_ALWAYS_REPLACE) {
+    SceneReplaceFrom(sceneFile);
+  } else if (preferences.sceneLoadingBehavior == GUI::SCENE_LOAD_ALWAYS_MERGE) {
+    SceneMergeFrom(sceneFile);
+  } else {
+    g_pendingSceneToLoad = sceneFile;
+    g_showLoadSceneDialog = true;
+  }
+}
+
+// New Scene, guarded against silently discarding unsaved changes.
+static void SceneRequestNew() {
+  if (g_sceneDirty)
+    g_showNewSceneGuard = true;
+  else
+    SceneNew();
+}
+
+// Open a file dialog and load the chosen scene through the preference router.
+static void SceneOpenDialog() {
+  auto selection =
+      pfd::open_file("Select a scene file to load", ".",
+                     {"Scene Files", "*.scene", "All Files", "*"})
+          .result();
+  if (!selection.empty())
+    SceneRequestLoad(selection[0]);
+}
+
 // Case-insensitive substring test used by the Scene Hierarchy search filter.
 // An empty needle matches everything (so the unfiltered list shows in full).
 static bool searchMatches(const std::string &haystack, const char *needle) {
@@ -1271,145 +1552,33 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
   // MAIN MENU BAR
   // ========================
 
-  // Static variables for scene loading dialog (must be outside menu scope)
-  static std::string pendingSceneToLoad = "";
-  static bool showLoadSceneDialog = false;
 
-  // Helper lambda to load and replace scene
+  // Thin wrappers kept for the existing call sites below; they delegate to the
+  // shared scene-file operations so every entry point behaves identically.
   auto loadAndReplaceScene = [&](const std::string &sceneFile) {
-    try {
-      // Recorded undo entries reference objects by index, which no longer
-      // match once a scene file replaces the containers
-      Engine::UndoManager::instance().clear();
-
-      // Clear all existing objects
-      currentScene.models.clear();
-      currentScene.pointClouds.clear();
-      pointLights.clear();
-      spotLights.clear();
-      currentSelectedType = SelectedType::None;
-      currentSelectedIndex = -1;
-      currentSelectedMeshIndex = -1;
-
-      // Load new scene
-      currentScene = Engine::loadScene(sceneFile, camera);
-      pointLights = currentScene.pointLights;
-      for (auto &pl : pointLights) {
-        pl.castShadows = true;
-      }
-      spotLights = currentScene.spotLights;
-
-      // Replace the snapshot list with the ones saved for this scene.
-      Core::SnapshotManager::instance().loadFromScene(sceneFile);
-
-      for (auto &model : currentScene.models) {
-        glm::vec3 targetScale = model.scale;
-        if (preferences.enableSpawnAnimation) {
-          model.startSpawnAnimation(targetScale, 1.1f);
-        }
-      }
-      currentSelectedIndex = currentScene.models.empty() ? -1 : 0;
-      updateSpaceMouseBounds();
-
-      // Mark voxelizer dirty for re-voxelization with new scene
-      if (voxelizer) {
-        voxelizer->markDirty();
-      }
-
-      GUI::UpdateWindowTitleForScene(sceneFile);
-      GUI::ShowToast("Scene loaded: " +
-                         std::filesystem::path(sceneFile).filename().string(),
-                     GUI::ToastType::Success);
-    } catch (const std::exception &e) {
-      std::cerr << "Failed to load scene: " << e.what() << std::endl;
-      GUI::ShowToast(std::string("Failed to load scene: ") + e.what(),
-                     GUI::ToastType::Error);
-    }
+    SceneReplaceFrom(sceneFile);
   };
-
-  // Helper lambda to load and merge scene
   auto loadAndMergeScene = [&](const std::string &sceneFile) {
-    try {
-      // Bulk merges are not tracked, so drop the index-based undo history
-      Engine::UndoManager::instance().clear();
-
-      // Load new scene and merge with existing
-      Engine::Scene newScene = Engine::loadScene(sceneFile, camera);
-
-      // Merge models
-      for (auto &model : newScene.models) {
-        glm::vec3 targetScale = model.scale;
-        if (preferences.enableSpawnAnimation) {
-          model.startSpawnAnimation(targetScale, 1.1f);
-        }
-        currentScene.models.push_back(model);
-      }
-
-      // Merge point clouds
-      for (auto &pc : newScene.pointClouds) {
-        currentScene.pointClouds.push_back(std::move(pc));
-      }
-
-      // Merge point lights
-      for (auto &pl : newScene.pointLights) {
-        pl.castShadows = true;
-        pointLights.push_back(pl);
-      }
-
-      // Merge spot lights
-      for (auto &sl : newScene.spotLights) {
-        spotLights.push_back(sl);
-      }
-
-      updateSpaceMouseBounds();
-
-      // Mark voxelizer dirty for re-voxelization with merged geometry
-      if (voxelizer) {
-        voxelizer->markDirty();
-      }
-
-      GUI::ShowToast("Scene merged: " +
-                         std::filesystem::path(sceneFile).filename().string(),
-                     GUI::ToastType::Success);
-    } catch (const std::exception &e) {
-      std::cerr << "Failed to load scene: " << e.what() << std::endl;
-      GUI::ShowToast(std::string("Failed to merge scene: ") + e.what(),
-                     GUI::ToastType::Error);
-    }
+    SceneMergeFrom(sceneFile);
   };
 
-  // Helper lambda to load scene (first load or based on preference)
-  auto loadSceneWithPreference = [&](const std::string &sceneFile) {
-    Engine::UndoManager::instance().clear();
-    currentScene = Engine::loadScene(sceneFile, camera);
-    pointLights = currentScene.pointLights;
-    for (auto &pl : pointLights) {
-      pl.castShadows = true;
-    }
-    spotLights = currentScene.spotLights;
-
-    // Replace the snapshot list with the ones saved for this scene.
-    Core::SnapshotManager::instance().loadFromScene(sceneFile);
-
-    for (auto &model : currentScene.models) {
-      glm::vec3 targetScale = model.scale;
-      if (preferences.enableSpawnAnimation) {
-        model.startSpawnAnimation(targetScale, 1.1f);
+  // Global keyboard shortcuts for scene file operations. Ignored while a text
+  // field has keyboard focus so they don't fire while the user is typing.
+  {
+    ImGuiIO &io = ImGui::GetIO();
+    if (io.KeyCtrl && !io.WantTextInput) {
+      if (ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+        if (io.KeyShift)
+          SceneSaveAsDialog();
+        else
+          SceneQuickSave();
+      } else if (ImGui::IsKeyPressed(ImGuiKey_N, false)) {
+        SceneRequestNew();
+      } else if (ImGui::IsKeyPressed(ImGuiKey_O, false)) {
+        SceneOpenDialog();
       }
     }
-    currentSelectedIndex = currentScene.models.empty() ? -1 : 0;
-    updateSpaceMouseBounds();
-
-    // Mark voxelizer dirty for re-voxelization with new scene
-    if (voxelizer) {
-      voxelizer->markDirty();
-    }
-
-    GUI::UpdateWindowTitleForScene(sceneFile);
-    GUI::ShowToast("Scene loaded: " +
-                       std::filesystem::path(sceneFile).filename().string(),
-                   GUI::ToastType::Success);
-  };
+  }
 
   // Import any files dropped onto the window (queued by the GLFW drop
   // callback). Scene files follow the same replace/merge/ask flow as
@@ -1426,27 +1595,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
       std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
       if (ext == ".scene") {
-        bool hasExistingObjects = !currentScene.models.empty() ||
-                                  !currentScene.pointClouds.empty() ||
-                                  !pointLights.empty() || !spotLights.empty();
-        if (!hasExistingObjects) {
-          try {
-            loadSceneWithPreference(filePath);
-          } catch (const std::exception &e) {
-            std::cerr << "Failed to load scene: " << e.what() << std::endl;
-            GUI::ShowToast(std::string("Failed to load scene: ") + e.what(),
-                           GUI::ToastType::Error);
-          }
-        } else if (preferences.sceneLoadingBehavior ==
-                   GUI::SCENE_LOAD_ALWAYS_REPLACE) {
-          loadAndReplaceScene(filePath);
-        } else if (preferences.sceneLoadingBehavior ==
-                   GUI::SCENE_LOAD_ALWAYS_MERGE) {
-          loadAndMergeScene(filePath);
-        } else {
-          pendingSceneToLoad = filePath;
-          showLoadSceneDialog = true;
-        }
+        SceneRequestLoad(filePath);
       } else if (ext == ".obj" || ext == ".fbx" || ext == ".3ds" ||
                  ext == ".gltf" || ext == ".glb") {
         importModelFile(filePath);
@@ -1555,7 +1704,12 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
 
       ImGui::Separator();
 
-      // Add icon to Load Scene
+      // New Scene (guarded against discarding unsaved changes).
+      if (ImGui::MenuItem("New Scene", "Ctrl+N")) {
+        SceneRequestNew();
+      }
+
+      // Load Scene
       std::string sceneMenuText = "Load Scene...";
       if (g_Fonts.icons) {
         ImGui::PushFont(g_Fonts.icons);
@@ -1563,69 +1717,48 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
         ImGui::PopFont();
         ImGui::SameLine();
       }
-
-      if (ImGui::MenuItem(sceneMenuText.c_str())) {
-        auto selection =
-            pfd::open_file("Select a scene file to load", ".",
-                           {"Scene Files", "*.scene", "All Files", "*"})
-                .result();
-        if (!selection.empty()) {
-          // Check if there are existing objects in the scene
-          bool hasExistingObjects = !currentScene.models.empty() ||
-                                    !currentScene.pointClouds.empty() ||
-                                    !pointLights.empty() || !spotLights.empty();
-
-          if (hasExistingObjects) {
-            // Check user preference for scene loading behavior
-            if (preferences.sceneLoadingBehavior ==
-                GUI::SCENE_LOAD_ALWAYS_REPLACE) {
-              // Auto-replace: clear existing and load new
-              loadAndReplaceScene(selection[0]);
-            } else if (preferences.sceneLoadingBehavior ==
-                       GUI::SCENE_LOAD_ALWAYS_MERGE) {
-              // Auto-merge: keep existing and add new
-              loadAndMergeScene(selection[0]);
-            } else {
-              // Always ask: show dialog
-              pendingSceneToLoad = selection[0];
-              showLoadSceneDialog = true;
-            }
-          } else {
-            // No existing objects, just load directly
-            try {
-              loadSceneWithPreference(selection[0]);
-            } catch (const std::exception &e) {
-              std::cerr << "Failed to load scene: " << e.what() << std::endl;
-              GUI::ShowToast(std::string("Failed to load scene: ") + e.what(),
-                             GUI::ToastType::Error);
-            }
-          }
-        }
+      if (ImGui::MenuItem(sceneMenuText.c_str(), "Ctrl+O")) {
+        SceneOpenDialog();
       }
 
-      if (ImGui::MenuItem("Save Scene...")) {
-        auto destination =
-            pfd::save_file("Select a file to save scene", ".",
-                           {"Scene Files", "*.scene", "All Files", "*"})
-                .result();
-        if (!destination.empty()) {
-          try {
-            currentScene.pointLights = pointLights;
-            currentScene.spotLights = spotLights;
-            Engine::saveScene(destination, currentScene, camera);
-            // Persist this scene's snapshots (metadata + thumbnails) alongside it.
-            Core::SnapshotManager::instance().saveToScene(destination);
-            GUI::UpdateWindowTitleForScene(destination);
-            GUI::ShowToast(
-                "Scene saved: " +
-                    std::filesystem::path(destination).filename().string(),
-                GUI::ToastType::Success);
-          } catch (const std::exception &e) {
-            std::cerr << "Failed to save scene: " << e.what() << std::endl;
-            GUI::ShowToast(std::string("Failed to save scene: ") + e.what(),
-                           GUI::ToastType::Error);
+      // Recent Scenes submenu (most-recently-used first).
+      if (ImGui::BeginMenu("Recent Scenes",
+                           !preferences.recentScenes.empty())) {
+        // Copy so we can mutate the list (remove missing entries) while
+        // iterating safely.
+        std::vector<std::string> recents = preferences.recentScenes;
+        for (const auto &recent : recents) {
+          bool exists = std::filesystem::exists(recent);
+          std::string label = std::filesystem::path(recent).filename().string();
+          if (!exists)
+            label += "  (missing)";
+          if (!exists)
+            ImGui::BeginDisabled();
+          if (ImGui::MenuItem(label.c_str())) {
+            SceneRequestLoad(recent);
           }
+          if (!exists)
+            ImGui::EndDisabled();
+          if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", recent.c_str());
         }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Clear Recent")) {
+          preferences.recentScenes.clear();
+          savePreferences();
+        }
+        ImGui::EndMenu();
+      }
+
+      ImGui::Separator();
+
+      // Save / Save As. Save re-writes the current file (or prompts when the
+      // scene has never been saved); Save As always prompts.
+      if (ImGui::MenuItem("Save Scene", "Ctrl+S")) {
+        SceneQuickSave();
+      }
+      if (ImGui::MenuItem("Save Scene As...", "Ctrl+Shift+S")) {
+        SceneSaveAsDialog();
       }
 
       ImGui::Separator();
@@ -1701,9 +1834,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
 
     // Load Scene Dialog Modal (must be outside menu scope for popup to work
     // correctly)
-    if (showLoadSceneDialog) {
+    if (g_showLoadSceneDialog) {
       ImGui::OpenPopup("Load Scene");
-      showLoadSceneDialog = false;
+      g_showLoadSceneDialog = false;
     }
 
     // Center the popup in the viewport (both horizontally and vertically)
@@ -1722,7 +1855,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
 
       // Replace button - clear existing scene
       if (ImGui::Button("Replace (Clear Existing)", ImVec2(200, 0))) {
-        loadAndReplaceScene(pendingSceneToLoad);
+        loadAndReplaceScene(g_pendingSceneToLoad);
         ImGui::CloseCurrentPopup();
       }
       ImGui::SameLine();
@@ -1732,7 +1865,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
 
       // Merge button - keep existing scene
       if (ImGui::Button("Merge (Keep Existing)", ImVec2(200, 0))) {
-        loadAndMergeScene(pendingSceneToLoad);
+        loadAndMergeScene(g_pendingSceneToLoad);
         ImGui::CloseCurrentPopup();
       }
       ImGui::SameLine();
@@ -1757,6 +1890,41 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
                          "Display > Scene Loading");
       ImGui::PopStyleColor();
 
+      ImGui::EndPopup();
+    }
+
+    // New Scene unsaved-changes guard.
+    if (g_showNewSceneGuard) {
+      ImGui::OpenPopup("Unsaved Changes");
+      g_showNewSceneGuard = false;
+    }
+    ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Unsaved Changes", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize |
+                                   ImGuiWindowFlags_NoMove)) {
+      ImGui::Text("The current scene has unsaved changes.");
+      ImGui::Spacing();
+      ImGui::Text("Save before creating a new scene?");
+      ImGui::Spacing();
+      ImGui::Separator();
+      ImGui::Spacing();
+
+      if (ImGui::Button("Save", ImVec2(120, 0))) {
+        if (SceneQuickSave()) {
+          SceneNew();
+          ImGui::CloseCurrentPopup();
+        }
+        // If the save was cancelled / failed, keep the dialog open.
+      }
+      ImGui::SameLine();
+      if (ImGui::Button("Don't Save", ImVec2(120, 0))) {
+        SceneNew();
+        ImGui::CloseCurrentPopup();
+      }
+      ImGui::SameLine();
+      if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+        ImGui::CloseCurrentPopup();
+      }
       ImGui::EndPopup();
     }
 
@@ -2127,6 +2295,10 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
 
       ImGui::MenuItem("Snapshots", nullptr, &showSnapshotsWindow);
       menuButtonTooltip("Save and restore camera / scene / tool snapshots");
+
+      ImGui::MenuItem("Scene Manager", nullptr, &showSceneManagerWindow);
+      menuButtonTooltip("Save / load scenes, recent files, scene info and "
+                        "save options");
 
       // Plugin-contributed tool entries (each toggles its own window).
       ImGui::Separator();
@@ -2844,6 +3016,10 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
 
   if (showSnapshotsWindow) {
     renderSnapshotsWindow();
+  }
+
+  if (showSceneManagerWindow) {
+    renderSceneManagerWindow();
   }
 
   // Screen-space measurement labels (distances/angles/coordinates) projected
@@ -6498,12 +6674,12 @@ void renderMeasurementToolWindow() {
   }
   ImGui::SameLine();
   DrawHelpMarker("While enabled, LEFT CLICK places a measurement point at the "
-                 "3D cursor. RIGHT CLICK or ENTER finishes a polyline, "
+                 "3D cursor. RIGHT CLICK or ENTER finishes a polyline/polygon, "
                  "BACKSPACE removes the last point, DELETE cancels.");
 
   int mode = static_cast<int>(measurementTool.getMode());
   const char *modeNames[] = {"Distance (polyline)", "Angle (3 points)",
-                             "Point (coordinates)"};
+                             "Point (coordinates)", "Area (polygon)"};
   if (ImGui::Combo("Mode", &mode, modeNames, IM_ARRAYSIZE(modeNames))) {
     measurementTool.setMode(static_cast<Engine::Measurement::Type>(mode));
   }
@@ -6522,6 +6698,13 @@ void renderMeasurementToolWindow() {
         active.points.size() >= 2) {
       ImGui::Text("Length so far: %s",
                   measurementTool.formatLength(active.totalLength()).c_str());
+    }
+    if (active.type == Engine::Measurement::Type::Area &&
+        active.points.size() >= 3) {
+      ImGui::Text("Area so far: %s",
+                  measurementTool.formatArea(active.area()).c_str());
+      ImGui::Text("Perimeter: %s",
+                  measurementTool.formatLength(active.perimeter()).c_str());
     }
     if (ImGui::Button("Finish", ImVec2(100, 0))) {
       measurementTool.finishActive();
@@ -6594,6 +6777,9 @@ void renderMeasurementToolWindow() {
                    m.points[0].y, m.points[0].z);
           value = buf;
         }
+        break;
+      case Engine::Measurement::Type::Area:
+        value = measurementTool.formatArea(m.area());
         break;
       case Engine::Measurement::Type::Distance:
       default:
@@ -6861,6 +7047,196 @@ static bool DrawTagChip(const char *label, bool active) {
   ImGui::PopStyleVar();
   ImGui::PopStyleColor(3);
   return clicked;
+}
+
+// Scene Manager panel: a single home for scene file operations (new / open /
+// save / save-as), recent files, the live scene's stats and editable metadata,
+// and the per-scene save options. Complements the File menu so all of this is
+// reachable from one dockable window.
+void renderSceneManagerWindow() {
+  float scale = g_GuiScale.currentScale;
+  ImGui::SetNextWindowSize(ImVec2(460 * scale, 640 * scale),
+                           ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSizeConstraints(ImVec2(340 * scale, 320 * scale),
+                                      ImVec2(100000.0f, 100000.0f));
+  ImGui::Begin("Scene Manager", &showSceneManagerWindow);
+
+  // ── Current scene ────────────────────────────────────────────────────────
+  DrawSectionHeader("Current Scene");
+
+  const bool untitled = g_currentScenePath.empty();
+  std::string sceneName =
+      untitled ? std::string("Untitled")
+               : std::filesystem::path(g_currentScenePath).stem().string();
+
+  ImGui::Text("%s", sceneName.c_str());
+  ImGui::SameLine();
+  if (g_sceneDirty) {
+    ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f), "  (unsaved changes)");
+  } else {
+    ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "  (saved)");
+  }
+  if (!untitled) {
+    ImGui::TextDisabled("%s", g_currentScenePath.c_str());
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("%s", g_currentScenePath.c_str());
+  }
+  if (!currentScene.metadata.modifiedAt.empty()) {
+    ImGui::TextDisabled("Last saved: %s",
+                        currentScene.metadata.modifiedAt.c_str());
+  }
+
+  ImGui::Spacing();
+
+  // ── Action buttons ───────────────────────────────────────────────────────
+  float fullW = ImGui::GetContentRegionAvail().x;
+  float halfW = (fullW - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+  if (ImGui::Button("New", ImVec2(halfW, 0)))
+    SceneRequestNew();
+  ImGui::SameLine();
+  if (ImGui::Button("Open...", ImVec2(halfW, 0)))
+    SceneOpenDialog();
+  if (ImGui::Button("Save", ImVec2(halfW, 0)))
+    SceneQuickSave();
+  ImGui::SameLine();
+  if (ImGui::Button("Save As...", ImVec2(halfW, 0)))
+    SceneSaveAsDialog();
+
+  // ── Statistics ───────────────────────────────────────────────────────────
+  DrawSectionHeader("Contents");
+  if (ImGui::BeginTable("scene_stats", 2,
+                        ImGuiTableFlags_SizingStretchProp)) {
+    auto row = [](const char *label, size_t count) {
+      ImGui::TableNextRow();
+      ImGui::TableSetColumnIndex(0);
+      ImGui::TextUnformatted(label);
+      ImGui::TableSetColumnIndex(1);
+      ImGui::Text("%zu", count);
+    };
+    row("Models", currentScene.models.size());
+    row("Point Clouds", currentScene.pointClouds.size());
+    row("Point Lights", pointLights.size());
+    row("Spot Lights", spotLights.size());
+    row("Measurements", currentScene.measurements.size());
+    row("Section Planes", currentScene.clipPlanes.size());
+    row("Snapshots", Core::SnapshotManager::instance().snapshots().size());
+    ImGui::EndTable();
+  }
+
+  // ── Metadata ─────────────────────────────────────────────────────────────
+  DrawSectionHeader("Metadata");
+  static char descBuf[1024];
+  static char authorBuf[256];
+  // Keep the buffers in sync with the live scene's metadata while the fields
+  // aren't being edited (so New / Load refreshes them, and edits aren't lost).
+  if (!ImGui::IsAnyItemActive()) {
+    strncpy_s(descBuf, currentScene.metadata.description.c_str(),
+              sizeof(descBuf) - 1);
+    strncpy_s(authorBuf, currentScene.metadata.author.c_str(),
+              sizeof(authorBuf) - 1);
+  }
+  if (ImGui::InputText("Author", authorBuf, sizeof(authorBuf))) {
+    currentScene.metadata.author = authorBuf;
+    g_sceneDirty = true;
+  }
+  if (ImGui::InputTextMultiline("Description", descBuf, sizeof(descBuf),
+                                ImVec2(ImGui::GetContentRegionAvail().x,
+                                       60 * scale))) {
+    currentScene.metadata.description = descBuf;
+    g_sceneDirty = true;
+  }
+  if (!currentScene.metadata.createdAt.empty()) {
+    ImGui::TextDisabled("Created: %s", currentScene.metadata.createdAt.c_str());
+  }
+
+  // ── Save options ─────────────────────────────────────────────────────────
+  DrawSectionHeader("Save Options");
+  auto &opt = preferences.sceneSaveSettings;
+  bool changed = false;
+  changed |= ImGui::Checkbox("Camera viewpoint", &opt.includeCamera);
+  changed |= ImGui::Checkbox("Lighting (sun + lights)", &opt.includeLighting);
+  changed |= ImGui::Checkbox("Environment (skybox + mode)",
+                             &opt.includeEnvironment);
+  changed |= ImGui::Checkbox("Measurements", &opt.includeMeasurements);
+  changed |= ImGui::Checkbox("Section planes", &opt.includeClipPlanes);
+  changed |= ImGui::Checkbox("Snapshots", &opt.includeSnapshots);
+  ImGui::SameLine();
+  DrawHelpMarker("Save named snapshots (metadata + thumbnails) into the "
+                 "scene folder so they reload with the scene.");
+  changed |= ImGui::Checkbox("Compact (minified) JSON", &opt.compact);
+  ImGui::SameLine();
+  DrawHelpMarker("Write the scene's .scene file without indentation. Smaller "
+                 "files, slightly harder to read by hand.");
+  changed |= ImGui::Checkbox("Apply saved environment on load",
+                             &preferences.applySceneEnvironmentOnLoad);
+  ImGui::SameLine();
+  DrawHelpMarker("When loading a scene that stored a skybox / lighting mode, "
+                 "switch the live session to match it.");
+
+  const char *behaviors[] = {"Always Ask", "Always Replace",
+                             "Always Merge"};
+  int behavior = static_cast<int>(preferences.sceneLoadingBehavior);
+  if (ImGui::Combo("On load (with existing scene)", &behavior, behaviors, 3)) {
+    preferences.sceneLoadingBehavior =
+        static_cast<GUI::SceneLoadingBehavior>(behavior);
+    changed = true;
+  }
+  if (changed)
+    savePreferences();
+
+  // ── Recent scenes ────────────────────────────────────────────────────────
+  DrawSectionHeader("Recent Scenes");
+  if (preferences.recentScenes.empty()) {
+    ImGui::TextDisabled("No recent scenes.");
+  } else {
+    // Defer all mutating actions until after the loop: loading a scene calls
+    // SceneAddRecent(), which rewrites preferences.recentScenes and would
+    // invalidate the iterator / dangling `recent` reference mid-iteration.
+    std::string toRemove;
+    std::string toLoad;
+    bool clearAll = false;
+    for (const auto &recent : preferences.recentScenes) {
+      ImGui::PushID(recent.c_str());
+      bool exists = std::filesystem::exists(recent);
+      std::string fname = std::filesystem::path(recent).filename().string();
+
+      if (!exists)
+        ImGui::BeginDisabled();
+      if (ImGui::Button("Load"))
+        toLoad = recent;
+      if (!exists)
+        ImGui::EndDisabled();
+
+      ImGui::SameLine();
+      if (ImGui::SmallButton("x"))
+        toRemove = recent;
+      ImGui::SameLine();
+      ImGui::TextUnformatted(fname.c_str());
+      if (!exists) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "(missing)");
+      }
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("%s", recent.c_str());
+      ImGui::PopID();
+    }
+    ImGui::Spacing();
+    if (ImGui::Button("Clear Recent List"))
+      clearAll = true;
+
+    if (clearAll) {
+      preferences.recentScenes.clear();
+      savePreferences();
+    } else if (!toRemove.empty()) {
+      auto &r = preferences.recentScenes;
+      r.erase(std::remove(r.begin(), r.end(), toRemove), r.end());
+      savePreferences();
+    } else if (!toLoad.empty()) {
+      SceneRequestLoad(toLoad);
+    }
+  }
+
+  ImGui::End();
 }
 
 // Snapshots panel: capture the current camera / scene / tool state into named,
@@ -7347,6 +7723,12 @@ static void drawMeasurementLabels() {
         drawLabel(m.points[0], buf, color);
       }
       break;
+    case Engine::Measurement::Type::Area:
+      if (m.points.size() >= 3) {
+        drawLabel(m.centroid(),
+                  measurementTool.formatArea(m.area()), color);
+      }
+      break;
     case Engine::Measurement::Type::Distance:
     default: {
       const size_t segments = m.points.size() >= 2 ? m.points.size() - 1 : 0;
@@ -7390,6 +7772,13 @@ static void drawMeasurementLabels() {
         char buf[32];
         snprintf(buf, sizeof(buf), "%.1f\xC2\xB0", tmp.angleDegrees());
         drawLabel(tmp.points[1], buf, liveColor);
+      } else if (active.type == Engine::Measurement::Type::Area &&
+                 active.points.size() >= 2) {
+        // Live area preview with the cursor closing the polygon.
+        Engine::Measurement tmp = active;
+        tmp.points.push_back(preview);
+        drawLabel(tmp.centroid(),
+                  measurementTool.formatArea(tmp.area()), liveColor);
       } else if (active.type == Engine::Measurement::Type::Distance) {
         const float len = glm::length(preview - active.points.back());
         drawLabel((active.points.back() + preview) * 0.5f,
