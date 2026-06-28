@@ -9036,41 +9036,20 @@ void mouse_button_callback(GLFWwindow *window, int button, int action,
 
       rightMousePressed = true;
 
-      // Capture cursor state for synchronization before starting rotation
-      glm::vec3 cursorPos =
-          cursorManager.isCursorPositionValid()
-              ? cursorManager.getCursorPosition()
-              : camera.Position + camera.Front * camera.OrbitDistance;
-
-      Core::CursorSyncManager::getInstance().captureState(
-          cursorPos, Core::CameraOperationType::Rotating,
-          camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane,
-                                     preferences.farPlane),
-          camera.GetViewMatrix(), windowWidth, windowHeight);
-
-      // Enable mouse capture for right button rotation
+      // Enable mouse capture so the accumulated mouse delta drives the camera
+      // free-look. The cursor is deliberately NOT hidden, locked or recentred:
+      // it stays where it is, moves with the mouse as the camera rotates, and is
+      // left wherever it ends up on release (no jump at the start or end). The
+      // trade-off is that a single drag can only rotate as far as the cursor can
+      // travel before reaching the viewport edge.
       isMouseCaptured = true;
-      firstMouse = true; // Reset the first mouse flag
-      glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-
-      // Center cursor
-      glfwSetCursorPos(window, windowWidth / 2.0f, windowHeight / 2.0f);
+      firstMouse = true; // Reset delta tracking so there is no initial jump.
     } else if (action == GLFW_RELEASE) {
       rightMousePressed = false;
 
-      // Synchronize cursor position after rotation
-      // Note: Pass false for stereo mode since stereo matrices aren't available
-      // here.
-      if (Core::CursorSyncManager::getInstance().needsSynchronization()) {
-        Core::CursorSynchronizer::synchronizeCursorPosition(
-            window, Core::CursorSyncManager::getInstance().getWorldPosition(),
-            camera.GetProjectionMatrix(aspectRatio, preferences.nearPlane,
-                                       preferences.farPlane),
-            camera.GetViewMatrix(), windowWidth, windowHeight, false);
-        Core::CursorSyncManager::getInstance().markSynchronized();
-      }
-
-      // Disable mouse capture
+      // End free-look. The cursor was never hidden, locked or recentred, so it
+      // is already exactly where the user left it -- just stop capturing. There
+      // is no re-projection / synchronisation, so the cursor does not jump.
       isMouseCaptured = false;
       firstMouse = true; // Reset first mouse flag for next time
     }

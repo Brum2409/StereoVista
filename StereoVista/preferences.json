@@ -2,7 +2,7 @@
     "camera": {
         "alwaysShowOrbitCenter": false,
         "autoConvergence": true,
-        "convergence": 13.064352035522461,
+        "convergence": 11.978595733642578,
         "convergenceCapMax": 39.0,
         "convergenceCapMin": 0.800000011920929,
         "convergenceDistanceFactor": 1.2999999523162842,
@@ -44,7 +44,7 @@
     "hdr": {
         "bloomIntensity": 0.1770000010728836,
         "bloomThreshold": 0.33000001311302185,
-        "contrast": 1.0199999809265137,
+        "contrast": 1.0,
         "enableBloom": false,
         "enableFXAA": true,
         "enableVignette": true,
@@ -52,7 +52,7 @@
         "exposure": 1.9299999475479126,
         "fxaaEdgeThreshold": 0.1770000010728836,
         "fxaaSubpixel": 0.27000001072883606,
-        "saturation": 0.8500000238418579,
+        "saturation": 1.0,
         "toneMapOperator": 1,
         "vignetteIntensity": 0.46000000834465027,
         "vignetteRadius": 0.5400000214576721,
@@ -157,7 +157,7 @@
         }
     },
     "shadows": {
-        "enableIndirectLighting": false,
+        "enableIndirectLighting": true,
         "enablePCSS": false,
         "lightSize": 0.13099999725818634,
         "pcfKernelSize": 9,

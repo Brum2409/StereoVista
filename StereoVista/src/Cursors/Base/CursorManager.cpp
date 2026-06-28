@@ -214,8 +214,11 @@ void CursorManager::updateCursorPosition(
     // Clear background cursor when we have a valid 3D cursor
     m_hasBackgroundCursorPosition = false;
 
-    if (camera.IsPanning ||
-        (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS)) {
+    // Panning keeps its own locked (DISABLED) cursor, so don't override the
+    // mode here. Right-button free-look intentionally leaves the cursor visible
+    // and moving, so fall through to the normal hover handling (3D sphere
+    // cursor over geometry) instead of freezing the mode.
+    if (camera.IsPanning) {
       m_cursorPositionCalculatedThisFrame = true;
       return;
     }
@@ -232,8 +235,10 @@ void CursorManager::updateCursorPosition(
         calculateBackgroundCursorPosition(window, projection, view);
     m_hasBackgroundCursorPosition = true;
 
-    if (camera.IsPanning ||
-        (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS)) {
+    // See the matching note above: only panning freezes the cursor mode;
+    // right-button free-look keeps the cursor visible (OS cursor over empty
+    // space) and moving with the mouse.
+    if (camera.IsPanning) {
       m_cursorPositionCalculatedThisFrame = true;
       return;
     }
