@@ -126,14 +126,19 @@ void TransformGizmo::clearTarget() {
     m_scale = nullptr;
     m_hover = Handle::None;
     m_hasInteractionPoint = false;
+    m_interactionLatched = false;
 }
 
-void TransformGizmo::setMode(Mode m) { m_mode = m; }
+void TransformGizmo::setMode(Mode m) {
+    m_mode = m;
+    m_interactionLatched = false; // a mode switch is a fresh interaction context
+}
 
 void TransformGizmo::cycleMode() {
     m_mode = (m_mode == Mode::Translate) ? Mode::Rotate
            : (m_mode == Mode::Rotate)    ? Mode::Scale
                                          : Mode::Translate;
+    m_interactionLatched = false;
 }
 
 TransformGizmo::Mode TransformGizmo::effectiveMode() const {
@@ -284,8 +289,21 @@ TransformGizmo::updateHover(const glm::vec3& o, const glm::vec3& d,
     if (isDragging()) return m_activeHandle;
     glm::vec3 hitPoint;
     m_hover = hitTest(o, d, cameraPos, &hitPoint);
-    m_hasInteractionPoint = (m_hover != Handle::None);
-    if (m_hasInteractionPoint) m_interactionPoint = hitPoint;
+    if (m_hover != Handle::None) {
+        // Live hover over a handle: snap the interaction point onto it and drop
+        // any post-drag latch -- ordinary hover takes over from here.
+        m_interactionPoint = hitPoint;
+        m_hasInteractionPoint = true;
+        m_interactionLatched = false;
+    } else if (!m_interactionLatched) {
+        // Nothing under the cursor and no latch: release the interaction point
+        // so the 3D cursor falls back to scene-geometry depth.
+        m_hasInteractionPoint = false;
+    }
+    // Otherwise (latched, but the cursor no longer sits on the handle's thin
+    // pickable band) keep the point from the just-finished drag so the cursor
+    // stays where the rotation/translation left it instead of jumping back onto
+    // its free scene-depth trajectory.
     return m_hover;
 }
 
@@ -376,6 +394,7 @@ bool TransformGizmo::beginDrag(Handle handle, const glm::vec3& o,
     // very first frame; updateDrag refines it to the live grab point below.
     m_interactionPoint = pivot;
     m_hasInteractionPoint = true;
+    m_interactionLatched = false; // a fresh drag, not a post-drag latch
     return true;
 }
 
@@ -477,12 +496,16 @@ void TransformGizmo::updateDrag(const glm::vec3& o, const glm::vec3& d,
 void TransformGizmo::endDrag() {
     m_activeHandle = Handle::None;
     m_dragAxisIndex = -1;
-    // Keep the last interaction point latched so the 3D cursor stays exactly
-    // where the handle was when the drag finished, rather than snapping back to
-    // scene-geometry depth. updateHover() refreshes (or clears) it on the next
-    // idle frame, but when hover is suppressed -- e.g. the right mouse button is
-    // held for a camera rotate -- the latch prevents the cursor from jumping on
-    // release.
+    // Latch the final interaction point so the 3D cursor (and the billboard
+    // marker drawn from it) stay exactly where the handle was when the drag
+    // finished, rather than snapping back to scene-geometry depth. Without the
+    // latch the very next updateHover() clears the point whenever the cursor no
+    // longer sits on the handle's thin pickable band -- which, after a rotation
+    // sweep, it almost never does -- so the cursor would visibly jump on the
+    // mouse-up. The latch is released by the next hover that re-acquires a
+    // handle, a new drag, a mode/target change, or by the host ending the
+    // interaction (clearInteractionPoint(), once Ctrl is let go).
+    m_interactionLatched = true;
     // (m_hasInteractionPoint / m_interactionPoint intentionally preserved.)
 }
 

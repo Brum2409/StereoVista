@@ -2,7 +2,7 @@
     "camera": {
         "alwaysShowOrbitCenter": false,
         "autoConvergence": true,
-        "convergence": 8.671202659606934,
+        "convergence": 19.03132438659668,
         "convergenceCapMax": 39.0,
         "convergenceCapMin": 0.800000011920929,
         "convergenceDistanceFactor": 1.2999999523162842,
@@ -88,9 +88,16 @@
         "removeRedundantMaterials": false,
         "sortByPrimitiveType": false
     },
+    "openxr": {
+        "farPlane": 200.0,
+        "mirrorToWindow": true,
+        "nearPlane": 0.05000000074505806,
+        "useScenePlanes": true,
+        "worldScale": 1.0
+    },
     "pointcloud": {
         "baseSize": 0.0010000000474974513,
-        "splatEnabled": true,
+        "splatEnabled": false,
         "splatMaxRadius": 2
     },
     "radar": {
@@ -205,21 +212,25 @@
             0.949999988079071
         ],
         "direction": [
-            -0.40824833512306213,
-            -0.8164966702461243,
-            -0.40824833512306213
+            -0.40824827551841736,
+            -0.8164965510368347,
+            -0.40824827551841736
         ],
         "enabled": true,
         "intensity": 0.1599999964237213
     },
     "ui": {
-        "cursorKeepLastDepthOnBackground": false,
+        "cursorBackgroundCacheDistance": 132.0,
+        "cursorBackgroundCacheMode": 2,
+        "cursorBackgroundCacheTime": 1.0,
+        "cursorKeepLastDepthOnBackground": true,
         "darkTheme": true,
         "enableSpawnAnimation": false,
         "guiScaleFactor": 1.0,
         "screenshotIncludeUI": false,
         "show3DCursor": true,
         "showFPS": true,
+        "stereoScreenshotMode": 0,
         "theme": 3,
         "vsync": false
     },

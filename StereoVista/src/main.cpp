@@ -4031,6 +4031,11 @@ int main() {
                  !rightMousePressed && !ImGui::GetIO().WantCaptureMouse) {
         transformGizmo.updateHover(gRayOrigin, gRayDir, camera.Position);
       }
+    } else {
+      // Gizmo idle (Ctrl not held and no active drag): drop any post-drag
+      // cursor latch so re-engaging the gizmo later doesn't snap the 3D cursor
+      // back onto a stale handle point from the previous interaction.
+      transformGizmo.clearInteractionPoint();
     }
 
     // ---- Update Model Depth Movement Physics ----

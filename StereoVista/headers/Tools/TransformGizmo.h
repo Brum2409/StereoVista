@@ -99,6 +99,15 @@ namespace Tools {
         bool hasInteractionPoint() const { return m_hasInteractionPoint; }
         const glm::vec3& interactionPoint() const { return m_interactionPoint; }
 
+        // Drop the cached interaction point and any post-drag latch. The host
+        // calls this when the gizmo is idle (Ctrl not held and no active drag)
+        // so a later re-engagement starts from a clean cursor state instead of
+        // snapping the 3D cursor onto a stale handle point from a past drag.
+        void clearInteractionPoint() {
+            m_hasInteractionPoint = false;
+            m_interactionLatched = false;
+        }
+
         // ── Rendering ───────────────────────────────────────────────────────
         // World-space overlay; call once per eye with that eye's matrices.
         void render(const glm::mat4& projection, const glm::mat4& view,
@@ -117,6 +126,12 @@ namespace Tools {
         // Cached world point on the engaged handle (see interactionPoint()).
         glm::vec3 m_interactionPoint = glm::vec3(0.0f);
         bool      m_hasInteractionPoint = false;
+        // After a drag ends the interaction point is "latched": updateHover()
+        // then keeps it (instead of clearing it when the cursor isn't on a
+        // handle) so the 3D cursor stays where the drag finished. Released by
+        // the next hover that re-acquires a handle, a new drag, a mode/target
+        // change, or clearInteractionPoint().
+        bool      m_interactionLatched = false;
 
         // Geometry size at the pivot for the current camera distance.
         float gizmoScale(const glm::vec3& cameraPos) const;
