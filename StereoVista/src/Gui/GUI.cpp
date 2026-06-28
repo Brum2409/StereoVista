@@ -881,6 +881,91 @@ void GUI::UpdateWindowTitleForScene(const std::string &scenePath) {
 // Draws the active toasts stacked above the bottom edge, newest at the
 // bottom. Called every frame from renderGUI (in both the visible and the
 // hidden-GUI paths).
+// Compact human-readable point count: "1.23B" / "350.4M" / "12.0K" / "742".
+static std::string formatPointCount(uint64_t n) {
+  char buf[32];
+  if (n >= 1000000000ull)
+    snprintf(buf, sizeof(buf), "%.2fB", static_cast<double>(n) / 1e9);
+  else if (n >= 1000000ull)
+    snprintf(buf, sizeof(buf), "%.1fM", static_cast<double>(n) / 1e6);
+  else if (n >= 1000ull)
+    snprintf(buf, sizeof(buf), "%.1fK", static_cast<double>(n) / 1e3);
+  else
+    snprintf(buf, sizeof(buf), "%llu", static_cast<unsigned long long>(n));
+  return buf;
+}
+
+// Overlay (bottom-left) showing progressive LAS/LAZ load state + stats while any
+// point cloud is still streaming: per-cloud phase, % loaded, points and rate.
+// Disappears automatically once everything has finished loading.
+static void renderPointCloudStreamingOverlay() {
+  struct Item {
+    std::string name;
+    Engine::PointCloudLoader::StreamProgress p;
+  };
+  std::vector<Item> items;
+  for (const auto &pc : currentScene.pointClouds) {
+    if (!pc.isStreaming())
+      continue;
+    auto prog = Engine::PointCloudLoader::getStreamProgress(pc);
+    if (prog.active)
+      items.push_back({pc.name, prog});
+  }
+  if (items.empty())
+    return;
+
+  float scale = g_GuiScale.currentScale;
+  SetNextWindowPosInMainWindow(ImVec2(16.0f * scale, windowHeight - 16.0f * scale),
+                               ImGuiCond_Always, ImVec2(0.0f, 1.0f));
+  ImGui::SetNextWindowBgAlpha(0.90f);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f * scale);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+                      ImVec2(14.0f * scale, 10.0f * scale));
+  ImGui::Begin("##pcloading", nullptr,
+               ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                   ImGuiWindowFlags_AlwaysAutoResize |
+                   ImGuiWindowFlags_NoSavedSettings |
+                   ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
+
+  if (g_Fonts.icons) {
+    ImGui::PushFont(g_Fonts.icons);
+    ImGui::TextColored(g_StyleColors.info, "%s", ICON_FA_CLOUD);
+    ImGui::PopFont();
+    ImGui::SameLine();
+  }
+  ImGui::Text("Loading %zu point cloud%s", items.size(),
+              items.size() == 1 ? "" : "s");
+  ImGui::Separator();
+
+  const float barW = 240.0f * scale;
+  for (const auto &it : items) {
+    const auto &p = it.p;
+    ImGui::TextUnformatted(it.name.c_str());
+    if (p.resorting) {
+      // Phase 2: background Morton sort — show an animated sweep (no fraction).
+      float anim =
+          static_cast<float>((static_cast<long long>(ImGui::GetTime() * 1000.0) %
+                              1000)) /
+          1000.0f;
+      ImGui::ProgressBar(anim, ImVec2(barW, 0.0f), "Optimizing (Morton sort)");
+      ImGui::TextDisabled("%s pts - sorting for full render speed...",
+                          formatPointCount(p.pointsTotal).c_str());
+    } else {
+      char ov[32];
+      snprintf(ov, sizeof(ov), "%.0f%%", p.fraction * 100.0f);
+      ImGui::ProgressBar(p.fraction, ImVec2(barW, 0.0f), ov);
+      ImGui::TextDisabled("%s / %s pts - %s pts/s",
+                          formatPointCount(p.pointsLoaded).c_str(),
+                          formatPointCount(p.pointsTotal).c_str(),
+                          formatPointCount(static_cast<uint64_t>(p.pointsPerSecond)).c_str());
+    }
+    ImGui::Spacing();
+  }
+
+  ImGui::End();
+  ImGui::PopStyleVar(2);
+}
+
 static void renderToasts() {
   if (g_toasts.empty())
     return;
@@ -1549,6 +1634,7 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
     if (showFPS) {
       renderPerformanceOverlay();
     }
+    renderPointCloudStreamingOverlay();
     renderToasts();
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -3046,6 +3132,9 @@ void renderGUI(bool isLeftEye, ImGuiViewportP *viewport,
   if (showFPS) {
     renderPerformanceOverlay();
   }
+
+  // Progressive point-cloud load progress (bottom-left, only while streaming)
+  renderPointCloudStreamingOverlay();
 
   // Transient status notifications (bottom-center)
   renderToasts();

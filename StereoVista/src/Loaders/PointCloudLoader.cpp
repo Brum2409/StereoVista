@@ -332,6 +332,7 @@ namespace Engine {
         bool                    sparse = false;  // were the SSBOs created sparse?
         uint32_t                targetPoints  = 0;
         uint32_t                targetBatches = 0;
+        std::chrono::steady_clock::time_point startTime = std::chrono::steady_clock::now();
 
         // ── Phase 2 result (built by the worker, swapped in by the GL thread) ──
         // Re-ordered, fully-quantised arrays for the whole cloud. Boundaries are
@@ -2848,6 +2849,27 @@ namespace Engine {
     void PointCloudLoader::initGLExtensions(void* (*procLoader)(const char*)) {
         s_glProcLoader  = procLoader;
         s_sparseChecked = false; // re-probe on next allocation
+    }
+
+    PointCloudLoader::StreamProgress PointCloudLoader::getStreamProgress(const PointCloud& pc) {
+        StreamProgress p;
+        PointCloudStream* S = pc.stream.get();
+        if (!S) return p;
+        p.active       = true;
+        p.pointsLoaded = pc.totalPointCount;
+        p.pointsTotal  = pc.streamTargetCount;
+        p.fraction     = (p.pointsTotal > 0)
+            ? std::min(1.0f, static_cast<float>(p.pointsLoaded) / static_cast<float>(p.pointsTotal))
+            : 0.0f;
+        // Phase 2 (background Morton sort) is running once phase 1 has finished
+        // uploading but the re-ordered arrays are not yet ready to swap in.
+        p.resorting = S->phase1Done.load() && S->resort &&
+                      !S->resortReady.load() && !S->failed.load();
+        const double el = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - S->startTime).count();
+        p.elapsedSeconds  = el;
+        p.pointsPerSecond = (el > 1e-3) ? static_cast<double>(p.pointsLoaded) / el : 0.0;
+        return p;
     }
 
 } // namespace Engine

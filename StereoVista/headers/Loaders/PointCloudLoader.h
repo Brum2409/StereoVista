@@ -55,6 +55,19 @@ namespace Engine {
         // is not (or no longer) streaming.
         static void updateStreaming(PointCloud& pointCloud);
 
+        // Live progress for a streaming cloud (for UI). active == false when the
+        // cloud is fully loaded (no longer streaming).
+        struct StreamProgress {
+            bool     active          = false; // still streaming?
+            bool     resorting       = false; // phase 2 (background Morton sort) running
+            uint32_t pointsLoaded    = 0;     // points uploaded so far
+            uint32_t pointsTotal     = 0;     // expected final point count
+            float    fraction        = 0.0f;  // phase-1 load fraction [0,1]
+            double   elapsedSeconds  = 0.0;
+            double   pointsPerSecond = 0.0;   // average load rate
+        };
+        static StreamProgress getStreamProgress(const PointCloud& pointCloud);
+
         // Provide the GL extension loader (e.g. glfwGetProcAddress) so optional
         // GL_ARB_sparse_buffer support can be probed. Call once from main after
         // GLAD init; if not called (or null), streaming falls back to full
