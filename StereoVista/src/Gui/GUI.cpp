@@ -1216,7 +1216,8 @@ static void importLASFiles(const std::vector<std::string> &lasFiles) {
   // points stream in on background threads and are uploaded each frame by
   // PointCloudLoader::updateStreaming() in the main loop, so the cloud appears
   // almost instantly and fills in while remaining tiles keep loading.
-  auto clouds = Engine::PointCloudLoader::beginLoadLASMultipleProgressive(lasFiles);
+  auto clouds = Engine::PointCloudLoader::beginLoadLASMultipleProgressive(
+      lasFiles, 1, preferences.pointCloudMortonResort);
   for (auto &pc : clouds) {
     currentScene.pointClouds.emplace_back(std::move(pc));
     Engine::Undo::recordPointCloudAdded(
@@ -3509,6 +3510,23 @@ void renderSettingsWindow() {
                          "fills larger gaps when extremely close, but costs more "
                          "atomic writes. 3-4 is a good balance.");
         }
+
+        // ---- LAS/LAZ progressive loading ----
+        ImGui::Spacing();
+        DrawSectionHeader("Point Cloud Loading (LAS/LAZ)");
+
+        if (ImGui::Checkbox("Morton Resort (two-phase)",
+                            &preferences.pointCloudMortonResort)) {
+          settingsChanged = true;
+        }
+        ImGui::SameLine();
+        DrawHelpMarker(
+            "On (default): LAS/LAZ files appear instantly in file order, then a "
+            "background per-file Morton sort is swapped in for full render speed "
+            "(tight per-batch culling regardless of the file's ordering). Off: "
+            "keep the file's original order as-is (literal Schütz loader) – "
+            "faster to load with lower RAM, but render speed depends on the file "
+            "already being spatially ordered. Applies to the next file loaded.");
 
         ImGui::Spacing();
         DrawSectionHeader("Shadow Quality");

@@ -222,6 +222,13 @@ struct ApplicationPreferences {
     int  maxRadius = 4; // upper clamp on splat radius in pixels (1–8)
   } pointSplatSettings;
 
+  // LAS/LAZ progressive loading. When true (default), files load two-phase:
+  // instant file-order display, then a background global per-file Morton sort is
+  // hot-swapped in for full render speed (Schütz's expected data layout produced
+  // at load). When false, the literal Schütz file-order layout is kept as-is
+  // (faster load, bounded RAM, but render speed depends on the file's ordering).
+  bool pointCloudMortonResort = true;
+
   // Shadow quality settings
   struct ShadowSettings {
     int pcfKernelSize = 3; // 3, 5, 7, or 9

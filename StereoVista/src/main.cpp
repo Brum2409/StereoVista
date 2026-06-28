@@ -2470,6 +2470,7 @@ void savePreferences() {
   j["pointcloud"]["baseSize"] = preferences.pointCloudBaseSize;
   j["pointcloud"]["splatEnabled"] = preferences.pointSplatSettings.enabled;
   j["pointcloud"]["splatMaxRadius"] = preferences.pointSplatSettings.maxRadius;
+  j["pointcloud"]["mortonResort"] = preferences.pointCloudMortonResort;
 
   // Save sun (directional light). It is an application-global light, so it
   // belongs in preferences rather than per-scene.
@@ -3082,6 +3083,8 @@ void loadPreferences() {
           j["pointcloud"].value("splatEnabled", true);
       preferences.pointSplatSettings.maxRadius =
           j["pointcloud"].value("splatMaxRadius", 4);
+      preferences.pointCloudMortonResort =
+          j["pointcloud"].value("mortonResort", true);
     }
 
     // Sun (directional light)
@@ -3497,6 +3500,11 @@ int main() {
     glfwTerminate();
     return -1;
   }
+
+  // Let the progressive point-cloud loader probe optional GL_ARB_sparse_buffer
+  // support (not exposed by our vendored GLAD) through the same proc loader.
+  Engine::PointCloudLoader::initGLExtensions(
+      reinterpret_cast<void* (*)(const char*)>(glfwGetProcAddress));
 
   glEnable(GL_MULTISAMPLE);
 
