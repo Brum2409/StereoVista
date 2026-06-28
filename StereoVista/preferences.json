@@ -2,7 +2,7 @@
     "camera": {
         "alwaysShowOrbitCenter": false,
         "autoConvergence": true,
-        "convergence": 11.978595733642578,
+        "convergence": 13.06039810180664,
         "convergenceCapMax": 39.0,
         "convergenceCapMin": 0.800000011920929,
         "convergenceDistanceFactor": 1.2999999523162842,
@@ -97,8 +97,11 @@
     },
     "pointcloud": {
         "baseSize": 0.0010000000474974513,
-        "splatEnabled": false,
-        "splatMaxRadius": 2
+        "hqsDepthThreshold": 0.012199999764561653,
+        "hqsEnabled": false,
+        "mortonResort": true,
+        "splatEnabled": true,
+        "splatMaxRadius": 3
     },
     "radar": {
         "autoFit": true,
@@ -225,9 +228,9 @@
             0.949999988079071
         ],
         "direction": [
-            -0.40824827551841736,
-            -0.8164965510368347,
-            -0.40824827551841736
+            -0.40824833512306213,
+            -0.8164966702461243,
+            -0.40824833512306213
         ],
         "enabled": true,
         "intensity": 0.1599999964237213
@@ -243,7 +246,7 @@
         "screenshotIncludeUI": false,
         "show3DCursor": true,
         "showFPS": true,
-        "stereoScreenshotMode": 0,
+        "stereoScreenshotMode": 1,
         "theme": 0,
         "vsync": false
     },

@@ -234,6 +234,69 @@
                         "mouseButton": -1,
                         "shift": true
                     }
+                ],
+                "ViewBack": [
+                    {
+                        "alt": false,
+                        "ctrl": true,
+                        "keyCode": 321,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
+                ],
+                "ViewBottom": [
+                    {
+                        "alt": false,
+                        "ctrl": true,
+                        "keyCode": 327,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
+                ],
+                "ViewFront": [
+                    {
+                        "alt": false,
+                        "ctrl": false,
+                        "keyCode": 321,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
+                ],
+                "ViewIso": [
+                    {
+                        "alt": false,
+                        "ctrl": false,
+                        "keyCode": 325,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
+                ],
+                "ViewLeft": [
+                    {
+                        "alt": false,
+                        "ctrl": true,
+                        "keyCode": 323,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
+                ],
+                "ViewRight": [
+                    {
+                        "alt": false,
+                        "ctrl": false,
+                        "keyCode": 323,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
+                ],
+                "ViewTop": [
+                    {
+                        "alt": false,
+                        "ctrl": false,
+                        "keyCode": 327,
+                        "mouseButton": -1,
+                        "shift": false
+                    }
                 ]
             },
             "name": "Default"

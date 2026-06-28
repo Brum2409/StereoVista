@@ -222,6 +222,17 @@ struct ApplicationPreferences {
     int  maxRadius = 4; // upper clamp on splat radius in pixels (1–8)
   } pointSplatSettings;
 
+  // High-Quality Shading (Schütz compute_loop_las_hqs). When enabled, the
+  // compute point-cloud path runs a 3-pass depth → colour-accumulate → resolve
+  // scheme that AVERAGES every point within `hqsDepthThreshold` (relative) of
+  // the nearest surface depth at each pixel, instead of a single nearest point
+  // winning. Removes aliasing / motion flicker on dense clouds at the cost of a
+  // second geometry pass (~2x the point-cloud render time).
+  struct PointCloudQualitySettings {
+    bool  highQualityShading = false;
+    float hqsDepthThreshold  = 0.01f; // 1% blend window around nearest depth
+  } pointCloudQuality;
+
   // LAS/LAZ progressive loading. When true (default), files load two-phase:
   // instant file-order display, then a background global per-file Morton sort is
   // hot-swapped in for full render speed (Schütz's expected data layout produced

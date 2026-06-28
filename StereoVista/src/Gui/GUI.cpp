@@ -3581,6 +3581,37 @@ void renderSettingsWindow() {
                          "Larger values detect wider depth transitions.");
         }
 
+        // ---- High-Quality Shading (point averaging / anti-aliasing) ----
+        ImGui::Spacing();
+        DrawSectionHeader("High-Quality Shading");
+
+        if (ImGui::Checkbox("Enable HQS",
+                            &preferences.pointCloudQuality.highQualityShading)) {
+          settingsChanged = true;
+        }
+        ImGui::SameLine();
+        DrawHelpMarker(
+            "Schütz high-quality shading: averages every point within a small "
+            "depth window of the nearest surface at each pixel, instead of "
+            "letting a single nearest point win. Removes aliasing and the "
+            "shimmer/flicker you see on dense clouds while moving. Costs a second "
+            "geometry pass (~2x the point-cloud render time).");
+
+        if (preferences.pointCloudQuality.highQualityShading) {
+          float pct = preferences.pointCloudQuality.hqsDepthThreshold * 100.0f;
+          if (ImGui::SliderFloat("Depth Blend Window", &pct, 0.1f, 5.0f,
+                                 "%.2f %%")) {
+            preferences.pointCloudQuality.hqsDepthThreshold = pct * 0.01f;
+            settingsChanged = true;
+          }
+          ImGui::SameLine();
+          DrawHelpMarker(
+              "How close (in relative depth) a point must be to the nearest "
+              "surface to be blended in. 1.00% matches the original paper. "
+              "Larger = smoother but can blend across thin gaps; smaller = "
+              "sharper but may reintroduce flicker.");
+        }
+
         // ---- Point Splatting (close-up / sparse density) ----
         ImGui::Spacing();
         DrawSectionHeader("Point Splatting");

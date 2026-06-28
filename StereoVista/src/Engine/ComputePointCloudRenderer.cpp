@@ -63,6 +63,15 @@ void ComputePointCloudRenderer::init(int width, int height) {
         m_resolveShader = new Shader(
             "assets/shaders/core/pointcloud_resolve.vert",
             "assets/shaders/core/pointcloud_resolve.frag");
+        // High-Quality Shading (Schütz compute_loop_las_hqs): depth → colour
+        // accumulate → resolve. Optional path selected per-frame via setHQS().
+        m_hqsDepthShader = new Shader(
+            "assets/shaders/core/pointcloud_hqs_depth.comp", Shader::ComputeShaderTag{});
+        m_hqsColorShader = new Shader(
+            "assets/shaders/core/pointcloud_hqs_color.comp", Shader::ComputeShaderTag{});
+        m_hqsResolveShader = new Shader(
+            "assets/shaders/core/pointcloud_resolve.vert",
+            "assets/shaders/core/pointcloud_hqs_resolve.frag");
     } catch (const std::exception& e) {
         std::cerr << "[ComputePC] Shader load failed: " << e.what() << "\n";
         return;
@@ -91,6 +100,44 @@ void ComputePointCloudRenderer::init(int width, int height) {
     // Cache resolve shader uniform locations
     m_resolveShader->use();
     m_locResolveImageSize = glGetUniformLocation(m_resolveShader->getID(), "uImageSize");
+
+    // Cache HQS depth-pass uniform locations
+    {
+        m_hqsDepthShader->use();
+        GLuint id = m_hqsDepthShader->getID();
+        m_locHqsDepthMVP             = glGetUniformLocation(id, "uMVP");
+        m_locHqsDepthModelView       = glGetUniformLocation(id, "uModelView");
+        m_locHqsDepthProj            = glGetUniformLocation(id, "uProj");
+        m_locHqsDepthImageSize       = glGetUniformLocation(id, "uImageSize");
+        m_locHqsDepthPointsPerThread = glGetUniformLocation(id, "uPointsPerThread");
+        m_locHqsDepthSplatMaxRadius  = glGetUniformLocation(id, "uSplatMaxRadius");
+        m_locHqsDepthClipCount       = glGetUniformLocation(id, "uClipPlaneCount");
+        m_locHqsDepthClipPlanes      = glGetUniformLocation(id, "uClipPlanes");
+    }
+
+    // Cache HQS colour-pass uniform locations
+    {
+        m_hqsColorShader->use();
+        GLuint id = m_hqsColorShader->getID();
+        m_locHqsColorMVP             = glGetUniformLocation(id, "uMVP");
+        m_locHqsColorModelView       = glGetUniformLocation(id, "uModelView");
+        m_locHqsColorProj            = glGetUniformLocation(id, "uProj");
+        m_locHqsColorImageSize       = glGetUniformLocation(id, "uImageSize");
+        m_locHqsColorPointsPerThread = glGetUniformLocation(id, "uPointsPerThread");
+        m_locHqsColorSplatMaxRadius  = glGetUniformLocation(id, "uSplatMaxRadius");
+        m_locHqsColorClipCount       = glGetUniformLocation(id, "uClipPlaneCount");
+        m_locHqsColorClipPlanes      = glGetUniformLocation(id, "uClipPlanes");
+        m_locHqsColorThreshold       = glGetUniformLocation(id, "uHqsThreshold");
+    }
+
+    // Cache HQS resolve-pass uniform locations
+    {
+        m_hqsResolveShader->use();
+        GLuint id = m_hqsResolveShader->getID();
+        m_locHqsResolveImageSize = glGetUniformLocation(id, "uImageSize");
+        m_locHqsResolveProjA     = glGetUniformLocation(id, "uProjA");
+        m_locHqsResolveProjB     = glGetUniformLocation(id, "uProjB");
+    }
 
     // Build fullscreen quad VAO
     glGenVertexArrays(1, &m_quadVAO);
@@ -145,11 +192,40 @@ void ComputePointCloudRenderer::allocateBuffers() {
                  totalPixels * static_cast<GLsizeiptr>(sizeof(uint32_t)),
                  nullptr, GL_DYNAMIC_COPY);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    // ── High-Quality Shading scratch buffers ─────────────────────────────────
+    // Reused across both eyes (cleared at the end of each endFrameHQS()).  Pre-
+    // cleared here so the first HQS frame starts clean and so the invariant holds
+    // even if HQS is only toggled on later (the standard path never touches them).
+    // Nearest linear-depth buffer: one uint per pixel, sentinel 0xFFFFFFFF.
+    glGenBuffers(1, &m_hqsDepthSSBO);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_hqsDepthSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER,
+                 totalPixels * static_cast<GLsizeiptr>(sizeof(uint32_t)),
+                 nullptr, GL_DYNAMIC_COPY);
+    GLuint depthSentinel = 0xFFFFFFFFu;
+    glClearNamedBufferSubData(m_hqsDepthSSBO, GL_R32UI, 0,
+                              totalPixels * static_cast<GLsizeiptr>(sizeof(uint32_t)),
+                              GL_RED_INTEGER, GL_UNSIGNED_INT, &depthSentinel);
+
+    // Colour accumulator: R,G,B,count interleaved → 4 uints per pixel, cleared to 0.
+    glGenBuffers(1, &m_hqsAccumSSBO);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_hqsAccumSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER,
+                 totalPixels * 4 * static_cast<GLsizeiptr>(sizeof(uint32_t)),
+                 nullptr, GL_DYNAMIC_COPY);
+    GLuint zero = 0;
+    glClearNamedBufferSubData(m_hqsAccumSSBO, GL_R32UI, 0,
+                              totalPixels * 4 * static_cast<GLsizeiptr>(sizeof(uint32_t)),
+                              GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
 
 void ComputePointCloudRenderer::freeBuffers() {
     if (m_framebufferSSBO) { glDeleteBuffers(1, &m_framebufferSSBO); m_framebufferSSBO = 0; }
     if (m_colorbufferSSBO) { glDeleteBuffers(1, &m_colorbufferSSBO); m_colorbufferSSBO = 0; }
+    if (m_hqsDepthSSBO)    { glDeleteBuffers(1, &m_hqsDepthSSBO);    m_hqsDepthSSBO    = 0; }
+    if (m_hqsAccumSSBO)    { glDeleteBuffers(1, &m_hqsAccumSSBO);    m_hqsAccumSSBO    = 0; }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -166,6 +242,9 @@ void ComputePointCloudRenderer::cleanup() {
     delete m_rasterShader;        m_rasterShader        = nullptr;
     delete m_colorLookupShader;   m_colorLookupShader   = nullptr;
     delete m_resolveShader;       m_resolveShader       = nullptr;
+    delete m_hqsDepthShader;      m_hqsDepthShader      = nullptr;
+    delete m_hqsColorShader;      m_hqsColorShader      = nullptr;
+    delete m_hqsResolveShader;    m_hqsResolveShader    = nullptr;
 
     if (m_quadVAO) { glDeleteVertexArrays(1, &m_quadVAO); m_quadVAO = 0; }
     if (m_quadVBO) { glDeleteBuffers(1,     &m_quadVBO);  m_quadVBO = 0; }
@@ -186,13 +265,25 @@ void ComputePointCloudRenderer::beginFrame() {
     // Start a fresh per-frame list of cloud rgba buffers.  Each renderNode()
     // call appends one; its slot index becomes that cloud's id.
     m_frameRGBASSBOs.clear();
+    // Fresh per-frame list of recorded draws (HQS mode replays them in endFrame).
+    m_frameDraws.clear();
 
     // Framebuffer was already cleared at the end of the previous endFrame().
     // Just bind it – no stall, the compute dispatch can start immediately.
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, m_framebufferSSBO);
 
     // Diagnostic: time the compute dispatch(es) issued before endFrame().
-    glBeginQuery(GL_TIME_ELAPSED, m_qCompute[m_qIdx]);
+    // HQS mode dispatches inside endFrame() instead, so it manages its own (no)
+    // timing — skip the query here to keep glBeginQuery/glEndQuery balanced.
+    if (!m_hqsEnabled)
+        glBeginQuery(GL_TIME_ELAPSED, m_qCompute[m_qIdx]);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+void ComputePointCloudRenderer::setHQS(bool enabled, float depthThreshold) {
+    m_hqsEnabled   = enabled;
+    m_hqsThreshold = glm::max(0.0f, depthThreshold);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -219,6 +310,33 @@ void ComputePointCloudRenderer::renderNode(
 {
     if (!m_initialized || numBatches == 0) return;
     if (!batchSSBO || !xyz4bSSBO || !rgbaSSBO) return;
+
+    // ── HQS mode: record the draw, defer dispatch to endFrameHQS() ─────────────
+    // High-Quality Shading needs ALL clouds' depth passes to finish before ANY
+    // colour pass starts (the colour pass reads the global nearest depth). That
+    // doesn't fit the single per-cloud loop in main.cpp, so instead of
+    // dispatching here we capture the cloud's parameters and replay them across
+    // the two passes in endFrameHQS().
+    if (m_hqsEnabled) {
+        CloudDraw d;
+        d.batchSSBO = batchSSBO; d.xyz12b = xyz12bSSBO; d.xyz8b = xyz8bSSBO;
+        d.xyz4b = xyz4bSSBO;     d.rgba = rgbaSSBO;
+        d.numBatches = numBatches; d.pointsPerThread = pointsPerThread;
+        d.splatMaxRadius = splatMaxRadius;
+        d.mvp = mvp; d.modelView = modelView; d.proj = proj;
+        d.clipCount = m_clipPlaneCount;
+        if (m_clipPlaneCount > 0) {
+            const glm::mat4 mt = glm::transpose(model);
+            for (int i = 0; i < m_clipPlaneCount; ++i)
+                d.localClip[i] = mt * m_clipPlanesWorld[i];
+        }
+        m_frameDraws.push_back(d);
+        // All clouds in an eye share the same projection; capture its z-row
+        // coefficients so the HQS resolve can reconstruct window depth.
+        m_hqsProjA = proj[2][2];
+        m_hqsProjB = proj[3][2];
+        return;
+    }
 
     // Assign this cloud a stable per-frame id = its slot in the render order.
     // The id is packed into the framebuffer payload so endFrame() can resolve
@@ -282,6 +400,10 @@ void ComputePointCloudRenderer::renderNode(
 
 void ComputePointCloudRenderer::endFrame() {
     if (!m_initialized) return;
+
+    // High-Quality Shading takes a separate 3-pass path (and never opened the
+    // compute timer query in beginFrame()).
+    if (m_hqsEnabled) { endFrameHQS(); return; }
 
     // Close compute timer.
     glEndQuery(GL_TIME_ELAPSED);  // ends m_qCompute[m_qIdx]
@@ -408,6 +530,121 @@ void ComputePointCloudRenderer::endFrame() {
     }
     m_qIdx ^= 1;
     m_qHavePrev = true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+void ComputePointCloudRenderer::endFrameHQS() {
+    // Schütz compute_loop_las_hqs: depth → colour-accumulate → resolve.
+    // m_hqsDepthSSBO / m_hqsAccumSSBO are already clean (cleared at allocation and
+    // at the end of the previous HQS frame; the standard path never touches them).
+    const int totalPixels = m_width * m_height;
+    if (m_frameDraws.empty()) {
+        // Nothing recorded (all clouds had empty/invalid SSBOs). The scratch
+        // buffers are still clean, so just leave the scene framebuffer as-is.
+        m_qHavePrev = false;
+        return;
+    }
+
+    // ── PASS 1: nearest depth (atomicMin linear eye depth per pixel) ──────────
+    m_hqsDepthShader->use();
+    glUniform2i(m_locHqsDepthImageSize, m_width, m_height);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, m_hqsDepthSSBO);
+    for (const CloudDraw& d : m_frameDraws) {
+        glUniformMatrix4fv(m_locHqsDepthMVP,       1, GL_FALSE, glm::value_ptr(d.mvp));
+        glUniformMatrix4fv(m_locHqsDepthModelView, 1, GL_FALSE, glm::value_ptr(d.modelView));
+        glUniformMatrix4fv(m_locHqsDepthProj,      1, GL_FALSE, glm::value_ptr(d.proj));
+        glUniform1i(m_locHqsDepthPointsPerThread, d.pointsPerThread);
+        glUniform1i(m_locHqsDepthSplatMaxRadius,  d.splatMaxRadius);
+        glUniform1i(m_locHqsDepthClipCount,       d.clipCount);
+        if (d.clipCount > 0 && m_locHqsDepthClipPlanes >= 0)
+            glUniform4fv(m_locHqsDepthClipPlanes, d.clipCount, glm::value_ptr(d.localClip[0]));
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 40, d.batchSSBO);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 41, d.xyz12b);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 42, d.xyz8b);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 43, d.xyz4b);
+        glDispatchCompute(d.numBatches, 1, 1);
+    }
+    // The colour pass reads the FINAL nearest depth, so every depth dispatch must
+    // be visible first.
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+    // ── PASS 2: colour accumulate (atomicAdd R,G,B,count within depth window) ─
+    m_hqsColorShader->use();
+    glUniform2i(m_locHqsColorImageSize, m_width, m_height);
+    glUniform1f(m_locHqsColorThreshold, m_hqsThreshold);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, m_hqsDepthSSBO);   // read nearest depth
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, m_hqsAccumSSBO);   // accumulate
+    for (const CloudDraw& d : m_frameDraws) {
+        glUniformMatrix4fv(m_locHqsColorMVP,       1, GL_FALSE, glm::value_ptr(d.mvp));
+        glUniformMatrix4fv(m_locHqsColorModelView, 1, GL_FALSE, glm::value_ptr(d.modelView));
+        glUniformMatrix4fv(m_locHqsColorProj,      1, GL_FALSE, glm::value_ptr(d.proj));
+        glUniform1i(m_locHqsColorPointsPerThread, d.pointsPerThread);
+        glUniform1i(m_locHqsColorSplatMaxRadius,  d.splatMaxRadius);
+        glUniform1i(m_locHqsColorClipCount,       d.clipCount);
+        if (d.clipCount > 0 && m_locHqsColorClipPlanes >= 0)
+            glUniform4fv(m_locHqsColorClipPlanes, d.clipCount, glm::value_ptr(d.localClip[0]));
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 40, d.batchSSBO);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 41, d.xyz12b);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 42, d.xyz8b);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 43, d.xyz4b);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 44, d.rgba);
+        glDispatchCompute(d.numBatches, 1, 1);
+    }
+    // Make the accumulator visible to the fragment resolve.
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+    // ── PASS 3: resolve (fullscreen quad → averaged colour + gl_FragDepth) ────
+    // Same depth/colour-mask state as the standard resolve so the hardware
+    // GL_LESS test occludes points behind meshes and updates the depth buffer.
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    glDisable(GL_STENCIL_TEST);
+
+    m_hqsResolveShader->use();
+    glUniform2i(m_locHqsResolveImageSize, m_width, m_height);
+    glUniform1f(m_locHqsResolveProjA, m_hqsProjA);
+    glUniform1f(m_locHqsResolveProjB, m_hqsProjB);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, m_hqsDepthSSBO);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, m_hqsAccumSSBO);
+
+    glBindVertexArray(m_quadVAO);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glBindVertexArray(0);
+
+    // ── Restore GL state ──────────────────────────────────────────────────────
+    glStencilMask(0xFF);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+
+    // Unbind SSBOs
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER,  2, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER,  3, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 40, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 41, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 42, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 43, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 44, 0);
+
+    // Clear both scratch buffers for the next frame (mirrors the standard path's
+    // end-of-frame clear so the next beginFrame can start without a stall).
+    GLuint depthSentinel = 0xFFFFFFFFu;
+    glClearNamedBufferSubData(m_hqsDepthSSBO, GL_R32UI, 0,
+                              totalPixels * static_cast<GLsizeiptr>(sizeof(uint32_t)),
+                              GL_RED_INTEGER, GL_UNSIGNED_INT, &depthSentinel);
+    GLuint zero = 0;
+    glClearNamedBufferSubData(m_hqsAccumSSBO, GL_R32UI, 0,
+                              totalPixels * 4 * static_cast<GLsizeiptr>(sizeof(uint32_t)),
+                              GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+    // HQS frames don't use the GL_TIME_ELAPSED queries; tell the next standard
+    // frame not to read a (never-written) previous result.
+    m_qHavePrev = false;
 }
 
 } // namespace Engine

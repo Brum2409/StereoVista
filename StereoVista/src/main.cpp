@@ -2509,6 +2509,8 @@ void savePreferences() {
   j["pointcloud"]["splatEnabled"] = preferences.pointSplatSettings.enabled;
   j["pointcloud"]["splatMaxRadius"] = preferences.pointSplatSettings.maxRadius;
   j["pointcloud"]["mortonResort"] = preferences.pointCloudMortonResort;
+  j["pointcloud"]["hqsEnabled"] = preferences.pointCloudQuality.highQualityShading;
+  j["pointcloud"]["hqsDepthThreshold"] = preferences.pointCloudQuality.hqsDepthThreshold;
 
   // Save sun (directional light). It is an application-global light, so it
   // belongs in preferences rather than per-scene.
@@ -3123,6 +3125,10 @@ void loadPreferences() {
           j["pointcloud"].value("splatMaxRadius", 4);
       preferences.pointCloudMortonResort =
           j["pointcloud"].value("mortonResort", true);
+      preferences.pointCloudQuality.highQualityShading =
+          j["pointcloud"].value("hqsEnabled", false);
+      preferences.pointCloudQuality.hqsDepthThreshold =
+          j["pointcloud"].value("hqsDepthThreshold", 0.01f);
     }
 
     // Sun (directional light)
@@ -7024,6 +7030,11 @@ void renderPointClouds(Engine::Shader *shader, const glm::mat4 &view,
     glm::vec4 worldPlanes[Engine::MAX_CLIP_PLANES];
     int nClip = clipPlaneTool.collectEnabledPlanes(worldPlanes);
     computePointCloudRenderer->setClipPlanes(nClip, worldPlanes);
+    // High-Quality Shading (Schütz HQS): point averaging instead of nearest-wins.
+    // Must be set before beginFrame() (begin/endFrame branch on it).
+    computePointCloudRenderer->setHQS(
+        preferences.pointCloudQuality.highQualityShading,
+        preferences.pointCloudQuality.hqsDepthThreshold);
     computePointCloudRenderer->beginFrame();
   }
 
