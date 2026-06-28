@@ -161,6 +161,17 @@ All user preferences are automatically saved to `preferences.json` and restored 
 | **W / A / S / D** | Move camera forward / left / backward / right |
 | **Space / Left Shift** | Move camera up / down |
 | **C** | Center camera on cursor position or scene midpoint |
+| **Home** | Reset camera to scene default position |
+
+### Standard Views
+Frame the entire scene from a fixed angle (CAD-style numpad layout). Also available as buttons under *Settings → Camera → Standard Views*.
+
+| Input | Action |
+|-------|--------|
+| **Numpad 1** / **Ctrl + Numpad 1** | Front / Back view |
+| **Numpad 3** / **Ctrl + Numpad 3** | Right / Left view |
+| **Numpad 7** / **Ctrl + Numpad 7** | Top / Bottom view |
+| **Numpad 5** | Isometric view |
 
 ### Model & Object Interaction
 | Input | Action |

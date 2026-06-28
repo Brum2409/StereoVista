@@ -36,6 +36,7 @@ using namespace GUI;
 
 // Forward declarations
 void updateSpaceMouseBounds();
+void applyStandardView(int viewId); // defined in main.cpp
 void updateSpaceMouseCursorAnchor();
 void renderPointLightManipulationPanel();
 void renderSpotLightManipulationPanel();
@@ -4044,6 +4045,36 @@ void renderSettingsWindow() {
       DrawHelpMarker("Maximum visible distance from camera. Higher values may "
                      "impact performance");
 
+      DrawSectionHeader("Standard Views");
+      ImGui::TextDisabled("Frame the scene from a fixed angle (numpad keys).");
+      {
+        const float spacing = ImGui::GetStyle().ItemSpacing.x;
+        const float btnW =
+            (ImGui::GetContentRegionAvail().x - spacing * 2.0f) / 3.0f;
+        const ImVec2 sz(btnW, 0.0f);
+
+        if (ImGui::Button("Top", sz))
+          applyStandardView(4);
+        ImGui::SameLine();
+        if (ImGui::Button("Bottom", sz))
+          applyStandardView(5);
+        ImGui::SameLine();
+        if (ImGui::Button("Isometric", sz))
+          applyStandardView(6);
+
+        if (ImGui::Button("Front", sz))
+          applyStandardView(0);
+        ImGui::SameLine();
+        if (ImGui::Button("Back", sz))
+          applyStandardView(1);
+        ImGui::SameLine();
+        if (ImGui::Button("Right", sz))
+          applyStandardView(2);
+
+        if (ImGui::Button("Left", sz))
+          applyStandardView(3);
+      }
+
       DrawSectionHeader("Stereoscopic 3D");
 
       if (ImGui::SliderFloat("Eye Separation", &preferences.separation, 0.01f,
@@ -5773,6 +5804,13 @@ void renderSettingsWindow() {
           renderAction(StereoVista::ShortcutAction::ResetCamera);
           renderAction(StereoVista::ShortcutAction::ToggleZoomToCursor);
           renderAction(StereoVista::ShortcutAction::ToggleOrbitAroundCursor);
+          renderAction(StereoVista::ShortcutAction::ViewFront);
+          renderAction(StereoVista::ShortcutAction::ViewBack);
+          renderAction(StereoVista::ShortcutAction::ViewRight);
+          renderAction(StereoVista::ShortcutAction::ViewLeft);
+          renderAction(StereoVista::ShortcutAction::ViewTop);
+          renderAction(StereoVista::ShortcutAction::ViewBottom);
+          renderAction(StereoVista::ShortcutAction::ViewIso);
         }
 
         // GROUP: Lighting
