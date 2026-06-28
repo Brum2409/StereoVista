@@ -7605,15 +7605,13 @@ void renderLightVisualizations(Engine::Shader *shader) {
   }
 }
 
-void updateSpaceMouseBounds() {
-  // Calculate combined bounding box for models and point clouds
-  // This function is called when:
-  // - Models or point clouds are loaded/deleted
-  // - Model/point cloud transforms (position, scale, rotation) change
-  // - Scenes are loaded
-  // This ensures SpaceMouse navigation bounds stay accurate without per-frame
-  // updates
-  glm::vec3 modelMin(FLT_MAX), modelMax(-FLT_MAX);
+// Compute the combined world-space axis-aligned bounding box of every model and
+// point cloud in the current scene. Returns false (leaving outMin/outMax
+// untouched) when the scene has no measurable content. Translation and scale are
+// applied; rotation is intentionally ignored to keep this cheap (matching the
+// SpaceMouse-bounds convention this used to inline).
+bool getSceneWorldBounds(glm::vec3 &outMin, glm::vec3 &outMax) {
+  glm::vec3 mn(FLT_MAX), mx(-FLT_MAX);
 
   // Include models in bounding box calculation
   for (const auto &model : currentScene.models) {
@@ -7621,8 +7619,8 @@ void updateSpaceMouseBounds() {
       for (const auto &vertex : mesh.vertices) {
         glm::vec3 worldPos =
             model.position + (glm::vec3(vertex.position) * model.scale);
-        modelMin = glm::min(modelMin, worldPos);
-        modelMax = glm::max(modelMax, worldPos);
+        mn = glm::min(mn, worldPos);
+        mx = glm::max(mx, worldPos);
       }
     }
   }
@@ -7635,35 +7633,122 @@ void updateSpaceMouseBounds() {
           pointCloud.position + (pointCloud.boundsMin * pointCloud.scale);
       const glm::vec3 pcMax =
           pointCloud.position + (pointCloud.boundsMax * pointCloud.scale);
-      modelMin = glm::min(modelMin, pcMin);
-      modelMax = glm::max(modelMax, pcMax);
+      mn = glm::min(mn, pcMin);
+      mx = glm::max(mx, pcMax);
     } else if (pointCloud.octreeRoot) {
       // Legacy: octree was built (e.g. by an older code path)
       const glm::vec3 pcMin =
           pointCloud.position + (pointCloud.octreeBoundsMin * pointCloud.scale);
       const glm::vec3 pcMax =
           pointCloud.position + (pointCloud.octreeBoundsMax * pointCloud.scale);
-      modelMin = glm::min(modelMin, pcMin);
-      modelMax = glm::max(modelMax, pcMax);
+      mn = glm::min(mn, pcMin);
+      mx = glm::max(mx, pcMax);
     } else if (!pointCloud.points.empty()) {
       // Last resort: iterate CPU-side points (only used by very old load paths)
       for (const auto &point : pointCloud.points) {
         const glm::vec3 worldPos =
             pointCloud.position + (point.position * pointCloud.scale);
-        modelMin = glm::min(modelMin, worldPos);
-        modelMax = glm::max(modelMax, worldPos);
+        mn = glm::min(mn, worldPos);
+        mx = glm::max(mx, worldPos);
       }
     }
   }
 
-  // Fallback if no content found
-  if (modelMin.x == FLT_MAX) {
+  if (mn.x == FLT_MAX)
+    return false; // no content
+
+  outMin = mn;
+  outMax = mx;
+  return true;
+}
+
+void updateSpaceMouseBounds() {
+  // Recalculate the combined bounding box for SpaceMouse navigation. Called when
+  // models/point clouds are loaded, deleted, transformed, or a scene is loaded,
+  // so the bounds stay accurate without per-frame updates.
+  glm::vec3 modelMin, modelMax;
+  if (!getSceneWorldBounds(modelMin, modelMax)) {
+    // Fallback if no content found
     modelMin = glm::vec3(-5.0f);
     modelMax = glm::vec3(5.0f);
   }
 
   // Update SpaceMouse with new bounds
   spaceMouseInput.SetModelExtents(modelMin, modelMax);
+}
+
+// Smoothly frame the whole scene from a standard axis-aligned or isometric
+// angle, the way a CAD/inspection viewer's numpad views work. viewId:
+//   0 Front (-Z)  1 Back (+Z)  2 Right (-X)  3 Left (+X)
+//   4 Top  (-Y)   5 Bottom (+Y)            6 Isometric
+// The camera distance is chosen so the scene's bounding sphere fits the current
+// vertical field of view with a small margin. The orbit pivot is re-anchored to
+// the scene centre so subsequent orbiting turns around what was just framed.
+void applyStandardView(int viewId) {
+  glm::vec3 mn, mx, center;
+  float radius;
+  if (getSceneWorldBounds(mn, mx)) {
+    center = (mn + mx) * 0.5f;
+    radius = glm::length(mx - mn) * 0.5f; // bounding-sphere radius
+  } else {
+    center = glm::vec3(0.0f);
+    radius = 5.0f;
+  }
+  if (radius < 0.001f)
+    radius = 1.0f;
+
+  // Front = direction from the camera toward the scene centre. Pick an up vector
+  // that is never parallel to Front so the look-at basis stays well defined.
+  glm::vec3 front;
+  glm::vec3 up(0.0f, 1.0f, 0.0f);
+  switch (viewId) {
+  case 1:
+    front = glm::vec3(0.0f, 0.0f, 1.0f);
+    break; // Back
+  case 2:
+    front = glm::vec3(-1.0f, 0.0f, 0.0f);
+    break; // Right (camera on +X)
+  case 3:
+    front = glm::vec3(1.0f, 0.0f, 0.0f);
+    break; // Left (camera on -X)
+  case 4:
+    front = glm::vec3(0.0f, -1.0f, 0.0f);
+    up = glm::vec3(0.0f, 0.0f, -1.0f);
+    break; // Top (look down)
+  case 5:
+    front = glm::vec3(0.0f, 1.0f, 0.0f);
+    up = glm::vec3(0.0f, 0.0f, 1.0f);
+    break; // Bottom (look up)
+  case 6:
+    front = glm::normalize(glm::vec3(-1.0f, -1.0f, -1.0f));
+    break; // Isometric
+  case 0:
+  default:
+    front = glm::vec3(0.0f, 0.0f, -1.0f);
+    break; // Front
+  }
+  front = glm::normalize(front);
+
+  // Distance so the bounding sphere fits inside the vertical FOV (+20% margin).
+  const float halfFov = glm::radians(glm::max(camera.Zoom, 1.0f) * 0.5f);
+  const float distance = (radius * 1.2f) / glm::max(glm::sin(halfFov), 0.01f);
+
+  // Look-at basis, matching the engine convention used elsewhere:
+  // columns are (Right, Up, -Front).
+  const glm::vec3 right = glm::normalize(glm::cross(front, up));
+  const glm::vec3 trueUp = glm::normalize(glm::cross(right, front));
+  const glm::mat3 rot(right, trueUp, -front);
+
+  Camera::CameraState target = camera.GetState();
+  target.position = center - front * distance;
+  target.orientation = glm::normalize(glm::quat_cast(rot));
+  target.zoom = camera.Zoom; // standard views do not change the FOV
+
+  camera.StartStateAnimation(target, 0.5f);
+  // Re-anchor the orbit pivot to the scene centre. StartStateAnimation keeps
+  // OrbitDistance and rebuilds OrbitPoint = Position + Front * OrbitDistance on
+  // completion, so setting the distance here lands the pivot on `center`.
+  camera.OrbitDistance = distance;
 }
 
 // ---- Snapshot glue (declared in Core/SnapshotManager.h) ----
@@ -9258,6 +9343,29 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
         std::cout << "Centering on world origin" << std::endl;
       }
     } break;
+
+    // Standard Views (frame the whole scene from a fixed angle)
+    case StereoVista::ShortcutAction::ViewFront:
+      applyStandardView(0);
+      break;
+    case StereoVista::ShortcutAction::ViewBack:
+      applyStandardView(1);
+      break;
+    case StereoVista::ShortcutAction::ViewRight:
+      applyStandardView(2);
+      break;
+    case StereoVista::ShortcutAction::ViewLeft:
+      applyStandardView(3);
+      break;
+    case StereoVista::ShortcutAction::ViewTop:
+      applyStandardView(4);
+      break;
+    case StereoVista::ShortcutAction::ViewBottom:
+      applyStandardView(5);
+      break;
+    case StereoVista::ShortcutAction::ViewIso:
+      applyStandardView(6);
+      break;
 
     // View/Display Controls
     case StereoVista::ShortcutAction::ToggleFPS:

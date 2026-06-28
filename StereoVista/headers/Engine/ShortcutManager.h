@@ -26,6 +26,15 @@ enum class ShortcutAction {
   ToggleSpaceMouseMode,    // Toggle SpaceMouse navigation mode (CAD/Drone)
   ResetCamera,             // Home - Reset camera to scene default position
 
+  // Standard Views (frame the scene from an axis-aligned / isometric angle)
+  ViewFront,    // Numpad 1 - Look along -Z
+  ViewBack,     // Ctrl+Numpad 1 - Look along +Z
+  ViewRight,    // Numpad 3 - Look along -X
+  ViewLeft,     // Ctrl+Numpad 3 - Look along +X
+  ViewTop,      // Numpad 7 - Look straight down (-Y)
+  ViewBottom,   // Ctrl+Numpad 7 - Look straight up (+Y)
+  ViewIso,      // Numpad 5 - Isometric three-quarter view
+
   // Lighting
   CycleLighting,  // L - Cycle lighting modes
   ToggleShadows,  // K - Toggle shadows

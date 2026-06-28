@@ -434,6 +434,19 @@ ShortcutProfile ShortcutManager::createDefaultProfile() {
                      KeyBinding(GLFW_KEY_I, true, false, true),
                      0); // Ctrl+Shift+I
   profile.setBinding(ShortcutAction::ResetCamera, KeyBinding(GLFW_KEY_HOME), 0);
+
+  // Standard views (CAD-style numpad layout: 1=front, 3=right, 7=top, 5=iso,
+  // Ctrl+ for the opposite side).
+  profile.setBinding(ShortcutAction::ViewFront, KeyBinding(GLFW_KEY_KP_1), 0);
+  profile.setBinding(ShortcutAction::ViewBack,
+                     KeyBinding(GLFW_KEY_KP_1, true), 0);
+  profile.setBinding(ShortcutAction::ViewRight, KeyBinding(GLFW_KEY_KP_3), 0);
+  profile.setBinding(ShortcutAction::ViewLeft,
+                     KeyBinding(GLFW_KEY_KP_3, true), 0);
+  profile.setBinding(ShortcutAction::ViewTop, KeyBinding(GLFW_KEY_KP_7), 0);
+  profile.setBinding(ShortcutAction::ViewBottom,
+                     KeyBinding(GLFW_KEY_KP_7, true), 0);
+  profile.setBinding(ShortcutAction::ViewIso, KeyBinding(GLFW_KEY_KP_5), 0);
   profile.setBinding(ShortcutAction::OpenMeasurementTool, KeyBinding(GLFW_KEY_M),
                      0);
   profile.setBinding(ShortcutAction::OpenClipPlaneTool, KeyBinding(GLFW_KEY_P),
@@ -518,6 +531,15 @@ const ShortcutProfile *ShortcutManager::getActiveProfile() const {
 }
 
 int ShortcutManager::normalizeKeyToLayout(int key, int scancode) {
+  // The keypad (numpad) has the same physical layout on QWERTY/QWERTZ/AZERTY/...
+  // and is a distinct set of keys from the main number row, so it must never be
+  // folded onto it. glfwGetKeyName *does* report names for the KP_0..KP_EQUAL
+  // range (e.g. "1" for KP_1), which would otherwise remap GLFW_KEY_KP_1 to
+  // GLFW_KEY_1 and make numpad bindings collide with the top-row digits. Leave
+  // every keypad key untouched.
+  if (key >= GLFW_KEY_KP_0 && key <= GLFW_KEY_KP_EQUAL)
+    return key;
+
   // glfwGetKeyName returns the character the physical key produces in the
   // current layout (e.g. on QWERTZ the GLFW_KEY_Y position is labeled "z").
   // When 'key' is a known token GLFW ignores 'scancode' and looks the name up
@@ -595,6 +617,22 @@ std::string ShortcutManager::getActionName(ShortcutAction action) {
     return "ToggleOrbitAroundCursor";
   case ShortcutAction::ResetCamera:
     return "ResetCamera";
+
+  // Standard Views
+  case ShortcutAction::ViewFront:
+    return "ViewFront";
+  case ShortcutAction::ViewBack:
+    return "ViewBack";
+  case ShortcutAction::ViewRight:
+    return "ViewRight";
+  case ShortcutAction::ViewLeft:
+    return "ViewLeft";
+  case ShortcutAction::ViewTop:
+    return "ViewTop";
+  case ShortcutAction::ViewBottom:
+    return "ViewBottom";
+  case ShortcutAction::ViewIso:
+    return "ViewIso";
 
   // Lighting
   case ShortcutAction::CycleLighting:
@@ -722,6 +760,22 @@ std::string ShortcutManager::getActionDescription(ShortcutAction action) {
     return "Toggle SpaceMouse Mode (CAD/Drone)";
   case ShortcutAction::ResetCamera:
     return "Reset Camera to Scene Default";
+
+  // Standard Views
+  case ShortcutAction::ViewFront:
+    return "Standard View: Front";
+  case ShortcutAction::ViewBack:
+    return "Standard View: Back";
+  case ShortcutAction::ViewRight:
+    return "Standard View: Right";
+  case ShortcutAction::ViewLeft:
+    return "Standard View: Left";
+  case ShortcutAction::ViewTop:
+    return "Standard View: Top";
+  case ShortcutAction::ViewBottom:
+    return "Standard View: Bottom";
+  case ShortcutAction::ViewIso:
+    return "Standard View: Isometric";
 
   // Lighting
   case ShortcutAction::CycleLighting:
