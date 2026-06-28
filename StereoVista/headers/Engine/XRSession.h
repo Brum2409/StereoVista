@@ -16,7 +16,31 @@
 #include <string>
 #include <vector>
 
+#include "Engine/XRRuntimeInfo.h"
+
 namespace Engine {
+
+// ---------------------------------------------------------------------------
+// System OpenXR runtime probing (independent of any XRSession instance).
+//
+// These let the app explain *why* a session failed (e.g. the active runtime is
+// Monado but its background service isn't running) and let the user switch to a
+// different installed runtime — all without admin rights or system-wide changes.
+// ---------------------------------------------------------------------------
+
+// Inspect the system: which runtime is active, where that choice comes from, and
+// which runtimes are installed. Safe to call any time, even with no session.
+XRDiagnostics probeXRRuntimes();
+
+// Force THIS process to use a specific runtime by setting the XR_RUNTIME_JSON
+// environment variable, which the OpenXR loader honours ahead of the system
+// default. Per-process only — nothing system-wide is modified, no admin needed.
+// Pass an empty string to clear the override and fall back to the system default.
+// (Note: the loader ignores this when the process runs elevated/as admin.)
+void setXRRuntimeOverride(const std::string &manifestPath);
+
+// The XR_RUNTIME_JSON override currently in effect for this process ("" = none).
+std::string getXRRuntimeOverride();
 
 // Manages a single OpenXR session bound to the application's OpenGL context.
 // All public methods are safe to call regardless of init state; they early-out

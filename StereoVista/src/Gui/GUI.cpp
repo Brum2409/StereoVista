@@ -10,6 +10,7 @@
 #include "Engine/ShortcutManager.h"
 #include "Engine/SpaceMouseInput.h"
 #include "Engine/ThreeDConnexionSync.h"
+#include "Engine/XRRuntimeInfo.h" // OpenXR diagnostics/runtime-picker data (no XR headers)
 #include "Gui/GuiTypes.h"
 #include "Tools/BrushTool.h"
 #include "Tools/ClipPlaneTool.h"
@@ -113,8 +114,14 @@ extern bool showSnapshotsWindow;
 extern bool        g_xrAvailable;   // true once init() succeeded at least once
 extern std::string g_xrStatusMsg;   // current status/error text
 extern std::string g_xrRuntimeName; // name of the runtime (e.g. "SteamVR")
+extern Engine::XRDiagnostics g_xrDiagnostics; // active + installed runtimes
+extern std::string g_xrActiveOverride;        // forced runtime ("" = system default)
 // Called by the GUI toggle to create / destroy the XR session.
 void xrSessionEnable(bool enable);
+// Re-scan the system for installed OpenXR runtimes.
+void xrRefreshDiagnostics();
+// Force a specific runtime for this process and (re)start XR ("" = system default).
+void xrUseRuntime(const std::string &manifestPath);
 
 // Defined in main.cpp: place planes using the 3D cursor / selection context.
 void addClipPlaneAtCursor();
@@ -4156,6 +4163,7 @@ void renderSettingsWindow() {
 
       if (ImGui::Checkbox("Enable OpenXR (VR Headset)", &preferences.openxrSettings.enabled)) {
         xrSessionEnable(preferences.openxrSettings.enabled);
+        if (preferences.openxrSettings.enabled) xrRefreshDiagnostics();
         settingsChanged = true;
       }
       ImGui::SameLine();
@@ -4165,7 +4173,111 @@ void renderSettingsWindow() {
           "a compatible HMD. The normal desktop window continues to render as a "
           "mirror when 'Mirror to Window' is enabled.");
 
-      if (preferences.openxrSettings.enabled) {
+      // ---- Troubleshooting + runtime picker -------------------------------
+      // Shown when OpenXR was requested but no session is running (i.e. startup
+      // failed). Explains *why* in plain language and lets the user switch to
+      // any runtime installed on this PC. Switching is per-process (via
+      // XR_RUNTIME_JSON) so it needs no admin rights and changes nothing
+      // system-wide.
+      if (preferences.openxrSettings.enabled && !g_xrAvailable) {
+        const Engine::XRDiagnostics &diag = g_xrDiagnostics;
+
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.2f, 1.0f));
+        ImGui::TextWrapped("OpenXR could not start.");
+        ImGui::PopStyleColor();
+
+        // Why it failed.
+        if (diag.activeServiceBased) {
+          ImGui::TextWrapped(
+              "The selected OpenXR runtime is \"%s\". It runs as a background "
+              "service that is launched by its own app, and that service is not "
+              "running right now - so no program (including this one) can use it.",
+              diag.activeRuntimeName.c_str());
+        } else if (!diag.activeRuntimeName.empty()) {
+          ImGui::TextWrapped("Active runtime: %s%s.",
+                             diag.activeRuntimeName.c_str(),
+                             diag.activeRuntimeSource == "XR_RUNTIME_JSON"
+                                 ? " (selected here)" : " (system default)");
+          ImGui::TextWrapped("%s", g_xrStatusMsg.c_str());
+        } else {
+          ImGui::TextWrapped(
+              "No OpenXR runtime is selected on this PC. Install or enable one "
+              "(SteamVR, Oculus / Meta, or Windows Mixed Reality).");
+        }
+
+        // How to fix it.
+        ImGui::Spacing();
+        ImGui::TextDisabled("How to fix");
+        ImGui::BulletText("Pick an installed runtime below and click \"Use\".");
+        ImGui::Bullet();
+        ImGui::TextWrapped("Make sure your headset is plugged in and its software "
+                           "(SteamVR, Oculus app, Mixed Reality Portal, ...) is "
+                           "running.");
+        if (diag.activeServiceBased) {
+          ImGui::Bullet();
+          ImGui::TextWrapped("Or launch the program that provides \"%s\" first, "
+                             "then enable OpenXR again.",
+                             diag.activeRuntimeName.c_str());
+        }
+
+        // Runtime picker. The list is stable (it does not change as you switch);
+        // each entry is tagged [in use] / [system default] as appropriate.
+        // Clicking a button must NOT mutate g_xrDiagnostics mid-draw (that would
+        // invalidate the list we're iterating), so the chosen action is recorded
+        // here and applied after the list has been drawn.
+        enum class XrAction { None, Refresh, Use };
+        XrAction    action = XrAction::None;
+        std::string actionPath; // runtime to switch to
+
+        ImGui::Spacing();
+        ImGui::TextDisabled("OpenXR runtimes found on this PC");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Refresh")) action = XrAction::Refresh;
+
+        ImGui::BeginChild("xr_runtime_list",
+                          ImVec2(0.0f, ImGui::GetTextLineHeightWithSpacing() * 5.0f),
+                          true);
+
+        if (diag.runtimes.empty()) {
+          ImGui::TextDisabled("(no OpenXR runtimes detected on this PC)");
+        }
+        const ImVec4 kServiceCol(0.95f, 0.6f, 0.2f, 1.0f);
+        for (size_t i = 0; i < diag.runtimes.size(); ++i) {
+          const Engine::XRRuntimeInfo &rt = diag.runtimes[i];
+          ImGui::PushID(static_cast<int>(i));
+          ImGui::BeginGroup();
+
+          if (ImGui::Button("Use")) { action = XrAction::Use; actionPath = rt.manifestPath; }
+          ImGui::SameLine();
+
+          if (rt.serviceBased) ImGui::PushStyleColor(ImGuiCol_Text, kServiceCol);
+          ImGui::TextUnformatted(rt.name.c_str());
+          if (rt.serviceBased) ImGui::PopStyleColor();
+
+          if (rt.isActive) { ImGui::SameLine(); ImGui::TextDisabled("[in use]"); }
+          if (rt.isSystemDefault) { ImGui::SameLine(); ImGui::TextDisabled("[system default]"); }
+          if (rt.serviceBased) {
+            ImGui::SameLine();
+            ImGui::TextColored(kServiceCol, "- needs its own app running");
+          }
+
+          ImGui::EndGroup();
+          if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", rt.manifestPath.c_str());
+          ImGui::PopID();
+        }
+        ImGui::EndChild();
+
+        ImGui::TextDisabled("Tip: if picking a runtime has no effect, run "
+                            "StereoVista without administrator rights, or set the "
+                            "runtime as default in its own settings.");
+
+        // Apply the deferred action now that we're done reading g_xrDiagnostics.
+        if (action == XrAction::Refresh) xrRefreshDiagnostics();
+        else if (action == XrAction::Use) xrUseRuntime(actionPath);
+      }
+
+      if (preferences.openxrSettings.enabled && g_xrAvailable) {
         if (!g_xrRuntimeName.empty()) {
           ImGui::TextDisabled("Runtime: %s", g_xrRuntimeName.c_str());
         }

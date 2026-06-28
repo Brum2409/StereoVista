@@ -12,7 +12,191 @@
 #include <iostream>
 #include <cstring>
 
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>     // _wputenv_s
+#include <filesystem>
+
+// RegGetValueW / registry access lives in Advapi32; make sure it is linked even
+// if it is not part of the project's default library set.
+#pragma comment(lib, "Advapi32.lib")
+
 namespace Engine {
+
+// ===========================================================================
+// System OpenXR runtime probing
+// ===========================================================================
+namespace {
+
+std::string wideToUtf8(const std::wstring &w) {
+    if (w.empty()) return {};
+    int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(),
+                                nullptr, 0, nullptr, nullptr);
+    std::string s(n, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(),
+                        s.data(), n, nullptr, nullptr);
+    return s;
+}
+
+std::wstring utf8ToWide(const std::string &s) {
+    if (s.empty()) return {};
+    int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), nullptr, 0);
+    std::wstring w(n, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), w.data(), n);
+    return w;
+}
+
+std::string toLower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return (char)std::tolower(c); });
+    return s;
+}
+
+// Read an environment variable as a wide string ("" if unset).
+std::wstring getEnvW(const wchar_t *name) {
+    DWORD n = GetEnvironmentVariableW(name, nullptr, 0);
+    if (n == 0) return {};
+    std::wstring v(n, L'\0');
+    DWORD got = GetEnvironmentVariableW(name, v.data(), n);
+    v.resize(got);
+    return v;
+}
+
+// Read a REG_SZ value from the 64-bit registry view ("" if missing).
+std::wstring regReadSZ(HKEY root, const wchar_t *subkey, const wchar_t *value) {
+    wchar_t buf[1024];
+    DWORD   cb = sizeof(buf);
+    LSTATUS st = RegGetValueW(root, subkey, value,
+                              RRF_RT_REG_SZ | RRF_SUBKEY_WOW6464KEY,
+                              nullptr, buf, &cb);
+    if (st != ERROR_SUCCESS) return {};
+    return std::wstring(buf);
+}
+
+// Map a runtime manifest path to a friendly name + whether it is service-based
+// (needs a separate background process running to work).
+void classifyRuntime(const std::string &pathUtf8,
+                     std::string &nameOut, bool &serviceBasedOut) {
+    const std::string p = toLower(pathUtf8);
+    auto has = [&](const char *needle) { return p.find(needle) != std::string::npos; };
+
+    serviceBasedOut = false;
+    if (has("monado")) {
+        serviceBasedOut = true;
+        nameOut = has("immersa") ? "Monado (from ImmersaStudio)" : "Monado";
+    } else if (has("steamxr") || has("steamvr")) {
+        nameOut = "SteamVR";
+    } else if (has("oculus") || has("meta")) {
+        nameOut = "Oculus / Meta";
+    } else if (has("mixedrealityruntime") || has("windowsmr") || has("\\wmr")) {
+        nameOut = "Windows Mixed Reality";
+    } else if (has("varjo")) {
+        nameOut = "Varjo";
+    } else if (has("vive") || has("htc")) {
+        nameOut = "VIVE OpenXR";
+    } else {
+        nameOut = "OpenXR runtime";
+    }
+}
+
+} // namespace
+
+XRDiagnostics probeXRRuntimes() {
+    XRDiagnostics d;
+
+    // Is the loader itself present? (DONT_RESOLVE keeps this side-effect free.)
+    if (HMODULE h = LoadLibraryExW(L"openxr_loader.dll", nullptr,
+                                   DONT_RESOLVE_DLL_REFERENCES)) {
+        d.loaderPresent = true;
+        FreeLibrary(h);
+    }
+
+    // The OS-wide default comes from the registry (per-user key wins over the
+    // machine-wide one). This is independent of any per-process override, so it
+    // stays fixed while the user switches runtimes in the picker.
+    std::string defaultSource;
+    if (std::wstring hkcu = regReadSZ(HKEY_CURRENT_USER,
+            L"SOFTWARE\\Khronos\\OpenXR\\1", L"ActiveRuntime"); !hkcu.empty()) {
+        d.systemDefaultPath = wideToUtf8(hkcu);
+        defaultSource       = "HKCU registry";
+    } else if (std::wstring hklm = regReadSZ(HKEY_LOCAL_MACHINE,
+            L"SOFTWARE\\Khronos\\OpenXR\\1", L"ActiveRuntime"); !hklm.empty()) {
+        d.systemDefaultPath = wideToUtf8(hklm);
+        defaultSource       = "HKLM registry";
+    }
+    bool dummyService = false;
+    if (!d.systemDefaultPath.empty())
+        classifyRuntime(d.systemDefaultPath, d.systemDefaultName, dummyService);
+
+    // The *effective* active runtime is what the loader will actually use right
+    // now: an explicit XR_RUNTIME_JSON override (set by our picker, or the
+    // environment) takes precedence over the system default.
+    if (std::wstring env = getEnvW(L"XR_RUNTIME_JSON"); !env.empty()) {
+        d.activeRuntimePath   = wideToUtf8(env);
+        d.activeRuntimeSource = "XR_RUNTIME_JSON";
+    } else if (!d.systemDefaultPath.empty()) {
+        d.activeRuntimePath   = d.systemDefaultPath;
+        d.activeRuntimeSource = defaultSource;
+    }
+    if (!d.activeRuntimePath.empty())
+        classifyRuntime(d.activeRuntimePath, d.activeRuntimeName, d.activeServiceBased);
+
+    // Build the STABLE list of installed runtimes: the standard install
+    // locations plus the system default. The transient override is deliberately
+    // NOT added here, so switching runtimes never adds/removes list entries.
+    std::vector<std::string> candidates;
+    auto addUnder = [&](const wchar_t *envName, const wchar_t *tail) {
+        std::wstring base = getEnvW(envName);
+        if (!base.empty()) candidates.push_back(wideToUtf8(base + tail));
+    };
+    addUnder(L"ProgramFiles(x86)", L"\\Steam\\steamapps\\common\\SteamVR\\steamxr_win64.json");
+    addUnder(L"ProgramW6432",      L"\\Oculus\\Support\\oculus-runtime\\oculus_openxr_64.json");
+    addUnder(L"ProgramFiles",      L"\\Oculus\\Support\\oculus-runtime\\oculus_openxr_64.json");
+    addUnder(L"SystemRoot",        L"\\System32\\MixedRealityRuntime.json");
+    addUnder(L"ProgramData",       L"\\Varjo\\MRRuntime\\varjo-openxr\\VarjoOpenXR.json");
+    // Always include the system default (e.g. Monado) so it stays listed even
+    // while a different runtime is active.
+    if (!d.systemDefaultPath.empty()) candidates.push_back(d.systemDefaultPath);
+
+    const std::string activeLower  = toLower(d.activeRuntimePath);
+    const std::string defaultLower = toLower(d.systemDefaultPath);
+    for (const std::string &c : candidates) {
+        std::error_code ec;
+        if (!std::filesystem::exists(std::filesystem::u8path(c), ec)) continue;
+
+        const std::string cl = toLower(c);
+        bool dup = false;
+        for (const XRRuntimeInfo &r : d.runtimes)
+            if (toLower(r.manifestPath) == cl) { dup = true; break; }
+        if (dup) continue;
+
+        XRRuntimeInfo info;
+        info.manifestPath   = c;
+        info.present        = true;
+        info.isActive       = (cl == activeLower);
+        info.isSystemDefault = (cl == defaultLower);
+        classifyRuntime(c, info.name, info.serviceBased);
+        d.runtimes.push_back(std::move(info));
+    }
+    return d;
+}
+
+void setXRRuntimeOverride(const std::string &manifestPath) {
+    if (manifestPath.empty()) {
+        SetEnvironmentVariableW(L"XR_RUNTIME_JSON", nullptr); // remove from process env
+        _wputenv_s(L"XR_RUNTIME_JSON", L"");                  // keep CRT copy in sync
+    } else {
+        std::wstring w = utf8ToWide(manifestPath);
+        // The loader reads this via GetEnvironmentVariableW; set both the Win32
+        // block and the CRT copy so they cannot disagree.
+        SetEnvironmentVariableW(L"XR_RUNTIME_JSON", w.c_str());
+        _wputenv_s(L"XR_RUNTIME_JSON", w.c_str());
+    }
+}
+
+std::string getXRRuntimeOverride() {
+    return wideToUtf8(getEnvW(L"XR_RUNTIME_JSON"));
+}
 
 // ---------------------------------------------------------------------------
 // Public: init / destroy
@@ -275,8 +459,28 @@ bool XRSession::createInstance() {
 
     XrResult res = xrCreateInstance(&ci, &instance_);
     if (res != XR_SUCCESS) {
-        statusMsg_ = "xrCreateInstance failed – no OpenXR runtime installed? "
-                     "(error " + std::to_string(res) + ")";
+        // xrCreateInstance can fail for very different reasons. Probe the system
+        // so the GUI can tell the user *which* one and how to fix it, rather than
+        // always blaming a missing runtime.
+        XRDiagnostics diag = probeXRRuntimes();
+        if (diag.activeServiceBased) {
+            // e.g. Monado (bundled with ImmersaStudio): a runtime is selected but
+            // its background service isn't running, so the loader can't connect.
+            statusMsg_ = "OpenXR runtime \"" + diag.activeRuntimeName +
+                         "\" is selected, but its background service is not "
+                         "running, so it can't be used. Start that program first, "
+                         "or choose another runtime below.";
+        } else if (diag.activeRuntimeName.empty()) {
+            statusMsg_ = "No OpenXR runtime is selected on this PC. Install or "
+                         "enable one (SteamVR, Oculus/Meta, or Windows Mixed "
+                         "Reality), then choose it below.";
+        } else {
+            statusMsg_ = "Couldn't start OpenXR runtime \"" +
+                         diag.activeRuntimeName + "\" (xrCreateInstance error " +
+                         std::to_string(res) + "). Make sure your headset is "
+                         "connected and its software is running, or choose "
+                         "another runtime below.";
+        }
         return false;
     }
 

@@ -2,7 +2,7 @@
     "camera": {
         "alwaysShowOrbitCenter": false,
         "autoConvergence": true,
-        "convergence": 19.03132438659668,
+        "convergence": 13.064352035522461,
         "convergenceCapMax": 39.0,
         "convergenceCapMin": 0.800000011920929,
         "convergenceDistanceFactor": 1.2999999523162842,
@@ -27,7 +27,7 @@
         "scrollDeceleration": 2.0,
         "scrollMomentum": 0.12999999523162842,
         "separation": 0.10999999940395355,
-        "showOrbitCenter": true,
+        "showOrbitCenter": false,
         "speedFactor": 1.0,
         "useNewStereoMethod": true,
         "useSmoothScrolling": true,
@@ -143,6 +143,19 @@
         "showBVHDebug": false,
         "skyIntensity": 0.11999999731779099
     },
+    "scene": {
+        "applyEnvironmentOnLoad": true,
+        "recent": [],
+        "save": {
+            "compact": false,
+            "includeCamera": true,
+            "includeClipPlanes": true,
+            "includeEnvironment": true,
+            "includeLighting": true,
+            "includeMeasurements": true,
+            "includeSnapshots": true
+        }
+    },
     "shadows": {
         "enableIndirectLighting": false,
         "enablePCSS": false,
@@ -231,7 +244,7 @@
         "show3DCursor": true,
         "showFPS": true,
         "stereoScreenshotMode": 0,
-        "theme": 3,
+        "theme": 0,
         "vsync": false
     },
     "vct": {

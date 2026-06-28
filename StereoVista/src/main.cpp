@@ -39,6 +39,7 @@
 #include "Plugins/PluginManager.h"
 
 // ---- OpenXR (Windows only; zero overhead when disabled) ----
+#include "Engine/XRRuntimeInfo.h" // platform-neutral; shared with the GUI picker
 #ifdef _WIN32
 #include "Engine/XRSession.h"
 #define GLFW_EXPOSE_NATIVE_WIN32
@@ -673,6 +674,11 @@ static int                g_xrEyeHeight   = 0;
 bool        g_xrAvailable   = false;
 std::string g_xrStatusMsg;
 std::string g_xrRuntimeName;
+// Snapshot of the system OpenXR setup (active runtime + installed runtimes),
+// refreshed on every enable attempt. Drives the GUI error panel + runtime picker.
+Engine::XRDiagnostics g_xrDiagnostics;
+// Manifest path of the runtime this process is forced to use ("" = system default).
+std::string g_xrActiveOverride;
 
 // Called by the GUI toggle (see GUI.cpp extern declaration).
 void xrSessionEnable(bool enable) {
@@ -687,29 +693,61 @@ void xrSessionEnable(bool enable) {
             delete g_xrSession;
             g_xrSession   = nullptr;
             g_xrAvailable = false;
-            // Revert the preference so the checkbox doesn't stay ticked.
-            preferences.openxrSettings.enabled = false;
+            // Leave openxrSettings.enabled == true on purpose: it keeps the GUI
+            // in the "requested but failing" state (orange dot + troubleshooting
+            // panel + runtime picker) so the user can see why and fix it. The
+            // render loop is still inert because it also gates on g_xrSession.
+            g_xrDiagnostics = Engine::probeXRRuntimes();
         } else {
             g_xrAvailable   = true;
             g_xrStatusMsg   = g_xrSession->statusMessage();
             g_xrRuntimeName = g_xrSession->runtimeName();
+            g_xrDiagnostics = Engine::probeXRRuntimes();
         }
     } else {
-        if (!g_xrSession) return;
-        delete g_xrSession;
-        g_xrSession     = nullptr;
+        // Reset cleanly whether or not a session exists (init may have failed,
+        // leaving g_xrSession null but a stale error message on screen).
+        if (g_xrSession) {
+            delete g_xrSession;
+            g_xrSession = nullptr;
+        }
         g_xrAvailable   = false;
         g_xrOverrideFBO = 0;
         g_xrStatusMsg   = "OpenXR disabled.";
         g_xrRuntimeName.clear();
     }
 }
+
+// Re-scan the system for installed runtimes (GUI "Refresh" button / lazy load).
+void xrRefreshDiagnostics() {
+    g_xrDiagnostics = Engine::probeXRRuntimes();
+}
+
+// Switch this process to a specific runtime and (re)start the session. Pass an
+// empty path to clear the override and use the system default again. The switch
+// is per-process via XR_RUNTIME_JSON — nothing system-wide changes.
+void xrUseRuntime(const std::string &manifestPath) {
+    if (g_xrSession) {                 // tear down any current/failed session
+        delete g_xrSession;
+        g_xrSession     = nullptr;
+        g_xrAvailable   = false;
+        g_xrOverrideFBO = 0;
+    }
+    Engine::setXRRuntimeOverride(manifestPath);
+    g_xrActiveOverride = manifestPath;
+    preferences.openxrSettings.enabled = true; // picking a runtime implies "enable"
+    xrSessionEnable(true);             // refreshes diagnostics + status message
+}
 #else
 // Stub on non-Windows so GUI.cpp can still reference the symbols.
 bool        g_xrAvailable   = false;
 std::string g_xrStatusMsg   = "OpenXR not supported on this platform.";
 std::string g_xrRuntimeName;
+Engine::XRDiagnostics g_xrDiagnostics;
+std::string g_xrActiveOverride;
 void xrSessionEnable(bool) {}
+void xrRefreshDiagnostics() {}
+void xrUseRuntime(const std::string &) {}
 #endif
 
 // BVH invalidation tracking
