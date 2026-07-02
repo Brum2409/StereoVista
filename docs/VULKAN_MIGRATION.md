@@ -38,8 +38,9 @@
   confirm API/extension behaviour and best practice. If a decision is the user's
   to make (scope/priorities/trade‑offs), **ask the user** a concrete question.
 
-### Non‑Goals (deferred — will be re‑implemented natively in Vulkan later)
-These are **removed from the first Vulkan build** and re‑added afterwards using
+### Non‑Goals (deferred — DELETED now, re‑implemented natively in Vulkan later)
+Per the owner's decision (status §0b), these are **deleted from the tree** as the
+rewrite proceeds (git history is the reference) and re‑implemented afterwards using
 native Vulkan capabilities (compute / ray‑tracing pipelines):
 - **Voxel Cone Tracing** (`Voxalizer`, `voxelization/*`, VCT shaders).
 - **DDGI** (`DDGIVolume`, `ddgi*` shaders).

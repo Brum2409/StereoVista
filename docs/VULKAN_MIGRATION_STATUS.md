@@ -62,6 +62,29 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ✎ changed from origi
 
 ---
 
+## 0b. Working agreement (user decisions — 2026-07-02)
+These are settled by the project owner. Follow them unless the user changes them.
+- **Deferred features → DELETE now, rebuild fresh later.** Do **not** port VCT
+  (`Voxalizer`, `voxelization/*`), DDGI (`DDGIVolume`, `ddgi*`), BVH Radiance
+  (`BVH`, `BVHDebug`), Bloom (`BloomRenderer`), or SSAO (`SSAORenderer`). Remove
+  their `.cpp/.h`, shaders, and `.vcxproj` entries as the rewrite proceeds. **Git
+  history is the reference** for the Phase 9 native re-implementation — no need to
+  keep the code in-tree. Also drop the VCT/Radiance `LightingMode` options for now
+  (ship only **Shadow Mapping**).
+- **`main` is feature-frozen** during the migration, so the Vulkan branch isn't
+  chasing a moving target. Don't re-port new OpenGL features (there shouldn't be any).
+- **The USER verifies each phase.** CI only compiles (no GPU); the agent can't run
+  the Windows app. The user has the stereo GPU and runs each milestone build,
+  reports visual results/bugs, and the agent iterates from that feedback. So: at a
+  phase boundary, get CI green, then hand the user clear run/verify steps and wait
+  for their result before declaring the phase done.
+- **Partial interim state is fine.** The branch may be less capable than `main`
+  mid-migration (missing post-FX/GI, some tools not yet ported). Just keep each
+  phase **compiling green on CI**; don't invest in bridging to keep every feature
+  live at every step.
+
+---
+
 ## 1. Phase board (suggested order — reorder if you have a better idea)
 
 - ☐ **Phase 0 — Toolchain & build setup** (Vulkan SDK/VMA/shaderc/volk in, GL loader out; no spikes)
@@ -75,11 +98,11 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ✎ changed from origi
 - ☐ **Phase 8 — Decompose `main.cpp`/`GUI.cpp`, delete GL scaffolding, update docs**
 - ☐ **Phase 9 (later, out of current scope) — re-add deferred features natively**
 
-> **Deferred on purpose** (do NOT port yet — re-implemented later in native Vulkan):
-> Voxel Cone Tracing (`Voxalizer`, `voxelization/*`), DDGI (`DDGIVolume`, `ddgi*`),
-> BVH ray-traced Radiance + `BVHDebug`, and heavy post-FX (Bloom, SSAO). Keep the
-> `LightingMode` enum but ship only **Shadow Mapping** in the first Vulkan build;
-> grey out VCT/Radiance in the UI.
+> **Deferred → DELETE now** (per §0b; re-implemented natively in Vulkan in Phase 9,
+> git history is the reference): Voxel Cone Tracing (`Voxalizer`, `voxelization/*`),
+> DDGI (`DDGIVolume`, `ddgi*`), BVH Radiance + `BVHDebug`, Bloom (`BloomRenderer`),
+> SSAO (`SSAORenderer`). Ship only **Shadow Mapping**; drop the VCT/Radiance
+> lighting modes for now.
 
 ---
 
@@ -286,8 +309,11 @@ target GPU ever lacks it, decide a fallback before Phase 5.
   `$(VULKAN_SDK)\Include`, lib `$(VULKAN_SDK)\Lib\vulkan-1.lib`) so CI exercises
   them.
 
-## 5. Verification checklist (no automated tests exist — verify manually)
-Re-check after each phase; capture before/after screenshots:
+## 5. Verification checklist (the USER runs these — see §0b)
+CI only compiles; the user runs each milestone on the stereo GPU and reports back.
+At each phase boundary: get CI green, then give the user concrete run/verify steps
+and wait for their result before marking the phase done. Capture before/after
+screenshots where useful:
 - [ ] App launches, ImGui docks/undocks/drags-out
 - [ ] `office.scene` models render lit + shadow-mapped
 - [ ] A reference LAS/LAZ cloud renders (standard **and** HQS), streams in
@@ -301,6 +327,13 @@ Re-check after each phase; capture before/after screenshots:
 ---
 
 ## 6. Session log (append newest at top; keep entries short)
+- **2026-07-02 — working agreement settled (§0b).** Owner decisions: (1) deferred
+  features (VCT/DDGI/Radiance/Bloom/SSAO) are **deleted now**, not kept as
+  reference — git history covers Phase 9; ship only Shadow Mapping. (2) `main` is
+  **feature-frozen** during the migration. (3) the **user verifies each phase** on
+  the stereo GPU (CI only compiles). (4) **partial interim state is fine** as long
+  as each phase compiles green. Updated deferred notes, verification section, and
+  design-doc non-goals accordingly.
 - **2026-07-02 — dropped spikes; start real migration.** Removed the throwaway
   Phase 0 spikes. Researched: `shaderBufferInt64Atomics` is **guaranteed at Vulkan
   1.2+** (core, not optional) and `VK_KHR_multiview` is core since 1.1, so the
