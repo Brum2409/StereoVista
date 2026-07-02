@@ -17,7 +17,7 @@ void Window::init(int width, int height, const char* title) {
     if (!glfwVulkanSupported())
         throw std::runtime_error(
             "GLFW cannot find a Vulkan loader (vulkan-1.dll). A current GPU "
-            "driver on Windows 10/11 always provides one — update the driver.");
+            "driver on Windows 10/11 always provides one - update the driver.");
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 

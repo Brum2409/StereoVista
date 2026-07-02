@@ -171,7 +171,7 @@ void Device::createInstance(bool enableValidation) {
     uint32_t glfwExtCount = 0;
     const char** glfwExts = glfwGetRequiredInstanceExtensions(&glfwExtCount);
     if (!glfwExts || glfwExtCount == 0)
-        throw std::runtime_error("GLFW reports no Vulkan instance extensions — "
+        throw std::runtime_error("GLFW reports no Vulkan instance extensions - "
                                  "no Vulkan-capable display path is available.");
     std::vector<const char*> extensions(glfwExts, glfwExts + glfwExtCount);
 

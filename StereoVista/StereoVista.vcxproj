@@ -130,6 +130,7 @@
       <AdditionalIncludeDirectories>../dependencies/include;../dependencies/include/hdf5;../dependencies/include/laszip;../dependencies/include/openxr;include;src;headers;src;headers/libs/imgui;backend;headers/libs;headers/libs/volk;headers/libs/3dconnexion;headers/libs/highfive;headers/libs/highfive/bits;headers/libs/hdf5;headers/libs/highfive/h5easy_bits</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -158,6 +159,7 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
       <AdditionalIncludeDirectories>../dependencies/include;../dependencies/include/hdf5;../dependencies/include/laszip;../dependencies/include/openxr;headers;src;headers/libs/imgui;backend;headers/libs;headers/libs/volk;headers/libs/3dconnexion;headers/libs/highfive;headers/libs/highfive/bits;headers/libs/hdf5;headers/libs/highfive/h5easy_bits</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>

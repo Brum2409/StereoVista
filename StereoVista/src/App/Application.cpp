@@ -128,7 +128,7 @@ void Application::run() {
 void Application::buildUi() {
     ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(420, 0), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("StereoVista — Vulkan migration")) {
+    if (ImGui::Begin("StereoVista - Vulkan migration")) {
         ImGui::Text("GPU: %s", device_.deviceName());
         ImGui::Text("Vulkan %u.%u.%u",
                     VK_API_VERSION_MAJOR(device_.properties().apiVersion),
