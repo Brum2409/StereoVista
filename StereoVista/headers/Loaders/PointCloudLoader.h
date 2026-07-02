@@ -20,6 +20,12 @@ namespace Engine {
                                    bool applyTransform = true);
         static bool exportToHDF5(const PointCloud& pointCloud, const std::string& filePath,
                                  bool applyTransform = true);
+        // Export to the Stanford PLY format (the standard point-cloud interchange
+        // format this app already imports). binary=true writes a compact
+        // binary_little_endian body (x/y/z float, r/g/b uchar, intensity float);
+        // binary=false writes a human-readable ascii body with the same fields.
+        static bool exportToPLY(const PointCloud& pointCloud, const std::string& filePath,
+                                bool applyTransform = true, bool binary = true);
         static PointCloud loadFromBinary(const std::string& filePath);
         // Header-driven reader for binary PLY (binary_little_endian /
         // binary_big_endian). Streams the fixed-stride vertex records straight

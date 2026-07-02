@@ -8539,6 +8539,16 @@ void renderPointCloudManipulationPanel(Engine::PointCloud &pointCloud) {
     ImGui::RadioButton("Binary (.pcb)", &exportFormat, 1);
     ImGui::SameLine();
     ImGui::RadioButton("HDF5", &exportFormat, 2);
+    ImGui::SameLine();
+    ImGui::RadioButton("PLY", &exportFormat, 3);
+
+    static bool exportPlyBinary = true;
+    if (exportFormat == 3) {
+      ImGui::Checkbox("Binary PLY", &exportPlyBinary);
+      ImGui::SameLine();
+      DrawHelpMarker("Write a compact binary_little_endian PLY (recommended). "
+                     "Disable for a human-readable ascii PLY.");
+    }
 
     static bool exportApplyTransform = true;
     ImGui::Checkbox("Apply transform", &exportApplyTransform);
@@ -8552,7 +8562,10 @@ void renderPointCloudManipulationPanel(Engine::PointCloud &pointCloud) {
 
     if (ImGui::Button("Export Point Cloud...", ImVec2(-1, 0))) {
       std::string defaultExt =
-          (exportFormat == 0) ? ".xyz" : (exportFormat == 1) ? ".pcb" : ".h5";
+          (exportFormat == 0) ? ".xyz"
+          : (exportFormat == 1) ? ".pcb"
+          : (exportFormat == 2) ? ".h5"
+                                : ".ply";
       auto destination = pfd::save_file("Export point cloud", ".",
                                         {"Point Cloud Files", "*" + defaultExt,
                                          "All Files", "*"})
@@ -8566,9 +8579,12 @@ void renderPointCloudManipulationPanel(Engine::PointCloud &pointCloud) {
         } else if (exportFormat == 1) {
           success = Engine::PointCloudLoader::exportToBinary(
               pointCloud, destination, exportApplyTransform);
-        } else {
+        } else if (exportFormat == 2) {
           success = Engine::PointCloudLoader::exportToHDF5(
               pointCloud, destination, exportApplyTransform);
+        } else {
+          success = Engine::PointCloudLoader::exportToPLY(
+              pointCloud, destination, exportApplyTransform, exportPlyBinary);
         }
 
         lastExportOk = success;
