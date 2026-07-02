@@ -1,14 +1,13 @@
 #pragma once
-#include "Engine/Core.h"
 #include <filesystem>
 #include <unordered_map>
 
 #include "imgui/imgui.h"
 #include "imgui/backends/imgui_impl_glfw.h"
-#include "imgui/backends/imgui_impl_opengl3.h"
+#include "imgui/backends/imgui_impl_vulkan.h"
 #include <imgui/imgui_internal.h>
 
-using namespace Engine;
+struct GLFWwindow;
 
 // Function declarations
 void SetupImGuiStyle(bool bStyleDark_, float alpha_);

@@ -92,3 +92,13 @@ StereoVista/imgui.ini
 *.h5
 /.kiro
 /compute_rasterizer-master
+
+# Vendored third-party binaries are dependencies (sources), not build
+# outputs — re-include them against the bin/ x64/ *.exe rules above.
+# (A parent dir must be un-ignored before files inside it can be.)
+!dependencies/bin/
+!dependencies/bin/**
+!dependencies/lib/x64/
+!dependencies/lib/x64/**
+!dependencies/tools/
+!dependencies/tools/**

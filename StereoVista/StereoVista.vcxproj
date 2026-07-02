@@ -102,7 +102,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>glfw3.lib;opengl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>glfw3.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -125,16 +125,16 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions);_CRT_SECURE_NO_WARNINGS;_ITERATOR_DEBUG_LEVEL=0;_HAS_ITERATOR_DEBUGGING=0</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;SV_VULKAN_VALIDATION=1;VK_NO_PROTOTYPES;GLFW_INCLUDE_NONE;IMGUI_IMPL_VULKAN_USE_VOLK;GLM_FORCE_DEPTH_ZERO_TO_ONE;%(PreprocessorDefinitions);_CRT_SECURE_NO_WARNINGS;_ITERATOR_DEBUG_LEVEL=0;_HAS_ITERATOR_DEBUGGING=0</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>../dependencies/include;../dependencies/include/hdf5;../dependencies/include/laszip;../dependencies/include/openxr;include;src;headers;src;headers/libs/imgui;backend;headers/libs;headers/libs/3dconnexion;headers/libs/highfive;headers/libs/highfive/bits;headers/libs/hdf5;headers/libs/highfive/h5easy_bits</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>../dependencies/include;../dependencies/include/hdf5;../dependencies/include/laszip;../dependencies/include/openxr;include;src;headers;src;headers/libs/imgui;backend;headers/libs;headers/libs/volk;headers/libs/3dconnexion;headers/libs/highfive;headers/libs/highfive/bits;headers/libs/hdf5;headers/libs/highfive/h5easy_bits</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>false</GenerateDebugInformation>
-      <AdditionalDependencies>glfw3_mt.lib;opengl32.lib;assimp-vc143-mt.lib;libhdf5.lib;libhdf5_cpp.lib;libzlib.lib;libaec.lib;libszaec.lib;legacy_stdio_definitions.lib;Shlwapi.lib;TDxNavLib.lib;laszip64.lib;openxr_loader.lib;delayimp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>glfw3_mt.lib;shaderc_shared.lib;assimp-vc143-mt.lib;libhdf5.lib;libhdf5_cpp.lib;libzlib.lib;libaec.lib;libszaec.lib;legacy_stdio_definitions.lib;Shlwapi.lib;TDxNavLib.lib;laszip64.lib;openxr_loader.lib;delayimp.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>../dependencies/lib/release;../dependencies/lib/x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <DelayLoadDLLs>openxr_loader.dll;%(DelayLoadDLLs)</DelayLoadDLLs>
     </Link>
@@ -142,6 +142,7 @@
       <Command>copy "$(SolutionDir)dependencies\bin\assimp-vc143-mt.dll" "$(OutDir)"
 copy "$(SolutionDir)dependencies\bin\LASzip64.dll" "$(OutDir)"
 copy "$(SolutionDir)dependencies\bin\openxr_loader.dll" "$(OutDir)"
+copy "$(SolutionDir)dependencies\bin\shaderc_shared.dll" "$(OutDir)"
 "%SystemRoot%\System32\robocopy.exe" "$(ProjectDir)assets" "$(OutDir)assets" /E /NJH /NJS /NFL /NDL
 IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     </PostBuildEvent>
@@ -152,9 +153,9 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;VK_NO_PROTOTYPES;GLFW_INCLUDE_NONE;IMGUI_IMPL_VULKAN_USE_VOLK;GLM_FORCE_DEPTH_ZERO_TO_ONE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>../dependencies/include;../dependencies/include/hdf5;../dependencies/include/laszip;../dependencies/include/openxr;headers;src;headers/libs/imgui;backend;headers/libs;headers/libs/3dconnexion;headers/libs/highfive;headers/libs/highfive/bits;headers/libs/hdf5;headers/libs/highfive/h5easy_bits</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>../dependencies/include;../dependencies/include/hdf5;../dependencies/include/laszip;../dependencies/include/openxr;headers;src;headers/libs/imgui;backend;headers/libs;headers/libs/volk;headers/libs/3dconnexion;headers/libs/highfive;headers/libs/highfive/bits;headers/libs/hdf5;headers/libs/highfive/h5easy_bits</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
     </ClCompile>
@@ -164,7 +165,7 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>../dependencies/lib/release;../dependencies/lib/x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>glfw3_mt.lib;opengl32.lib;assimp-vc143-mt.lib;libhdf5.lib;libhdf5_cpp.lib;libzlib.lib;libaec.lib;libszaec.lib;legacy_stdio_definitions.lib;Shlwapi.lib;TDxNavLib.lib;laszip64.lib;openxr_loader.lib;delayimp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>glfw3_mt.lib;shaderc_shared.lib;assimp-vc143-mt.lib;libhdf5.lib;libhdf5_cpp.lib;libzlib.lib;libaec.lib;libszaec.lib;legacy_stdio_definitions.lib;Shlwapi.lib;TDxNavLib.lib;laszip64.lib;openxr_loader.lib;delayimp.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <DelayLoadDLLs>openxr_loader.dll;%(DelayLoadDLLs)</DelayLoadDLLs>
       <IgnoreAllDefaultLibraries>
       </IgnoreAllDefaultLibraries>
@@ -174,62 +175,146 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
       <Command>copy "$(SolutionDir)dependencies\bin\assimp-vc143-mt.dll" "$(OutDir)"
 copy "$(SolutionDir)dependencies\bin\LASzip64.dll" "$(OutDir)"
 copy "$(SolutionDir)dependencies\bin\openxr_loader.dll" "$(OutDir)"
+copy "$(SolutionDir)dependencies\bin\shaderc_shared.dll" "$(OutDir)"
 "%SystemRoot%\System32\robocopy.exe" "$(ProjectDir)assets" "$(OutDir)assets" /E /NJH /NJS /NFL /NDL
 IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
+  <!-- Vulkan GLSL -> SPIR-V (vendored glslc; ShaderCompiler recompiles at
+       runtime via shaderc when a source is newer than its .spv). -->
   <ItemGroup>
-    <ClCompile Include="headers\libs\glad.c" />
-    <ClCompile Include="src\Cursors\CursorPresets.cpp" />
-    <ClCompile Include="src\Engine\BVH.cpp" />
-    <ClCompile Include="src\Engine\XRSession.cpp" />
-    <ClCompile Include="src\Engine\BVHDebug.cpp" />
-    <ClCompile Include="src\Engine\BloomRenderer.cpp" />
-    <ClCompile Include="src\Engine\ComputePointCloudRenderer.cpp" />
-    <ClCompile Include="src\Engine\Buffers.cpp" />
-    <ClCompile Include="src\Engine\DDGIVolume.cpp" />
-    <ClCompile Include="src\Engine\Input.cpp" />
-    <ClCompile Include="src\Engine\OctreePointCloudManager.cpp" />
-    <ClCompile Include="src\Engine\Shader.cpp" />
-    <ClCompile Include="src\Engine\ShortcutManager.cpp" />
-    <ClCompile Include="src\Engine\SpaceMouseInput.cpp" />
-    <ClCompile Include="src\Engine\ThreeDConnexionSync.cpp" />
-    <ClCompile Include="src\Engine\SSAORenderer.cpp" />
-    <ClCompile Include="src\Engine\Screenshot.cpp" />
-    <ClCompile Include="src\Engine\Window.cpp" />
+    <CustomBuild Include="assets\shaders_vk\triangle.vert">
+      <FileType>Document</FileType>
+      <Command>if not exist "$(OutDir)assets\shaders_vk" mkdir "$(OutDir)assets\shaders_vk"
+"$(SolutionDir)dependencies\tools\glslc.exe" --target-env=vulkan1.3 -O -o "$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv" "%(FullPath)"</Command>
+      <Outputs>$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv</Outputs>
+      <Message>glslc %(Filename)%(Extension)</Message>
+    </CustomBuild>
+    <CustomBuild Include="assets\shaders_vk\triangle.frag">
+      <FileType>Document</FileType>
+      <Command>if not exist "$(OutDir)assets\shaders_vk" mkdir "$(OutDir)assets\shaders_vk"
+"$(SolutionDir)dependencies\tools\glslc.exe" --target-env=vulkan1.3 -O -o "$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv" "%(FullPath)"</Command>
+      <Outputs>$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv</Outputs>
+      <Message>glslc %(Filename)%(Extension)</Message>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Vulkan application (active) -->
+    <ClCompile Include="src\App\main.cpp" />
+    <ClCompile Include="headers\libs\volk\volk.c" />
     <ClCompile Include="headers\libs\imgui\backends\imgui_impl_glfw.cpp" />
-    <ClCompile Include="headers\libs\imgui\backends\imgui_impl_opengl3.cpp" />
+    <ClCompile Include="headers\libs\imgui\backends\imgui_impl_vulkan.cpp" />
     <ClCompile Include="headers\libs\imgui\imgui.cpp" />
     <ClCompile Include="headers\libs\imgui\imgui_draw.cpp" />
     <ClCompile Include="headers\libs\imgui\imgui_tables.cpp" />
     <ClCompile Include="headers\libs\imgui\imgui_widgets.cpp" />
     <ClCompile Include="headers\libs\imgui\imgui_style.cpp" />
-    <ClCompile Include="src\main.cpp" />
-    <ClCompile Include="src\Loaders\ModelLoader.cpp" />
-    <ClCompile Include="headers\libs\portable-file-dialogs.h" />
-    <ClCompile Include="src\Loaders\PointCloudLoader.cpp" />
-    <ClCompile Include="src\Core\SceneManager.cpp" />
-    <ClCompile Include="src\Core\SnapshotManager.cpp" />
-    <ClCompile Include="src\Core\UndoManager.cpp" />
     <ClCompile Include="src\Engine\StbImageImpl.cpp" />
-    <ClCompile Include="src\Core\Voxalizer.cpp" />
-    <ClCompile Include="src\Cursors\Base\Cursor.cpp" />
-    <ClCompile Include="src\Cursors\Base\CursorManager.cpp" />
-    <ClCompile Include="src\Cursors\Types\FragmentCursor.cpp" />
-    <ClCompile Include="src\Cursors\Types\PlaneCursor.cpp" />
-    <ClCompile Include="src\Cursors\Types\SphereCursor.cpp" />
-    <ClCompile Include="src\Core\CursorSynchronizer.cpp" />
-    <ClCompile Include="src\Gui\CursorPreview3D.cpp" />
-    <ClCompile Include="src\Gui\GUI.cpp" />
-    <ClCompile Include="src\Tools\BrushTool.cpp" />
-    <ClCompile Include="src\Tools\ClipPlaneTool.cpp" />
-    <ClCompile Include="src\Tools\MeasurementTool.cpp" />
-    <ClCompile Include="src\Tools\TransformGizmo.cpp" />
-    <ClCompile Include="src\Plugins\PluginManager.cpp" />
-    <ClCompile Include="src\Plugins\MeasurementPlugin.cpp" />
-    <ClCompile Include="src\Plugins\Examples\CrosshairPlugin.cpp" />
+    <ClCompile Include="headers\libs\portable-file-dialogs.h" />
+    <!-- OpenGL-era sources: excluded from the build (GLAD is gone), kept
+         in-tree as the behaviour reference until their system is migrated.
+         Re-enable each file only after its Vulkan port (see
+         docs/VULKAN_MIGRATION_STATUS.md phase board). -->
+    <ClCompile Include="src\main.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Gui\GUI.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Gui\CursorPreview3D.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Loaders\ModelLoader.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Loaders\PointCloudLoader.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Engine\ComputePointCloudRenderer.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Engine\OctreePointCloudManager.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Engine\Buffers.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Engine\Screenshot.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Engine\Window.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Engine\Input.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Engine\XRSession.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Engine\ShortcutManager.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Engine\SpaceMouseInput.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Engine\ThreeDConnexionSync.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Core\SceneManager.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Core\SnapshotManager.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Core\UndoManager.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Core\CursorSynchronizer.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Cursors\CursorPresets.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Cursors\Base\Cursor.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Cursors\Base\CursorManager.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Cursors\Types\FragmentCursor.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Cursors\Types\PlaneCursor.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Cursors\Types\SphereCursor.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Tools\BrushTool.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Tools\ClipPlaneTool.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Tools\MeasurementTool.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Tools\TransformGizmo.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Plugins\PluginManager.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Plugins\MeasurementPlugin.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Plugins\Examples\CrosshairPlugin.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="headers\libs\volk\volk.h" />
+    <ClInclude Include="headers\libs\vma\vk_mem_alloc.h" />
     <ClInclude Include="headers\core.h" />
     <ClInclude Include="headers\Core\SceneManager.h" />
     <ClInclude Include="headers\Core\SnapshotManager.h" />
@@ -238,20 +323,14 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClInclude Include="headers\Core\CursorSyncState.h" />
     <ClInclude Include="headers\cursor_presets.h" />
     <ClInclude Include="headers\engine\buffers.h" />
-    <ClInclude Include="headers\Engine\BVH.h" />
     <ClInclude Include="headers\Engine\XRSession.h" />
-    <ClInclude Include="headers\Engine\BVHDebug.h" />
-    <ClInclude Include="headers\Engine\BloomRenderer.h" />
     <ClInclude Include="headers\Engine\ComputePointCloudRenderer.h" />
-    <ClInclude Include="headers\Engine\DDGIVolume.h" />
     <ClInclude Include="headers\engine\data.h" />
     <ClInclude Include="headers\engine\input.h" />
     <ClInclude Include="headers\Engine\OctreePointCloudManager.h" />
-    <ClInclude Include="headers\Engine\Shader.h" />
     <ClInclude Include="headers\Engine\ShortcutManager.h" />
     <ClInclude Include="headers\Engine\SpaceMouseInput.h" />
     <ClInclude Include="headers\Engine\ThreeDConnexionSync.h" />
-    <ClInclude Include="headers\Engine\SSAORenderer.h" />
     <ClInclude Include="headers\Engine\Screenshot.h" />
     <ClInclude Include="headers\engine\window.h" />
     <ClInclude Include="headers\Camera.h" />
@@ -343,8 +422,7 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClInclude Include="headers\libs\assimp\XMLTools.h" />
     <ClInclude Include="headers\libs\assimp\ZipArchiveIOSystem.h" />
     <ClInclude Include="headers\libs\imgui\backends\imgui_impl_glfw.h" />
-    <ClInclude Include="headers\libs\imgui\backends\imgui_impl_opengl3.h" />
-    <ClInclude Include="headers\libs\imgui\backends\imgui_impl_opengl3_loader.h" />
+    <ClInclude Include="headers\libs\imgui\backends\imgui_impl_vulkan.h" />
     <ClInclude Include="headers\libs\imgui\imconfig.h" />
     <ClInclude Include="headers\libs\imgui\imgui.h" />
     <ClInclude Include="headers\libs\imgui\imgui_incl.h" />
@@ -360,7 +438,6 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClInclude Include="headers\point_cloud_loader.h" />
     <ClInclude Include="headers\scene_manager.h" />
     <ClInclude Include="headers\libs\stb_image.h" />
-    <ClInclude Include="headers\voxalizer.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="assets\shaders\fragmentShader.glsl" />
@@ -373,15 +450,6 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <None Include="assets\shaders\vertexShader.glsl" />
     <None Include="assets\shaders\sphereVertexShader.glsl" />
     <None Include="assets\shaders\sphereFragmentShader.glsl" />
-    <None Include="assets\shaders\voxelization.frag" />
-    <None Include="assets\shaders\voxelization.geom" />
-    <None Include="assets\shaders\voxelization.vert" />
-    <None Include="assets\shaders\voxel_cube.frag" />
-    <None Include="assets\shaders\voxel_cube.vert" />
-    <None Include="assets\shaders\voxel_visualization.frag" />
-    <None Include="assets\shaders\voxel_visualization.vert" />
-    <None Include="assets\shaders\world_position.frag" />
-    <None Include="assets\shaders\world_position.vert" />
     <None Include="headers\libs\assimp\.editorconfig" />
     <None Include="headers\libs\assimp\color4.inl" />
     <None Include="headers\libs\assimp\config.h.in" />
