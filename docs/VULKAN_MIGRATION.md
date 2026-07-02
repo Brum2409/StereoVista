@@ -1,8 +1,12 @@
-# StereoVista — OpenGL → Vulkan Migration Plan
+# StereoVista — OpenGL → Vulkan Migration Plan (design & rationale)
 
 > Status: **planning**. Branch: `claude/opengl-vulkan-migration-yqc277`.
-> This document is the source of truth for the migration. It is intentionally
-> detailed so the work can be picked up in independent phases.
+> This document holds the **design rationale** (RHI layering, decisions,
+> per-system reuse/rewrite table). For **live progress** — what's done, what's
+> next, and the session log — see **`docs/VULKAN_MIGRATION_STATUS.md`**, which is
+> the file every new session should read first. This plan is intentionally
+> detailed but **not binding**: if a better approach emerges, take it and record
+> the change in the status file.
 
 ---
 
