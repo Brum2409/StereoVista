@@ -105,6 +105,8 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ✎ changed from origi
     a **single pass** with `VK_KHR_multiview` — this is strictly better than the
     OpenGL path, which runs `renderEye()` twice per frame. If the surface caps
     stereo out, fall back to two swapchains / side-by-side.
+- **Spikes are throwaway/reference** — prove the approach, then fold the *lessons*
+  (not necessarily the code) into Phase 1. Don't over-build them.
 - **Exit:** both spikes pass (or a documented fallback chosen); SDK builds.
 - **Read:** `src/Engine/ComputePointCloudRenderer.cpp` (int64 check + shader ext
   lines), `src/main.cpp:3485-3535` (GLFW_STEREO creation + mono fallback),
@@ -144,7 +146,13 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ✎ changed from origi
   GLSL. `renderEye()` (`main.cpp:5335`, a ~600-line monolith) becomes a
   **pass-based renderer** (shadow pass → forward pass → skybox), not a straight
   port.
-- **Exit:** lit + shadow-mapped models on screen, mono.
+- **⚠ Design for multiview NOW (so Phase 7 stereo is additive, not a rewrite):**
+  make the color/depth target a **layered** image and the camera UBO a
+  **per-view array** indexed by `gl_ViewIndex` (`VK_KHR_multiview`). Mono = 1
+  view/layer today; stereo just enables the 2nd view + a stereo swapchain later.
+  Don't bake a single view/projection into shaders or the pass. Also set
+  `GLM_FORCE_DEPTH_ZERO_TO_ONE` + fix inverted-Y on all projections here.
+- **Exit:** lit + shadow-mapped models on screen, mono (1-view).
 - **Read:** `src/Loaders/ModelLoader.cpp`, `headers/Loaders/ModelLoader.h`,
   `src/main.cpp:5335-5950` (renderEye body), `assets/shaders/core/*`.
 
@@ -288,6 +296,12 @@ Re-check after each phase; capture before/after screenshots:
 ---
 
 ## 6. Session log (append newest at top; keep entries short)
+- **2026-07-02 — order refinement (final planning pass).** Kept the phase order
+  (it's dependency-sound) but made the renderer **multiview-aware from Phase 3**
+  (layered target + per-view camera UBO array via `gl_ViewIndex`) so Phase 7
+  stereo is additive, not a rewrite; folded the GLM clip-space fix into Phase 3;
+  noted Phase 0 spikes are throwaway. Planning is considered complete — next
+  session starts Phase 0 implementation.
 - **2026-07-02 — dependency disposition.** Added an explicit GL-specific
   library swap/remove/keep matrix (new §2c here + `MIGRATION.md §2.12`). Verified
   against the .vcxproj: `opengl32.lib` linked (remove), GLAD vendored (remove →
