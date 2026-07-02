@@ -25,6 +25,19 @@
   never touch raw Vulkan, keeping the door open for later backends and for the
   advanced features we defer.
 
+### Guiding principles (apply to every phase)
+- **Rewrite better, don't translate.** This is a chance to modernize. Produce
+  **deeply optimized, idiomatic, native Vulkan** — single‑pass multiview stereo,
+  bindless/descriptor‑indexed materials, dynamic rendering, timeline semaphores,
+  proper sync2 barriers, VMA suballocation, GPU‑driven / indirect draws where
+  they help. The OpenGL code is the reference for **behaviour**, not for **how**.
+  **No stale copy‑paste.** A large rewrite or a change of planned direction is
+  acceptable — expected, even — when it yields a better Vulkan design.
+- **When unsure, dig deeper — don't guess.** Read more of the source, and use the
+  **Internet** (Khronos Vulkan spec/registry, Vulkan‑Samples, vendor docs) to
+  confirm API/extension behaviour and best practice. If a decision is the user's
+  to make (scope/priorities/trade‑offs), **ask the user** a concrete question.
+
 ### Non‑Goals (deferred — will be re‑implemented natively in Vulkan later)
 These are **removed from the first Vulkan build** and re‑added afterwards using
 native Vulkan capabilities (compute / ray‑tracing pipelines):
@@ -148,7 +161,7 @@ logic.
 | 4 | Descriptors | **Descriptor indexing / partially‑bound** (bindless‑lite) for textures; per‑frame descriptor pools | Scales for many models/textures; simplifies material binding |
 | 5 | 64‑bit point‑cloud atomics | `VK_KHR_shader_atomic_int64` + `shaderBufferInt64Atomics` (core 1.2), SPIR‑V `Int64Atomics`, GLSL `GL_EXT_shader_atomic_int64` | Direct 1:1 map of the existing rasterizer; verify device support at startup, feature‑gate |
 | 6 | Frames in flight | **2**, timeline semaphores, per‑frame command pool + descriptor pool | Standard double‑buffering |
-| 7 | Quad‑buffer stereo | **Hardest problem.** Use `VK_KHR_display` stereo present *or* NVIDIA `VK_KHR_swapchain` `imageArrayLayers=2` where supported; fall back to two swapchains / side‑by‑side. Abstract behind a `StereoTarget` so callers stay unaware | Desktop quad‑buffer stereo is vendor‑specific; must be isolated early as a spike |
+| 7 | Quad‑buffer stereo | **Native in Vulkan.** Create the swapchain with `imageArrayLayers = 2` (when `VkSurfaceCapabilitiesKHR.maxImageArrayLayers >= 2`); the presentation engine maps layer 0/1 → left/right eye. Render **both eyes in a single pass** with `VK_KHR_multiview`. Abstract behind a `StereoTarget`; fall back to two swapchains / side‑by‑side only if a surface caps stereo out | Cleaner *and faster* than GL (no `GL_BACK_LEFT/RIGHT`, no twice‑per‑frame `renderEye`). Just validate surface caps in a small spike |
 | 8 | XR | OpenXR with `XR_USE_GRAPHICS_API_VULKAN`, Vulkan swapchain images as `VkImage` | Required; rework `XRSession` |
 | 9 | ImGui | `imgui_impl_vulkan` (+ existing glfw backend) | Official, supports multi‑viewport |
 | 10 | Windowing | Keep **GLFW** (no GL context: `GLFW_NO_API`), create `VkSurfaceKHR` | Minimal disruption to input/callbacks |
@@ -223,8 +236,10 @@ ordering front‑loads the risky spikes (bootstrap, stereo, int64 atomics).
 - **Spike A:** headless device‑capability probe — confirm on the target GPU:
   `shaderBufferInt64Atomics`, descriptor indexing, dynamic rendering, timeline
   semaphores, and the **stereo present** path. Record results here.
-- **Spike B:** quad‑buffer stereo present proof‑of‑concept (clear left eye red /
-  right eye blue on the stereo display). This de‑risks the single scariest item.
+- **Spike B:** quad‑buffer stereo validation — confirm the surface reports
+  `maxImageArrayLayers >= 2`, create a stereo swapchain (`imageArrayLayers = 2`)
+  and clear left eye red / right eye blue on the stereo display. Native path, so
+  this just confirms the target GPU/driver caps; plan single‑pass multiview.
 - Deliverable: `docs/VULKAN_MIGRATION.md` (this file) + capability report.
 
 ### Phase 1 — Core bootstrap + new App skeleton
@@ -319,8 +334,9 @@ ordering front‑loads the risky spikes (bootstrap, stereo, int64 atomics).
 ---
 
 ## 7. Risks & Mitigations
-- **Quad‑buffer stereo in Vulkan is vendor‑specific.** → Spike B in Phase 0;
-  isolate behind `StereoTarget`; keep side‑by‑side fallback.
+- **Quad‑buffer stereo** — supported natively (stereo swapchain +
+  `VK_KHR_multiview`), so low risk. → Spike B just validates surface caps on the
+  target GPU; isolate behind `StereoTarget`; keep side‑by‑side fallback.
 - **int64 atomics availability.** → Spike A gate; document fallback (e.g. 32‑bit
   depth + separate index, or split‑atomic) before committing the rewrite.
 - **Scope creep from GI systems.** → Explicitly deferred; feature‑gate the

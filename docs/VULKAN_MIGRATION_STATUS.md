@@ -11,10 +11,24 @@
 > 2. **Do NOT trust this file as ground truth about the code.** Before you touch
 >    a system, **read the actual source yourself** (files change; this file lags).
 >    Use it only for orientation and history.
-> 3. **Update this file when you finish work.** Move tasks between sections, note
+> 3. **This is a rewrite, not a translation. Make it BETTER — deeply optimized,
+>    idiomatic, native Vulkan.** Do **not** stale-copy-paste the OpenGL logic
+>    into Vulkan. If something can be done better the Vulkan way (single-pass
+>    multiview stereo, GPU-driven rendering, bindless descriptors, timeline
+>    semaphores, async compute, `vkCmdDrawIndirect`, dynamic rendering, proper
+>    barriers, VMA suballocation, etc.), **do it that way** — even if it means a
+>    large rewrite or changing the planned direction. The OpenGL code is the
+>    reference for *behaviour*, not for *how*.
+> 4. **If you are unsure about anything — Vulkan APIs, extension support, the best
+>    pattern, how the existing system behaves — DIG DEEPER: read more source, and
+>    use the Internet (official Vulkan spec/registry, Khronos samples, vendor
+>    docs).** Do not guess. If it is a product/architecture decision only the user
+>    can make (scope, trade-offs, priorities), **ask the user** with a concrete
+>    question rather than assuming.
+> 5. **Update this file when you finish work.** Move tasks between sections, note
 >    what you actually did, what changed vs. the plan, and what's next. Append a
 >    dated entry to the **Session Log**.
-> 4. The deep design rationale (RHI layering, decisions, per-system reuse/rewrite
+> 6. The deep design rationale (RHI layering, decisions, per-system reuse/rewrite
 >    table) lives in **`docs/VULKAN_MIGRATION.md`** — read it once for context.
 >
 > **Branch:** `claude/opengl-vulkan-migration-yqc277` — this *is* the Vulkan
@@ -69,13 +83,20 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ✎ changed from origi
     `ComputePointCloudRenderer::init` which already checks the GL equivalents),
     descriptor indexing, dynamic rendering, timeline semaphores, and the stereo
     present path. Write results into §4 below.
-  - **Spike B (stereo):** clear left eye red / right eye blue on the real
-    quad-buffer stereo display via Vulkan. This is the single biggest unknown —
-    quad-buffer stereo is vendor-specific in Vulkan (no `GL_BACK_LEFT/RIGHT`).
-- **Exit:** both spikes pass or a documented fallback is chosen; SDK builds.
+  - **Spike B (stereo — validation, not a blocker):** confirm the target GPU's
+    Vulkan surface reports `maxImageArrayLayers >= 2`, then clear left eye red /
+    right eye blue on the real quad-buffer stereo display. Vulkan supports
+    quad-buffered stereo **natively**: create the swapchain with
+    `imageArrayLayers = 2` and the presentation engine maps layer 0/1 to
+    left/right eyes (no `GL_BACK_LEFT/RIGHT` hacks). Plan to render both eyes in
+    a **single pass** with `VK_KHR_multiview` — this is strictly better than the
+    OpenGL path, which runs `renderEye()` twice per frame. If the surface caps
+    stereo out, fall back to two swapchains / side-by-side.
+- **Exit:** both spikes pass (or a documented fallback chosen); SDK builds.
 - **Read:** `src/Engine/ComputePointCloudRenderer.cpp` (int64 check + shader ext
   lines), `src/main.cpp:3485-3535` (GLFW_STEREO creation + mono fallback),
-  `docs/VULKAN_MIGRATION.md §3`.
+  `docs/VULKAN_MIGRATION.md §3`. Vulkan stereo refs: spec `VkSwapchainCreateInfoKHR`
+  (`imageArrayLayers`) + `VK_KHR_multiview`.
 
 ### Phase 1 — Core bootstrap + `Application`  ☐
 - **Goal:** a window with Vulkan + ImGui drawing, and the new app skeleton.
@@ -157,11 +178,14 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ✎ changed from origi
 
 ### Phase 7 — Stereo + XR  ☐
 - **Goal:** quad-buffer stereo display and OpenXR HMD both render.
-- **How:** implement `StereoTarget` (from Spike B) for quad-buffer + mono; the
-  per-view loop replaces `renderEye`'s twice-per-frame stereo calls (keep the
-  `g_sharedPassesDone` "view-independent passes once per frame" idea). Rework
+- **How:** implement `StereoTarget` (native Vulkan stereo swapchain,
+  `imageArrayLayers = 2`, from Spike B) plus mono. **Render both eyes in a single
+  pass with `VK_KHR_multiview`** (view index selects per-eye projection/view via
+  a UBO array) instead of porting `renderEye`'s twice-per-frame calls — the
+  "view-independent passes once per frame" idea (`g_sharedPassesDone`) becomes
+  unnecessary for the main pass since both views are drawn together. Rework
   `XRSession` to `XR_USE_GRAPHICS_API_VULKAN` (Vulkan swapchain `VkImage`s
-  instead of GL textures).
+  instead of GL textures); multiview also fits HMD stereo cleanly.
 - **Exit:** stereo display + HMD both correct.
 - **Read:** `src/Engine/XRSession.cpp`, `headers/Engine/XRSession.h`,
   `src/main.cpp:4680-5180` (eye-dispatch loop).
@@ -196,7 +220,9 @@ index buffer) **before** starting Phase 5.
 - Memory: **VMA**. — _confirm_
 - Shaders: GLSL → SPIR-V via **shaderc**, runtime + offline. — _confirm_
 - int64 atomics available on target GPU? **UNKNOWN — Spike A**
-- Quad-buffer stereo present path in Vulkan? **UNKNOWN — Spike B**
+- Quad-buffer stereo: **native in Vulkan** — swapchain `imageArrayLayers = 2`
+  (needs `maxImageArrayLayers >= 2`); render both eyes single-pass via
+  `VK_KHR_multiview`. Confirm surface caps on the target GPU in **Spike B**.
 - _(add device/driver names, extension support, benchmark notes here)_
 
 ---
@@ -216,6 +242,13 @@ Re-check after each phase; capture before/after screenshots:
 ---
 
 ## 6. Session log (append newest at top; keep entries short)
+- **2026-07-02 — planning (feedback pass).** Corrected the stereo approach:
+  Vulkan supports quad-buffered stereo **natively** (swapchain
+  `imageArrayLayers = 2` + single-pass `VK_KHR_multiview`) — better than GL's
+  twice-per-frame `renderEye`; downgraded Spike B from "biggest unknown" to a
+  caps validation (confirmed via Vulkan spec). Added the core philosophy to both
+  docs: **native/optimized rewrite, no stale copy-paste, dig deeper / use the
+  Internet when unsure, ask the user for product decisions.**
 - **2026-07-02 — planning.** Deep-read the OpenGL codebase; authored
   `docs/VULKAN_MIGRATION.md` (design/rationale) and this living status file.
   Confirmed: `renderEye()` (main.cpp:5335) is a ~600-line monolith to decompose
