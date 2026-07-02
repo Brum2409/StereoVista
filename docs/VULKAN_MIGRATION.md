@@ -258,17 +258,20 @@ into owning systems.
 Each phase should compile, run, and be visually verifiable before the next. The
 ordering front‑loads the risky spikes (bootstrap, stereo, int64 atomics).
 
-### Phase 0 — Setup & spikes (foundation)
-- New branch (this one). Add Vulkan SDK, **VMA**, **shaderc/glslang** to
-  `dependencies/`; update `.vcxproj`/`.filters`; add a SPIR‑V build step.
-- **Spike A:** headless device‑capability probe — confirm on the target GPU:
-  `shaderBufferInt64Atomics`, descriptor indexing, dynamic rendering, timeline
-  semaphores, and the **stereo present** path. Record results here.
-- **Spike B:** quad‑buffer stereo validation — confirm the surface reports
-  `maxImageArrayLayers >= 2`, create a stereo swapchain (`imageArrayLayers = 2`)
-  and clear left eye red / right eye blue on the stereo display. Native path, so
-  this just confirms the target GPU/driver caps; plan single‑pass multiview.
-- Deliverable: `docs/VULKAN_MIGRATION.md` (this file) + capability report.
+### Phase 0 — Toolchain & build setup (no spikes)
+- **Start the real migration directly — no throwaway spikes.** The two risks the
+  spikes targeted are resolved by the Vulkan spec and become normal Phase‑1 code:
+  `shaderBufferInt64Atomics` is **guaranteed on any Vulkan 1.2+ device** (core,
+  non‑optional — only the *shared* int64 variant is optional), and quad‑buffered
+  stereo (`imageArrayLayers = 2`) + `VK_KHR_multiview` (core since 1.1) are
+  exercised for real when the swapchain (Phase 1) and stereo present (Phase 7)
+  are built. Target **Vulkan 1.3**; detect + enable these features in `Device`
+  init and fail loudly if absent.
+- Self‑integrate (per §7b) **Vulkan SDK**, **VMA**, **shaderc/glslang**, **volk**
+  into `StereoVista.vcxproj`/`.filters`; add a GLSL→SPIR‑V build step; validation
+  layers in Debug. Do the §2.12 dependency surgery (remove GLAD/`opengl32.lib`/
+  ImGui‑GL3; add volk; define `GLM_FORCE_DEPTH_ZERO_TO_ONE`).
+- Deliverable: CI green with the Vulkan toolchain linked and the GL loader gone.
 
 ### Phase 1 — Core bootstrap + new App skeleton
 - `Platform::Window` with `GLFW_NO_API` + `VkSurfaceKHR`; keep input callbacks.
@@ -363,10 +366,12 @@ ordering front‑loads the risky spikes (bootstrap, stereo, int64 atomics).
 
 ## 7. Risks & Mitigations
 - **Quad‑buffer stereo** — supported natively (stereo swapchain +
-  `VK_KHR_multiview`), so low risk. → Spike B just validates surface caps on the
-  target GPU; isolate behind `StereoTarget`; keep side‑by‑side fallback.
-- **int64 atomics availability.** → Spike A gate; document fallback (e.g. 32‑bit
-  depth + separate index, or split‑atomic) before committing the rewrite.
+  `VK_KHR_multiview`), so low risk. → Isolate behind `StereoTarget`; keep
+  side‑by‑side fallback if a surface caps stereo out.
+- **int64 atomics availability** — **guaranteed at Vulkan 1.2+** (`shaderBufferInt64Atomics`
+  is core), and the current GL app already uses GL int64 atomics on this hardware,
+  so effectively a non‑risk. → Enable + assert in `Device` init; only if a future
+  target GPU lacks it, document a fallback (32‑bit depth + separate index) before Phase 5.
 - **Scope creep from GI systems.** → Explicitly deferred; feature‑gate the
   lighting‑mode UI so only Shadow Mapping is selectable in the first Vulkan build.
 - **Two huge files (`main.cpp`, `GUI.cpp`).** → Decompose incrementally, not in
@@ -416,9 +421,10 @@ user:**
 
 ## 9. Immediate next steps
 1. Land this plan (done).
-2. Phase 0 Spike A (capability probe) + Spike B (stereo present PoC) — these two
-   decide items #5 and #7 above and unblock everything else.
-3. Stand up the `Application` + RHI `Device`/`Swapchain` + ImGui‑Vulkan
-   hello‑triangle (Phase 1).
+2. **Phase 0** — wire the Vulkan toolchain (SDK/VMA/shaderc/volk) into the
+   `.vcxproj`, do the §2.12 dependency surgery, set `GLM_FORCE_DEPTH_ZERO_TO_ONE`,
+   add the SPIR‑V build step; get CI green. **No spikes.**
+3. **Phase 1** — stand up the `Application` + RHI `Device` (Vulkan 1.3, feature
+   enablement) + `Swapchain` + ImGui‑Vulkan hello‑triangle.
 </content>
 </invoke>

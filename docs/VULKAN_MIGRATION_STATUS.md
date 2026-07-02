@@ -64,7 +64,7 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ✎ changed from origi
 
 ## 1. Phase board (suggested order — reorder if you have a better idea)
 
-- ☐ **Phase 0 — Setup & spikes** (de-risk the two scary unknowns)
+- ☐ **Phase 0 — Toolchain & build setup** (Vulkan SDK/VMA/shaderc/volk in, GL loader out; no spikes)
 - ☐ **Phase 1 — Core Vulkan bootstrap + `Application` skeleton** (hello triangle + ImGui)
 - ☐ **Phase 2 — RHI hardening** (buffers/images/pipelines/descriptors, HDR target + tonemap)
 - ☐ **Phase 3 — Mesh forward PBR + shadow mapping** (Shadow-Mapping lighting only)
@@ -85,38 +85,38 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ✎ changed from origi
 
 ## 2. Per-phase detail (goal · how it could be done · exit · what to read)
 
-### Phase 0 — Setup & spikes  ☐
-- **Goal:** add tooling and settle the two decisions that gate everything.
-- **How:**
-  - Add to `dependencies/`: **Vulkan SDK**, **VMA** (`vk_mem_alloc.h`),
-    **shaderc/glslang**. Wire into `StereoVista.vcxproj`(+`.filters`), add a
-    SPIR-V build step, enable validation layers in Debug.
-  - **Spike A (capabilities):** probe the target GPU for
-    `shaderBufferInt64Atomics` (point-cloud rasterizer depends on it — see
-    `ComputePointCloudRenderer::init` which already checks the GL equivalents),
-    descriptor indexing, dynamic rendering, timeline semaphores, and the stereo
-    present path. Write results into §4 below.
-  - **Spike B (stereo — validation, not a blocker):** confirm the target GPU's
-    Vulkan surface reports `maxImageArrayLayers >= 2`, then clear left eye red /
-    right eye blue on the real quad-buffer stereo display. Vulkan supports
-    quad-buffered stereo **natively**: create the swapchain with
-    `imageArrayLayers = 2` and the presentation engine maps layer 0/1 to
-    left/right eyes (no `GL_BACK_LEFT/RIGHT` hacks). Plan to render both eyes in
-    a **single pass** with `VK_KHR_multiview` — this is strictly better than the
-    OpenGL path, which runs `renderEye()` twice per frame. If the surface caps
-    stereo out, fall back to two swapchains / side-by-side.
-- **Spikes are throwaway/reference** — prove the approach, then fold the *lessons*
-  (not necessarily the code) into Phase 1. Don't over-build them.
-- **Exit:** both spikes pass (or a documented fallback chosen); SDK builds.
-- **Read:** `src/Engine/ComputePointCloudRenderer.cpp` (int64 check + shader ext
-  lines), `src/main.cpp:3485-3535` (GLFW_STEREO creation + mono fallback),
-  `docs/VULKAN_MIGRATION.md §3`. Vulkan stereo refs: spec `VkSwapchainCreateInfoKHR`
-  (`imageArrayLayers`) + `VK_KHR_multiview`.
+### Phase 0 — Toolchain & build setup  ☐
+- **No throwaway spikes.** Go straight into the real migration. The old plan had
+  two spikes; both are unnecessary because the risks they were meant to de-risk
+  are resolved **by the Vulkan spec** and become normal code in Phase 1:
+  - `shaderBufferInt64Atomics` (the point-cloud rasterizer's hard dependency) is
+    **guaranteed on any Vulkan 1.2+ device** — it's a core feature, not optional
+    (only the *shared*-memory int64 variant is optional). Target **Vulkan 1.3**
+    and it's there. Just enable + assert it in `Device` init.
+  - Quad-buffered stereo is native (`imageArrayLayers = 2`) and `VK_KHR_multiview`
+    is core since Vulkan 1.1 — validated for real when the swapchain (Phase 1) and
+    stereo present (Phase 7) are built, not in a throwaway.
+- **Goal:** the project builds green on CI with the full Vulkan toolchain wired in
+  and the OpenGL-specific deps removed — ready for real Vulkan code.
+- **How:** self-integrate (per §golden-rule-5 / `MIGRATION.md §7b`) **Vulkan SDK**,
+  **VMA**, **shaderc/glslang**, **volk** into `StereoVista.vcxproj`(+`.filters`);
+  add a GLSL→SPIR-V build step; validation layers in Debug. Do the §2c dependency
+  surgery: **remove GLAD + `opengl32.lib` + ImGui GL3 backend**, add volk;
+  **define `GLM_FORCE_DEPTH_ZERO_TO_ONE`** project-wide. (Old GL render code can
+  stay compiling for now; it stops running once Phase 1 creates the no-GL window.)
+- **Exit:** CI green with the Vulkan toolchain linked and GL loader removed.
+- **Read:** `StereoVista/StereoVista.vcxproj` (include/lib dirs, deps, post-build
+  copy), `docs/VULKAN_MIGRATION.md §2.12 + §7b`, `headers/libs/imgui/backends/*`.
 
 ### Phase 1 — Core bootstrap + `Application`  ☐
 - **Goal:** a window with Vulkan + ImGui drawing, and the new app skeleton.
 - **How:** `Platform::Window` on GLFW with `GLFW_NO_API` + `VkSurfaceKHR` (keep
-  existing input callbacks). RHI `Device`+`Swapchain`, 2 frames-in-flight,
+  existing input callbacks). RHI `Device` (instance/physical/logical device,
+  queues, VMA, volk) targeting **Vulkan 1.3** with **feature detection &
+  enablement** — require and enable `shaderBufferInt64Atomics` (guaranteed at
+  1.2+), multiview, descriptor indexing, dynamic rendering, timeline semaphores;
+  **fail loudly with a clear message** if any required feature is absent (this
+  replaces the old capability spike). `Swapchain`, 2 frames-in-flight,
   command/descriptor pools. `Application` class owns the loop
   (poll→update→render→present). Hello-triangle through RHI + `ShaderCompiler`.
   Swap ImGui backend to **`imgui_impl_vulkan`** (keep `imgui_impl_glfw`);
@@ -200,7 +200,7 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ✎ changed from origi
 ### Phase 7 — Stereo + XR  ☐
 - **Goal:** quad-buffer stereo display and OpenXR HMD both render.
 - **How:** implement `StereoTarget` (native Vulkan stereo swapchain,
-  `imageArrayLayers = 2`, from Spike B) plus mono. **Render both eyes in a single
+  `imageArrayLayers = 2`) plus mono. **Render both eyes in a single
   pass with `VK_KHR_multiview`** (view index selects per-eye projection/view via
   a UBO array) instead of porting `renderEye`'s twice-per-frame calls — the
   "view-independent passes once per frame" idea (`g_sharedPassesDone`) becomes
@@ -243,14 +243,17 @@ keeps one that needs **reconfiguration**. Full matrix + rationale in
   run old-GL and new-Vulkan paths on the same window.
 
 ## 3. Next up (start here)
-1. **Phase 0 / Spike A** — Vulkan device capability probe (esp. int64 atomics +
-   stereo present). Record findings in §4.
-2. **Phase 0 / Spike B** — quad-buffer stereo present proof-of-concept.
-3. Then **Phase 1** bootstrap.
+1. **Phase 0** — wire the Vulkan toolchain (SDK/VMA/shaderc/volk) into the
+   `.vcxproj`, remove GLAD/`opengl32.lib`/ImGui-GL3, set `GLM_FORCE_DEPTH_ZERO_TO_ONE`,
+   add the SPIR-V build step; get CI green.
+2. **Phase 1** — real bootstrap: `Application` + RHI `Device` (Vulkan 1.3, feature
+   enablement incl. int64 buffer atomics) + `Swapchain` + ImGui-Vulkan hello-triangle.
+3. Continue into **Phase 2+** per the board.
 
-If Spike A shows the target GPU lacks `shaderBufferInt64Atomics`, decide and
-document a fallback for the point-cloud framebuffer (e.g. 32-bit depth + separate
-index buffer) **before** starting Phase 5.
+No spikes — start the real migration directly. `shaderBufferInt64Atomics` is
+guaranteed at Vulkan 1.2+ (and the current GL app already uses GL int64 atomics on
+this hardware), so no point-cloud-framebuffer fallback is expected; if a specific
+target GPU ever lacks it, decide a fallback before Phase 5.
 
 ---
 
@@ -258,10 +261,11 @@ index buffer) **before** starting Phase 5.
 - Vulkan version: **1.3** (proposed). — _confirm_
 - Memory: **VMA**. — _confirm_
 - Shaders: GLSL → SPIR-V via **shaderc**, runtime + offline. — _confirm_
-- int64 atomics available on target GPU? **UNKNOWN — Spike A**
+- int64 buffer atomics: **guaranteed by spec at Vulkan 1.2+** (core, non-optional);
+  target Vulkan 1.3 and enable in `Device` init. No probe needed.
 - Quad-buffer stereo: **native in Vulkan** — swapchain `imageArrayLayers = 2`
   (needs `maxImageArrayLayers >= 2`); render both eyes single-pass via
-  `VK_KHR_multiview`. Confirm surface caps on the target GPU in **Spike B**.
+  `VK_KHR_multiview` (core since 1.1). Exercised for real in Phase 1/7.
 - _(add device/driver names, extension support, benchmark notes here)_
 
 ---
@@ -296,6 +300,13 @@ Re-check after each phase; capture before/after screenshots:
 ---
 
 ## 6. Session log (append newest at top; keep entries short)
+- **2026-07-02 — dropped spikes; start real migration.** Removed the throwaway
+  Phase 0 spikes. Researched: `shaderBufferInt64Atomics` is **guaranteed at Vulkan
+  1.2+** (core, not optional) and `VK_KHR_multiview` is core since 1.1, so the
+  point-cloud-atomics and stereo risks are resolved by spec — they become normal
+  feature-enablement in the real `Device` init (Phase 1, fail-loud if absent).
+  Phase 0 is now pure toolchain/build setup (Vulkan SDK/VMA/shaderc/volk in, GL
+  loader out, GLM depth flag). Phase 1 does real bootstrap. No PoC code.
 - **2026-07-02 — order refinement (final planning pass).** Kept the phase order
   (it's dependency-sound) but made the renderer **multiview-aware from Phase 3**
   (layered target + per-view camera UBO array via `gl_ViewIndex`) so Phase 7
