@@ -411,7 +411,20 @@ spec-status correction — optional per spec, universal on modern NVIDIA/AMD.
 CI only compiles; the user runs each milestone on the stereo GPU and reports back.
 At each phase boundary: get CI green, then give the user concrete run/verify steps
 and wait for their result before marking the phase done. Capture before/after
-screenshots where useful:
+screenshots where useful.
+
+**Phase 1 (pending now)** — build `Release|x64` (or `Debug|x64` for validation
+layers) from `StereoVista.sln`, run `bin\x64\<config>\StereoVista.exe`:
+- [ ] Window "StereoVista" opens; console shows `[vulkan] using GPU: …` and
+      `surface maxImageArrayLayers = …` (2 = stereo-present capable)
+- [ ] RGB triangle sways on the dark viewport and never disappears mid-sway
+      (vanishing = broken CLOCKWISE front-face convention)
+- [ ] Debug panel shows GPU/driver/Vulkan version/swapchain/stereo capability
+- [ ] Panel docks, undocks, and drags OUT of the main window (own OS window)
+- [ ] Resize/maximize/minimize/restore work; exit is clean
+- [ ] Debug build: no `[vulkan][error]` validation messages in the console
+
+Full app-level checklist (later phases):
 - [ ] App launches, ImGui docks/undocks/drags-out
 - [ ] `office.scene` models render lit + shadow-mapped
 - [ ] A reference LAS/LAZ cloud renders (standard **and** HQS), streams in
@@ -425,6 +438,23 @@ screenshots where useful:
 ---
 
 ## 6. Session log (append newest at top; keep entries short)
+- **2026-07-02 — Phase 1 static audit (same session, follow-up).** Re-verified
+  the implementation without a GPU: CI green on Debug+Release x64 for the full
+  head (both branches at the same commit); zero GL-context calls left in
+  compiled code; vcxproj ⇄ filters item lists match exactly; reverse-Z +
+  Y-flip projections validated numerically (near→1, far→0, view +y → NDC −y;
+  infinite-far variant correct); `imgui_impl_vulkan` 1.91.1 confirmed to run
+  secondary (dragged-out) viewports through the dynamic-rendering path; the
+  ImGui GLFW backend chains input callbacks and does not touch our
+  framebuffer-size callback; WSI semaphore lifecycle re-checked (per-slot
+  acquire semaphores gated by the frame timeline, per-image present
+  semaphores, early-out on OUT_OF_DATE without slot advance). Known
+  deliberate gaps: app-level input callbacks (key/mouse/scroll/drop) return
+  with the systems that consume them (Phase 6); fonts/ is not copied to the
+  output dir (matches the old app); rendering pauses while the main window is
+  minimized (matches the upstream ImGui Vulkan example). Added a migration
+  banner to CLAUDE.md so future sessions aren't misled by the GL-era
+  description. **Only remaining Phase 1 exit item: the user's visual run.**
 - **2026-07-02 — Phase 0 done + Phase 1 implemented (first coding session).**
   Vendored the full Vulkan toolchain (Vulkan-Headers/volk 1.4.350, VMA 3.4.0,
   shaderc_shared + glslc — §4) and made the build hermetic (CI SDK install
