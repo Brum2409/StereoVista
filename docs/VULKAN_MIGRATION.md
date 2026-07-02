@@ -305,8 +305,8 @@ ordering front‑loads the risky spikes (bootstrap, stereo, int64 atomics).
 
 ### Phase 5 — Compute point‑cloud pipeline (largest rewrite)
 - Port the Schütz rasterizer to a **Vulkan compute pipeline**:
-  - `uint64_t` framebuffer SSBO via `VK_KHR_shader_atomic_int64` (gate on Spike A;
-    provide a documented fallback if a target GPU lacks it).
+  - `uint64_t` framebuffer SSBO via `shaderBufferInt64Atomics` (enabled in
+    `Device` init; guaranteed at Vulkan 1.2+).
   - Port `pointcloud_rasterize.comp` (explicit `set/binding`, push constants for
     MVP/imageSize/cloudID/splat), the **HQS** depth/colour/resolve passes, the
     per‑cloud colour‑lookup pass, and the fullscreen **resolve** writing depth.
@@ -328,8 +328,9 @@ ordering front‑loads the risky spikes (bootstrap, stereo, int64 atomics).
 - Exit criterion: cursors + all tools + gizmo behave as today.
 
 ### Phase 7 — Stereo & XR
-- Implement `StereoTarget` for quad‑buffer stereo (from Spike B) and mono; make
-  `renderEye`'s successor a per‑view loop over the stereo target.
+- Implement `StereoTarget` for native quad‑buffer stereo (`imageArrayLayers = 2`)
+  and mono; drive both eyes single‑pass via `VK_KHR_multiview` (the renderer is
+  already multiview‑aware from Phase 3).
 - Rework `XRSession` to `XR_USE_GRAPHICS_API_VULKAN` (Vulkan swapchain images).
 - Exit criterion: quad‑buffer stereo display + OpenXR HMD both render.
 

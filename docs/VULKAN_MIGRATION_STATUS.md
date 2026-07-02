@@ -172,8 +172,9 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ✎ changed from origi
 - **Goal:** dense LAS/LAZ clouds render (standard + HQS) with clipping,
   composited against mesh depth.
 - **How:** port the Schütz software rasterizer to Vulkan compute:
-  `uint64_t` framebuffer SSBO + `atomicMin` via `VK_KHR_shader_atomic_int64`
-  (gate on Spike A); port `pointcloud_rasterize.comp`, HQS depth/colour/resolve,
+  `uint64_t` framebuffer SSBO + `atomicMin` via `shaderBufferInt64Atomics`
+  (enabled in `Device` init; guaranteed at 1.2+); port `pointcloud_rasterize.comp`,
+  HQS depth/colour/resolve,
   `pointcloud_color_lookup.comp`, and the fullscreen resolve writing depth —
   adding explicit `layout(set,binding)` + push constants. Replace
   `glMemoryBarrier(GL_ALL_BARRIER_BITS)` with sync2 barriers and the SSBO clear
