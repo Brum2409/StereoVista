@@ -349,6 +349,32 @@ ordering front‑loads the risky spikes (bootstrap, stereo, int64 atomics).
 
 ---
 
+## 7b. Using & integrating third‑party libraries
+Prefer a well‑maintained library over reinventing it whenever it **greatly
+simplifies or optimizes** the work. Strong candidates for this migration:
+- **VMA** (`vk_mem_alloc.h`) — memory allocation. *(planned)*
+- **shaderc** / **glslang** — GLSL→SPIR‑V. *(planned)*
+- **volk** — dynamic Vulkan function loader (fast, avoids linking the static
+  loader for everything). *(consider)*
+- **vk‑bootstrap** — instance/physical‑device/device/swapchain boilerplate.
+  *(consider — but keep the RHI thin; don't leak it above the RHI)*
+- **SPIRV‑Reflect** — reflect descriptor/push‑constant layouts from SPIR‑V so
+  pipeline layouts aren't hand‑maintained. *(consider)*
+
+**Integration is the agent's job — do it completely, no manual steps left for the
+user:**
+1. Download **all** required files (headers, `.lib`, `.dll`, LICENSE) into the
+   repo under the existing vendoring layout — third‑party headers in
+   `headers/libs/<name>/`, prebuilt binaries in `dependencies/include|lib|bin`.
+2. Wire into `StereoVista.vcxproj`(+`.filters`): additional include dirs, library
+   dirs, additional dependencies (per‑config Debug/Release), and a **post‑build
+   copy** for any runtime `.dll` (mirror the existing `assimp-vc143-mt.dll` /
+   `LASzip64.dll` copy steps).
+3. A fresh `git clone` must build **green on CI** with no external install beyond
+   the CI‑provided Vulkan SDK. Prefer header‑only libs where practical.
+4. Keep each library's LICENSE; avoid copyleft (GPL/LGPL) that would encumber the
+   app. Record every added library (name, version, why) in the status file §4.
+
 ## 8. Tooling / dependencies to add
 - Vulkan SDK (headers, `vulkan-1.lib`, validation layers).
 - **VMA** (`vk_mem_alloc.h`) — vendored in `headers/libs/`.

@@ -25,10 +25,23 @@
 >    docs).** Do not guess. If it is a product/architecture decision only the user
 >    can make (scope, trade-offs, priorities), **ask the user** with a concrete
 >    question rather than assuming.
-> 5. **Update this file when you finish work.** Move tasks between sections, note
+> 5. **Prefer good libraries over reinventing.** If a well-maintained library
+>    greatly simplifies or optimizes the work (e.g. **VMA** for allocation,
+>    **shaderc/glslang** for GLSL→SPIR-V, **volk** for a Vulkan loader,
+>    **vk-bootstrap** for instance/device setup, **SPIRV-Reflect** for descriptor
+>    reflection), **use it** instead of hand-rolling. When you do, **fully
+>    integrate it yourself**: download *every* required file (headers, `.lib`,
+>    `.dll`, license) into the repo under the existing vendoring layout
+>    (`headers/libs/…`, `dependencies/include|lib|bin`), wire it into
+>    `StereoVista.vcxproj`(+`.filters`) — include dirs, lib dirs, additional
+>    dependencies, and a post-build copy for any runtime `.dll` (mirror how
+>    `assimp-vc143-mt.dll` / `LASzip64.dll` are handled) — and confirm it builds
+>    **green on CI**. No "install this SDK manually" hand-waving: the checkout must
+>    build as-is. Keep licenses; avoid GPL. Note each added library in §4.
+> 6. **Update this file when you finish work.** Move tasks between sections, note
 >    what you actually did, what changed vs. the plan, and what's next. Append a
 >    dated entry to the **Session Log**.
-> 6. The deep design rationale (RHI layering, decisions, per-system reuse/rewrite
+> 7. The deep design rationale (RHI layering, decisions, per-system reuse/rewrite
 >    table) lives in **`docs/VULKAN_MIGRATION.md`** — read it once for context.
 >
 > **Branch:** `claude/opengl-vulkan-migration-yqc277` — this *is* the Vulkan
@@ -257,6 +270,11 @@ Re-check after each phase; capture before/after screenshots:
 ---
 
 ## 6. Session log (append newest at top; keep entries short)
+- **2026-07-02 — library policy.** Added guidance: prefer good libraries that
+  greatly simplify/optimize (VMA, shaderc/glslang, volk, vk-bootstrap,
+  SPIRV-Reflect); the agent must fully self-integrate them (download all headers/
+  .lib/.dll/license into the vendoring layout, wire into the .vcxproj incl.
+  post-build DLL copy, build green on CI — no manual install steps).
 - **2026-07-02 — CI setup.** Added `.github/workflows/ci-vulkan-migration.yml`:
   Debug+Release x64 compile-check on `windows-latest` with the Vulkan SDK
   pre-installed, inline MSVC error annotations, and build logs (`.log`+`.binlog`)
