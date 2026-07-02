@@ -1,29 +1,22 @@
-// Temporary Phase 0 entry point: proves the vendored Vulkan toolchain (volk
-// loader, Vulkan headers, VMA, shaderc) compiles and links with the GL loader
-// removed. Replaced by the real Application bootstrap in Phase 1.
+// StereoVista entry point (Vulkan).
+//
+// The old OpenGL main.cpp (src/main.cpp, ~9800 lines) is excluded from the
+// build and serves as the behaviour reference while its systems are migrated
+// phase by phase — see docs/VULKAN_MIGRATION_STATUS.md.
 
-#define VMA_STATIC_VULKAN_FUNCTIONS 0
-#define VMA_DYNAMIC_VULKAN_FUNCTIONS 1
-#define VMA_IMPLEMENTATION
-#include <volk.h>
-#include <vma/vk_mem_alloc.h>
+#include "App/Application.h"
 
-#include <shaderc/shaderc.hpp>
-
+#include <exception>
 #include <iostream>
 
 int main() {
-    const VkResult loader = volkInitialize();
-    std::cout << "[phase0] Vulkan headers: VK_HEADER_VERSION " << VK_HEADER_VERSION << "\n";
-    if (loader == VK_SUCCESS) {
-        const uint32_t version = volkGetInstanceVersion();
-        std::cout << "[phase0] volk: loader found, instance version "
-                  << VK_API_VERSION_MAJOR(version) << "." << VK_API_VERSION_MINOR(version)
-                  << "\n";
-    } else {
-        std::cout << "[phase0] volk: no Vulkan loader on this machine\n";
+    try {
+        app::Application application;
+        application.init();
+        application.run();
+        return 0;
+    } catch (const std::exception& e) {
+        std::cerr << "\nFATAL: " << e.what() << std::endl;
+        return 1;
     }
-    shaderc::Compiler compiler;
-    std::cout << "[phase0] shaderc: " << (compiler.IsValid() ? "ok" : "FAILED") << "\n";
-    return 0;
 }

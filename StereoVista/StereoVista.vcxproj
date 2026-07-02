@@ -200,7 +200,15 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
   </ItemGroup>
   <ItemGroup>
     <!-- Vulkan application (active) -->
+    <ClCompile Include="src\App\Application.cpp" />
     <ClCompile Include="src\App\main.cpp" />
+    <ClCompile Include="src\Platform\Window.cpp" />
+    <ClCompile Include="src\RHI\Device.cpp" />
+    <ClCompile Include="src\RHI\ShaderCompiler.cpp" />
+    <ClCompile Include="src\RHI\Swapchain.cpp" />
+    <ClCompile Include="src\RHI\VmaUsage.cpp" />
+    <ClCompile Include="src\RHI\VulkanCommon.cpp" />
+    <ClCompile Include="src\Renderer\Renderer.cpp" />
     <ClCompile Include="headers\libs\volk\volk.c" />
     <ClCompile Include="headers\libs\imgui\backends\imgui_impl_glfw.cpp" />
     <ClCompile Include="headers\libs\imgui\backends\imgui_impl_vulkan.cpp" />
@@ -313,6 +321,15 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="headers\App\Application.h" />
+    <ClInclude Include="headers\Platform\Window.h" />
+    <ClInclude Include="headers\RHI\Device.h" />
+    <ClInclude Include="headers\RHI\ShaderCompiler.h" />
+    <ClInclude Include="headers\RHI\Swapchain.h" />
+    <ClInclude Include="headers\RHI\Vma.h" />
+    <ClInclude Include="headers\RHI\VulkanCommon.h" />
+    <ClInclude Include="headers\Renderer\Projection.h" />
+    <ClInclude Include="headers\Renderer\Renderer.h" />
     <ClInclude Include="headers\libs\volk\volk.h" />
     <ClInclude Include="headers\libs\vma\vk_mem_alloc.h" />
     <ClInclude Include="headers\core.h" />
