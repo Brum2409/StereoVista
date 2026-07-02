@@ -143,15 +143,12 @@ void Application::buildUi() {
         ImGui::Text("%.1f fps (%.2f ms)", ImGui::GetIO().Framerate,
                     1000.0f / ImGui::GetIO().Framerate);
         ImGui::Separator();
-        ImGui::TextWrapped("Phase 1: Vulkan bootstrap. The triangle below is "
-                           "rendered through the multiview scene target; drag "
-                           "this panel out of the window to test viewports.");
-        ImGui::Checkbox("ImGui demo window", &showDemoWindow_);
+        ImGui::TextWrapped("Phase 1: Vulkan bootstrap. The triangle is "
+                           "rendered through the multiview scene target. Dock "
+                           "this panel or drag it out of the main window to "
+                           "test the ImGui viewports path.");
     }
     ImGui::End();
-
-    if (showDemoWindow_)
-        ImGui::ShowDemoWindow(&showDemoWindow_);
 }
 
 void Application::handleResize() {

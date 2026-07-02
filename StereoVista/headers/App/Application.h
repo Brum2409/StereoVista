@@ -37,7 +37,6 @@ private:
 
     VkDescriptorPool imguiDescriptorPool_ = VK_NULL_HANDLE;
     bool imguiInitialized_ = false;
-    bool showDemoWindow_ = false;
 };
 
 } // namespace app
