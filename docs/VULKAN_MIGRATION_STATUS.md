@@ -44,8 +44,9 @@
 > 7. The deep design rationale (RHI layering, decisions, per-system reuse/rewrite
 >    table) lives in **`docs/VULKAN_MIGRATION.md`** — read it once for context.
 >
-> **Branch:** `claude/opengl-vulkan-migration-yqc277` — this *is* the Vulkan
-> branch. All migration work lands here.
+> **Branch:** `StereoVista-vulkan` — this *is* the Vulkan branch. Sessions may
+> develop on per-session `claude/...` working branches (CI runs on those too),
+> but every green milestone is pushed to `StereoVista-vulkan`.
 
 ---
 
@@ -53,10 +54,10 @@
 
 | | |
 |---|---|
-| **Current phase** | Phase 0 — Setup & spikes (**not started**) |
-| **What builds** | Original OpenGL app (unchanged; MSVC/`StereoVista.sln`) |
-| **Vulkan code present** | None yet |
-| **Last updated** | 2026-07-02 — planning session |
+| **Current phase** | Phase 1 — bootstrap code complete, **awaiting user visual verification** (window + docking ImGui + triangle) |
+| **What builds** | New Vulkan app skeleton (Window/Device/Swapchain/Renderer/ImGui-Vulkan + multiview hello-triangle). Old GL sources are `ExcludedFromBuild` (in-tree as behaviour reference); deferred GI subsystems deleted |
+| **Vulkan code present** | `headers/RHI + src/RHI` (Device, Swapchain, ShaderCompiler, VMA glue), `Platform/Window`, `Renderer` (multiview scene target, timeline sync), `App/Application` |
+| **Last updated** | 2026-07-02 — Phase 0 + Phase 1 implementation session |
 
 Legend: ☐ not started · ◐ in progress · ☑ done · ✎ changed from original plan
 
@@ -87,8 +88,8 @@ These are settled by the project owner. Follow them unless the user changes them
 
 ## 1. Phase board (suggested order — reorder if you have a better idea)
 
-- ☐ **Phase 0 — Toolchain & build setup** (Vulkan SDK/VMA/shaderc/volk in, GL loader out; no spikes)
-- ☐ **Phase 1 — Core Vulkan bootstrap + `Application` skeleton** (hello triangle + ImGui)
+- ☑ **Phase 0 — Toolchain & build setup** (vendored Vulkan-Headers/volk/VMA/shaderc+glslc in, GLAD/`opengl32.lib`/ImGui-GL3/`Engine::Shader` out; deferred GI systems deleted; SPIR-V build step)
+- ◐ **Phase 1 — Core Vulkan bootstrap + `Application` skeleton** (code + CI done: window, RHI Device/Swapchain, multiview triangle, ImGui-Vulkan; **user visual verification pending**)
 - ☐ **Phase 2 — RHI hardening** (buffers/images/pipelines/descriptors, HDR target + tonemap)
 - ☐ **Phase 3 — Mesh forward PBR + shadow mapping** (Shadow-Mapping lighting only)
 - ☐ **Phase 4 — Loading system → RHI upload** (parsers reused; streaming preserved)
@@ -108,7 +109,16 @@ These are settled by the project owner. Follow them unless the user changes them
 
 ## 2. Per-phase detail (goal · how it could be done · exit · what to read)
 
-### Phase 0 — Toolchain & build setup  ☐
+### Phase 0 — Toolchain & build setup  ☑ (2026-07-02)
+- **DONE — deltas vs the plan:** the toolchain is **vendored, not
+  SDK-installed** (see §4): Vulkan-Headers + volk + VMA + shaderc_shared +
+  glslc live in the repo, the CI SDK-install step was removed, and the old GL
+  sources went `ExcludedFromBuild` immediately (GLAD's removal makes them
+  uncompilable — "old GL code stays compiling" was never possible). Deferred
+  GI subsystems (Voxalizer/DDGI/BVH/BVHDebug/Bloom/SSAO + shaders) deleted per
+  §0b. `GLFW_INCLUDE_NONE` added to the required defines (see §4). SPIR-V
+  build step = per-shader `CustomBuild` items running vendored glslc into
+  `$(OutDir)assets\shaders_vk`.
 - **No throwaway spikes.** Go straight into the real migration. The old plan had
   two spikes; both are unnecessary because the risks they were meant to de-risk
   are resolved **by the Vulkan spec** and become normal code in Phase 1:
@@ -131,7 +141,27 @@ These are settled by the project owner. Follow them unless the user changes them
 - **Read:** `StereoVista/StereoVista.vcxproj` (include/lib dirs, deps, post-build
   copy), `docs/VULKAN_MIGRATION.md §2.12 + §7b`, `headers/libs/imgui/backends/*`.
 
-### Phase 1 — Core bootstrap + `Application`  ☐
+### Phase 1 — Core bootstrap + `Application`  ◐ (code + CI done; user verify pending)
+- **Implemented (2026-07-02):** `Platform::Window` (GLFW_NO_API, raw mouse
+  motion, resize→GUI-scale hook), `rhi::Device` (volk; validation layer +
+  debug messenger when `SV_VULKAN_VALIDATION` and the layer exists; robust
+  multi-GPU pick with per-candidate rejection reasons; fail-loud required
+  features incl. shaderInt64+int64 buffer atomics, multiview, timeline
+  semaphores, bufferDeviceAddress, descriptor indexing, dynamicRendering,
+  sync2; VMA; `immediateSubmit`), `rhi::Swapchain` (FIFO mono; probes
+  `maxImageArrayLayers` = the Phase 7 stereo-present seam; per-image present
+  semaphores), `renderer::Renderer` (2 FIF paced by ONE timeline semaphore;
+  per-frame transient command pool + reset descriptor pool; sync2 barriers;
+  **layered multiview scene target** RGBA16F+D32 with per-view camera UBO
+  array indexed by `gl_ViewIndex` — mono = viewMask 0b1; blit → swapchain,
+  ImGui pass on the backbuffer), `rhi::ShaderCompiler` (precompiled `.spv`
+  else runtime shaderc w/ includes), `app::Application` (loop, ImGui-Vulkan
+  init/shutdown, resize/minimize handling, debug panel), triangle shaders
+  under `assets/shaders_vk/`. Old input callbacks are NOT yet rewired (they
+  live in excluded main.cpp and come back with camera/tools phases); ImGui's
+  GLFW backend chains its own.
+- **Exit:** CI green ✅; **user confirmation of the running app pending** —
+  window + docking/drag-out ImGui + swaying triangle.
 - **Goal:** a window with Vulkan + ImGui drawing, and the new app skeleton.
 - **How:** `Platform::Window` on GLFW with `GLFW_NO_API` + `VkSurfaceKHR` (keep
   existing input callbacks). RHI `Device` (instance/physical/logical device,
@@ -252,7 +282,13 @@ pipelines. Out of scope until Phases 0–8 are solid.
 
 ---
 
-## 2c. OpenGL-specific dependencies — swap / remove / keep
+## 2c. OpenGL-specific dependencies — swap / remove / keep — **EXECUTED 2026-07-02**
+Status: GLAD deleted (glad.c + glad/KHR headers), `opengl32.lib` dropped from
+all configs, `imgui_impl_opengl3*` deleted, runtime-GLSL `Engine::Shader`
+deleted, volk vendored as the loader, `GLM_FORCE_DEPTH_ZERO_TO_ONE` (+
+`GLFW_INCLUDE_NONE`, `VK_NO_PROTOTYPES`, `IMGUI_IMPL_VULKAN_USE_VOLK`) defined
+project-wide, GL-era sources `ExcludedFromBuild`. Original matrix kept below
+for reference:
 The project links some **GL-specific** libraries that must go, keeps others, and
 keeps one that needs **reconfiguration**. Full matrix + rationale in
 `docs/VULKAN_MIGRATION.md §2.12`; the essentials:
@@ -271,17 +307,21 @@ keeps one that needs **reconfiguration**. Full matrix + rationale in
   run old-GL and new-Vulkan paths on the same window.
 
 ## 3. Next up (start here)
-1. **Phase 0** — wire the Vulkan toolchain (SDK/VMA/shaderc/volk) into the
-   `.vcxproj`, remove GLAD/`opengl32.lib`/ImGui-GL3, set `GLM_FORCE_DEPTH_ZERO_TO_ONE`,
-   add the SPIR-V build step; get CI green.
-2. **Phase 1** — real bootstrap: `Application` + RHI `Device` (Vulkan 1.3, feature
-   enablement incl. int64 buffer atomics) + `Swapchain` + ImGui-Vulkan hello-triangle.
-3. Continue into **Phase 2+** per the board.
+1. **Wait for the user's Phase 1 visual verification** (window opens, GPU/driver
+   shown in the debug panel, triangle sways without vanishing, ImGui panels
+   dock/undock/drag out to OS windows, resize doesn't crash, console clean of
+   validation errors). Fix whatever they report.
+2. **Phase 2 — RHI hardening**: `Buffer`/`Texture` (VMA + staged uploads),
+   `Pipeline` abstraction (SPIR-V + descriptor-layout spec + dynamic-rendering
+   formats — consider SPIRV-Reflect), growable `DescriptorAllocator`, HDR
+   tonemap pass replacing the Renderer's placeholder blit-to-swapchain,
+   `Screenshot` readback. The triangle pass in `Renderer.cpp` shows the frame
+   skeleton to build on (timeline sync, per-frame pools, layered target).
+3. Continue into **Phase 3+** per the board.
 
-No spikes — start the real migration directly. `shaderBufferInt64Atomics` is
-guaranteed at Vulkan 1.2+ (and the current GL app already uses GL int64 atomics on
-this hardware), so no point-cloud-framebuffer fallback is expected; if a specific
-target GPU ever lacks it, decide a fallback before Phase 5.
+Note for Phase 5: `shaderBufferInt64Atomics` + `shaderInt64` are **required and
+enabled** in `rhi::Device` (fail-loud with a clear message). See §4 for the
+spec-status correction — optional per spec, universal on modern NVIDIA/AMD.
 
 ---
 
@@ -293,8 +333,47 @@ target GPU ever lacks it, decide a fallback before Phase 5.
   on current drivers). Everything the required set needs is core 1.1–1.3 (see below).
 - Vulkan version: **1.3** (dynamic rendering, sync2, timeline semaphores core).
 - Memory: **VMA**. Shaders: GLSL → SPIR-V via **shaderc**, offline + runtime.
-- int64 buffer atomics: **guaranteed by spec at Vulkan 1.2+** (core, non-optional);
-  enable in `Device` init. Available on all modern NVIDIA/AMD — no probe needed.
+- int64 buffer atomics — **spec-claim CORRECTED (2026-07-02):**
+  `shaderBufferInt64Atomics` is **NOT unconditionally mandatory** in core 1.2/1.3
+  (it is promoted-optional from `VK_KHR_shader_atomic_int64`, and absent even
+  from the `VP_KHR_roadmap_2022` profile — verified against Khronos
+  Vulkan-Profiles). It **is** universally supported by modern NVIDIA/AMD Windows
+  drivers, i.e. by the entire compatibility target. Consequence unchanged:
+  `rhi::Device` **requires + enables** it (with `shaderInt64`) and fails loudly
+  naming the missing feature. If an exotic GPU ever needs support, design a
+  32-bit fallback before Phase 5.
+- **Vulkan toolchain is fully VENDORED (hermetic build; no SDK install):**
+  a fresh clone + MSVC builds as-is, locally and on CI. The CI workflow no
+  longer installs the Vulkan SDK (drift-prone `latest` + undocumented
+  stripdown). End users need only a Vulkan-capable driver; developers who want
+  validation layers install them via the SDK/vkconfig (the app requests the
+  layer only if present).
+- **Added libraries (name — version — why):**
+  - **Vulkan-Headers v1.4.350** — `dependencies/include/vulkan|vk_video` — C API headers (matches current LunarG SDK line).
+  - **volk 1.4.350** — `headers/libs/volk` (volk.h/volk.c, MIT) — Vulkan loader replacing GLAD; device-level entry points loaded via `volkLoadDevice` (skips loader trampolines).
+  - **VulkanMemoryAllocator v3.4.0** — `headers/libs/vma` (MIT) — all GPU memory; dynamic functions from volk (`VMA_DYNAMIC_VULKAN_FUNCTIONS=1`), impl unit `src/RHI/VmaUsage.cpp`.
+  - **shaderc (shaderc_shared)** — Google CI VS2022 x64 release artifact 2026-06-30 (Apache-2.0) — runtime GLSL→SPIR-V in `rhi::ShaderCompiler`; headers `dependencies/include/shaderc`, `dependencies/lib/x64/shaderc_shared.lib`, `dependencies/bin/shaderc_shared.dll` (post-build copy).
+  - **glslc.exe** (same artifact) — `dependencies/tools` — offline SPIR-V custom build step (`--target-env=vulkan1.3`) into `$(OutDir)assets\shaders_vk`.
+  - **imgui_impl_vulkan @ v1.91.1-docking** — `headers/libs/imgui/backends` — render backend replacing `imgui_impl_opengl3`; volk mode (`IMGUI_IMPL_VULKAN_USE_VOLK`), dynamic rendering, multi-viewport.
+  - Licenses collected under `dependencies/licenses/` + alongside vendored sources.
+- **House rendering conventions (Renderer/Projection.h — enforced from Phase 1):**
+  every projection comes from the `renderer::` factories: Vulkan **[0,1] depth**
+  (`GLM_FORCE_DEPTH_ZERO_TO_ONE` project-wide), **REVERSE-Z** (near→1, far→0,
+  `VK_COMPARE_OP_GREATER`, clear depth 0.0) for float-depth precision, and the
+  **Y-flip baked into the projection** — so CCW-authored meshes are
+  `VK_FRONT_FACE_CLOCKWISE` in every raster pipeline. Do not hand-roll
+  projections above the RHI.
+- **Swapchain format:** UNORM (`B8G8R8A8_UNORM` preferred) + `SRGB_NONLINEAR`,
+  FIFO (vsync, matching the GL app's swap-interval-1). ImGui writes raw colors;
+  scene gamma is handled by the Phase 2 tonemap, not the backbuffer format.
+- **GLFW_INCLUDE_NONE** is defined project-wide: without it `glfw3.h` includes
+  `<GL/gl.h>` (and thus `windows.h` + min/max macros) — found via local clang
+  syntax-check before it could break MSVC.
+- **gitignore trap (learned the hard way):** root `.gitignore` ignores `bin/`,
+  `x64/`, `*.exe` *anywhere*, which silently dropped vendored binaries from the
+  first Phase 0 commit (CI custom-build exit code 3 = glslc.exe missing).
+  Negations for `dependencies/bin|lib/x64|tools` are now in `.gitignore`; when
+  vendoring binaries, always verify with `git ls-files` afterwards.
 - **Quad-buffer stereo: RUNTIME-DETECTED, not assumed.** Stereo *rendering* (2 layers,
   `VK_KHR_multiview`, core 1.1) is available everywhere. Stereo *presentation* to a
   3D display (swapchain `imageArrayLayers = 2`, needs surface `maxImageArrayLayers >= 2`)
@@ -308,19 +387,25 @@ target GPU ever lacks it, decide a fallback before Phase 5.
 ---
 
 ## 4b. Continuous Integration
-- Workflow: `.github/workflows/ci-vulkan-migration.yml` runs on every push to this
-  branch (and PRs). It builds **Debug + Release x64** on `windows-latest` with the
-  **Vulkan SDK** pre-installed (`VULKAN_SDK` set; VMA component included), and does
-  **not** publish releases (that's `msbuild.yml`, main-only).
+- Workflow: `.github/workflows/ci-vulkan-migration.yml` runs on pushes to
+  `StereoVista-vulkan` **and `claude/**` session branches** (triggers fixed
+  2026-07-02 — they pointed at a dead branch name and never fired) plus PRs to
+  `StereoVista-vulkan`/`main`. It builds **Debug + Release x64** on
+  `windows-latest` and does **not** publish releases (that's `msbuild.yml`,
+  main-only).
+- **No Vulkan SDK on CI anymore** — the toolchain is vendored (see §4); the
+  SDK-install step was removed for speed and determinism.
 - Compiler errors appear as **inline annotations** (MSVC problem matcher) and the
   full MSBuild **text + `.binlog`** are uploaded as artifacts (even on failure) —
   download them to see every error, or open the `.binlog` in the MSBuild
   Structured Log Viewer.
 - **After pushing, check the CI result** — this repo has no local Windows build in
-  the agent environment, so CI is the primary signal that the code compiles.
-  Wire new Vulkan sources into `StereoVista.vcxproj` (+ include dir
-  `$(VULKAN_SDK)\Include`, lib `$(VULKAN_SDK)\Lib\vulkan-1.lib`) so CI exercises
-  them.
+  the agent environment, so CI is the primary signal that the code compiles. Wire
+  new Vulkan sources into `StereoVista.vcxproj`(+`.filters`) so CI exercises them.
+- Tip: a Linux-side `clang++ -std=c++17 -fsyntax-only` against the vendored
+  headers (defines: `VK_NO_PROTOTYPES GLFW_INCLUDE_NONE IMGUI_IMPL_VULKAN_USE_VOLK
+  GLM_FORCE_DEPTH_ZERO_TO_ONE`) catches most errors before burning a CI round;
+  `glslangValidator --target-env vulkan1.3` checks the shaders.
 
 ## 5. Verification checklist (the USER runs these — see §0b)
 CI only compiles; the user runs each milestone on the stereo GPU and reports back.
@@ -340,6 +425,29 @@ screenshots where useful:
 ---
 
 ## 6. Session log (append newest at top; keep entries short)
+- **2026-07-02 — Phase 0 done + Phase 1 implemented (first coding session).**
+  Vendored the full Vulkan toolchain (Vulkan-Headers/volk 1.4.350, VMA 3.4.0,
+  shaderc_shared + glslc — §4) and made the build hermetic (CI SDK install
+  removed; CI triggers fixed — they pointed at a dead branch). Executed the §2c
+  surgery: GLAD/`opengl32.lib`/ImGui-GL3/`Engine::Shader` deleted, deferred GI
+  subsystems (VCT/DDGI/BVH/Bloom/SSAO + shaders) deleted, GL-era sources
+  `ExcludedFromBuild` as in-tree reference, `GLM_FORCE_DEPTH_ZERO_TO_ONE` +
+  `GLFW_INCLUDE_NONE` + `VK_NO_PROTOTYPES` project-wide. Built the Phase 1
+  skeleton: `Platform::Window` (GLFW_NO_API), `rhi::Device` (fail-loud 1.3
+  feature set incl. int64 buffer atomics; robust GPU pick), `rhi::Swapchain`
+  (mono FIFO; `maxImageArrayLayers` stereo-present probe = Phase 7 seam),
+  `renderer::Renderer` (2 FIF on one timeline semaphore, sync2, per-frame
+  pools, **layered multiview scene target + per-view camera UBO array** —
+  stereo will be additive), `rhi::ShaderCompiler` (.spv-or-shaderc),
+  `app::Application` + ImGui 1.91.1 on `imgui_impl_vulkan` (docking +
+  multi-viewport; project-local style/font files preserved, font rebuild
+  routed through the Vulkan backend). House conventions established in
+  `Renderer/Projection.h`: [0,1] depth + **reverse-Z** + Y-flip-in-projection
+  (⇒ `VK_FRONT_FACE_CLOCKWISE`). Corrected the int64-atomics spec claim (§4).
+  Gotchas recorded in §4 (gitignore binary trap, GLFW_INCLUDE_NONE).
+  **Next:** user runs the build and verifies window/ImGui/triangle; then
+  Phase 2 (RHI hardening: Buffer/Texture/Pipeline/DescriptorAllocator, HDR
+  tonemap, screenshot readback).
 - **2026-07-02 — compatibility target set.** Owner: app must run on Win10/11 on
   **any modern NVIDIA/AMD GPU**, not a specific device. Consequence: quad-buffer
   stereo *present* is workstation-GPU-only, so it's now **runtime-detected with a
