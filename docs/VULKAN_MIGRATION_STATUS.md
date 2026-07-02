@@ -216,6 +216,24 @@ pipelines. Out of scope until Phases 0–8 are solid.
 
 ---
 
+## 2c. OpenGL-specific dependencies — swap / remove / keep
+The project links some **GL-specific** libraries that must go, keeps others, and
+keeps one that needs **reconfiguration**. Full matrix + rationale in
+`docs/VULKAN_MIGRATION.md §2.12`; the essentials:
+- **REMOVE:** GLAD (`headers/libs/glad.c` + glad/`KHR` headers), `opengl32.lib`,
+  ImGui `imgui_impl_opengl3.*`, and the runtime-GLSL `Engine::Shader`.
+- **REPLACE loader:** add **volk** (or SDK loader) in GLAD's place; shaders → SPIR-V (shaderc).
+- **KEEP (API-agnostic):** GLFW (init `GLFW_NO_API` + surface; drop the ~24
+  GL-context calls incl. `GLFW_STEREO`/`glfwSwapBuffers`), Assimp, LASzip,
+  HDF5/HighFive, stb_image, TDxNavLib, json, portable-file-dialogs.
+- **KEEP + RECONFIGURE:** **GLM** — Vulkan clip space differs from GL. Define
+  **`GLM_FORCE_DEPTH_ZERO_TO_ONE`** and fix the inverted Y on **every** projection
+  matrix. **Currently NOT set — real correctness bug if missed.**
+- **KEEP loader, SWAP binding:** OpenXR loader → `XR_USE_GRAPHICS_API_VULKAN`.
+- ⚠️ **Sequencing:** once the window is `GLFW_NO_API` there is no GL context —
+  any live GL call crashes. Port or stub GL systems as the context switches; don't
+  run old-GL and new-Vulkan paths on the same window.
+
 ## 3. Next up (start here)
 1. **Phase 0 / Spike A** — Vulkan device capability probe (esp. int64 atomics +
    stereo present). Record findings in §4.
@@ -270,6 +288,12 @@ Re-check after each phase; capture before/after screenshots:
 ---
 
 ## 6. Session log (append newest at top; keep entries short)
+- **2026-07-02 — dependency disposition.** Added an explicit GL-specific
+  library swap/remove/keep matrix (new §2c here + `MIGRATION.md §2.12`). Verified
+  against the .vcxproj: `opengl32.lib` linked (remove), GLAD vendored (remove →
+  volk), ImGui GL3 backend (→ vulkan), ~24 GL-context GLFW calls to drop. Flagged
+  the **GLM clip-space** issue: `GLM_FORCE_DEPTH_ZERO_TO_ONE` is NOT set and must
+  be, plus inverted-Y on all projections. Noted the no-GL-context sequencing trap.
 - **2026-07-02 — library policy.** Added guidance: prefer good libraries that
   greatly simplify/optimize (VMA, shaderc/glslang, volk, vk-bootstrap,
   SPIRV-Reflect); the agent must fully self-integrate them (download all headers/

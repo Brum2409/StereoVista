@@ -151,6 +151,32 @@ logic.
 
 ---
 
+## 2.12 Dependency / library disposition (OpenGL‑specific vs. keep)
+
+Not every dependency is OpenGL‑specific. Some are **removed**, some are **kept**,
+some are **kept but reconfigured**. Verify against `StereoVista.vcxproj` before
+touching — current state confirmed 2026‑07‑02.
+
+| Dependency | Role | Disposition |
+|---|---|---|
+| **GLAD** (`headers/libs/glad.c`, `dependencies/include/glad`, `KHR/khrplatform.h`) | GL function loader | **REMOVE.** Replace with a Vulkan loader — **volk** (recommended) or the SDK static loader. Delete glad.c + glad/KHR headers and the `<ClCompile Include="…glad.c">`. |
+| **`opengl32.lib`** | GL lib | **REMOVE** from `<AdditionalDependencies>` (both Debug+Release). |
+| **ImGui GL3 backend** (`imgui_impl_opengl3.*`) | GUI render backend | **REMOVE.** Replace with `imgui_impl_vulkan`. **Keep** `imgui_impl_glfw`. |
+| **`Engine::Shader`** (runtime `glCompileShader` of GLSL) | shader compile | **REPLACE.** Compile GLSL→SPIR‑V (shaderc) into an RHI `ShaderModule`; GLSL sources gain explicit `layout(set,binding)` + push constants. |
+| **GLFW** (`glfw3.lib` / `glfw3_mt.lib`) | windowing + input | **KEEP** — API‑agnostic. Init with `GLFW_NO_API`, create the surface via `glfwCreateWindowSurface`. **Drop** the ~24 GL‑context calls: `GLFW_CONTEXT_VERSION_*`, `GLFW_OPENGL_PROFILE`, **`GLFW_STEREO`** (Vulkan stereo is a swapchain property, not a pixel format), `glfwMakeContextCurrent`, `glfwSwapBuffers` (→ `vkQueuePresentKHR`), `glfwSwapInterval` (→ present mode), `glfwGetProcAddress` for GL. |
+| **GLM** | math | **KEEP but reconfigure.** Vulkan clip space differs from GL: **define `GLM_FORCE_DEPTH_ZERO_TO_ONE`** (Vulkan depth is `[0,1]`, not `[-1,1]`) and handle the **inverted Y** (negate `proj[1][1]` or flip the viewport). Audit *every* projection matrix (main, shadow, point‑cloud, cursors, XR). **Not currently set — this is a real correctness item, not cosmetic.** |
+| **OpenXR loader** (`openxr_loader.lib`) | VR | **KEEP loader; SWAP graphics binding.** GL → Vulkan: `XR_USE_GRAPHICS_API_VULKAN`, `XR_KHR_vulkan_enable2`, swapchain images as `VkImage`. |
+| Assimp, LASzip, HDF5+HighFive, stb_image, TDxNavLib, nlohmann/json, portable‑file‑dialogs | loaders / input / util | **KEEP** — all graphics‑API‑agnostic. Only the *GPU upload* side of the loaders changes (Phase 4). |
+
+**New dependencies to add** (self‑integrate per §7b): Vulkan SDK, **VMA**,
+**shaderc/glslang**, and optionally **volk**, **vk‑bootstrap**, **SPIRV‑Reflect**.
+
+**Sequencing caveat:** the moment the window is created with `GLFW_NO_API` there
+is **no GL context**, so any still‑live GL call crashes. GL‑dependent systems must
+be **ported or temporarily stubbed** as the context switches — you can't run the
+old `renderEye` GL path and the new Vulkan path against the same window. Keep old
+GL files compiling only until their system is ported, then delete them.
+
 ## 3. Key Vulkan Decisions (resolve these before coding)
 
 | # | Topic | Recommendation | Why |
@@ -167,6 +193,8 @@ logic.
 | 10 | Windowing | Keep **GLFW** (no GL context: `GLFW_NO_API`), create `VkSurfaceKHR` | Minimal disruption to input/callbacks |
 | 11 | Build | Add Vulkan SDK, VMA, shaderc to `dependencies/`; wire into `.vcxproj`; SPIR‑V build step | Windows/MSVC only, matches project |
 | 12 | Validation | Validation layers + `VK_EXT_debug_utils` in Debug builds | Non‑negotiable for a port of this size |
+| 13 | GLM clip space | `GLM_FORCE_DEPTH_ZERO_TO_ONE` globally + handle inverted‑Y (flip `proj[1][1]` or viewport) | Vulkan NDC ≠ GL NDC; without this, depth test + culling are wrong everywhere. Not currently set |
+| 14 | Vulkan loader | **volk** (or SDK static loader) replacing GLAD | Faster dispatch, per‑device function pointers; removes the last GL loader |
 
 ---
 
