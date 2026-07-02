@@ -25,6 +25,12 @@
   never touch raw Vulkan, keeping the door open for later backends and for the
   advanced features we defer.
 
+### Compatibility target
+Must run on **Windows 10 & 11** on **any modern NVIDIA or AMD GPU** — not a single
+known device. Target **Vulkan 1.3**; keep the required feature set to things that
+are core/broadly available (see §3 #5/#7 and status §4); **degrade gracefully**
+(esp. stereo present, which is workstation‑GPU‑only) and validate on both vendors.
+
 ### Guiding principles (apply to every phase)
 - **Rewrite better, don't translate.** This is a chance to modernize. Produce
   **deeply optimized, idiomatic, native Vulkan** — single‑pass multiview stereo,
@@ -188,7 +194,7 @@ GL files compiling only until their system is ported, then delete them.
 | 4 | Descriptors | **Descriptor indexing / partially‑bound** (bindless‑lite) for textures; per‑frame descriptor pools | Scales for many models/textures; simplifies material binding |
 | 5 | 64‑bit point‑cloud atomics | `VK_KHR_shader_atomic_int64` + `shaderBufferInt64Atomics` (core 1.2), SPIR‑V `Int64Atomics`, GLSL `GL_EXT_shader_atomic_int64` | Direct 1:1 map of the existing rasterizer; verify device support at startup, feature‑gate |
 | 6 | Frames in flight | **2**, timeline semaphores, per‑frame command pool + descriptor pool | Standard double‑buffering |
-| 7 | Quad‑buffer stereo | **Native in Vulkan.** Create the swapchain with `imageArrayLayers = 2` (when `VkSurfaceCapabilitiesKHR.maxImageArrayLayers >= 2`); the presentation engine maps layer 0/1 → left/right eye. Render **both eyes in a single pass** with `VK_KHR_multiview`. Abstract behind a `StereoTarget`; fall back to two swapchains / side‑by‑side only if a surface caps stereo out | Cleaner *and faster* than GL (no `GL_BACK_LEFT/RIGHT`, no twice‑per‑frame `renderEye`). Just validate surface caps in a small spike |
+| 7 | Quad‑buffer stereo | **Runtime‑detected, not assumed.** Stereo *rendering* (`VK_KHR_multiview`, core 1.1) is always available. Stereo *present* (swapchain `imageArrayLayers = 2`, needs surface `maxImageArrayLayers >= 2`) is generally **workstation‑GPU‑only** (Quadro/Radeon Pro + stereo display); consumer GeForce/Radeon usually don't expose it. Abstract behind `StereoTarget`: use the stereo swapchain when present, else **fall back to mono** (optionally side‑by‑side) — mirroring the GL app's stereo→mono fallback | Compat target is *any* modern NVIDIA/AMD GPU on Win10/11, so stereo present must be optional; multiview single‑pass render is still cleaner/faster than GL's twice‑per‑frame `renderEye` |
 | 8 | XR | OpenXR with `XR_USE_GRAPHICS_API_VULKAN`, Vulkan swapchain images as `VkImage` | Required; rework `XRSession` |
 | 9 | ImGui | `imgui_impl_vulkan` (+ existing glfw backend) | Official, supports multi‑viewport |
 | 10 | Windowing | Keep **GLFW** (no GL context: `GLFW_NO_API`), create `VkSurfaceKHR` | Minimal disruption to input/callbacks |
@@ -367,9 +373,11 @@ ordering front‑loads the risky spikes (bootstrap, stereo, int64 atomics).
 ---
 
 ## 7. Risks & Mitigations
-- **Quad‑buffer stereo** — supported natively (stereo swapchain +
-  `VK_KHR_multiview`), so low risk. → Isolate behind `StereoTarget`; keep
-  side‑by‑side fallback if a surface caps stereo out.
+- **Quad‑buffer stereo present is workstation‑GPU‑only.** On the broad
+  Win10/11 + any‑modern‑NVIDIA/AMD target, most consumer GPUs won't expose a
+  stereo surface. → `StereoTarget` **detects at runtime** and falls back to mono
+  (optionally side‑by‑side); the multiview render path is unaffected. Not a
+  blocker — same behaviour class as the current GL app's stereo→mono fallback.
 - **int64 atomics availability** — **guaranteed at Vulkan 1.2+** (`shaderBufferInt64Atomics`
   is core), and the current GL app already uses GL int64 atomics on this hardware,
   so effectively a non‑risk. → Enable + assert in `Device` init; only if a future

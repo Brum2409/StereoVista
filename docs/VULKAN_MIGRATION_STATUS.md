@@ -222,9 +222,13 @@ These are settled by the project owner. Follow them unless the user changes them
   `headers/Plugins/PluginContext.h`, `docs/PLUGINS.md`.
 
 ### Phase 7 — Stereo + XR  ☐
-- **Goal:** quad-buffer stereo display and OpenXR HMD both render.
-- **How:** implement `StereoTarget` (native Vulkan stereo swapchain,
-  `imageArrayLayers = 2`) plus mono. **Render both eyes in a single
+- **Goal:** quad-buffer stereo display and OpenXR HMD both render, **with a clean
+  mono fallback on GPUs/displays that don't support stereo present** (the common
+  case on consumer NVIDIA/AMD — see §4 compatibility target).
+- **How:** implement `StereoTarget` with **runtime detection**: if the surface
+  reports `maxImageArrayLayers >= 2`, use a native stereo swapchain
+  (`imageArrayLayers = 2`); otherwise fall back to **mono present** (optionally
+  side-by-side). The renderer stays multiview-capable either way. **Render both eyes in a single
   pass with `VK_KHR_multiview`** (view index selects per-eye projection/view via
   a UBO array) instead of porting `renderEye`'s twice-per-frame calls — the
   "view-independent passes once per frame" idea (`g_sharedPassesDone`) becomes
@@ -281,16 +285,25 @@ target GPU ever lacks it, decide a fallback before Phase 5.
 
 ---
 
-## 4. Decisions & spike results (fill in as you learn)
-- Vulkan version: **1.3** (proposed). — _confirm_
-- Memory: **VMA**. — _confirm_
-- Shaders: GLSL → SPIR-V via **shaderc**, runtime + offline. — _confirm_
+## 4. Decisions & notes (fill in as you learn)
+- **COMPATIBILITY TARGET (owner):** must run on **Windows 10 & 11** on **any modern
+  NVIDIA or AMD GPU** — NOT a single known device. So: no exotic optional features
+  in the required set; degrade gracefully; test both NVIDIA and AMD driver behaviour
+  where possible. Target **Vulkan 1.3** (covers ~last-decade NVIDIA Kepler+/AMD GCN+
+  on current drivers). Everything the required set needs is core 1.1–1.3 (see below).
+- Vulkan version: **1.3** (dynamic rendering, sync2, timeline semaphores core).
+- Memory: **VMA**. Shaders: GLSL → SPIR-V via **shaderc**, offline + runtime.
 - int64 buffer atomics: **guaranteed by spec at Vulkan 1.2+** (core, non-optional);
-  target Vulkan 1.3 and enable in `Device` init. No probe needed.
-- Quad-buffer stereo: **native in Vulkan** — swapchain `imageArrayLayers = 2`
-  (needs `maxImageArrayLayers >= 2`); render both eyes single-pass via
-  `VK_KHR_multiview` (core since 1.1). Exercised for real in Phase 1/7.
-- _(add device/driver names, extension support, benchmark notes here)_
+  enable in `Device` init. Available on all modern NVIDIA/AMD — no probe needed.
+- **Quad-buffer stereo: RUNTIME-DETECTED, not assumed.** Stereo *rendering* (2 layers,
+  `VK_KHR_multiview`, core 1.1) is available everywhere. Stereo *presentation* to a
+  3D display (swapchain `imageArrayLayers = 2`, needs surface `maxImageArrayLayers >= 2`)
+  is generally exposed **only on workstation GPUs (Quadro / Radeon Pro) with a stereo
+  display + driver stereo enabled** — consumer GeForce/Radeon usually do NOT expose it.
+  → Detect at runtime; **fall back to mono present** (default on consumer GPUs), like the
+  current GL app's stereo→mono fallback. Optionally offer side-by-side. The renderer
+  stays multiview-capable regardless; only the present path is conditional.
+- _(record: extensions/features actually found on the test GPUs, driver quirks, notes)_
 
 ---
 
@@ -327,6 +340,11 @@ screenshots where useful:
 ---
 
 ## 6. Session log (append newest at top; keep entries short)
+- **2026-07-02 — compatibility target set.** Owner: app must run on Win10/11 on
+  **any modern NVIDIA/AMD GPU**, not a specific device. Consequence: quad-buffer
+  stereo *present* is workstation-GPU-only, so it's now **runtime-detected with a
+  mono fallback** (multiview render path unaffected). Updated §4, Phase 7, and the
+  design-doc decision table/goals/risks. Required feature set stays core 1.1–1.3.
 - **2026-07-02 — working agreement settled (§0b).** Owner decisions: (1) deferred
   features (VCT/DDGI/Radiance/Bloom/SSAO) are **deleted now**, not kept as
   reference — git history covers Phase 9; ship only Shadow Mapping. (2) `main` is
