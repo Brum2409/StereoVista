@@ -227,6 +227,21 @@ index buffer) **before** starting Phase 5.
 
 ---
 
+## 4b. Continuous Integration
+- Workflow: `.github/workflows/ci-vulkan-migration.yml` runs on every push to this
+  branch (and PRs). It builds **Debug + Release x64** on `windows-latest` with the
+  **Vulkan SDK** pre-installed (`VULKAN_SDK` set; VMA component included), and does
+  **not** publish releases (that's `msbuild.yml`, main-only).
+- Compiler errors appear as **inline annotations** (MSVC problem matcher) and the
+  full MSBuild **text + `.binlog`** are uploaded as artifacts (even on failure) —
+  download them to see every error, or open the `.binlog` in the MSBuild
+  Structured Log Viewer.
+- **After pushing, check the CI result** — this repo has no local Windows build in
+  the agent environment, so CI is the primary signal that the code compiles.
+  Wire new Vulkan sources into `StereoVista.vcxproj` (+ include dir
+  `$(VULKAN_SDK)\Include`, lib `$(VULKAN_SDK)\Lib\vulkan-1.lib`) so CI exercises
+  them.
+
 ## 5. Verification checklist (no automated tests exist — verify manually)
 Re-check after each phase; capture before/after screenshots:
 - [ ] App launches, ImGui docks/undocks/drags-out
@@ -242,6 +257,11 @@ Re-check after each phase; capture before/after screenshots:
 ---
 
 ## 6. Session log (append newest at top; keep entries short)
+- **2026-07-02 — CI setup.** Added `.github/workflows/ci-vulkan-migration.yml`:
+  Debug+Release x64 compile-check on `windows-latest` with the Vulkan SDK
+  pre-installed, inline MSVC error annotations, and build logs (`.log`+`.binlog`)
+  uploaded as artifacts. No release publishing. CI is the primary build signal
+  since the agent environment can't compile the Windows/MSVC project.
 - **2026-07-02 — planning (feedback pass).** Corrected the stereo approach:
   Vulkan supports quad-buffered stereo **natively** (swapchain
   `imageArrayLayers = 2` + single-pass `VK_KHR_multiview`) — better than GL's

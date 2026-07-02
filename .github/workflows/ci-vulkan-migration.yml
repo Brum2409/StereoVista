@@ -1,0 +1,88 @@
+name: CI Build (Vulkan migration)
+
+# Compile-check for the Vulkan migration branch so every push shows whether the
+# project still builds and, if not, exactly which errors occurred.
+#
+# This is intentionally SEPARATE from msbuild.yml (which only runs on `main` and
+# publishes GitHub Releases). This workflow never creates a release — it just
+# builds Debug + Release x64 and surfaces compiler errors:
+#   * inline annotations on the changed lines (MSVC problem matcher), and
+#   * full MSBuild text + binary logs uploaded as artifacts (even on failure).
+#
+# The Vulkan SDK is installed up front so that once the migration starts adding
+# Vulkan code (VMA, vulkan.h, SPIR-V, etc.) it compiles here too. Until then it
+# is simply unused. The migration agent may pin/bump the SDK version below.
+
+on:
+  push:
+    branches: [ "claude/opengl-vulkan-migration-yqc277" ]
+  pull_request:
+    branches: [ "claude/opengl-vulkan-migration-yqc277", "main" ]
+  workflow_dispatch:
+
+# A newer push to the same branch cancels the in-flight run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SOLUTION_FILE_PATH: StereoVista.sln
+  BUILD_PLATFORM: x64
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.configuration }} x64
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false            # report BOTH configs even if one fails
+      matrix:
+        configuration: [ Debug, Release ]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      # Install the Vulkan SDK (sets the VULKAN_SDK env var for later steps).
+      # Cached between runs; stripped down to keep it small. `latest` tracks the
+      # newest SDK — pin `vulkan_version:` here if a specific version is needed.
+      - name: Install Vulkan SDK
+        uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          vulkan_version: latest
+          optional_components: com.lunarg.vulkan.vma
+          install_runtime: true
+          cache: true
+          stripdown: true
+
+      # Turns raw MSVC "error C....:" lines into inline PR/commit annotations.
+      - name: Enable MSVC problem matcher
+        uses: ammaraskar/msvc-problem-matcher@master
+
+      - name: Build (${{ matrix.configuration }} | x64)
+        shell: pwsh
+        run: |
+          msbuild /m /nologo `
+            /p:Configuration=${{ matrix.configuration }} `
+            /p:Platform=${{ env.BUILD_PLATFORM }} `
+            /consoleLoggerParameters:Summary `
+            /fileLogger "/fileLoggerParameters:LogFile=build-${{ matrix.configuration }}.log;Verbosity=normal" `
+            "/binaryLogger:build-${{ matrix.configuration }}.binlog" `
+            "${{ env.SOLUTION_FILE_PATH }}"
+
+      # Upload logs even when the build fails so the errors are downloadable.
+      # The .binlog opens in the MSBuild Structured Log Viewer for deep debugging.
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-${{ matrix.configuration }}
+          path: |
+            build-${{ matrix.configuration }}.log
+            build-${{ matrix.configuration }}.binlog
+          if-no-files-found: ignore
