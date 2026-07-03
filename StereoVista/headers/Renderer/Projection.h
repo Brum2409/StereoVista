@@ -11,9 +11,15 @@
 //     dramatically better distributed; use VK_COMPARE_OP_GREATER (or
 //     GREATER_OR_EQUAL) and clear depth to 0.0.
 //  3. Vulkan's NDC +Y points down. The factories negate the Y row, which
-//     keeps view/world space right-handed Y-up like the GL app. Consequence:
-//     CCW-authored front faces arrive CLOCKWISE in framebuffer space — use
-//     VK_FRONT_FACE_CLOCKWISE with these matrices.
+//     keeps view/world space right-handed Y-up like the GL app and the image
+//     upright. Because the flip is baked into the projection (not applied as
+//     a negative-height viewport), triangles keep the same on-screen
+//     orientation as in GL, and Vulkan's front-face test — evaluated in
+//     framebuffer space, i.e. as seen on screen — agrees with GL: CCW-authored
+//     front faces stay COUNTER-CLOCKWISE. Use VK_FRONT_FACE_COUNTER_CLOCKWISE
+//     with these matrices. (Only the negative-viewport-height flip method
+//     toggles winding, because it acts after clipping, inside the viewport
+//     transform the front-face test observes.)
 // ============================================================================
 
 #ifndef GLM_FORCE_DEPTH_ZERO_TO_ONE

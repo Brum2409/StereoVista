@@ -1,5 +1,6 @@
 #pragma once
 
+#include "RHI/Swapchain.h"
 #include "RHI/Vma.h"
 #include "RHI/VulkanCommon.h"
 
@@ -12,7 +13,6 @@ struct ImDrawData;
 
 namespace rhi {
 class Device;
-class Swapchain;
 class ShaderCompiler;
 }
 
@@ -36,6 +36,16 @@ public:
     static constexpr uint32_t kFramesInFlight = 2;
     static constexpr uint32_t kMaxViews = 2;
 
+    // Where the frame time goes, exponentially smoothed. slotWaitMs is the
+    // CPU blocking on this slot's previous GPU submission; acquireMs and
+    // presentMs are the WSI calls — under FIFO those two carry the vsync
+    // pacing, so they finger the culprit when the frame rate is wrong.
+    struct FrameStats {
+        float slotWaitMs = 0.0f;
+        float acquireMs = 0.0f;
+        float presentMs = 0.0f;
+    };
+
     Renderer() = default;
     ~Renderer() { shutdown(); }
     Renderer(const Renderer&) = delete;
@@ -49,11 +59,13 @@ public:
     void onSwapchainRecreated();
 
     // Records + submits + presents one frame. uiDrawData may be null (UI not
-    // built this frame). Returns false when the swapchain is out of date —
-    // the caller recreates it and calls onSwapchainRecreated().
-    bool renderFrame(ImDrawData* uiDrawData, double timeSeconds);
+    // built this frame). OutOfDate means nothing was presented — the caller
+    // recreates the swapchain and calls onSwapchainRecreated(). Suboptimal
+    // still presented; the caller decides whether a recreate is worth it.
+    rhi::PresentResult renderFrame(ImDrawData* uiDrawData, double timeSeconds);
 
     uint32_t viewCount() const { return viewCount_; }
+    const FrameStats& frameStats() const { return frameStats_; }
 
 private:
     // GPU camera data, one slot per multiview view (std140-compatible).
@@ -90,6 +102,7 @@ private:
     VkSemaphore frameTimeline_ = VK_NULL_HANDLE;
     uint64_t timelineValue_ = 0;
     uint32_t frameSlot_ = 0;
+    FrameStats frameStats_;
 
     // Layered HDR scene target (color + depth), one layer per view.
     VkImage sceneColor_ = VK_NULL_HANDLE;

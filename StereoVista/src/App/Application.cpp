@@ -65,7 +65,11 @@ void Application::initImGui() {
     UpdateGuiScale(fbWidth, fbHeight);
     InitializeImGuiWithFonts(window_.handle(), true);
 
-    VkFormat swapchainFormat = swapchain_.format();
+    // The backend copies InitInfo by value but keeps pColorAttachmentFormats
+    // as a raw pointer and dereferences it again whenever a dragged-out
+    // viewport creates its pipeline — a stack local here means that pipeline
+    // gets a garbage color format and the OS window renders black.
+    imguiColorFormat_ = swapchain_.format();
     ImGui_ImplVulkan_InitInfo info{};
     info.Instance = device_.instance();
     info.PhysicalDevice = device_.physicalDevice();
@@ -79,7 +83,7 @@ void Application::initImGui() {
     info.UseDynamicRendering = true;
     info.PipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
     info.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
-    info.PipelineRenderingCreateInfo.pColorAttachmentFormats = &swapchainFormat;
+    info.PipelineRenderingCreateInfo.pColorAttachmentFormats = &imguiColorFormat_;
     info.CheckVkResultFn = checkImGuiVkResult;
     if (!ImGui_ImplVulkan_Init(&info))
         throw std::runtime_error("ImGui_ImplVulkan_Init failed");
@@ -98,6 +102,12 @@ void Application::run() {
         if (window_.consumeResizeFlag())
             handleResize();
 
+        if (pendingPresentMode_ != VK_PRESENT_MODE_MAX_ENUM_KHR) {
+            swapchain_.setPreferredPresentMode(pendingPresentMode_);
+            pendingPresentMode_ = VK_PRESENT_MODE_MAX_ENUM_KHR;
+            handleResize();
+        }
+
         // Font atlas rebuilds must happen outside NewFrame/Render, with the
         // GPU idle (the texture may still be bound by an in-flight frame).
         if (g_GuiScale.needsRescale || g_GuiScale.needsFontRebuild) {
@@ -111,7 +121,8 @@ void Application::run() {
         buildUi();
         ImGui::Render();
 
-        const bool presented = renderer_.renderFrame(ImGui::GetDrawData(), glfwGetTime());
+        const rhi::PresentResult presentResult =
+            renderer_.renderFrame(ImGui::GetDrawData(), glfwGetTime());
 
         // Secondary OS windows (dragged-out panels): the Vulkan backend owns
         // their swapchains and presents them itself.
@@ -120,8 +131,20 @@ void Application::run() {
             ImGui::RenderPlatformWindowsDefault();
         }
 
-        if (!presented)
+        if (presentResult == rhi::PresentResult::OutOfDate) {
             handleResize();
+        } else if (presentResult == rhi::PresentResult::Suboptimal) {
+            // Recreate only when the size really changed. A driver that
+            // reports Suboptimal persistently must not trap the loop in a
+            // waitIdle+recreate cycle (which shows up as a hard fps cap and
+            // laggy input).
+            int width = 0, height = 0;
+            window_.framebufferSize(width, height);
+            if (width > 0 && height > 0 &&
+                (static_cast<uint32_t>(width) != swapchain_.extent().width ||
+                 static_cast<uint32_t>(height) != swapchain_.extent().height))
+                handleResize();
+        }
     }
 }
 
@@ -142,6 +165,29 @@ void Application::buildUi() {
                     swapchain_.stereoPresentSupported() ? "yes" : "no");
         ImGui::Text("%.1f fps (%.2f ms)", ImGui::GetIO().Framerate,
                     1000.0f / ImGui::GetIO().Framerate);
+
+        // Frame pacing: under FIFO the vsync wait must sit in acquire and/or
+        // present; a large slot wait means the GPU (or a driver cap) is the
+        // bottleneck. Sum far below the frame time = external throttle
+        // (battery/power-save caps, NVIDIA Battery Boost / Max Frame Rate).
+        const renderer::Renderer::FrameStats& stats = renderer_.frameStats();
+        ImGui::Text("Waits (ms): slot %.2f, acquire %.2f, present %.2f",
+                    stats.slotWaitMs, stats.acquireMs, stats.presentMs);
+        ImGui::Text("Swapchain recreations: %u", swapchainRecreations_);
+
+        if (ImGui::BeginCombo("Present mode",
+                              rhi::presentModeName(swapchain_.presentMode()))) {
+            for (VkPresentModeKHR mode : swapchain_.availablePresentModes()) {
+                if (mode > VK_PRESENT_MODE_FIFO_RELAXED_KHR)
+                    continue; // shared-present modes need a different frame path
+                const bool selected = (mode == swapchain_.presentMode());
+                if (ImGui::Selectable(rhi::presentModeName(mode), selected) && !selected)
+                    pendingPresentMode_ = mode;
+                if (selected)
+                    ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
         ImGui::Separator();
         ImGui::TextWrapped("Phase 1: Vulkan bootstrap. The triangle is "
                            "rendered through the multiview scene target. Dock "
@@ -158,6 +204,10 @@ void Application::handleResize() {
         return;
     swapchain_.recreate(static_cast<uint32_t>(width), static_cast<uint32_t>(height));
     renderer_.onSwapchainRecreated();
+    ++swapchainRecreations_;
+    // The surface format selection is deterministic, so this stays stable; if
+    // it ever changed, the ImGui main pipeline would need a reinit as well.
+    imguiColorFormat_ = swapchain_.format();
 }
 
 void Application::shutdownImGui() {

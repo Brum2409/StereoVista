@@ -54,10 +54,10 @@
 
 | | |
 |---|---|
-| **Current phase** | Phase 1 — bootstrap code complete, **awaiting user visual verification** (window + docking ImGui + triangle) |
+| **Current phase** | Phase 1 ☑ **DONE — user-verified 2026-07-03** (triangle + drag-out ImGui viewports render after the winding/format-lifetime fixes). Next: **Phase 2 — RHI hardening** |
 | **What builds** | New Vulkan app skeleton (Window/Device/Swapchain/Renderer/ImGui-Vulkan + multiview hello-triangle). Old GL sources are `ExcludedFromBuild` (in-tree as behaviour reference); deferred GI subsystems deleted |
 | **Vulkan code present** | `headers/RHI + src/RHI` (Device, Swapchain, ShaderCompiler, VMA glue), `Platform/Window`, `Renderer` (multiview scene target, timeline sync), `App/Application` |
-| **Last updated** | 2026-07-02 — Phase 0 + Phase 1 implementation session |
+| **Last updated** | 2026-07-03 — Phase 1 verification fixes + close-out |
 
 Legend: ☐ not started · ◐ in progress · ☑ done · ✎ changed from original plan
 
@@ -89,7 +89,7 @@ These are settled by the project owner. Follow them unless the user changes them
 ## 1. Phase board (suggested order — reorder if you have a better idea)
 
 - ☑ **Phase 0 — Toolchain & build setup** (vendored Vulkan-Headers/volk/VMA/shaderc+glslc in, GLAD/`opengl32.lib`/ImGui-GL3/`Engine::Shader` out; deferred GI systems deleted; SPIR-V build step)
-- ◐ **Phase 1 — Core Vulkan bootstrap + `Application` skeleton** (code + CI done: window, RHI Device/Swapchain, multiview triangle, ImGui-Vulkan; **user visual verification pending**)
+- ☑ **Phase 1 — Core Vulkan bootstrap + `Application` skeleton** (window, RHI Device/Swapchain, multiview triangle, ImGui-Vulkan; user-verified 2026-07-03 after fixing the front-face convention + ImGui viewport format lifetime — see session log)
 - ☐ **Phase 2 — RHI hardening** (buffers/images/pipelines/descriptors, HDR target + tonemap)
 - ☐ **Phase 3 — Mesh forward PBR + shadow mapping** (Shadow-Mapping lighting only)
 - ☐ **Phase 4 — Loading system → RHI upload** (parsers reused; streaming preserved)
@@ -141,7 +141,7 @@ These are settled by the project owner. Follow them unless the user changes them
 - **Read:** `StereoVista/StereoVista.vcxproj` (include/lib dirs, deps, post-build
   copy), `docs/VULKAN_MIGRATION.md §2.12 + §7b`, `headers/libs/imgui/backends/*`.
 
-### Phase 1 — Core bootstrap + `Application`  ◐ (code + CI done; user verify pending)
+### Phase 1 — Core bootstrap + `Application`  ☑ (2026-07-03, user-verified)
 - **Implemented (2026-07-02):** `Platform::Window` (GLFW_NO_API, raw mouse
   motion, resize→GUI-scale hook), `rhi::Device` (volk; validation layer +
   debug messenger when `SV_VULKAN_VALIDATION` and the layer exists; robust
@@ -160,8 +160,11 @@ These are settled by the project owner. Follow them unless the user changes them
   under `assets/shaders_vk/`. Old input callbacks are NOT yet rewired (they
   live in excluded main.cpp and come back with camera/tools phases); ImGui's
   GLFW backend chains its own.
-- **Exit:** CI green ✅; **user confirmation of the running app pending** —
-  window + docking/drag-out ImGui + swaying triangle.
+- **Exit:** CI green ✅; user verified on the RTX 3050 Ti laptop (2026-07-03):
+  swaying triangle renders, panels dock/undock/drag out to OS windows,
+  ~600 fps uncapped (Immediate) — after the verification-round fixes in the
+  session log (front-face convention, ImGui viewport format lifetime,
+  Suboptimal-present hardening).
 - **Goal:** a window with Vulkan + ImGui drawing, and the new app skeleton.
 - **How:** `Platform::Window` on GLFW with `GLFW_NO_API` + `VkSurfaceKHR` (keep
   existing input callbacks). RHI `Device` (instance/physical/logical device,
@@ -307,17 +310,13 @@ keeps one that needs **reconfiguration**. Full matrix + rationale in
   run old-GL and new-Vulkan paths on the same window.
 
 ## 3. Next up (start here)
-1. **Wait for the user's Phase 1 visual verification** (window opens, GPU/driver
-   shown in the debug panel, triangle sways without vanishing, ImGui panels
-   dock/undock/drag out to OS windows, resize doesn't crash, console clean of
-   validation errors). Fix whatever they report.
-2. **Phase 2 — RHI hardening**: `Buffer`/`Texture` (VMA + staged uploads),
+1. **Phase 2 — RHI hardening**: `Buffer`/`Texture` (VMA + staged uploads),
    `Pipeline` abstraction (SPIR-V + descriptor-layout spec + dynamic-rendering
    formats — consider SPIRV-Reflect), growable `DescriptorAllocator`, HDR
    tonemap pass replacing the Renderer's placeholder blit-to-swapchain,
    `Screenshot` readback. The triangle pass in `Renderer.cpp` shows the frame
    skeleton to build on (timeline sync, per-frame pools, layered target).
-3. Continue into **Phase 3+** per the board.
+2. Continue into **Phase 3+** per the board.
 
 Note for Phase 5: `shaderBufferInt64Atomics` + `shaderInt64` are **required and
 enabled** in `rhi::Device` (fail-loud with a clear message). See §4 for the
@@ -360,9 +359,41 @@ spec-status correction — optional per spec, universal on modern NVIDIA/AMD.
   every projection comes from the `renderer::` factories: Vulkan **[0,1] depth**
   (`GLM_FORCE_DEPTH_ZERO_TO_ONE` project-wide), **REVERSE-Z** (near→1, far→0,
   `VK_COMPARE_OP_GREATER`, clear depth 0.0) for float-depth precision, and the
-  **Y-flip baked into the projection** — so CCW-authored meshes are
-  `VK_FRONT_FACE_CLOCKWISE` in every raster pipeline. Do not hand-roll
-  projections above the RHI.
+  **Y-flip baked into the projection** — which keeps the image upright and
+  **preserves GL's winding**: CCW-authored meshes stay
+  **`VK_FRONT_FACE_COUNTER_CLOCKWISE`** in every raster pipeline. ⚠ Corrected
+  2026-07-03 — this bullet originally said `VK_FRONT_FACE_CLOCKWISE`, which
+  back-culled everything (the first user run had no triangle). The front-face
+  test runs in framebuffer space (as seen on screen); a projection-baked flip
+  does not change on-screen orientation. Only the negative-viewport-height
+  flip method toggles winding (it acts inside the viewport transform the test
+  observes) — we do not use it. Matches vulkan-tutorial's Y-flip guidance.
+  Do not hand-roll projections above the RHI.
+- **ImGui Vulkan backend pointer-lifetime trap (bit us 2026-07-03):**
+  `ImGui_ImplVulkan_InitInfo` is copied by value, but
+  `PipelineRenderingCreateInfo.pColorAttachmentFormats` stays a raw pointer
+  that the backend dereferences **lazily** — when the first dragged-out
+  viewport creates the shared secondary-viewport pipeline. Pointing it at a
+  stack local makes secondary OS windows render black (garbage/UNDEFINED
+  format pipeline; main window unaffected because its pipeline is built during
+  init). It now points at the long-lived `Application::imguiColorFormat_`.
+- **WSI pacing tools (debug panel, added 2026-07-03):** per-frame wait
+  breakdown (`slot` = CPU wait on the frame slot's previous GPU submission,
+  `acquire`, `present`), a swapchain-recreation counter, and a **present-mode
+  selector** (FIFO default = vsync/GL parity; Mailbox/Immediate for preference
+  and for diagnosing driver-side FIFO pacing). `Swapchain::present` returns
+  `PresentResult` and the app recreates on Suboptimal **only if the size
+  actually changed** — a persistent-SUBOPTIMAL driver must not trap the loop
+  in waitIdle+recreate (reads as a hard fps cap + laggy input).
+- **Test GPU facts (RTX 3050 Ti Laptop, Optimus hybrid, driver Vulkan
+  1.4.341):** `maxImageArrayLayers = 1` (mono present, as predicted for
+  consumer GeForce); windowed 1920×1055 uncapped (Immediate) ≈ **600 fps —
+  that is normal and present-path-bound** (DWM composition + dGPU→iGPU
+  cross-adapter copy ≈ 1–1.5 ms/frame; the Phase-1 GPU work itself is
+  ~0.1–0.3 ms). Do not read windowed hello-triangle fps as GPU capacity. A
+  hard 30 fps (2× vblank) was seen under FIFO in the first run — recheck FIFO
+  after the Suboptimal hardening; if it persists it is the hybrid-GPU FIFO
+  path, and Mailbox is the tear-free alternative.
 - **Swapchain format:** UNORM (`B8G8R8A8_UNORM` preferred) + `SRGB_NONLINEAR`,
   FIFO (vsync, matching the GL app's swap-interval-1). ImGui writes raw colors;
   scene gamma is handled by the Phase 2 tonemap, not the backbuffer format.
@@ -413,16 +444,19 @@ At each phase boundary: get CI green, then give the user concrete run/verify ste
 and wait for their result before marking the phase done. Capture before/after
 screenshots where useful.
 
-**Phase 1 (pending now)** — build `Release|x64` (or `Debug|x64` for validation
-layers) from `StereoVista.sln`, run `bin\x64\<config>\StereoVista.exe`:
-- [ ] Window "StereoVista" opens; console shows `[vulkan] using GPU: …` and
+**Phase 1 (VERIFIED 2026-07-03)** — build `Release|x64` (or `Debug|x64` for
+validation layers) from `StereoVista.sln`, run `bin\x64\<config>\StereoVista.exe`:
+- [x] Window "StereoVista" opens; console shows `[vulkan] using GPU: …` and
       `surface maxImageArrayLayers = …` (2 = stereo-present capable)
-- [ ] RGB triangle sways on the dark viewport and never disappears mid-sway
-      (vanishing = broken CLOCKWISE front-face convention)
-- [ ] Debug panel shows GPU/driver/Vulkan version/swapchain/stereo capability
-- [ ] Panel docks, undocks, and drags OUT of the main window (own OS window)
-- [ ] Resize/maximize/minimize/restore work; exit is clean
+- [x] RGB triangle sways on the dark viewport and never disappears mid-sway
+      (vanishing = broken COUNTER_CLOCKWISE front-face convention)
+- [x] Debug panel shows GPU/driver/Vulkan version/swapchain/stereo capability
+- [x] Panel docks, undocks, and drags OUT of the main window (own OS window)
+- [ ] Resize/maximize/minimize/restore work; exit is clean *(not explicitly
+      re-tested after the fixes — spot-check in passing during Phase 2)*
 - [ ] Debug build: no `[vulkan][error]` validation messages in the console
+      *(validation layer not installed on the test machine; run once via
+      vkconfig/SDK when convenient)*
 
 Full app-level checklist (later phases):
 - [ ] App launches, ImGui docks/undocks/drags-out
@@ -438,6 +472,30 @@ Full app-level checklist (later phases):
 ---
 
 ## 6. Session log (append newest at top; keep entries short)
+- **2026-07-03 — Phase 1 user verification: three bugs fixed, phase CLOSED.**
+  First real run reported: no triangle, dragged-out ImGui windows black, hard
+  30 fps. Root causes and fixes: (1) **the winding convention was inverted** —
+  with the Y-flip baked into the projection, CCW-authored faces STAY
+  counter-clockwise under Vulkan's framebuffer-space front-face test (only the
+  negative-viewport-height flip method toggles winding). Pipeline switched to
+  `VK_FRONT_FACE_COUNTER_CLOCKWISE`; Projection.h and §4 corrected — the
+  2026-07-02 static-audit claim of a "validated" CLOCKWISE convention was
+  wrong. (2) **Black secondary viewports**: dangling
+  `PipelineRenderingCreateInfo.pColorAttachmentFormats` (stack local captured
+  by the backend's by-value InitInfo copy, dereferenced lazily on first
+  drag-out) → now a long-lived `Application` member (§4 gotcha). (3) **30 fps
+  lock**: no structural fault found in the frame loop; hardened the
+  Suboptimal-present path (recreate only when the size changed — a
+  persistent-SUBOPTIMAL driver could otherwise trap the loop in
+  waitIdle+recreate at exactly half refresh) and added diagnostics: per-frame
+  wait breakdown (slot/acquire/present) + swapchain-recreation counter +
+  present-mode selector (FIFO/Mailbox/Immediate) in the debug panel. Also
+  enabled `separateDepthStencilLayouts` (mandatory-supported at 1.2+; required
+  for the depth-only `DEPTH_ATTACHMENT_OPTIMAL` layout the renderer already
+  used). **User re-verified**: triangle sways, drag-out viewports render,
+  ~600 fps uncapped Immediate at 1920×1055 on the Optimus RTX 3050 Ti —
+  assessed as normal/present-path-bound (§4 test-GPU facts). **Phase 1 done →
+  next: Phase 2 (RHI hardening).**
 - **2026-07-02 — Phase 1 static audit (same session, follow-up).** Re-verified
   the implementation without a GPU: CI green on Debug+Release x64 for the full
   head (both branches at the same commit); zero GL-context calls left in

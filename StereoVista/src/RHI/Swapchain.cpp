@@ -52,10 +52,19 @@ void Swapchain::create(uint32_t width, uint32_t height, VkSwapchainKHR old) {
     format_ = chosen.format;
     colorSpace_ = chosen.colorSpace;
 
-    // FIFO is the only present mode Vulkan guarantees; it is also the vsync
-    // behaviour the GL app shipped with (swap interval 1). Present-mode
-    // choice becomes a preference later.
-    VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
+    // FIFO (the only guaranteed mode, and the GL app's swap-interval-1
+    // behaviour) is the default; the debug panel can switch to any other mode
+    // the surface offers — useful both as a preference and to diagnose
+    // driver-side FIFO pacing problems (hybrid-GPU laptops).
+    uint32_t modeCount = 0;
+    VK_CHECK(vkGetPhysicalDeviceSurfacePresentModesKHR(gpu, surface, &modeCount, nullptr));
+    availablePresentModes_.resize(modeCount);
+    VK_CHECK(vkGetPhysicalDeviceSurfacePresentModesKHR(gpu, surface, &modeCount,
+                                                       availablePresentModes_.data()));
+    presentMode_ = VK_PRESENT_MODE_FIFO_KHR;
+    for (VkPresentModeKHR mode : availablePresentModes_)
+        if (mode == preferredPresentMode_)
+            presentMode_ = mode;
 
     VkExtent2D wanted{};
     if (caps.currentExtent.width != UINT32_MAX) {
@@ -82,7 +91,7 @@ void Swapchain::create(uint32_t width, uint32_t height, VkSwapchainKHR old) {
     info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     info.preTransform = caps.currentTransform;
     info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    info.presentMode = presentMode;
+    info.presentMode = presentMode_;
     info.clipped = VK_TRUE;
     info.oldSwapchain = old;
 
@@ -123,7 +132,7 @@ uint32_t Swapchain::acquireImage(VkSemaphore signalWhenAvailable) {
     return imageIndex;
 }
 
-bool Swapchain::present(VkQueue queue, uint32_t imageIndex) {
+PresentResult Swapchain::present(VkQueue queue, uint32_t imageIndex) {
     VkSemaphore wait = renderFinished_[imageIndex];
     VkPresentInfoKHR info{};
     info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
@@ -133,10 +142,12 @@ bool Swapchain::present(VkQueue queue, uint32_t imageIndex) {
     info.pSwapchains = &swapchain_;
     info.pImageIndices = &imageIndex;
     VkResult result = vkQueuePresentKHR(queue, &info);
-    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
-        return false;
+    if (result == VK_ERROR_OUT_OF_DATE_KHR)
+        return PresentResult::OutOfDate;
+    if (result == VK_SUBOPTIMAL_KHR)
+        return PresentResult::Suboptimal;
     VK_CHECK(result);
-    return true;
+    return PresentResult::Success;
 }
 
 void Swapchain::destroyViews() {

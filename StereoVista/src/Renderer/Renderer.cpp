@@ -10,6 +10,7 @@
 #include "imgui/imgui.h"
 #include "imgui/backends/imgui_impl_vulkan.h"
 
+#include <chrono>
 #include <cmath>
 #include <cstring>
 
@@ -45,6 +46,16 @@ void pipelineBarriers(VkCommandBuffer cmd, const VkImageMemoryBarrier2* barriers
     dep.imageMemoryBarrierCount = count;
     dep.pImageMemoryBarriers = barriers;
     vkCmdPipelineBarrier2(cmd, &dep);
+}
+
+using StatsClock = std::chrono::steady_clock;
+
+float msBetween(StatsClock::time_point from, StatsClock::time_point to) {
+    return std::chrono::duration<float, std::milli>(to - from).count();
+}
+
+void smooth(float& average, float sample) {
+    average += 0.08f * (sample - average);
 }
 
 } // namespace
@@ -213,13 +224,14 @@ void Renderer::createTrianglePipeline(rhi::ShaderCompiler& shaderCompiler) {
     viewport.viewportCount = 1;
     viewport.scissorCount = 1;
 
-    // House conventions (Renderer/Projection.h): Y-flipped projections turn
-    // CCW-authored faces clockwise.
+    // House conventions (Renderer/Projection.h): the Y-flip lives in the
+    // projection, so CCW-authored faces keep their counter-clockwise
+    // on-screen winding — GL's front-face convention carries over.
     VkPipelineRasterizationStateCreateInfo raster{};
     raster.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     raster.polygonMode = VK_POLYGON_MODE_FILL;
     raster.cullMode = VK_CULL_MODE_BACK_BIT;
-    raster.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     raster.lineWidth = 1.0f;
 
     VkPipelineMultisampleStateCreateInfo multisample{};
@@ -283,7 +295,7 @@ void Renderer::createTrianglePipeline(rhi::ShaderCompiler& shaderCompiler) {
 void Renderer::updateViewUniforms(FrameContext& frame, double timeSeconds) {
     // Gentle ±60° sway: proves the per-frame UBO path while keeping the
     // back-face-culled triangle facing the camera — if it vanishes, the
-    // CLOCKWISE front-face convention (Projection.h) is broken.
+    // COUNTER_CLOCKWISE front-face convention (Projection.h) is broken.
     const float angle = std::sin(static_cast<float>(timeSeconds) * 0.5f) * glm::radians(60.0f);
     const glm::vec3 eye(3.0f * std::sin(angle), 1.2f, 3.0f * std::cos(angle));
     const glm::vec3 target(0.0f);
@@ -303,8 +315,10 @@ void Renderer::updateViewUniforms(FrameContext& frame, double timeSeconds) {
     vmaFlushAllocation(device_->allocator(), frame.viewUboAllocation, 0, sizeof(uniforms));
 }
 
-bool Renderer::renderFrame(ImDrawData* uiDrawData, double timeSeconds) {
+rhi::PresentResult Renderer::renderFrame(ImDrawData* uiDrawData, double timeSeconds) {
     FrameContext& frame = frames_[frameSlot_];
+
+    const StatsClock::time_point frameStart = StatsClock::now();
 
     // Block until this slot's previous submission retired.
     if (frame.submittedTimelineValue != 0) {
@@ -315,10 +329,14 @@ bool Renderer::renderFrame(ImDrawData* uiDrawData, double timeSeconds) {
         waitInfo.pValues = &frame.submittedTimelineValue;
         VK_CHECK(vkWaitSemaphores(device_->device(), &waitInfo, UINT64_MAX));
     }
+    const StatsClock::time_point afterSlotWait = StatsClock::now();
+    smooth(frameStats_.slotWaitMs, msBetween(frameStart, afterSlotWait));
 
     const uint32_t imageIndex = swapchain_->acquireImage(frame.acquireSemaphore);
     if (imageIndex == UINT32_MAX)
-        return false;
+        return rhi::PresentResult::OutOfDate;
+    const StatsClock::time_point afterAcquire = StatsClock::now();
+    smooth(frameStats_.acquireMs, msBetween(afterSlotWait, afterAcquire));
 
     VK_CHECK(vkResetCommandPool(device_->device(), frame.commandPool, 0));
     VK_CHECK(vkResetDescriptorPool(device_->device(), frame.descriptorPool, 0));
@@ -357,7 +375,10 @@ bool Renderer::renderFrame(ImDrawData* uiDrawData, double timeSeconds) {
 
     frameSlot_ = (frameSlot_ + 1) % kFramesInFlight;
 
-    return swapchain_->present(device_->graphicsQueue(), imageIndex);
+    const StatsClock::time_point beforePresent = StatsClock::now();
+    const rhi::PresentResult result = swapchain_->present(device_->graphicsQueue(), imageIndex);
+    smooth(frameStats_.presentMs, msBetween(beforePresent, StatsClock::now()));
+    return result;
 }
 
 void Renderer::recordFrame(FrameContext& frame, uint32_t imageIndex, ImDrawData* uiDrawData) {

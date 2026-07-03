@@ -36,7 +36,18 @@ private:
     renderer::Renderer renderer_;
 
     VkDescriptorPool imguiDescriptorPool_ = VK_NULL_HANDLE;
+    // Backing store for ImGui_ImplVulkan_InitInfo::PipelineRenderingCreateInfo
+    // ::pColorAttachmentFormats. The backend keeps that POINTER for its whole
+    // lifetime (secondary-viewport pipelines are created lazily on first
+    // drag-out), so it must not point at a stack local.
+    VkFormat imguiColorFormat_ = VK_FORMAT_UNDEFINED;
     bool imguiInitialized_ = false;
+
+    // Debug-panel state: deferred present-mode switch (applied at the top of
+    // the next loop iteration, never mid-frame) and a recreate counter that
+    // makes a recreate storm visible at a glance.
+    VkPresentModeKHR pendingPresentMode_ = VK_PRESENT_MODE_MAX_ENUM_KHR;
+    uint32_t swapchainRecreations_ = 0;
 };
 
 } // namespace app

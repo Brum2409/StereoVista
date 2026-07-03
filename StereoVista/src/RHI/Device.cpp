@@ -33,6 +33,9 @@ const FeatureRequirement kRequiredFeatures[] = {
     { "multiview", nullptr, &VkPhysicalDeviceVulkan11Features::multiview, nullptr, nullptr },
     { "shaderBufferInt64Atomics", nullptr, nullptr, &VkPhysicalDeviceVulkan12Features::shaderBufferInt64Atomics, nullptr },
     { "timelineSemaphore", nullptr, nullptr, &VkPhysicalDeviceVulkan12Features::timelineSemaphore, nullptr },
+    // Mandatory-supported at 1.2+; must still be ENABLED for the renderer's
+    // depth-only VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL usage to be legal.
+    { "separateDepthStencilLayouts", nullptr, nullptr, &VkPhysicalDeviceVulkan12Features::separateDepthStencilLayouts, nullptr },
     { "bufferDeviceAddress", nullptr, nullptr, &VkPhysicalDeviceVulkan12Features::bufferDeviceAddress, nullptr },
     { "descriptorIndexing", nullptr, nullptr, &VkPhysicalDeviceVulkan12Features::descriptorIndexing, nullptr },
     { "runtimeDescriptorArray", nullptr, nullptr, &VkPhysicalDeviceVulkan12Features::runtimeDescriptorArray, nullptr },
@@ -337,6 +340,7 @@ void Device::createLogicalDevice() {
     enable12.pNext = &enable13;
     enable12.shaderBufferInt64Atomics = VK_TRUE;
     enable12.timelineSemaphore = VK_TRUE;
+    enable12.separateDepthStencilLayouts = VK_TRUE;
     enable12.bufferDeviceAddress = VK_TRUE;
     enable12.descriptorIndexing = VK_TRUE;
     enable12.runtimeDescriptorArray = VK_TRUE;
