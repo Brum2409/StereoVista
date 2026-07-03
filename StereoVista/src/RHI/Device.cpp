@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <iterator>
 #include <sstream>
@@ -29,6 +31,8 @@ struct FeatureRequirement {
 
 const FeatureRequirement kRequiredFeatures[] = {
     { "samplerAnisotropy", &VkPhysicalDeviceFeatures::samplerAnisotropy, nullptr, nullptr, nullptr },
+    // CUBE_ARRAY image views (point-light shadow cubemap array).
+    { "imageCubeArray", &VkPhysicalDeviceFeatures::imageCubeArray, nullptr, nullptr, nullptr },
     { "shaderInt64", &VkPhysicalDeviceFeatures::shaderInt64, nullptr, nullptr, nullptr },
     { "multiview", nullptr, &VkPhysicalDeviceVulkan11Features::multiview, nullptr, nullptr },
     { "shaderBufferInt64Atomics", nullptr, nullptr, &VkPhysicalDeviceVulkan12Features::shaderBufferInt64Atomics, nullptr },
@@ -44,6 +48,10 @@ const FeatureRequirement kRequiredFeatures[] = {
     { "descriptorBindingUpdateUnusedWhilePending", nullptr, nullptr, &VkPhysicalDeviceVulkan12Features::descriptorBindingUpdateUnusedWhilePending, nullptr },
     { "descriptorBindingVariableDescriptorCount", nullptr, nullptr, &VkPhysicalDeviceVulkan12Features::descriptorBindingVariableDescriptorCount, nullptr },
     { "shaderSampledImageArrayNonUniformIndexing", nullptr, nullptr, &VkPhysicalDeviceVulkan12Features::shaderSampledImageArrayNonUniformIndexing, nullptr },
+    // HARD requirement since Phase 3: every scene shader binds its blocks
+    // with layout(scalar) against the shared C++/GLSL structs (playbook A.1).
+    // Universal on modern NVIDIA/AMD Windows drivers (the compat target).
+    { "scalarBlockLayout", nullptr, nullptr, &VkPhysicalDeviceVulkan12Features::scalarBlockLayout, nullptr },
     { "hostQueryReset", nullptr, nullptr, &VkPhysicalDeviceVulkan12Features::hostQueryReset, nullptr },
     { "dynamicRendering", nullptr, nullptr, nullptr, &VkPhysicalDeviceVulkan13Features::dynamicRendering },
     { "synchronization2", nullptr, nullptr, nullptr, &VkPhysicalDeviceVulkan13Features::synchronization2 },
@@ -133,6 +141,13 @@ bool hasExtension(const std::vector<VkExtensionProperties>& exts, const char* na
     return false;
 }
 
+// Runtime files (preferences.json, imgui.ini, screenshots/) are working-
+// directory-relative in this app; the pipeline cache follows the same
+// convention. A cold cache after a cwd change is harmless.
+std::filesystem::path pipelineCachePath() {
+    return "pipeline_cache.bin";
+}
+
 } // namespace
 
 void Device::init(GLFWwindow* window, bool enableValidation) {
@@ -145,6 +160,7 @@ void Device::init(GLFWwindow* window, bool enableValidation) {
     pickPhysicalDevice();
     createLogicalDevice();
     createAllocator();
+    createPipelineCache();
 
     VkCommandPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -362,15 +378,15 @@ void Device::createLogicalDevice() {
     enable2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     enable2.pNext = &enable11;
     enable2.features.samplerAnisotropy = VK_TRUE;
+    enable2.features.imageCubeArray = VK_TRUE;
     enable2.features.shaderInt64 = VK_TRUE;
 
-    // scalarBlockLayout/shaderDrawParameters are enabled above without being
-    // in the required table — verify them here so an exotic driver fails with
-    // a clear message instead of VK_ERROR_FEATURE_NOT_PRESENT.
+    // shaderDrawParameters is enabled above without being in the required
+    // table — verify it here so an exotic driver fails soft instead of
+    // VK_ERROR_FEATURE_NOT_PRESENT. (scalarBlockLayout used to fall off the
+    // same way; since Phase 3 it is a hard requirement checked in the table.)
     QueriedFeatures avail;
     avail.query(physicalDevice_);
-    if (!avail.v12.scalarBlockLayout)
-        enable12.scalarBlockLayout = VK_FALSE;
     if (!avail.v11.shaderDrawParameters)
         enable11.shaderDrawParameters = VK_FALSE;
 
@@ -419,6 +435,53 @@ void Device::createAllocator() {
     info.pVulkanFunctions = &functions;
     info.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
     VK_CHECK(vmaCreateAllocator(&info, &allocator_));
+}
+
+void Device::createPipelineCache() {
+    std::vector<char> initial;
+    std::ifstream file(pipelineCachePath(), std::ios::binary | std::ios::ate);
+    if (file) {
+        const std::streamsize size = file.tellg();
+        if (size > 0) {
+            initial.resize(static_cast<size_t>(size));
+            file.seekg(0);
+            file.read(initial.data(), size);
+        }
+    }
+
+    VkPipelineCacheCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+    // The implementation validates the blob's header (vendor/device/cache
+    // UUID) and ignores incompatible data, so feeding a stale file is safe.
+    info.initialDataSize = initial.size();
+    info.pInitialData = initial.empty() ? nullptr : initial.data();
+    if (vkCreatePipelineCache(device_, &info, nullptr, &pipelineCache_) != VK_SUCCESS) {
+        // A corrupt file must not stop the app; retry empty.
+        info.initialDataSize = 0;
+        info.pInitialData = nullptr;
+        VK_CHECK(vkCreatePipelineCache(device_, &info, nullptr, &pipelineCache_));
+    }
+}
+
+void Device::savePipelineCache() {
+    if (pipelineCache_ == VK_NULL_HANDLE)
+        return;
+    size_t size = 0;
+    if (vkGetPipelineCacheData(device_, pipelineCache_, &size, nullptr) != VK_SUCCESS ||
+        size == 0)
+        return;
+    std::vector<char> data(size);
+    if (vkGetPipelineCacheData(device_, pipelineCache_, &size, data.data()) != VK_SUCCESS)
+        return;
+
+    const std::filesystem::path path = pipelineCachePath();
+    std::error_code ec;
+    if (path.has_parent_path())
+        std::filesystem::create_directories(path.parent_path(), ec);
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (file)
+        file.write(data.data(), static_cast<std::streamsize>(size));
+    // Failure is acceptable: the cache is an optimization, not state.
 }
 
 void Device::immediateSubmit(const std::function<void(VkCommandBuffer)>& record) const {
@@ -471,6 +534,9 @@ void Device::shutdown() {
         return;
     if (device_ != VK_NULL_HANDLE) {
         vkDeviceWaitIdle(device_);
+        savePipelineCache();
+        if (pipelineCache_ != VK_NULL_HANDLE)
+            vkDestroyPipelineCache(device_, pipelineCache_, nullptr);
         if (immediatePool_ != VK_NULL_HANDLE)
             vkDestroyCommandPool(device_, immediatePool_, nullptr);
         if (allocator_ != VK_NULL_HANDLE)
@@ -483,6 +549,7 @@ void Device::shutdown() {
         vkDestroyDebugUtilsMessengerEXT(instance_, debugMessenger_, nullptr);
     vkDestroyInstance(instance_, nullptr);
 
+    pipelineCache_ = VK_NULL_HANDLE;
     immediatePool_ = VK_NULL_HANDLE;
     allocator_ = VK_NULL_HANDLE;
     device_ = VK_NULL_HANDLE;

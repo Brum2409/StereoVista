@@ -1,7 +1,5 @@
 #include "Engine/Screenshot.h"
 
-#include <glad/glad.h>
-
 #include <algorithm>
 #include <cstdint>
 #include <ctime>
@@ -155,58 +153,6 @@ bool writePNG(const std::string &path, int width, int height, int channels,
   return file.good();
 }
 
-bool captureToMemory(int x, int y, int width, int height,
-                     unsigned int readBuffer,
-                     std::vector<unsigned char> &outPixels, int &outWidth,
-                     int &outHeight) {
-  if (width <= 0 || height <= 0)
-    return false;
-
-  // Read from the default framebuffer's selected color buffer, restoring all
-  // touched GL state afterwards so the capture is transparent to the renderer.
-  GLint prevReadFbo = 0;
-  glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevReadFbo);
-  glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-  GLint prevReadBuffer = GL_BACK;
-  glGetIntegerv(GL_READ_BUFFER, &prevReadBuffer);
-  glReadBuffer(static_cast<GLenum>(readBuffer));
-
-  const int channels = 3; // RGB
-  std::vector<unsigned char> pixels(static_cast<size_t>(width) * height *
-                                    channels);
-
-  GLint prevAlign = 4;
-  glGetIntegerv(GL_PACK_ALIGNMENT, &prevAlign);
-  glPixelStorei(GL_PACK_ALIGNMENT, 1);
-  glReadPixels(x, y, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
-  glPixelStorei(GL_PACK_ALIGNMENT, prevAlign);
-
-  glReadBuffer(static_cast<GLenum>(prevReadBuffer));
-  glBindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFbo);
-
-  // OpenGL returns rows bottom-to-top; flip so the image is upright.
-  const size_t rowBytes = static_cast<size_t>(width) * channels;
-  outPixels.assign(pixels.size(), 0);
-  for (int row = 0; row < height; ++row) {
-    std::copy(pixels.begin() + static_cast<size_t>(height - 1 - row) * rowBytes,
-              pixels.begin() + static_cast<size_t>(height - row) * rowBytes,
-              outPixels.begin() + static_cast<size_t>(row) * rowBytes);
-  }
-  outWidth = width;
-  outHeight = height;
-  return true;
-}
-
-bool captureToPNG(const std::string &path, int x, int y, int width, int height,
-                  unsigned int readBuffer) {
-  std::vector<unsigned char> flipped;
-  int w = 0, h = 0;
-  if (!captureToMemory(x, y, width, height, readBuffer, flipped, w, h))
-    return false;
-
-  return writePNG(path, w, h, 3, flipped.data());
-}
-
 std::vector<unsigned char>
 combineStereo(const std::vector<unsigned char> &left,
               const std::vector<unsigned char> &right, int width, int height,
@@ -243,50 +189,6 @@ combineStereo(const std::vector<unsigned char> &left,
               out.begin() + dstOff + rowBytes);
   }
   return out;
-}
-
-namespace {
-// Insert a suffix before the file extension, e.g. ("a/b.png", "_L") ->
-// "a/b_L.png". If there is no extension the suffix is simply appended.
-std::string insertSuffix(const std::string &path, const std::string &suffix) {
-  std::filesystem::path p(path);
-  std::filesystem::path stem = p.stem();
-  std::string ext = p.extension().string();
-  std::filesystem::path out = p.parent_path();
-  out /= (stem.string() + suffix + ext);
-  return out.string();
-}
-} // namespace
-
-bool captureStereoToPNG(const std::string &path, int x, int y, int width,
-                        int height, unsigned int leftBuffer,
-                        unsigned int rightBuffer, StereoLayout layout) {
-  std::vector<unsigned char> left, right;
-  int lw = 0, lh = 0, rw = 0, rh = 0;
-  if (!captureToMemory(x, y, width, height, leftBuffer, left, lw, lh))
-    return false;
-  if (!captureToMemory(x, y, width, height, rightBuffer, right, rw, rh))
-    return false;
-  if (lw != rw || lh != rh) {
-    std::cerr << "captureStereoToPNG: eye dimensions differ" << std::endl;
-    return false;
-  }
-
-  const int channels = 3; // captureToMemory returns RGB
-
-  if (layout == StereoLayout::Separate) {
-    bool okL = writePNG(insertSuffix(path, "_L"), lw, lh, channels, left.data());
-    bool okR =
-        writePNG(insertSuffix(path, "_R"), rw, rh, channels, right.data());
-    return okL && okR;
-  }
-
-  int outW = 0, outH = 0;
-  std::vector<unsigned char> combined =
-      combineStereo(left, right, lw, lh, channels, layout, outW, outH);
-  if (combined.empty())
-    return false;
-  return writePNG(path, outW, outH, channels, combined.data());
 }
 
 std::string makeTimestampedPath(const std::string &directory) {

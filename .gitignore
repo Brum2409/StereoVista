@@ -64,6 +64,10 @@ OpenGLTemplate/x64/
 
 # Application specific files
 imgui.ini
+pipeline_cache.bin
+# App screenshot output when run from the project dir (root screenshots/
+# holds curated reference images and stays tracked)
+/StereoVista/screenshots/
 
 # Build artifacts
 *.iobj

@@ -75,6 +75,10 @@ public:
 
     bool stereoPresentSupported() const { return maxSurfaceLayers_ >= 2; }
 
+    // Swapchain images carry TRANSFER_SRC (surface permitting), so the
+    // presented frame can be copied out for screenshots.
+    bool supportsCapture() const { return supportsCapture_; }
+
 private:
     void create(uint32_t width, uint32_t height, VkSwapchainKHR old);
     void destroyViews();
@@ -91,6 +95,7 @@ private:
     std::vector<VkImageView> imageViews_;
     std::vector<VkSemaphore> renderFinished_;
     uint32_t maxSurfaceLayers_ = 1;
+    bool supportsCapture_ = false;
 };
 
 } // namespace rhi

@@ -42,6 +42,10 @@ public:
     uint32_t graphicsQueueFamily() const { return graphicsQueueFamily_; }
     VkQueue graphicsQueue() const { return graphicsQueue_; }
 
+    // Disk-backed pipeline cache (StereoVista/pipeline_cache.bin) shared by
+    // every pipeline build; the driver itself rejects stale/foreign blobs.
+    VkPipelineCache pipelineCache() const { return pipelineCache_; }
+
     const VkPhysicalDeviceProperties& properties() const { return properties_; }
     const char* deviceName() const { return properties_.deviceName; }
     bool validationActive() const { return debugMessenger_ != VK_NULL_HANDLE; }
@@ -60,6 +64,8 @@ private:
     void pickPhysicalDevice();
     void createLogicalDevice();
     void createAllocator();
+    void createPipelineCache();
+    void savePipelineCache();
 
     VkInstance instance_ = VK_NULL_HANDLE;
     VkDebugUtilsMessengerEXT debugMessenger_ = VK_NULL_HANDLE;
@@ -73,6 +79,7 @@ private:
 
     VkPhysicalDeviceProperties properties_{};
     VkCommandPool immediatePool_ = VK_NULL_HANDLE;
+    VkPipelineCache pipelineCache_ = VK_NULL_HANDLE;
 };
 
 } // namespace rhi

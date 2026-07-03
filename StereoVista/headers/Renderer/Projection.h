@@ -73,4 +73,29 @@ inline glm::mat4 frustumAsymmetric(float left, float right, float bottom, float 
     return flipY(reverseZ(glm::frustum(left, right, bottom, top, zNear, zFar)));
 }
 
+// ---- Cube-map face rendering (point-light shadows) ----
+// DELIBERATELY NO flipY: the house Y-flip exists to keep the PRESENTED image
+// upright; a cube face is only ever resampled through the fixed-function
+// cube lookup, whose direction→texel mapping is identical in GL and Vulkan
+// (NDC -1..+1 maps to texel row 0..N the same way in both APIs). Rendering
+// the faces with the classic GL cubemap view matrices and a plain reverse-Z
+// projection therefore reproduces GL sampling exactly; adding the flip would
+// mirror every face. Winding does flip without the Y-flip — the point-shadow
+// pipeline culls NONE so it cannot matter.
+inline glm::mat4 perspectiveCubeFace(float zNear, float zFar) {
+    return reverseZ(glm::perspective(glm::radians(90.0f), 1.0f, zNear, zFar));
+}
+
+// faceIndex follows the cube-layer order +X,-X,+Y,-Y,+Z,-Z with the standard
+// GL cubemap up vectors.
+inline glm::mat4 cubeFaceView(const glm::vec3& eye, int faceIndex) {
+    static const glm::vec3 dirs[6] = {
+        { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 },
+    };
+    static const glm::vec3 ups[6] = {
+        { 0, -1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 }, { 0, -1, 0 }, { 0, -1, 0 },
+    };
+    return glm::lookAt(eye, eye + dirs[faceIndex], ups[faceIndex]);
+}
+
 } // namespace renderer

@@ -79,6 +79,15 @@ void Swapchain::create(uint32_t width, uint32_t height, VkSwapchainKHR old) {
     if (caps.maxImageCount > 0)
         minImages = std::min(minImages, caps.maxImageCount);
 
+    // The scene reaches the backbuffer as a color attachment (tonemap pass);
+    // TRANSFER_SRC additionally lets the screenshot path copy the presented
+    // frame back. Desktop drivers universally support it, but honor the caps
+    // rather than assume (capture is simply refused without it).
+    VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    supportsCapture_ = (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
+    if (supportsCapture_)
+        usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+
     VkSwapchainCreateInfoKHR info{};
     info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
     info.surface = surface;
@@ -87,7 +96,7 @@ void Swapchain::create(uint32_t width, uint32_t height, VkSwapchainKHR old) {
     info.imageColorSpace = colorSpace_;
     info.imageExtent = extent_;
     info.imageArrayLayers = 1; // Phase 7: 2 when stereoPresentSupported()
-    info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    info.imageUsage = usage;
     info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     info.preTransform = caps.currentTransform;
     info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;

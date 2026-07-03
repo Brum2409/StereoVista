@@ -1,12 +1,21 @@
 #include "App/Application.h"
 
+#include "Engine/Screenshot.h"
+#include "Platform/Paths.h"
+#include "Renderer/Projection.h"
+
 #include <GLFW/glfw3.h>
+
+#include <glm/gtc/matrix_transform.hpp>
 
 #include "imgui/imgui.h"
 #include "imgui/backends/imgui_impl_glfw.h"
 #include "imgui/backends/imgui_impl_vulkan.h"
 #include "imgui/imgui_sytle.h"
 
+#include <algorithm>
+#include <cfloat>
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
 
@@ -41,7 +50,158 @@ void Application::init() {
 
     renderer_.init(device_, swapchain_, shaderCompiler_);
 
+    loadScene();
+
+    // Sun defaults follow the GL app (dimmed warm directional); the repo
+    // skybox becomes the background when its faces resolve.
+    sun_.enabled = true;
+    if (renderer_.skybox().loadCubemap("skybox"))
+        sky_.mode = renderer::SkyMode::Cubemap;
+
     initImGui();
+}
+
+void Application::loadScene() {
+    const std::filesystem::path scenePath = Platform::resolveAssetPath("office.scene");
+    if (!scenePath.empty()) {
+        try {
+            scene_ = scene::loadSceneFile(scenePath.string(), device_,
+                                          renderer_.materials());
+        } catch (const std::exception& e) {
+            std::cerr << "ERROR: " << e.what() << "\n";
+        }
+    }
+    if (scene_.models.empty())
+        scene_ = scene::createDefaultScene(device_, renderer_.materials());
+
+    if (scene_.camera.valid) {
+        cameraPos_ = scene_.camera.position;
+        const glm::vec3 front = scene_.camera.front;
+        cameraPitch_ = glm::degrees(std::asin(glm::clamp(front.y, -1.0f, 1.0f)));
+        cameraYaw_ = glm::degrees(std::atan2(front.z, front.x));
+    }
+}
+
+glm::vec3 Application::cameraFront() const {
+    const float yaw = glm::radians(cameraYaw_);
+    const float pitch = glm::radians(cameraPitch_);
+    return glm::normalize(glm::vec3(std::cos(yaw) * std::cos(pitch), std::sin(pitch),
+                                    std::sin(yaw) * std::cos(pitch)));
+}
+
+void Application::updateCamera(float dt) {
+    GLFWwindow* window = window_.handle();
+    const ImGuiIO& io = ImGui::GetIO();
+
+    // RMB drag = mouse look (disabled cursor for unlimited travel). ImGui gets
+    // right of way only when the press STARTS over a UI element.
+    const bool rmbDown = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+    if (rmbDown && !looking_ && !io.WantCaptureMouse) {
+        looking_ = true;
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        glfwGetCursorPos(window, &lastMouseX_, &lastMouseY_);
+    } else if (!rmbDown && looking_) {
+        looking_ = false;
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    }
+    if (looking_) {
+        double mouseX = 0.0, mouseY = 0.0;
+        glfwGetCursorPos(window, &mouseX, &mouseY);
+        const float sensitivity = 0.12f;
+        cameraYaw_ += float(mouseX - lastMouseX_) * sensitivity;
+        cameraPitch_ -= float(mouseY - lastMouseY_) * sensitivity;
+        cameraPitch_ = glm::clamp(cameraPitch_, -89.0f, 89.0f);
+        lastMouseX_ = mouseX;
+        lastMouseY_ = mouseY;
+    }
+
+    if (io.WantCaptureKeyboard)
+        return;
+    const glm::vec3 front = cameraFront();
+    const glm::vec3 right = glm::normalize(glm::cross(front, glm::vec3(0, 1, 0)));
+    glm::vec3 move(0.0f);
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) move += front;
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) move -= front;
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) move += right;
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) move -= right;
+    if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) move.y += 1.0f;
+    if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) move.y -= 1.0f;
+    if (glm::dot(move, move) > 0.0f) {
+        float speed = cameraSpeed_;
+        if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS)
+            speed *= 4.0f;
+        cameraPos_ += glm::normalize(move) * speed * dt;
+    }
+}
+
+void Application::buildFrameSubmission(renderer::FrameSubmission& submission) const {
+    const VkExtent2D extent = swapchain_.extent();
+    const float aspect =
+        extent.height ? float(extent.width) / float(extent.height) : 1.0f;
+
+    renderer::ViewCamera camera;
+    camera.position = cameraPos_;
+    camera.view = glm::lookAt(cameraPos_, cameraPos_ + cameraFront(),
+                              glm::vec3(0, 1, 0));
+    camera.proj = renderer::perspective(glm::radians(cameraFovDeg_), aspect, 0.05f,
+                                        500.0f);
+    // Identical eyes until stereo (Phase 7) supplies per-eye transforms.
+    for (uint32_t v = 0; v < renderer::kMaxViews; ++v)
+        submission.views[v] = camera;
+
+    submission.draws.clear();
+    submission.draws.reserve(scene_.models.size() * 2);
+    for (const scene::Model& model : scene_.models) {
+        if (!model.visible)
+            continue;
+        const glm::mat4 modelMatrix = model.modelMatrix();
+        const glm::mat3 normalMatrix = model.normalMatrix(modelMatrix);
+        for (const scene::ModelMesh& mesh : model.meshes) {
+            if (!mesh.buffer.valid())
+                continue;
+            renderer::DrawItem draw;
+            draw.mesh = &mesh.buffer;
+            draw.model = modelMatrix;
+            draw.normalMatrix = normalMatrix;
+            draw.materialIndex = mesh.materialIndex;
+
+            // World bounding sphere from the local AABB corners (feeds the sun
+            // shadow frustum fit).
+            glm::vec3 minB(FLT_MAX), maxB(-FLT_MAX);
+            for (int corner = 0; corner < 8; ++corner) {
+                const glm::vec3 local(
+                    (corner & 1) ? mesh.boundsMax.x : mesh.boundsMin.x,
+                    (corner & 2) ? mesh.boundsMax.y : mesh.boundsMin.y,
+                    (corner & 4) ? mesh.boundsMax.z : mesh.boundsMin.z);
+                const glm::vec3 world = glm::vec3(modelMatrix * glm::vec4(local, 1.0f));
+                minB = glm::min(minB, world);
+                maxB = glm::max(maxB, world);
+            }
+            draw.worldBoundsCenter = (minB + maxB) * 0.5f;
+            draw.worldBoundsRadius = glm::length(maxB - minB) * 0.5f;
+            submission.draws.push_back(draw);
+        }
+    }
+
+    submission.pointLights.clear();
+    submission.pointLights.reserve(scene_.pointLights.size());
+    for (const scene::PointLight& light : scene_.pointLights) {
+        renderer::PointLightState state;
+        state.position = light.position;
+        state.color = light.color;
+        state.intensity = light.intensity;
+        state.attenLinear = light.attenLinear;
+        state.attenQuadratic = light.attenQuadratic;
+        state.castsShadows = light.castsShadows;
+        state.radius = light.radius;
+        submission.pointLights.push_back(state);
+    }
+
+    submission.sun = sun_;
+    submission.sky = sky_;
+    submission.shadowsEnabled = shadowsEnabled_;
+    submission.softShadows = softShadows_;
+    submission.ambient = ambient_;
 }
 
 void Application::initImGui() {
@@ -91,8 +251,14 @@ void Application::initImGui() {
 }
 
 void Application::run() {
+    lastFrameTime_ = glfwGetTime();
+    renderer::FrameSubmission submission;
     while (!window_.shouldClose()) {
         window_.pollEvents();
+
+        const double now = glfwGetTime();
+        const float dt = std::min(float(now - lastFrameTime_), 0.1f);
+        lastFrameTime_ = now;
 
         if (window_.isMinimized()) {
             glfwWaitEventsTimeout(0.1);
@@ -121,8 +287,10 @@ void Application::run() {
         buildUi();
         ImGui::Render();
 
+        updateCamera(dt);
+        buildFrameSubmission(submission);
         const rhi::PresentResult presentResult =
-            renderer_.renderFrame(ImGui::GetDrawData(), glfwGetTime());
+            renderer_.renderFrame(submission, ImGui::GetDrawData());
 
         // Secondary OS windows (dragged-out panels): the Vulkan backend owns
         // their swapchains and presents them itself.
@@ -188,11 +356,114 @@ void Application::buildUi() {
             }
             ImGui::EndCombo();
         }
+
+        // ---- HDR tonemap (Phase 2) ----
         ImGui::Separator();
-        ImGui::TextWrapped("Phase 1: Vulkan bootstrap. The triangle is "
-                           "rendered through the multiview scene target. Dock "
-                           "this panel or drag it out of the main window to "
-                           "test the ImGui viewports path.");
+        renderer::TonemapSettings& tonemap = renderer_.tonemapSettings();
+        ImGui::SliderFloat("Exposure", &tonemap.exposure, 0.1f, 8.0f, "%.2f",
+                           ImGuiSliderFlags_Logarithmic);
+        if (ImGui::BeginCombo("Tonemap", renderer::tonemapOperatorName(tonemap.op))) {
+            const renderer::TonemapOperator ops[] = {
+                renderer::TonemapOperator::Reinhard,
+                renderer::TonemapOperator::ACES,
+                renderer::TonemapOperator::Uncharted2,
+                renderer::TonemapOperator::AgX,
+                renderer::TonemapOperator::KhronosPBRNeutral,
+            };
+            for (renderer::TonemapOperator op : ops) {
+                const bool selected = (op == tonemap.op);
+                if (ImGui::Selectable(renderer::tonemapOperatorName(op), selected))
+                    tonemap.op = op;
+                if (selected)
+                    ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+
+        // ---- Screenshot (Phase 2: Vulkan copy-to-buffer readback) ----
+        ImGui::Separator();
+        ImGui::BeginDisabled(renderer_.screenshotPending());
+        if (ImGui::Button("Save screenshot"))
+            renderer_.requestScreenshot(
+                Engine::Screenshot::makeTimestampedPath("screenshots"));
+        ImGui::EndDisabled();
+        if (!renderer_.screenshotStatus().empty()) {
+            ImGui::SameLine();
+            ImGui::TextWrapped("%s", renderer_.screenshotStatus().c_str());
+        }
+
+        // ---- Scene + lighting (Phase 3) ----
+        ImGui::Separator();
+        size_t meshCount = 0;
+        for (const scene::Model& model : scene_.models)
+            meshCount += model.meshes.size();
+        ImGui::Text("Scene: %s", scene_.sourcePath.c_str());
+        ImGui::Text("%zu models / %zu meshes, %zu point lights",
+                    scene_.models.size(), meshCount, scene_.pointLights.size());
+        ImGui::TextWrapped("Camera: RMB-drag look, WASD move, Q/E down/up, "
+                           "Shift fast");
+        ImGui::SliderFloat("Camera speed", &cameraSpeed_, 0.5f, 30.0f, "%.1f");
+        ImGui::SliderFloat("FOV", &cameraFovDeg_, 30.0f, 100.0f, "%.0f deg");
+
+        ImGui::Separator();
+        ImGui::Checkbox("Shadows", &shadowsEnabled_);
+        if (shadowsEnabled_) {
+            ImGui::SameLine();
+            ImGui::Checkbox("Soft (PCSS)", &softShadows_);
+        }
+        ImGui::Checkbox("Sun", &sun_.enabled);
+        if (sun_.enabled) {
+            if (ImGui::SliderFloat3("Sun direction", &sun_.direction.x, -1.0f, 1.0f))
+                if (glm::dot(sun_.direction, sun_.direction) < 1e-6f)
+                    sun_.direction = glm::vec3(0.0f, -1.0f, 0.0f);
+            ImGui::ColorEdit3("Sun color", &sun_.color.x);
+            ImGui::SliderFloat("Sun intensity", &sun_.intensity, 0.0f, 5.0f, "%.2f");
+            ImGui::SliderFloat("Sun size", &sun_.angularSizeDeg, 0.0f, 10.0f,
+                               "%.1f deg");
+        }
+        ImGui::SliderFloat("Ambient", &ambient_, 0.0f, 0.3f, "%.3f");
+
+        // Sky mode: texture modes only listed once their data loaded.
+        const char* skyModeNames[] = { "Cubemap", "Equirect HDR", "Solid color",
+                                       "Gradient" };
+        int skyMode = static_cast<int>(sky_.mode);
+        if (ImGui::BeginCombo("Sky", skyModeNames[skyMode])) {
+            for (int i = 0; i < 4; ++i) {
+                const bool available =
+                    (i != 0 || renderer_.skybox().hasCubemap()) &&
+                    (i != 1 || renderer_.skybox().hasEquirect());
+                if (!available)
+                    continue;
+                const bool selected = (i == skyMode);
+                if (ImGui::Selectable(skyModeNames[i], selected))
+                    sky_.mode = static_cast<renderer::SkyMode>(i);
+                if (selected)
+                    ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::SliderFloat("Sky intensity", &sky_.intensity, 0.0f, 4.0f, "%.2f");
+        if (sky_.mode == renderer::SkyMode::SolidColor)
+            ImGui::ColorEdit3("Sky color", &sky_.solidColor.x);
+        if (sky_.mode == renderer::SkyMode::Gradient) {
+            ImGui::ColorEdit3("Sky bottom", &sky_.gradientBottom.x);
+            ImGui::ColorEdit3("Sky top", &sky_.gradientTop.x);
+        }
+
+        if (!scene_.pointLights.empty() &&
+            ImGui::TreeNode("Point lights")) {
+            for (size_t i = 0; i < scene_.pointLights.size(); ++i) {
+                scene::PointLight& light = scene_.pointLights[i];
+                ImGui::PushID(static_cast<int>(i));
+                ImGui::Text("Light %zu", i);
+                ImGui::ColorEdit3("Color", &light.color.x);
+                ImGui::SliderFloat("Intensity", &light.intensity, 0.0f, 10.0f, "%.2f");
+                ImGui::Checkbox("Casts shadows", &light.castsShadows);
+                ImGui::SliderFloat("Radius", &light.radius, 0.0f, 0.5f, "%.3f m");
+                ImGui::PopID();
+            }
+            ImGui::TreePop();
+        }
     }
     ImGui::End();
 }
@@ -228,6 +499,8 @@ void Application::shutdown() {
     if (device_.device() != VK_NULL_HANDLE)
         device_.waitIdle();
     shutdownImGui();
+    // Scene GPU buffers must go before the renderer/device they live on.
+    scene_ = scene::Scene{};
     renderer_.shutdown();
     swapchain_.shutdown();
     device_.shutdown();
