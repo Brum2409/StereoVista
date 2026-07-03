@@ -37,6 +37,7 @@ using namespace GUI;
 // Forward declarations
 void updateSpaceMouseBounds();
 void applyStandardView(int viewId); // defined in main.cpp
+bool frameSelectedObject();          // defined in main.cpp
 void updateSpaceMouseCursorAnchor();
 void renderPointLightManipulationPanel();
 void renderSpotLightManipulationPanel();
@@ -4218,6 +4219,13 @@ void renderSettingsWindow() {
 
         if (ImGui::Button("Left", sz))
           applyStandardView(3);
+
+        ImGui::Spacing();
+        if (ImGui::Button("Frame Selected (F)"))
+          frameSelectedObject();
+        ImGui::SameLine();
+        DrawHelpMarker("Fly the camera in to fill the view with the selected "
+                       "object, keeping the current viewing angle.");
       }
 
       DrawSectionHeader("Stereoscopic 3D");
@@ -5947,6 +5955,7 @@ void renderSettingsWindow() {
 
           renderAction(StereoVista::ShortcutAction::CenterView);
           renderAction(StereoVista::ShortcutAction::ResetCamera);
+          renderAction(StereoVista::ShortcutAction::FrameSelected);
           renderAction(StereoVista::ShortcutAction::ToggleZoomToCursor);
           renderAction(StereoVista::ShortcutAction::ToggleOrbitAroundCursor);
           renderAction(StereoVista::ShortcutAction::ViewFront);

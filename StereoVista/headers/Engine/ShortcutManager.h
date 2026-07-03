@@ -25,6 +25,7 @@ enum class ShortcutAction {
   ToggleOrbitAroundCursor, // Toggle orbit around cursor
   ToggleSpaceMouseMode,    // Toggle SpaceMouse navigation mode (CAD/Drone)
   ResetCamera,             // Home - Reset camera to scene default position
+  FrameSelected,           // F - Fly the camera to frame the selected object
 
   // Standard Views (frame the scene from an axis-aligned / isometric angle)
   ViewFront,    // Numpad 1 - Look along -Z

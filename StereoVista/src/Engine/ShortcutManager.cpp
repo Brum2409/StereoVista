@@ -434,6 +434,7 @@ ShortcutProfile ShortcutManager::createDefaultProfile() {
                      KeyBinding(GLFW_KEY_I, true, false, true),
                      0); // Ctrl+Shift+I
   profile.setBinding(ShortcutAction::ResetCamera, KeyBinding(GLFW_KEY_HOME), 0);
+  profile.setBinding(ShortcutAction::FrameSelected, KeyBinding(GLFW_KEY_F), 0);
 
   // Standard views (CAD-style numpad layout: 1=front, 3=right, 7=top, 5=iso,
   // Ctrl+ for the opposite side).
@@ -617,6 +618,8 @@ std::string ShortcutManager::getActionName(ShortcutAction action) {
     return "ToggleOrbitAroundCursor";
   case ShortcutAction::ResetCamera:
     return "ResetCamera";
+  case ShortcutAction::FrameSelected:
+    return "FrameSelected";
 
   // Standard Views
   case ShortcutAction::ViewFront:
@@ -760,6 +763,8 @@ std::string ShortcutManager::getActionDescription(ShortcutAction action) {
     return "Toggle SpaceMouse Mode (CAD/Drone)";
   case ShortcutAction::ResetCamera:
     return "Reset Camera to Scene Default";
+  case ShortcutAction::FrameSelected:
+    return "Frame Selected Object";
 
   // Standard Views
   case ShortcutAction::ViewFront:

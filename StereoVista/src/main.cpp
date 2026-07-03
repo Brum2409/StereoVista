@@ -7822,6 +7822,94 @@ void applyStandardView(int viewId) {
   camera.OrbitDistance = distance;
 }
 
+// Smoothly frame the currently selected object so it fills the viewport. Unlike
+// the standard views (which frame the whole scene from a fixed angle) and
+// CenterView (which pivots on a point but keeps the current distance), this
+// keeps the current viewing direction and only flies in/out so the selected
+// object's bounding sphere fits the vertical field of view with a small margin.
+// The orbit pivot is re-anchored onto the framed object. Returns false and does
+// nothing when there is no framable selection.
+bool frameSelectedObject() {
+  glm::vec3 center(0.0f);
+  float radius = 0.0f;
+  bool valid = false;
+
+  switch (currentSelectedType) {
+  case SelectedType::Model:
+    if (currentSelectedIndex >= 0 &&
+        currentSelectedIndex < static_cast<int>(currentScene.models.size())) {
+      const auto &model = currentScene.models[currentSelectedIndex];
+      // boundingSphereRadius is measured from localBoundsCenter (local-space
+      // AABB centre), so account for that offset and the object's scale.
+      center = model.position + glm::vec3(model.scale * model.localBoundsCenter);
+      radius = model.boundingSphereRadius *
+               glm::max(model.scale.x, glm::max(model.scale.y, model.scale.z));
+      valid = true;
+    }
+    break;
+  case SelectedType::PointCloud:
+    if (currentSelectedIndex >= 0 &&
+        currentSelectedIndex <
+            static_cast<int>(currentScene.pointClouds.size())) {
+      const auto &pc = currentScene.pointClouds[currentSelectedIndex];
+      if (pc.hasBounds()) {
+        const glm::vec3 mn = pc.position + (pc.boundsMin * pc.scale);
+        const glm::vec3 mx = pc.position + (pc.boundsMax * pc.scale);
+        center = (mn + mx) * 0.5f;
+        radius = glm::length(mx - mn) * 0.5f;
+      } else {
+        center = pc.position; // bounds not yet computed (very old load path)
+        radius = 1.0f;
+      }
+      valid = true;
+    }
+    break;
+  case SelectedType::PointLight:
+    if (currentSelectedIndex >= 0 &&
+        currentSelectedIndex < static_cast<int>(pointLights.size())) {
+      center = pointLights[currentSelectedIndex].position;
+      radius = 0.5f; // point target: frame a small neighbourhood around it
+      valid = true;
+    }
+    break;
+  case SelectedType::SpotLight:
+    if (currentSelectedIndex >= 0 &&
+        currentSelectedIndex < static_cast<int>(spotLights.size())) {
+      center = spotLights[currentSelectedIndex].position;
+      radius = 0.5f;
+      valid = true;
+    }
+    break;
+  default:
+    break;
+  }
+
+  if (!valid) {
+    GUI::ShowToast("Select an object to frame (F)", GUI::ToastType::Warning);
+    return false;
+  }
+  if (radius < 0.001f)
+    radius = 1.0f;
+
+  // Keep the current viewing direction; only change distance so the object's
+  // bounding sphere fills the vertical FOV with a small margin.
+  const glm::vec3 front = glm::normalize(camera.Front);
+  const float halfFov = glm::radians(glm::max(camera.Zoom, 1.0f) * 0.5f);
+  const float distance = (radius * 1.3f) / glm::max(glm::sin(halfFov), 0.01f);
+
+  Camera::CameraState target = camera.GetState();
+  target.position = center - front * distance;
+  target.orientation = camera.Orientation; // unchanged: preserve the angle
+  target.zoom = camera.Zoom;
+
+  camera.StartStateAnimation(target, 0.4f);
+  // StartStateAnimation keeps OrbitDistance and rebuilds
+  // OrbitPoint = Position + Front * OrbitDistance on completion. Front is
+  // unchanged here, so setting the distance lands the pivot on `center`.
+  camera.OrbitDistance = distance;
+  return true;
+}
+
 // ---- Snapshot glue (declared in Core/SnapshotManager.h) ----
 namespace Core {
 
@@ -9393,6 +9481,10 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
         std::cout << "Centering on world origin" << std::endl;
       }
     } break;
+
+    case StereoVista::ShortcutAction::FrameSelected:
+      frameSelectedObject();
+      break;
 
     // Standard Views (frame the whole scene from a fixed angle)
     case StereoVista::ShortcutAction::ViewFront:
