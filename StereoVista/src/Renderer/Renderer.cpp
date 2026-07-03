@@ -53,6 +53,8 @@ void Renderer::init(rhi::Device& device, rhi::Swapchain& swapchain,
     createFrameContexts();
     createSceneTarget();
 
+    uploadRing_.create(device, kUploadRingBytes, "streaming upload ring");
+
     materials_.init(device);
     createFrameSetLayout();
 
@@ -292,6 +294,14 @@ rhi::PresentResult Renderer::renderFrame(const FrameSubmission& submission,
     const StatsClock::time_point afterSlotWait = StatsClock::now();
     smooth(frameStats_.slotWaitMs, msBetween(frameStart, afterSlotWait));
 
+    // Retire upload-ring space owned by frames the GPU has finished.
+    {
+        uint64_t completed = 0;
+        VK_CHECK(vkGetSemaphoreCounterValue(device_->device(), frameTimeline_,
+                                            &completed));
+        uploadRing_.reclaim(completed);
+    }
+
     const uint32_t imageIndex = swapchain_->acquireImage(frame.acquireSemaphore);
     if (imageIndex == UINT32_MAX)
         return rhi::PresentResult::OutOfDate;
@@ -358,6 +368,7 @@ rhi::PresentResult Renderer::renderFrame(const FrameSubmission& submission,
     submit.pSignalSemaphoreInfos = signals;
     VK_CHECK(vkQueueSubmit2(device_->graphicsQueue(), 1, &submit, VK_NULL_HANDLE));
     frame.submittedTimelineValue = timelineValue_;
+    uploadRing_.notifySubmitted(timelineValue_);
 
     if (captureThisFrame) {
         screenshot_.timelineValue = timelineValue_;
@@ -381,6 +392,9 @@ void Renderer::recordFrame(FrameContext& frame, uint32_t imageIndex,
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     VK_CHECK(vkBeginCommandBuffer(cmd, &beginInfo));
+
+    // ---- Pass 0: streaming uploads staged since the last frame ----
+    uploadRing_.flush(cmd);
 
     // ---- Pass 1: shadow casters (owns its targets + transitions) ----
     shadowPass_.record(cmd, frameSet, submission, shadowedLightCount);
@@ -691,6 +705,7 @@ void Renderer::shutdown() {
         vkDestroyDescriptorSetLayout(device_->device(), frameSetLayout_, nullptr);
     frameSetLayout_ = VK_NULL_HANDLE;
     materials_.shutdown();
+    uploadRing_.destroy();
     sceneColor_.destroy();
     sceneDepth_.destroy();
     destroyFrameContexts();

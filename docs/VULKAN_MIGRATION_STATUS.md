@@ -54,10 +54,10 @@
 
 | | |
 |---|---|
-| **Current phase** | Phase 3 ☑ **DONE (user-verified 2026-07-03; Phase 2 verify folded in).** Pass-based renderer (Shadow→Forward→Skybox→Tonemap over a real `FrameSubmission` scene input), bindless materials, `office.scene` loads, sun + point-light shadows with world-unit biases + rotated-Vogel PCF + PCSS contact hardening. Next: **Phase 4 — Loading system → RHI upload** |
-| **What builds** | Vulkan app: `office.scene` (or a built-in default scene) rendered with ONE metallic-roughness PBR path into the multiview HDR target — 4K sun shadow map (texel-snapped ortho fit) + up to 4 point-light depth cube maps (all 6 faces in ONE multiview pass each), skybox (cubemap/equirect/solid/gradient), tonemap resolve + ImGui in one backbuffer pass, PNG screenshot. Fly camera (RMB-look + WASDQE). Old GL sources `ExcludedFromBuild` |
-| **Vulkan code present** | `RHI/` (Device+pipeline cache, Swapchain, ShaderCompiler, Buffer, Texture, Pipeline+reflection, DescriptorAllocator, Barrier, VMA glue), `Platform/` (Window, Paths), `Renderer/` (Renderer, MaterialSystem, MeshBuffer, FrameSubmission/GpuTypes, `passes/` Tonemap+Shadow+Forward+Skybox), `Scene/` (office.scene loader, primitives, Assimp importer), `App/Application`; shared C++/GLSL structs in `assets/shaders_vk/scene_types.h`; `Engine/Screenshot` re-enabled (PNG writer, API-agnostic) |
-| **Last updated** | 2026-07-03 — Phases 2+3 closed out (user ran the build; Peter-Panning bias bug fixed, shadow quality pass landed: Vogel PCF + PCSS both light types, caster range cull) |
+| **Current phase** | Phase 4 ☑ **DONE (2026-07-03; builds green Release+Debug x64, boot smoke-tested).** All point-cloud loaders compile again and upload through the RHI: `rhi::UploadRing` (persistently-mapped staging ring on the frame timeline) + `renderer::PointCloudGpu` (ONE suballocated device buffer per cloud, BDA section addresses for Phase 5). Streaming contract preserved (worker thread + per-frame `updateStreaming`). Draw-level verification lands with the Phase 5 rasterizer (the phase's original exit criterion). Next: **Phase 5 — Compute point-cloud pipeline** |
+| **What builds** | Vulkan app: `office.scene` (or a built-in default scene) rendered with ONE metallic-roughness PBR path into the multiview HDR target — 4K sun shadow map + up to 4 point-light depth cube maps (multiview), skybox, tonemap resolve + ImGui in one backbuffer pass, PNG screenshot, fly camera. **Point clouds load via the debug panel** (`Load point cloud...`: LAS/LAZ streamed progressively with live progress; XYZ/TXT/PLY/PCB/HDF5 synchronous) and upload to VRAM — nothing draws them until Phase 5. Old GL sources `ExcludedFromBuild` except `Loaders/PointCloudLoader.cpp` (re-enabled, GL-free) |
+| **Vulkan code present** | `RHI/` (Device+pipeline cache, Swapchain, ShaderCompiler, Buffer, Texture, Pipeline+reflection, DescriptorAllocator, Barrier, **UploadRing**, VMA glue), `Platform/` (Window, Paths), `Renderer/` (Renderer, MaterialSystem, MeshBuffer, **PointCloudGpu**, FrameSubmission/GpuTypes, `passes/` Tonemap+Shadow+Forward+Skybox), `Scene/` (office.scene loader, primitives, Assimp importer), `App/Application`, `Loaders/PointCloudLoader` (all parsers + RHI upload); shared C++/GLSL structs in `assets/shaders_vk/scene_types.h`; `Engine/Screenshot` + GL-free `Engine/Data.h` |
+| **Last updated** | 2026-07-03 — Phase 4 landed (loaders → RHI upload; upload ring; single-buffer cloud residency + BDA prep; GL sparse dropped; OpenMP enabled) |
 
 Legend: ☐ not started · ◐ in progress · ☑ done · ✎ changed from original plan
 
@@ -92,7 +92,7 @@ These are settled by the project owner. Follow them unless the user changes them
 - ☑ **Phase 1 — Core Vulkan bootstrap + `Application` skeleton** (window, RHI Device/Swapchain, multiview triangle, ImGui-Vulkan; user-verified 2026-07-03 after fixing the front-face convention + ImGui viewport format lifetime — see session log)
 - ☑ **Phase 2 — RHI hardening** (buffers/images/pipelines/descriptors, HDR target + tonemap, screenshot readback; verified through the Phase 3 scene run 2026-07-03 — the Phase 2 triangle demo was deleted as planned)
 - ☑ **Phase 3 — Mesh forward PBR + shadow mapping** (Shadow-Mapping lighting only; user-verified 2026-07-03. Includes the post-first-run shadow quality pass: world-unit depth biases, rotated-Vogel PCF, PCSS contact hardening on sun AND point lights, caster range culling — see session log)
-- ☐ **Phase 4 — Loading system → RHI upload** (parsers reused; streaming preserved)
+- ☑ **Phase 4 — Loading system → RHI upload** (parsers reused untouched; streaming contract preserved on an upload ring; one suballocated buffer per cloud with BDA prep — 2026-07-03, builds green; draw-level verify folds into Phase 5)
 - ☐ **Phase 5 — Compute point-cloud pipeline** (Schütz rasterizer + HQS; biggest rewrite)
 - ☐ **Phase 6 — Camera, cursors, tools, plugins** (overlay renderer)
 - ☐ **Phase 7 — Stereo (`StereoTarget`) + Vulkan OpenXR**
@@ -369,23 +369,71 @@ These are settled by the project owner. Follow them unless the user changes them
 - **Read:** `src/Loaders/ModelLoader.cpp`, `headers/Loaders/ModelLoader.h`,
   `src/main.cpp:5335-5950` (renderEye body), `assets/shaders/core/*`.
 
-### Phase 4 — Loading system → RHI upload  ☐
-- **Goal:** all loaders push data through the RHI; nothing GL remains in loaders.
-- **How:** keep every parser (Assimp, LASzip, HDF5/HighFive, PLY, XYZ, `.pcb`)
-  untouched. Replace only `glGen*`/`glBufferData`/`glBufferSubData`/sparse
-  `glBufferStorage` with `rhi::Buffer` + staging. **Preserve the progressive
-  streaming contract**: `PointCloudStream` worker thread + `updateStreaming()`
-  filling pre-allocated buffers per frame (now `VkBuffer`s).
-- **→ Nudges (playbook §6b):** for the streaming path, use **one
-  persistently-mapped VMA ring** the worker writes into each frame, **not
-  per-object re-allocation** (**A.13**); give **big static clouds dedicated
-  allocations / a custom VMA pool** (**A.13**). Set up per-batch data for **BDA
-  access** (a GPU pointer per batch) so Phase 5 can drop the 5-SSBOs-per-cloud
-  binding churn (**A.2**).
-- **Exit:** models + streamed clouds upload correctly (verified in Phase 5 draw).
-- **Read:** `src/Loaders/PointCloudLoader.cpp` (streaming ~L200-240, ~L2770-2910),
-  `headers/Engine/Data.h` (`PointCloud`, `ComputeBatch`),
-  `src/Engine/OctreePointCloudManager.cpp`.
+### Phase 4 — Loading system → RHI upload  ☑ (2026-07-03; builds green, draw-verify folds into Phase 5)
+- **DONE — what was actually built (read the source, not this summary):**
+  - **Every parser untouched** (LASzip, HDF5/HighFive, binary+ASCII PLY, XYZ/
+    TXT, `.pcb`): `Loaders/PointCloudLoader.cpp` is compiled again with ONLY its
+    GPU touch points replaced. Models were already on `Scene/ModelImporter`
+    since Phase 3 — the GL-era `Loaders/ModelLoader.cpp` stays excluded (it dies
+    with the GL scaffolding in Phase 8).
+  - **`rhi::UploadRing`** (A.13): one persistently-mapped 64 MB HostUpload ring.
+    Producers stage copies any time during the frame (`stage()` = ring memcpy +
+    queued region; `mark()`/`rollback()` make a multi-copy unit all-or-nothing);
+    `Renderer::recordFrame` records everything in ONE batch at the top of the
+    frame command buffer (`flush(cmd)`, regions grouped per destination + one
+    coarse copy→all barrier); space retires against the existing frame timeline
+    (`notifySubmitted`/`reclaim` — no fences, no new sync objects). A full ring
+    defers to the next frame, which backpressures the worker via `maxInFlight` —
+    the GL contract with driver-managed throttling made explicit.
+  - **`renderer::PointCloudGpu`** — ✎ improvement over the GL layout: the five
+    SSBOs (batches/xyz4b/xyz8b/xyz12b/rgba) became **ONE device-local buffer
+    with 256-aligned sections** — one allocation (VMA **dedicated** ≥ 64 MB so
+    huge clouds bypass the pools, A.13), one destruction, one barrier target —
+    plus a **`PointCloudGpuAddresses` struct of five BDA section pointers** in
+    exactly the shape Phase 5's push constants consume (A.2: zero descriptor
+    binds per cloud per pass). Usage incl. TRANSFER_SRC for the export readback.
+  - **`Engine/Data.h` is GPU-API-free**: no more `Core.h`/GLAD; `PointCloud`
+    holds `shared_ptr<renderer::PointCloudGpu>` (declared BEFORE `stream` so the
+    worker joins before the buffers die); the ~140 lines of hand-rolled move
+    ctors (which existed only to zero raw GL handles) are now `= default`; the
+    GL_POINTS octree-LOD fields are gone (compute path is guaranteed on the
+    Vulkan 1.3 feature set), the CPU octree/disk-cache structs remain.
+  - **Streaming contract preserved**, two paths: bulk loads stage-upload into a
+    fresh `PointCloudGpu` (blocking, loading-time); progressive LAS/LAZ
+    pre-allocates from the exact header count and `updateStreaming()` drains
+    chunks through the ring each frame. The phase-2 **Morton-resort swap is now
+    SLICED across frames** (64-batch ≈ 10 MB units, cursor in the stream state)
+    — a multi-GB one-shot `glBufferSubData` equivalent cannot ride a staging
+    ring; slices keep [points, descriptors] regions consistent (transient mixed
+    ordering is invisible until Phase 5 draws and acceptable mid-load; the
+    double-buffered alternative costs a 2x VRAM spike — rejected).
+  - **GL sparse buffers NOT ported** (on-demand page commitment): VRAM now
+    tracks the full header-sized reservation — the behaviour on every
+    non-sparse GL driver. Vulkan sparse binding costs queue+bind bookkeeping
+    that isn't worth it until someone actually hits the reservation wall.
+  - **`forEachPointBatch` (exporters)** — ✎ improvement: GPU readback now walks
+    contiguous multi-batch spans with ONE `immediateSubmit` per ~4 M points
+    (the GL path issued four `glGetBufferSubData` per 10 k-point batch —
+    thousands of pipeline syncs per export).
+  - **Cloud destruction (interim):** `PointCloudGpu::destroy` drops queued ring
+    copies + `waitIdle` before freeing — unload is a rare user action. TODO
+    Phase 5: timeline-deferred destruction once clouds render every frame.
+  - **App wiring:** `PointCloudLoader::initGpu(&device, &renderer.uploadRing())`
+    (replaces `initGLExtensions`); per-frame pump before `renderFrame`; debug
+    panel gained **Load point cloud...** (portable-file-dialogs, multi-select →
+    shared-centre multi-tile streaming), per-cloud progress/VRAM/unload, ring
+    usage readout, downsample + Morton-resort toggles.
+  - **OpenMP enabled (x64 Debug+Release)** — the loader's `#pragma omp` Morton/
+    quantise loops were silently SERIAL in every GL-era build (the project never
+    set `<OpenMPSupport>`); now they parallelize as written.
+- **Exit:** builds green (local Release+Debug x64), app boots + office scene
+  regression-clean with the loaders compiled in; upload **correctness** is
+  confirmed visually by the Phase 5 draw (the original exit criterion). Light
+  user checks available now — §5 Phase 4 checklist.
+- **Read:** `headers/RHI/UploadRing.h`, `headers/Renderer/PointCloudGpu.h`
+  (contracts in the headers), `src/Loaders/PointCloudLoader.cpp`
+  (updateStreaming + streaming infra comments), `Renderer.cpp` renderFrame
+  (ring reclaim/flush/notify points).
 
 ### Phase 5 — Compute point-cloud pipeline  ☐  ← **biggest rewrite**
 - **Goal:** dense LAS/LAZ clouds render (standard + HQS) with clipping,
@@ -510,18 +558,18 @@ keeps one that needs **reconfiguration**. Full matrix + rationale in
   run old-GL and new-Vulkan paths on the same window.
 
 ## 3. Next up (start here)
-1. **Close out Phases 2+3 together**: the user runs the build and works the
-   Phase 3 checklist in §5 (it subsumes the still-open Phase 2 tonemap/
-   screenshot items — the Phase 2 triangle demo no longer exists); fix whatever
-   the run surfaces, then flip Phase 2 and 3 to ☑ and commit/push the milestone
-   to `StereoVista-vulkan`.
-2. **Phase 4 — Loading system → RHI upload**: keep every parser (Assimp already
-   rides `Scene/ModelImporter`; LASzip, HDF5/HighFive, PLY, XYZ, `.pcb` still
-   GL-excluded) and replace only the GL buffer calls with `rhi::Buffer` +
-   staging. **Preserve the progressive streaming contract** (worker thread +
-   per-frame `updateStreaming` fills); see the Phase 4 `→ Nudges` (persistently
-   mapped VMA ring, dedicated allocations for big clouds, per-batch BDA prep
-   for Phase 5).
+1. **Phase 5 — Compute point-cloud pipeline** (the biggest rewrite): port the
+   Schütz atomicMin compute rasterizer + HQS to Vulkan compute. Everything it
+   consumes is already resident: each loaded cloud is ONE device buffer whose
+   five sections are addressable via `PointCloudGpu::addresses` (BDA — design
+   the shaders around ONE push-constant struct of `buffer_reference` pointers
+   per cloud, playbook A.2, instead of per-cloud descriptor sets). Follow the
+   Phase 5 `→ Nudges` and especially **§C fixes**: core int64 atomics only
+   (C.1 — the GL shaders' NV-only extensions break AMD) and rework the depth
+   math for [0,1] reverse-Z GREATER (C.2 — the GL clip-space math flickers if
+   copied). The app-side seam: `Application::pointClouds_` (loaded clouds) →
+   add them to `FrameSubmission`; light user verification of the Phase 4
+   upload path (§5 checklist) can ride the first Phase 5 run.
 
 Note for Phase 5: `shaderBufferInt64Atomics` + `shaderInt64` are **required and
 enabled** in `rhi::Device` (fail-loud with a clear message). See §4 for the
@@ -679,6 +727,31 @@ spec-status correction — optional per spec, universal on modern NVIDIA/AMD.
   indices (no `nonuniformEXT` call needed). Also note the MSBuild CustomBuild
   glslc step did NOT fail the build on a shader error once (exe still linked) —
   after adding shaders, confirm `$(OutDir)assets\shaders_vk\<name>.spv` exists.
+- **Phase 4: upload-ring lifecycle** (`rhi::UploadRing`, owned by the Renderer):
+  stage anywhere in the frame → `flush(cmd)` at the very top of the frame
+  command buffer → `notifySubmitted(timelineValue)` right after `vkQueueSubmit2`
+  → `reclaim(counter)` after the slot wait next frame. Allocations never
+  straddle the physical wrap (tail-run padding); `mark()`/`rollback()` give
+  multi-copy units all-or-nothing semantics. If a frame is skipped (OutOfDate
+  before recording), staged copies simply ride the next recorded frame.
+- **Phase 4: one buffer per cloud.** `renderer::PointCloudGpu` = single
+  device-local allocation, 256-aligned sections [batches][xyz4b][xyz8b][xyz12b]
+  [rgba], `dedicated` VMA allocation at ≥ 64 MB, BDA base + section offsets
+  published as `PointCloudGpuAddresses` (the Phase 5 push-constant shape).
+  Section stride constant `kBatchStride` is static_asserted against
+  `sizeof(Engine::ComputeBatch)` in the loader.
+- **Phase 4: cloud destruction is waitIdle-guarded (interim).** Dropping a
+  cloud cancels its queued ring copies then waits for the device before
+  freeing — fine while unload is a rare user action; replace with
+  timeline-deferred destruction when Phase 5 has clouds rendering every frame.
+- **Phase 4: OpenMP is ON for x64** (`<OpenMPSupport>true`). Every GL-era build
+  silently ignored the loader's `#pragma omp parallel for` (the setting was
+  never enabled) — Morton encode/quantise loops ran serial. Runtime dependency
+  vcomp140.dll ships with the VC redist the app already needs.
+- **Phase 4: GL_ARB_sparse_buffer was dropped, not ported.** VRAM tracks the
+  full header-sized reservation (pre-Vulkan behaviour on all non-sparse
+  drivers). Revisit Vulkan sparse binding only if a real cloud actually
+  exceeds VRAM on a target machine.
 - _(record: extensions/features actually found on the test GPUs, driver quirks, notes)_
 
 ---
@@ -747,6 +820,26 @@ start from VS with the project dir as cwd — both work; assets resolve either w
 - [ ] FPS in the panel is reasonable for your GPU with the office scene
       (double-digit minimum; report the number + GPU so we can baseline)
 
+**Phase 4 (light checks — full verification rides the first Phase 5 draw)** —
+build `Release|x64`, run the app (project dir as cwd resolves assets best):
+- [ ] Office scene still renders exactly as in Phase 3 (regression check — the
+      loaders now compile into the app and the renderer flushes an upload ring
+      every frame)
+- [ ] Debug panel → **Load point cloud...** with a LAS/LAZ file: progress bar
+      fills live (points/s readout), "resorting..." appears afterwards for a
+      while (Morton phase 2), console logs `[LAS-Stream] ... complete` /
+      `Morton resort applied`; the cloud row shows a plausible VRAM figure
+      (~20 bytes x points / downsample)
+- [ ] Multi-select several LAS/LAZ tiles: all stream concurrently
+- [ ] A text cloud (XYZ/TXT/PLY) loads too (synchronous — UI blocks while it
+      parses; that matches the GL app)
+- [ ] **Upload ring** readout moves while streaming, returns to ~0 after
+- [ ] **Unload** removes a cloud (also mid-stream) without crash/validation
+      errors; loading again works
+- [ ] No `[vulkan][error]` spam at any point; exit is clean while a cloud is
+      still streaming
+- [ ] Expected: the points themselves do NOT draw yet — that is Phase 5
+
 **Phase 1 (VERIFIED 2026-07-03)** — build `Release|x64` (or `Debug|x64` for
 validation layers) from `StereoVista.sln`, run `bin\x64\<config>\StereoVista.exe`:
 - [x] Window "StereoVista" opens; console shows `[vulkan] using GPU: …` and
@@ -775,6 +868,31 @@ Full app-level checklist (later phases):
 ---
 
 ## 6. Session log (append newest at top; keep entries short)
+- **2026-07-03 (evening) — Phase 4 implemented + committed (builds green
+  Release+Debug x64, boot smoke-tested on the RTX 3050 Ti).** Committed the
+  Phases 2+3 milestone first (7689a1a), then landed Phase 4: `rhi::UploadRing`
+  (64 MB persistently-mapped staging ring; stage-anytime → flush at top of the
+  frame cmd buffer → retire on the frame timeline; mark/rollback for
+  all-or-nothing chunk staging), `renderer::PointCloudGpu` (✎ five GL SSBOs →
+  ONE suballocated device buffer, 256-aligned sections, dedicated VMA alloc
+  ≥64 MB, `PointCloudGpuAddresses` BDA struct = Phase 5 push-constant shape),
+  `Engine/Data.h` de-GL'd (no Core.h/GLAD; RAII `shared_ptr<PointCloudGpu>`;
+  hand-rolled moves → `= default`; GL_POINTS LOD fields deleted),
+  `PointCloudLoader.cpp` re-enabled with parsers byte-identical — only GPU
+  touch points swapped: bulk build = staged uploads, progressive = ring chunks
+  (deque + push-front retry), Morton-resort swap now SLICED (64 batches/slice)
+  across frames, GL sparse machinery deleted (full reservation; §4 note),
+  `forEachPointBatch` readback batched into multi-batch spans (1 submit per
+  ~4M points vs 4 GL readbacks per batch), `initGLExtensions` →
+  `initGpu(device, ring)`. Renderer owns the ring (reclaim/flush/notify hooks
+  in renderFrame); Application pumps `updateStreaming` per cloud before
+  renderFrame and the debug panel gained Load point cloud... (pfd,
+  multi-select shared-centre tiles) + progress/VRAM/ring readouts + unload.
+  Also enabled `<OpenMPSupport>` (x64): the loader's omp loops had been
+  silently serial in every GL build. Interim: cloud destroy = drop ring
+  copies + waitIdle (Phase 5: timeline-deferred). Smoke run: scene renders,
+  clean boot logs; skybox/fonts warnings are the known run-from-bin cwd
+  artifacts. **Next: Phase 5 (compute rasterizer + HQS) — see §3.**
 - **2026-07-03 (later) — Two fixes from the user's first Phase 3 run.**
   (1) Startup fatal `Pipeline 'forward PBR': set 1 binding 1 is a runtime
   array…`: the pipeline builder demanded a `bindingOverride()` capacity for

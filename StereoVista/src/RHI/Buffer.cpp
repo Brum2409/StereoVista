@@ -39,6 +39,8 @@ void Buffer::create(Device& device, const BufferDesc& desc) {
                           VMA_ALLOCATION_CREATE_MAPPED_BIT;
         break;
     }
+    if (desc.dedicated)
+        allocInfo.flags |= VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
 
     VmaAllocationInfo outInfo{};
     VK_CHECK(vmaCreateBuffer(device_->allocator(), &bufInfo, &allocInfo, &buffer_,

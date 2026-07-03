@@ -1,7 +1,9 @@
 #include "App/Application.h"
 
 #include "Engine/Screenshot.h"
+#include "Loaders/PointCloudLoader.h"
 #include "Platform/Paths.h"
+#include "Renderer/PointCloudGpu.h"
 #include "Renderer/Projection.h"
 
 #include <GLFW/glfw3.h>
@@ -13,9 +15,14 @@
 #include "imgui/backends/imgui_impl_vulkan.h"
 #include "imgui/imgui_sytle.h"
 
+#include <portable-file-dialogs.h>
+
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 
@@ -49,6 +56,9 @@ void Application::init() {
     swapchain_.init(device_, static_cast<uint32_t>(fbWidth), static_cast<uint32_t>(fbHeight));
 
     renderer_.init(device_, swapchain_, shaderCompiler_);
+
+    // Point-cloud loaders upload through the device + the renderer's ring.
+    Engine::PointCloudLoader::initGpu(&device_, &renderer_.uploadRing());
 
     loadScene();
 
@@ -288,6 +298,12 @@ void Application::run() {
         ImGui::Render();
 
         updateCamera(dt);
+
+        // Pump streaming point clouds: stages this frame's chunk copies into
+        // the upload ring; renderFrame records them at the top of the frame.
+        for (Engine::PointCloud& pc : pointClouds_)
+            Engine::PointCloudLoader::updateStreaming(pc);
+
         buildFrameSubmission(submission);
         const rhi::PresentResult presentResult =
             renderer_.renderFrame(submission, ImGui::GetDrawData());
@@ -464,8 +480,112 @@ void Application::buildUi() {
             }
             ImGui::TreePop();
         }
+
+        buildPointCloudUi();
     }
     ImGui::End();
+}
+
+// ---- Point clouds (Phase 4: loaders -> RHI upload; drawing lands in Phase 5)
+void Application::buildPointCloudUi() {
+    ImGui::Separator();
+    ImGui::Text("Point clouds (upload only until Phase 5)");
+
+    if (ImGui::Button("Load point cloud..."))
+        openPointCloudDialog();
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(120.0f);
+    ImGui::InputInt("Downsample", &pointCloudDownsample_);
+    pointCloudDownsample_ = std::max(1, pointCloudDownsample_);
+    ImGui::Checkbox("Morton resort (LAS/LAZ streaming phase 2)",
+                    &pointCloudMortonResort_);
+
+    const rhi::UploadRing& ring = renderer_.uploadRing();
+    ImGui::Text("Upload ring: %.1f / %.0f MB in flight",
+                double(ring.usedBytes()) / (1024.0 * 1024.0),
+                double(ring.capacity()) / (1024.0 * 1024.0));
+
+    size_t eraseIndex = SIZE_MAX;
+    for (size_t i = 0; i < pointClouds_.size(); ++i) {
+        Engine::PointCloud& pc = pointClouds_[i];
+        ImGui::PushID(static_cast<int>(i));
+        ImGui::Separator();
+        ImGui::Text("%s", pc.name.c_str());
+        if (pc.gpu && pc.gpu->valid())
+            ImGui::Text("VRAM %.1f MB, %u batches",
+                        double(pc.gpu->storage.size()) / (1024.0 * 1024.0),
+                        pc.numBatches);
+
+        const Engine::PointCloudLoader::StreamProgress progress =
+            Engine::PointCloudLoader::getStreamProgress(pc);
+        if (progress.active) {
+            char overlay[96];
+            std::snprintf(overlay, sizeof(overlay), "%u / %u pts (%.1f M/s)",
+                          progress.pointsLoaded, progress.pointsTotal,
+                          progress.pointsPerSecond / 1e6);
+            ImGui::ProgressBar(progress.fraction, ImVec2(-80.0f, 0.0f), overlay);
+            if (progress.resorting) {
+                ImGui::SameLine();
+                ImGui::TextUnformatted("resorting...");
+            }
+        } else {
+            ImGui::Text("%u points loaded", pc.totalPointCount);
+        }
+
+        if (ImGui::Button("Unload"))
+            eraseIndex = i; // destroys GPU buffers + joins the stream worker
+        ImGui::PopID();
+    }
+    if (eraseIndex != SIZE_MAX)
+        pointClouds_.erase(pointClouds_.begin() +
+                           static_cast<std::ptrdiff_t>(eraseIndex));
+}
+
+void Application::openPointCloudDialog() {
+    const std::vector<std::string> files =
+        pfd::open_file("Load point cloud", "",
+                       { "Point clouds",
+                         "*.las *.laz *.xyz *.txt *.ply *.pcb *.h5 *.hdf5 *.f5",
+                         "All files", "*" },
+                       pfd::opt::multiselect)
+            .result();
+    if (files.empty())
+        return;
+
+    const size_t downsample = static_cast<size_t>(pointCloudDownsample_);
+
+    // LAS/LAZ ride the progressive streaming path (a multi-selection shares
+    // one centre so tiles stay aligned); everything else loads synchronously
+    // through the format-dispatching text/binary loaders.
+    std::vector<std::string> lasFiles;
+    for (const std::string& path : files) {
+        std::string ext = std::filesystem::path(path).extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        if (ext == ".las" || ext == ".laz") {
+            lasFiles.push_back(path);
+            continue;
+        }
+        Engine::PointCloud pc =
+            Engine::PointCloudLoader::loadPointCloudFile(path, downsample);
+        if (pc.isLoaded())
+            pointClouds_.push_back(std::move(pc));
+        else
+            std::cerr << "[app] failed to load point cloud: " << path << "\n";
+    }
+    if (lasFiles.size() == 1) {
+        Engine::PointCloud pc = Engine::PointCloudLoader::beginLoadLASProgressive(
+            lasFiles[0], downsample, nullptr, pointCloudMortonResort_);
+        if (pc.isLoaded())
+            pointClouds_.push_back(std::move(pc));
+        else
+            std::cerr << "[app] failed to start streaming: " << lasFiles[0] << "\n";
+    } else if (lasFiles.size() > 1) {
+        std::vector<Engine::PointCloud> clouds =
+            Engine::PointCloudLoader::beginLoadLASMultipleProgressive(
+                lasFiles, downsample, pointCloudMortonResort_);
+        for (Engine::PointCloud& pc : clouds)
+            pointClouds_.push_back(std::move(pc));
+    }
 }
 
 void Application::handleResize() {
@@ -499,7 +619,9 @@ void Application::shutdown() {
     if (device_.device() != VK_NULL_HANDLE)
         device_.waitIdle();
     shutdownImGui();
-    // Scene GPU buffers must go before the renderer/device they live on.
+    // Scene + point-cloud GPU buffers must go before the renderer/device they
+    // live on (cloud destruction also joins any still-streaming worker).
+    pointClouds_.clear();
     scene_ = scene::Scene{};
     renderer_.shutdown();
     swapchain_.shutdown();

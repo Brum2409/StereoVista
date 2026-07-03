@@ -130,6 +130,7 @@
       <AdditionalIncludeDirectories>../dependencies/include;../dependencies/include/hdf5;../dependencies/include/laszip;../dependencies/include/openxr;include;src;headers;src;headers/libs/imgui;backend;headers/libs;headers/libs/volk;headers/libs/3dconnexion;headers/libs/highfive;headers/libs/highfive/bits;headers/libs/hdf5;headers/libs/highfive/h5easy_bits</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <OpenMPSupport>true</OpenMPSupport>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
@@ -159,6 +160,7 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
       <AdditionalIncludeDirectories>../dependencies/include;../dependencies/include/hdf5;../dependencies/include/laszip;../dependencies/include/openxr;headers;src;headers/libs/imgui;backend;headers/libs;headers/libs/volk;headers/libs/3dconnexion;headers/libs/highfive;headers/libs/highfive/bits;headers/libs/hdf5;headers/libs/highfive/h5easy_bits</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <OpenMPSupport>true</OpenMPSupport>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
@@ -264,11 +266,13 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClCompile Include="src\RHI\ShaderCompiler.cpp" />
     <ClCompile Include="src\RHI\Swapchain.cpp" />
     <ClCompile Include="src\RHI\Texture.cpp" />
+    <ClCompile Include="src\RHI\UploadRing.cpp" />
     <ClCompile Include="src\RHI\VmaUsage.cpp" />
     <ClCompile Include="src\RHI\VulkanCommon.cpp" />
     <ClCompile Include="src\Renderer\Renderer.cpp" />
     <ClCompile Include="src\Renderer\MaterialSystem.cpp" />
     <ClCompile Include="src\Renderer\MeshBuffer.cpp" />
+    <ClCompile Include="src\Renderer\PointCloudGpu.cpp" />
     <ClCompile Include="src\Renderer\passes\TonemapPass.cpp" />
     <ClCompile Include="src\Renderer\passes\ShadowPass.cpp" />
     <ClCompile Include="src\Renderer\passes\ForwardPass.cpp" />
@@ -277,6 +281,7 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClCompile Include="src\Scene\ModelImporter.cpp" />
     <ClCompile Include="src\Scene\SceneLoader.cpp" />
     <ClCompile Include="src\Engine\Screenshot.cpp" />
+    <ClCompile Include="src\Loaders\PointCloudLoader.cpp" />
     <ClCompile Include="headers\libs\spirv_reflect\spirv_reflect.c" />
     <ClCompile Include="headers\libs\volk\volk.c" />
     <ClCompile Include="headers\libs\imgui\backends\imgui_impl_glfw.cpp" />
@@ -302,9 +307,6 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="src\Loaders\ModelLoader.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="src\Loaders\PointCloudLoader.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="src\Engine\ComputePointCloudRenderer.cpp">
@@ -397,6 +399,7 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClInclude Include="headers\RHI\ShaderCompiler.h" />
     <ClInclude Include="headers\RHI\Swapchain.h" />
     <ClInclude Include="headers\RHI\Texture.h" />
+    <ClInclude Include="headers\RHI\UploadRing.h" />
     <ClInclude Include="headers\RHI\Vma.h" />
     <ClInclude Include="headers\RHI\VulkanCommon.h" />
     <ClInclude Include="headers\Platform\Paths.h" />
@@ -406,6 +409,7 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClInclude Include="headers\Renderer\GpuTypes.h" />
     <ClInclude Include="headers\Renderer\MaterialSystem.h" />
     <ClInclude Include="headers\Renderer\MeshBuffer.h" />
+    <ClInclude Include="headers\Renderer\PointCloudGpu.h" />
     <ClInclude Include="headers\Renderer\passes\TonemapPass.h" />
     <ClInclude Include="headers\Renderer\passes\ShadowPass.h" />
     <ClInclude Include="headers\Renderer\passes\ForwardPass.h" />

@@ -5,6 +5,7 @@
 #include "RHI/Pipeline.h"
 #include "RHI/Swapchain.h"
 #include "RHI/Texture.h"
+#include "RHI/UploadRing.h"
 #include "RHI/VulkanCommon.h"
 #include "Renderer/FrameSubmission.h"
 #include "Renderer/GpuTypes.h"
@@ -102,6 +103,11 @@ public:
     MaterialSystem& materials() { return materials_; }
     SkyboxPass& skybox() { return skyboxPass_; }
 
+    // Per-frame staging ring for the streaming loaders (Phase 4): copies
+    // staged anywhere in the frame are recorded at the top of the next frame
+    // command buffer; space retires against the frame timeline.
+    rhi::UploadRing& uploadRing() { return uploadRing_; }
+
     TonemapSettings& tonemapSettings() { return tonemapSettings_; }
 
     // Queues a capture of the next presented frame (tonemapped scene + UI) to
@@ -166,6 +172,9 @@ private:
     uint64_t timelineValue_ = 0;
     uint32_t frameSlot_ = 0;
     FrameStats frameStats_;
+
+    rhi::UploadRing uploadRing_;
+    static constexpr VkDeviceSize kUploadRingBytes = 64ull << 20;
 
     // Layered HDR scene target (color + depth), one layer per view.
     rhi::Texture sceneColor_;

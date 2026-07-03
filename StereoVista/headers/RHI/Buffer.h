@@ -22,6 +22,10 @@ struct BufferDesc {
     VkBufferUsageFlags usage = 0; // TRANSFER_DST is added automatically for
                                   // GpuOnly so upload() always works
     MemoryUsage memory = MemoryUsage::GpuOnly;
+    // Own VkDeviceMemory block instead of a VMA pool suballocation. For big
+    // long-lived buffers (large point clouds) — keeps them from fragmenting
+    // the shared pools and lets the driver manage them individually (A.13).
+    bool dedicated = false;
     const char* debugName = nullptr;
 };
 

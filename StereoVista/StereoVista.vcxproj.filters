@@ -49,6 +49,9 @@
     <ClCompile Include="src\RHI\Texture.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\RHI\UploadRing.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\RHI\VmaUsage.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -65,6 +68,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\Renderer\MeshBuffer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Renderer\PointCloudGpu.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\Renderer\passes\ShadowPass.cpp">
@@ -280,6 +286,12 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\Renderer\MeshBuffer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Renderer\PointCloudGpu.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\RHI\UploadRing.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\Scene\Scene.h">

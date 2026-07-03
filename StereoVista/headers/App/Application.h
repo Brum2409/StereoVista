@@ -1,11 +1,14 @@
 #pragma once
 
+#include "Engine/Data.h"
 #include "Platform/Window.h"
 #include "RHI/Device.h"
 #include "RHI/ShaderCompiler.h"
 #include "RHI/Swapchain.h"
 #include "Renderer/Renderer.h"
 #include "Scene/Scene.h"
+
+#include <vector>
 
 namespace app {
 
@@ -28,6 +31,8 @@ private:
     void initImGui();
     void shutdownImGui();
     void buildUi();
+    void buildPointCloudUi();
+    void openPointCloudDialog();
     void handleResize();
     void loadScene();
     void updateCamera(float dt);
@@ -43,6 +48,13 @@ private:
     // Interim scene host (full SceneManager returns in a later phase) and the
     // per-frame lighting/sky state the debug panel edits.
     scene::Scene scene_;
+
+    // Loaded point clouds (Phase 4: parsers + GPU upload; drawing lands in
+    // Phase 5). Owned here until the full SceneManager returns; streaming
+    // clouds are pumped every frame before renderFrame.
+    std::vector<Engine::PointCloud> pointClouds_;
+    int pointCloudDownsample_ = 1;
+    bool pointCloudMortonResort_ = true;
     renderer::SunState sun_;
     renderer::SkyState sky_;
     bool shadowsEnabled_ = true;

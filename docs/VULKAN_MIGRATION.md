@@ -1,7 +1,8 @@
 # StereoVista — OpenGL → Vulkan Migration Plan (design & rationale)
 
-> Status: **in progress** (Phase 0 done; Phase 1 code+CI done, user verify
-> pending). Branch: `StereoVista-vulkan`.
+> Status: **in progress** (Phases 0-4 done: bootstrap, RHI, forward PBR +
+> shadows, loaders → RHI upload; next: Phase 5 point-cloud compute).
+> Branch: `StereoVista-vulkan`.
 > This document holds the **design rationale** (RHI layering, decisions,
 > per-system reuse/rewrite table). For **live progress** — what's done, what's
 > next, and the session log — see **`docs/VULKAN_MIGRATION_STATUS.md`**, which is
