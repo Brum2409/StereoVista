@@ -1,5 +1,17 @@
 # StereoVista - CLAUDE.md
 
+> ## ⚠️ Vulkan migration in progress (branch `StereoVista-vulkan`)
+> On the Vulkan branch this file's OpenGL description is **historical**: the app
+> now boots a native **Vulkan 1.3** skeleton (`src/App`, `src/RHI`,
+> `src/Platform`, `src/Renderer`; volk + VMA + shaderc vendored; GLAD /
+> `opengl32.lib` / ImGui-GL3 / `Engine::Shader` removed; VCT/DDGI/BVH/Bloom/SSAO
+> deleted pending native re-implementation). The GL-era sources remain in-tree
+> but `ExcludedFromBuild`, serving as the behaviour reference while systems are
+> ported phase by phase. **Read `docs/VULKAN_MIGRATION_STATUS.md` FIRST** for
+> current state, working rules, and next steps; design rationale lives in
+> `docs/VULKAN_MIGRATION.md`. This file gets rewritten in Phase 8. On `main`
+> (feature-frozen during the migration) the description below is accurate.
+
 ## Project Overview
 
 StereoVista is an OpenGL 4.6 desktop application for interactive 3D visualization with native stereo (quad-buffer) rendering support. It handles 3D models and point clouds with advanced rendering features including PBR, SSAO, bloom, three switchable lighting modes (shadow mapping, voxel cone tracing, and BVH ray-traced radiance), DDGI (dynamic diffuse global illumination), and 3DConnexion SpaceMouse navigation.

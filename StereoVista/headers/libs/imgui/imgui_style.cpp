@@ -142,9 +142,10 @@ bool InitializeImGuiWithFonts(GLFWwindow *window, bool isDarkTheme) {
 
   io.ConfigWindowsMoveFromTitleBarOnly = true;
 
-  // Initialize GLFW and OpenGL backends
-  ImGui_ImplGlfw_InitForOpenGL(window, true);
-  ImGui_ImplOpenGL3_Init("#version 330 core");
+  // Initialize the GLFW platform backend. The Vulkan render backend needs
+  // device objects this file has no business knowing, so the caller runs
+  // ImGui_ImplVulkan_Init() after this returns.
+  ImGui_ImplGlfw_InitForVulkan(window, true);
 
   // Configure style
   SetupImGuiStyle(isDarkTheme, 1.0f);
@@ -459,9 +460,10 @@ void RebuildImGuiFontAtlas(bool isDarkTheme) {
 
   std::cout << "Rebuilding font atlas at scale " << scale << "x" << std::endl;
 
-  // CRITICAL: Destroy the OpenGL texture BEFORE clearing fonts
-  // This prevents accessing freed memory during texture cleanup
-  ImGui_ImplOpenGL3_DestroyFontsTexture();
+  // CRITICAL: Destroy the GPU texture BEFORE clearing fonts. This prevents
+  // accessing freed memory during texture cleanup. The caller must ensure the
+  // GPU is idle (the in-flight frames may still sample the old atlas).
+  ImGui_ImplVulkan_DestroyFontsTexture();
 
   // Clear existing fonts
   io.Fonts->Clear();
@@ -685,7 +687,7 @@ void RebuildImGuiFontAtlas(bool isDarkTheme) {
   }
 
   // Upload to GPU - create new texture (old one already destroyed at start)
-  ImGui_ImplOpenGL3_CreateFontsTexture();
+  ImGui_ImplVulkan_CreateFontsTexture();
 
   // Set default font
   if (g_Fonts.regular) {

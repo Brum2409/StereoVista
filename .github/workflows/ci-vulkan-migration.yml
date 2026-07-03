@@ -1,23 +1,26 @@
 name: CI Build (Vulkan migration)
 
-# Compile-check for the Vulkan migration branch so every push shows whether the
+# Compile-check for the Vulkan migration so every push shows whether the
 # project still builds and, if not, exactly which errors occurred.
 #
-# This is intentionally SEPARATE from msbuild.yml (which only runs on `main` and
-# publishes GitHub Releases). This workflow never creates a release — it just
-# builds Debug + Release x64 and surfaces compiler errors:
+# This is intentionally SEPARATE from msbuild.yml (which only runs on `main`
+# and publishes GitHub Releases). This workflow never creates a release — it
+# just builds Debug + Release x64 and surfaces compiler errors:
 #   * inline annotations on the changed lines (MSVC problem matcher), and
 #   * full MSBuild text + binary logs uploaded as artifacts (even on failure).
 #
-# The Vulkan SDK is installed up front so that once the migration starts adding
-# Vulkan code (VMA, vulkan.h, SPIR-V, etc.) it compiles here too. Until then it
-# is simply unused. The migration agent may pin/bump the SDK version below.
+# The Vulkan toolchain is fully VENDORED in the repo (Vulkan-Headers, volk,
+# VMA under headers/libs + dependencies/include; shaderc_shared .lib/.dll and
+# glslc.exe under dependencies/) — no Vulkan SDK install is needed to build.
+# See docs/VULKAN_MIGRATION_STATUS.md §4.
 
 on:
   push:
-    branches: [ "claude/opengl-vulkan-migration-yqc277" ]
+    branches:
+      - "StereoVista-vulkan"
+      - "claude/**"
   pull_request:
-    branches: [ "claude/opengl-vulkan-migration-yqc277", "main" ]
+    branches: [ "StereoVista-vulkan", "main" ]
   workflow_dispatch:
 
 # A newer push to the same branch cancels the in-flight run.
@@ -47,18 +50,6 @@ jobs:
 
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2
-
-      # Install the Vulkan SDK (sets the VULKAN_SDK env var for later steps).
-      # Cached between runs; stripped down to keep it small. `latest` tracks the
-      # newest SDK — pin `vulkan_version:` here if a specific version is needed.
-      - name: Install Vulkan SDK
-        uses: jakoch/install-vulkan-sdk-action@v1
-        with:
-          vulkan_version: latest
-          optional_components: com.lunarg.vulkan.vma
-          install_runtime: true
-          cache: true
-          stripdown: true
 
       # Turns raw MSVC "error C....:" lines into inline PR/commit annotations.
       - name: Enable MSVC problem matcher

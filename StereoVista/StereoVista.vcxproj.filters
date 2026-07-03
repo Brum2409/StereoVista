@@ -13,24 +13,94 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="Shaders">
+      <UniqueIdentifier>{B2E1A5C4-7D3F-4E86-9A0B-52C6D1F0A9E3}</UniqueIdentifier>
+      <Extensions>vert;frag;comp;geom;glsl;spv</Extensions>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="src\main.cpp">
+    <ClCompile Include="src\App\Application.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="headers\libs\glad.c">
+    <ClCompile Include="src\App\main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\engine\window.cpp">
+    <ClCompile Include="src\Platform\Window.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\engine\input.cpp">
+    <ClCompile Include="src\RHI\Buffer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\engine\shader.cpp">
+    <ClCompile Include="src\RHI\DescriptorAllocator.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\engine\buffers.cpp">
+    <ClCompile Include="src\RHI\Device.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\RHI\Pipeline.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\RHI\ShaderCompiler.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\RHI\Swapchain.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\RHI\Texture.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\RHI\UploadRing.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\RHI\VmaUsage.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\RHI\VulkanCommon.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Renderer\Renderer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Renderer\passes\TonemapPass.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Renderer\MaterialSystem.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Renderer\MeshBuffer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Renderer\PointCloudGpu.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Renderer\passes\ShadowPass.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Renderer\passes\ForwardPass.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Renderer\passes\SkyboxPass.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Scene\Primitives.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Scene\ModelImporter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Scene\SceneLoader.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\spirv_reflect\spirv_reflect.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\volk\volk.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\imgui\backends\imgui_impl_glfw.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\imgui\backends\imgui_impl_vulkan.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="headers\libs\imgui\imgui.cpp">
@@ -45,34 +115,49 @@
     <ClCompile Include="headers\libs\imgui\imgui_widgets.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="headers\libs\imgui\backends\imgui_impl_glfw.cpp">
+    <ClCompile Include="headers\libs\imgui\imgui_style.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="headers\libs\imgui\backends\imgui_impl_opengl3.cpp">
+    <ClCompile Include="src\Engine\StbImageImpl.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="headers\libs\portable-file-dialogs.h">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="headers\libs\imgui\imgui_style.cpp">
+    <ClCompile Include="src\main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\Engine\BloomRenderer.cpp">
+    <ClCompile Include="src\Gui\GUI.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Gui\CursorPreview3D.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Loaders\ModelLoader.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Loaders\PointCloudLoader.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\Engine\ComputePointCloudRenderer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\Cursors\CursorPresets.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Engine\BVH.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Engine\BVHDebug.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="src\Engine\OctreePointCloudManager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Engine\Buffers.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Engine\Screenshot.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Engine\Window.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Engine\Input.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Engine\XRSession.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\Engine\ShortcutManager.cpp">
@@ -81,10 +166,7 @@
     <ClCompile Include="src\Engine\SpaceMouseInput.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\Loaders\ModelLoader.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Loaders\PointCloudLoader.cpp">
+    <ClCompile Include="src\Engine\ThreeDConnexionSync.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\Core\SceneManager.cpp">
@@ -96,10 +178,10 @@
     <ClCompile Include="src\Core\UndoManager.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\Engine\StbImageImpl.cpp">
+    <ClCompile Include="src\Core\CursorSynchronizer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\Core\Voxalizer.cpp">
+    <ClCompile Include="src\Cursors\CursorPresets.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\Cursors\Base\Cursor.cpp">
@@ -115,15 +197,6 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\Cursors\Types\SphereCursor.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Core\CursorSynchronizer.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Gui\CursorPreview3D.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Gui\GUI.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\Tools\BrushTool.cpp">
@@ -147,93 +220,180 @@
     <ClCompile Include="src\Plugins\Examples\CrosshairPlugin.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\Engine\DDGIVolume.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Engine\SSAORenderer.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Engine\Screenshot.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="headers\App\Application.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Platform\Window.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\RHI\Barrier.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\RHI\Buffer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\RHI\DescriptorAllocator.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\RHI\Device.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\RHI\Pipeline.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\RHI\ShaderCompiler.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\RHI\Swapchain.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\RHI\Texture.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\RHI\Vma.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\RHI\VulkanCommon.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Renderer\Projection.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Renderer\Renderer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Renderer\passes\TonemapPass.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Renderer\passes\ShadowPass.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Renderer\passes\ForwardPass.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Renderer\passes\SkyboxPass.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Renderer\FrameSubmission.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Renderer\GpuTypes.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Renderer\MaterialSystem.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Renderer\MeshBuffer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Renderer\PointCloudGpu.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\RHI\UploadRing.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Scene\Scene.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Platform\Paths.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\spirv_reflect\spirv_reflect.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\volk\volk.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\vma\vk_mem_alloc.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="headers\core.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="headers\engine\window.h">
+    <ClInclude Include="headers\Core\SceneManager.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="headers\Engine\Shader.h">
+    <ClInclude Include="headers\Core\SnapshotManager.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="headers\engine\input.h">
+    <ClInclude Include="headers\Core\UndoManager.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="headers\engine\buffers.h">
+    <ClInclude Include="headers\Core\CursorSynchronizer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="headers\engine\data.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\Engine\BloomRenderer.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\Engine\ComputePointCloudRenderer.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\Camera.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\libs\stb_image.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\libs\imgui\imconfig.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\libs\imgui\imgui.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\libs\imgui\imgui_internal.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\libs\imgui\imstb_rectpack.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\libs\imgui\imstb_textedit.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\libs\imgui\imstb_truetype.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\libs\imgui\backends\imgui_impl_glfw.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\libs\imgui\backends\imgui_impl_opengl3.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\libs\imgui\backends\imgui_impl_opengl3_loader.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\libs\imgui\imgui_sytle.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\libs\json.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\libs\imgui\imgui_incl.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\scene_manager.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\libs\openLinks.h">
+    <ClInclude Include="headers\Core\CursorSyncState.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\cursor_presets.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="headers\point_cloud_loader.h">
+    <ClInclude Include="headers\engine\buffers.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Engine\XRSession.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Engine\ComputePointCloudRenderer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\engine\data.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\engine\input.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Engine\OctreePointCloudManager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Engine\ShortcutManager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Engine\SpaceMouseInput.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Engine\ThreeDConnexionSync.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Engine\Screenshot.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\engine\window.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Camera.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Tools\BrushTool.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Tools\ClipPlaneTool.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Tools\MeasurementTool.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Tools\TransformGizmo.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Plugins\Plugin.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Plugins\PluginContext.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Plugins\PluginManager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Plugins\PluginRegistry.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Plugins\MeasurementPlugin.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Plugins\Examples\CrosshairPlugin.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\libs\assimp\aabb.h">
@@ -467,133 +627,158 @@
     <ClInclude Include="headers\libs\assimp\ZipArchiveIOSystem.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="headers\model_loader.h">
+    <ClInclude Include="headers\libs\imgui\backends\imgui_impl_glfw.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="headers\voxalizer.h">
+    <ClInclude Include="headers\libs\imgui\backends\imgui_impl_vulkan.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="headers\Core\SceneManager.h">
+    <ClInclude Include="headers\libs\imgui\imconfig.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="headers\Core\SnapshotManager.h">
+    <ClInclude Include="headers\libs\imgui\imgui.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="headers\Core\UndoManager.h">
+    <ClInclude Include="headers\libs\imgui\imgui_incl.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="headers\Core\CursorSynchronizer.h">
+    <ClInclude Include="headers\libs\imgui\imgui_internal.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="headers\Core\CursorSyncState.h">
+    <ClInclude Include="headers\libs\imgui\imgui_sytle.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="headers\Engine\BVH.h">
+    <ClInclude Include="headers\libs\imgui\imstb_rectpack.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="headers\Engine\BVHDebug.h">
+    <ClInclude Include="headers\libs\imgui\imstb_textedit.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="headers\Engine\OctreePointCloudManager.h">
+    <ClInclude Include="headers\libs\imgui\imstb_truetype.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="headers\Engine\ShortcutManager.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\Engine\SpaceMouseInput.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\Tools\BrushTool.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\Tools\ClipPlaneTool.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\Tools\MeasurementTool.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\Tools\TransformGizmo.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\Plugins\Plugin.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\Plugins\PluginContext.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\Plugins\PluginManager.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\Plugins\PluginRegistry.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\Plugins\MeasurementPlugin.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\Plugins\Examples\CrosshairPlugin.h">
+    <ClInclude Include="headers\libs\json.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\Loaders\ModelLoader.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="headers\Engine\DDGIVolume.h">
+    <ClInclude Include="headers\model_loader.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="headers\Engine\SSAORenderer.h">
+    <ClInclude Include="headers\libs\openLinks.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="headers\Engine\Screenshot.h">
+    <ClInclude Include="headers\point_cloud_loader.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\scene_manager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\stb_image.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <None Include="assets\shaders\vertexShader.glsl" />
-    <None Include="assets\shaders\fragmentShader.glsl" />
-    <None Include="assets\shaders\sphereVertexShader.glsl" />
-    <None Include="assets\shaders\sphereFragmentShader.glsl" />
-    <None Include="headers\libs\assimp\.editorconfig" />
-    <None Include="headers\libs\assimp\color4.inl">
-      <Filter>Header Files</Filter>
+    <CustomBuild Include="assets\shaders_vk\mesh.vert">
+      <Filter>Shaders</Filter>
+    </CustomBuild>
+    <CustomBuild Include="assets\shaders_vk\mesh.frag">
+      <Filter>Shaders</Filter>
+    </CustomBuild>
+    <CustomBuild Include="assets\shaders_vk\depth_sun.vert">
+      <Filter>Shaders</Filter>
+    </CustomBuild>
+    <CustomBuild Include="assets\shaders_vk\depth_point.vert">
+      <Filter>Shaders</Filter>
+    </CustomBuild>
+    <CustomBuild Include="assets\shaders_vk\skybox.vert">
+      <Filter>Shaders</Filter>
+    </CustomBuild>
+    <CustomBuild Include="assets\shaders_vk\skybox.frag">
+      <Filter>Shaders</Filter>
+    </CustomBuild>
+    <CustomBuild Include="assets\shaders_vk\fullscreen.vert">
+      <Filter>Shaders</Filter>
+    </CustomBuild>
+    <CustomBuild Include="assets\shaders_vk\tonemap.frag">
+      <Filter>Shaders</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="assets\shaders_vk\scene_types.h">
+      <Filter>Shaders</Filter>
     </None>
-    <None Include="headers\libs\assimp\config.h.in" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="assets\shaders\fragmentShader.glsl">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="assets\shaders\planeCursorFragmentShader.glsl">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="assets\shaders\planeCursorVertexShader.glsl">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="assets\shaders\simpleDepthFragmentShader.glsl">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="assets\shaders\simpleDepthVertexShader.glsl">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="assets\shaders\skyboxFragmentShader.glsl">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="assets\shaders\skyboxVertexShader.glsl">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="assets\shaders\vertexShader.glsl">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="assets\shaders\sphereVertexShader.glsl">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="assets\shaders\sphereFragmentShader.glsl">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="headers\libs\assimp\.editorconfig">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="headers\libs\assimp\color4.inl">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="headers\libs\assimp\config.h.in">
+      <Filter>Resource Files</Filter>
+    </None>
     <None Include="headers\libs\assimp\material.inl">
-      <Filter>Header Files</Filter>
+      <Filter>Resource Files</Filter>
     </None>
     <None Include="headers\libs\assimp\matrix3x3.inl">
-      <Filter>Header Files</Filter>
+      <Filter>Resource Files</Filter>
     </None>
     <None Include="headers\libs\assimp\matrix4x4.inl">
-      <Filter>Header Files</Filter>
+      <Filter>Resource Files</Filter>
     </None>
-    <None Include="headers\libs\assimp\module.modulemap" />
+    <None Include="headers\libs\assimp\module.modulemap">
+      <Filter>Resource Files</Filter>
+    </None>
     <None Include="headers\libs\assimp\quaternion.inl">
-      <Filter>Header Files</Filter>
+      <Filter>Resource Files</Filter>
     </None>
-    <None Include="headers\libs\assimp\revision.h.in" />
+    <None Include="headers\libs\assimp\revision.h.in">
+      <Filter>Resource Files</Filter>
+    </None>
     <None Include="headers\libs\assimp\SmoothingGroups.inl">
-      <Filter>Header Files</Filter>
+      <Filter>Resource Files</Filter>
     </None>
     <None Include="headers\libs\assimp\vector2.inl">
-      <Filter>Header Files</Filter>
+      <Filter>Resource Files</Filter>
     </None>
     <None Include="headers\libs\assimp\vector3.inl">
-      <Filter>Header Files</Filter>
+      <Filter>Resource Files</Filter>
     </None>
-    <None Include="assets\shaders\simpleDepthVertexShader.glsl" />
-    <None Include="assets\shaders\simpleDepthFragmentShader.glsl" />
-    <None Include="headers\octree.h" />
-    <None Include="assets\shaders\skyboxVertexShader.glsl" />
-    <None Include="assets\shaders\skyboxFragmentShader.glsl" />
-    <None Include="assets\shaders\planeCursorVertexShader.glsl" />
-    <None Include="assets\shaders\planeCursorFragmentShader.glsl" />
-    <None Include="assets\shaders\voxelization.frag" />
-    <None Include="assets\shaders\voxelization.geom" />
-    <None Include="assets\shaders\voxelization.vert" />
-    <None Include="assets\shaders\voxel_cube.frag" />
-    <None Include="assets\shaders\voxel_cube.vert" />
-    <None Include="assets\shaders\voxel_visualization.frag" />
-    <None Include="assets\shaders\voxel_visualization.vert" />
-    <None Include="assets\shaders\world_position.frag" />
-    <None Include="assets\shaders\world_position.vert" />
+    <None Include="headers\octree.h">
+      <Filter>Resource Files</Filter>
+    </None>
   </ItemGroup>
 </Project>

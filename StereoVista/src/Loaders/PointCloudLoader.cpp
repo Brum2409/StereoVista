@@ -1,6 +1,9 @@
 // point_cloud_loader.cpp
 #include "Loaders/PointCloudLoader.h"
-#include "Engine/OctreePointCloudManager.h"
+#include "RHI/Buffer.h"
+#include "RHI/Device.h"
+#include "RHI/UploadRing.h"
+#include "Renderer/PointCloudGpu.h"
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -8,9 +11,8 @@
 #include <thread>
 #include <mutex>
 #include <atomic>
-#include <queue>
+#include <deque>
 #include <condition_variable>
-#include <glad/glad.h>
 #include <cstring>
 #include <filesystem>
 #include <future>
@@ -42,27 +44,33 @@ using namespace H5;
 namespace Engine {
 
     // =========================================================================
-    // Streaming compute SSBO infrastructure
+    // GPU upload infrastructure (Vulkan)
     // =========================================================================
-    // These helpers let every loader stream points directly to GPU SSBOs one
-    // batch (kComputeBatchSize = 10240 points) at a time.
-    // Peak CPU RAM = one batch (~280 KB) regardless of point cloud size.
+    // Every loader builds the same quantised layout the Schütz compute
+    // rasterizer consumes, then uploads through the RHI:
+    //   - bulk loads: blocking staged upload into a fresh PointCloudGpu
+    //     (loading-time; Device::immediateSubmit)
+    //   - progressive loads: PointCloudGpu pre-allocated from the file header,
+    //     chunks staged per frame through the renderer's UploadRing
     //
     // Coordinate quantisation matches the Schütz compute rasterizer exactly:
     //   normalised = (pos - batchMin) / batchSize   ∈ [0,1]
     //   bits30     = uint32( normalised * 2^30 )
-    //   ssXyz_4b   packs bits30[29:20]  (coarsest; always read by shader)
-    //   ssXyz_8b   packs bits30[19:10]
-    //   ssXyz_12b  packs bits30[ 9: 0]  (finest; level-0 only)
+    //   xyz4b      packs bits30[29:20]  (coarsest; always read by shader)
+    //   xyz8b      packs bits30[19:10]
+    //   xyz12b     packs bits30[ 9: 0]  (finest; level-0 only)
     // =========================================================================
 
-    static void deleteComputeSSBOs(PointCloud& pc) {
-        auto del = [](GLuint& id) { if (id) { glDeleteBuffers(1, &id); id = 0; } };
-        del(pc.computeBatchSSBO);
-        del(pc.computeXyz12bSSBO);
-        del(pc.computeXyz8bSSBO);
-        del(pc.computeXyz4bSSBO);
-        del(pc.computeRGBASSBO);
+    static_assert(sizeof(ComputeBatch) == renderer::PointCloudGpu::kBatchStride,
+                  "PointCloudGpu::kBatchStride must equal sizeof(ComputeBatch)");
+
+    // GPU context, set once at startup (initGpu). The GL implementation used
+    // the implicit current context; Vulkan gets explicit dependencies.
+    static rhi::Device*     s_device = nullptr;
+    static rhi::UploadRing* s_ring   = nullptr;
+
+    static void releaseGpuBuffers(PointCloud& pc) {
+        pc.gpu.reset(); // PointCloudGpu::destroy drops ring copies + waits
     }
 
 
@@ -104,9 +112,7 @@ namespace Engine {
     // quantisation matches the rasterize shader exactly (per-batch 30-bit, three
     // 10-bit tiers; the RGBA alpha byte carries point intensity).
     static void buildComputeCloud(PointCloud& pc, std::vector<PointCloudPoint>& points) {
-        deleteComputeSSBOs(pc);
-        if (pc.vbo) { glDeleteBuffers(1, &pc.vbo); pc.vbo = 0; }
-        if (pc.vao) { glDeleteVertexArrays(1, &pc.vao); pc.vao = 0; }
+        releaseGpuBuffers(pc);
         pc.numBatches      = 0;
         pc.totalPointCount = 0;
 
@@ -199,18 +205,29 @@ namespace Engine {
             }
         }
 
-        // ── 5. Bulk upload: one glBufferData per SSBO ─────────────────────────
-        auto upload = [](GLuint& id, const void* data, GLsizeiptr bytes) {
-            glGenBuffers(1, &id);
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, id);
-            glBufferData(GL_SHADER_STORAGE_BUFFER, bytes, data, GL_STATIC_DRAW);
-        };
-        upload(pc.computeBatchSSBO,  batches.data(), static_cast<GLsizeiptr>(batches.size() * sizeof(ComputeBatch)));
-        upload(pc.computeXyz4bSSBO,  xyz4b.data(),   static_cast<GLsizeiptr>(N * sizeof(uint32_t)));
-        upload(pc.computeXyz8bSSBO,  xyz8b.data(),   static_cast<GLsizeiptr>(N * sizeof(uint32_t)));
-        upload(pc.computeXyz12bSSBO, xyz12b.data(),  static_cast<GLsizeiptr>(N * sizeof(uint32_t)));
-        upload(pc.computeRGBASSBO,   rgba.data(),    static_cast<GLsizeiptr>(N * sizeof(uint32_t)));
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        // ── 5. Bulk upload: staged copies into one fresh device buffer ───────
+        // Loading-time work: each section rides Buffer::upload's blocking
+        // staging path (the GL glBufferData equivalent).
+        if (!s_device) {
+            std::cerr << "[ComputePC] PointCloudLoader::initGpu was not called – "
+                         "keeping '" << pc.name << "' CPU-only\n";
+            points.swap(pc.points); // keep the data so isLoaded() stays true
+            return;
+        }
+        pc.gpu = std::make_shared<renderer::PointCloudGpu>();
+        if (!pc.gpu->create(*s_device, s_ring, static_cast<uint32_t>(N), numBatches,
+                            pc.name)) {
+            releaseGpuBuffers(pc);
+            return;
+        }
+        const VkDeviceSize streamBytes = static_cast<VkDeviceSize>(N) * sizeof(uint32_t);
+        pc.gpu->storage.upload(batches.data(),
+                               static_cast<VkDeviceSize>(batches.size() * sizeof(ComputeBatch)),
+                               pc.gpu->batchesOffset);
+        pc.gpu->storage.upload(xyz4b.data(),  streamBytes, pc.gpu->xyz4bOffset);
+        pc.gpu->storage.upload(xyz8b.data(),  streamBytes, pc.gpu->xyz8bOffset);
+        pc.gpu->storage.upload(xyz12b.data(), streamBytes, pc.gpu->xyz12bOffset);
+        pc.gpu->storage.upload(rgba.data(),   streamBytes, pc.gpu->rgbaOffset);
 
         pc.numBatches             = numBatches;
         pc.totalPointCount        = static_cast<uint32_t>(N);
@@ -230,81 +247,37 @@ namespace Engine {
     //
     //   Phase 1 (instant display, Schütz's literal loader): a background worker
     //     reads the file in chunks and produces ready-to-upload GPU staging
-    //     ("StreamChunk"s) in *file order* (no sort). The GL/main thread drains
-    //     them each frame in updateStreaming() via glBufferSubData into SSBOs
-    //     pre-allocated to the exact header point count, growing pc.numBatches as
-    //     data arrives so the compute rasterizer draws the cloud while it loads.
+    //     ("StreamChunk"s) in *file order* (no sort). The main thread drains
+    //     them each frame in updateStreaming() through the upload ring into a
+    //     device buffer pre-allocated to the exact header point count, growing
+    //     pc.numBatches as data arrives so the compute rasterizer draws the
+    //     cloud while it loads.
     //
     //   Phase 2 (full speed, optional): once the whole file is in, the worker
     //     runs a single global per-file Morton sort + batch shuffle (exactly the
     //     buildComputeCloud transform) over the accumulated points, producing
-    //     re-ordered arrays that the main thread swaps into the SSBOs in place.
-    //     Re-ordering points never changes the rendered image, only batch AABB
-    //     tightness, so the swap is visually transparent. Both phases keep the
-    //     partial last batch in the final slot, so phase-1 and phase-2 batch
-    //     boundaries align (multiples of kComputeBatchSize) and the swap is
-    //     point/descriptor-consistent. Phase 2 is the default; it can be disabled
-    //     (mortonResort=false) for the pure file-order Schütz path.
+    //     re-ordered arrays that the main thread swaps into the device buffer in
+    //     place — in ring-budgeted SLICES across frames (a multi-GB cloud cannot
+    //     ride one frame's staging).  Re-ordering points never changes the
+    //     rendered image once complete, only batch AABB tightness. Both phases
+    //     keep the partial last batch in the final slot, so phase-1 and phase-2
+    //     batch boundaries align (multiples of kComputeBatchSize) and every
+    //     slice overwrites matching [points, descriptors] regions. While slices
+    //     land, a viewer could transiently see duplicated/missing points
+    //     (nothing draws clouds until Phase 5; if it ever bothers, the
+    //     alternative is double-buffering the whole cloud at a 2x VRAM spike).
+    //     Phase 2 is the default; it can be disabled (mortonResort=false) for
+    //     the pure file-order Schütz path.
     //
-    // The LAS header is exploited up front: exact point count (precise SSBO
+    // The LAS header is exploited up front: exact point count (precise buffer
     // pre-allocation + progress, no counting pass) and exact bounds (camera
     // framing and SpaceMouse extents are valid before a single point is read).
-
-    // ── Optional GL_ARB_sparse_buffer support ────────────────────────────────
-    // Schütz allocates the point SSBOs as *sparse* buffers and commits physical
-    // pages on demand as data streams in, so VRAM use tracks the loaded portion
-    // rather than the full reservation. Our vendored GLAD does not expose the
-    // extension, so we load the entry point manually (set up from main once the
-    // GL context exists) and fall back to a normal glBufferData reservation when
-    // it is unavailable.
-#ifndef GL_SPARSE_STORAGE_BIT_ARB
-#define GL_SPARSE_STORAGE_BIT_ARB 0x0400
-#endif
-#ifndef GL_SPARSE_BUFFER_PAGE_SIZE_ARB
-#define GL_SPARSE_BUFFER_PAGE_SIZE_ARB 0x82F8
-#endif
-    typedef void (APIENTRYP PFN_glBufferPageCommitmentARB_t)(GLenum target, GLintptr offset, GLsizeiptr size, GLboolean commit);
-    static PFN_glBufferPageCommitmentARB_t s_glBufferPageCommitmentARB = nullptr;
-    static void* (*s_glProcLoader)(const char*) = nullptr;
-    static GLint s_sparsePageSize  = 0;
-    static bool  s_sparseChecked   = false;
-    static bool  s_sparseAvailable = false;
-
-    // True if sparse buffers can be used (entry point loaded + page size known).
-    static bool sparseBuffersAvailable() {
-        if (s_sparseChecked) return s_sparseAvailable;
-        s_sparseChecked = true;
-        if (s_glProcLoader) {
-            s_glBufferPageCommitmentARB = reinterpret_cast<PFN_glBufferPageCommitmentARB_t>(
-                s_glProcLoader("glBufferPageCommitmentARB"));
-        }
-        if (s_glBufferPageCommitmentARB) {
-            glGetIntegerv(GL_SPARSE_BUFFER_PAGE_SIZE_ARB, &s_sparsePageSize);
-            if (glGetError() == GL_NO_ERROR && s_sparsePageSize > 0)
-                s_sparseAvailable = true;
-        }
-        std::cout << "[LAS-Stream] Sparse buffers "
-                  << (s_sparseAvailable ? "available (page size "
-                      + std::to_string(s_sparsePageSize) + ")" : "unavailable – using full reservation")
-                  << "\n";
-        return s_sparseAvailable;
-    }
-
-    // Commit the sparse pages covering [byteOffset, byteOffset+byteSize) of the
-    // currently-bound SSBO (Schütz's alignment).  No-op unless this cloud's
-    // buffers were actually created sparse (sparse==true). The entry point and
-    // page size are stable once probed, so this stays correct even if a later
-    // cloud falls back to non-sparse.
-    static void commitSparseRange(bool sparse, GLintptr byteOffset, GLsizeiptr byteSize, GLsizeiptr bufferBytes) {
-        if (!sparse || !s_glBufferPageCommitmentARB || s_sparsePageSize <= 0 || byteSize <= 0) return;
-        const GLintptr  page  = static_cast<GLintptr>(s_sparsePageSize);
-        const GLintptr  aOff  = byteOffset - (byteOffset % page);
-        GLsizeiptr      aSize = byteSize + (byteOffset - aOff);
-        aSize = ((aSize + page - 1) / page) * page;             // round up to page
-        if (aOff + aSize > bufferBytes) aSize = bufferBytes - aOff; // clamp to buffer
-        if (aSize > 0)
-            s_glBufferPageCommitmentARB(GL_SHADER_STORAGE_BUFFER, aOff, aSize, GL_TRUE);
-    }
+    //
+    // GL_ARB_sparse_buffer on-demand page commitment was NOT ported: VRAM now
+    // tracks the full header-sized reservation (the behaviour every non-sparse
+    // GL driver already had). Vulkan sparse binding exists but costs a queue
+    // + bind bookkeeping that isn't worth it before someone actually hits the
+    // reservation wall; revisit if that happens.
 
     struct StreamChunk {
         uint32_t firstPoint = 0;   // base offset into the per-point SSBOs
@@ -323,25 +296,26 @@ namespace Engine {
         std::thread             worker;
         std::mutex              mtx;
         std::condition_variable cv;          // signals both produce and consume
-        std::queue<StreamChunk> ready;       // phase-1 chunks awaiting upload
+        std::deque<StreamChunk> ready;       // phase-1 chunks awaiting upload
         std::atomic<bool>       stop{false}; // request worker exit (cloud removed)
         std::atomic<bool>       phase1Done{false};
         std::atomic<bool>       finished{false};
         std::atomic<bool>       failed{false};
         size_t                  maxInFlight = 4; // backpressure → bounds CPU RAM
         bool                    resort = true;   // do phase 2 (global Morton sort)?
-        bool                    sparse = false;  // were the SSBOs created sparse?
         uint32_t                targetPoints  = 0;
         uint32_t                targetBatches = 0;
         std::chrono::steady_clock::time_point startTime = std::chrono::steady_clock::now();
 
-        // ── Phase 2 result (built by the worker, swapped in by the GL thread) ──
+        // ── Phase 2 result (built by the worker, swapped in by the main thread)
         // Re-ordered, fully-quantised arrays for the whole cloud. Boundaries are
-        // aligned to kComputeBatchSize so they overwrite the phase-1 SSBOs in
-        // place. resortReady flips true when these are populated.
+        // aligned to kComputeBatchSize so they overwrite the phase-1 layout in
+        // place. resortReady flips true when these are populated;
+        // resortBatchesUploaded is the main thread's slice cursor.
         std::atomic<bool>         resortReady{false};
         std::vector<uint32_t>     r_xyz4b, r_xyz8b, r_xyz12b, r_rgba;
         std::vector<ComputeBatch> r_batches;
+        uint32_t                  resortBatchesUploaded = 0;
 
         ~PointCloudStream() {
             stop.store(true);
@@ -512,7 +486,7 @@ namespace Engine {
             std::unique_lock<std::mutex> lk(S->mtx);
             S->cv.wait(lk, [&] { return S->stop.load() || S->ready.size() < S->maxInFlight; });
             if (S->stop.load()) return false;
-            S->ready.push(std::move(ck));
+            S->ready.push_back(std::move(ck));
             lk.unlock();
             S->cv.notify_all();
             return true;
@@ -706,7 +680,7 @@ namespace Engine {
         std::ifstream file(filePath, std::ios::binary);
         if (!file.is_open()) {
             std::cerr << "[TextPC] Failed to open: " << filePath << "\n";
-            deleteComputeSSBOs(pointCloud);
+            releaseGpuBuffers(pointCloud);
             return std::move(pointCloud);
         }
 
@@ -1098,7 +1072,7 @@ namespace Engine {
         f.seekg(dataStart + skipBytes);
         if (!f) {
             std::cerr << "[PLY] Failed to seek to vertex data in " << filePath << "\n";
-            deleteComputeSSBOs(pointCloud);
+            releaseGpuBuffers(pointCloud);
             return std::move(pointCloud);
         }
 
@@ -1200,80 +1174,163 @@ namespace Engine {
         }
 
         if (pointCloud.numBatches == 0 || pointCloud.totalPointCount == 0 ||
-            pointCloud.computeBatchSSBO == 0 || pointCloud.computeXyz4bSSBO == 0 ||
-            pointCloud.computeXyz8bSSBO == 0 || pointCloud.computeXyz12bSSBO == 0 ||
-            pointCloud.computeRGBASSBO == 0) {
+            !pointCloud.gpu || !pointCloud.gpu->valid()) {
             std::cerr << "[PCExport] Point cloud '" << pointCloud.name
                       << "' has no point data to read back\n";
             return false;
         }
+        if (!s_device) {
+            std::cerr << "[PCExport] PointCloudLoader::initGpu was not called\n";
+            return false;
+        }
+
+        const renderer::PointCloudGpu& gpu = *pointCloud.gpu;
+
+        // Blocking GPU->CPU readback of ranges of the cloud buffer through one
+        // reused HostReadback staging buffer. Export is a user action, so
+        // immediateSubmit stalls are fine.
+        rhi::Buffer readback;
+        auto readRanges = [&](const VkBufferCopy2* regions, uint32_t regionCount,
+                              VkDeviceSize totalBytes) {
+            if (!readback.valid() || readback.size() < totalBytes) {
+                rhi::BufferDesc desc{};
+                desc.size = totalBytes;
+                desc.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+                desc.memory = rhi::MemoryUsage::HostReadback;
+                desc.debugName = "pointcloud export readback";
+                readback.create(*s_device, desc);
+            }
+            s_device->immediateSubmit([&](VkCommandBuffer cmd) {
+                VkCopyBufferInfo2 copy{};
+                copy.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2;
+                copy.srcBuffer = gpu.storage.handle();
+                copy.dstBuffer = readback.handle();
+                copy.regionCount = regionCount;
+                copy.pRegions = regions;
+                vkCmdCopyBuffer2(cmd, &copy);
+            });
+            readback.invalidate(0, totalBytes);
+        };
+        auto region = [](VkDeviceSize srcOffset, VkDeviceSize dstOffset,
+                         VkDeviceSize size) {
+            VkBufferCopy2 r{};
+            r.sType = VK_STRUCTURE_TYPE_BUFFER_COPY_2;
+            r.srcOffset = srcOffset;
+            r.dstOffset = dstOffset;
+            r.size = size;
+            return r;
+        };
 
         // Read the batch descriptors once (32 bytes per batch).
         std::vector<ComputeBatch> batches(pointCloud.numBatches);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, pointCloud.computeBatchSSBO);
-        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-                           static_cast<GLsizeiptr>(batches.size() * sizeof(ComputeBatch)),
-                           batches.data());
+        {
+            const VkDeviceSize bytes =
+                static_cast<VkDeviceSize>(batches.size()) * sizeof(ComputeBatch);
+            const VkBufferCopy2 r = region(gpu.batchesOffset, 0, bytes);
+            readRanges(&r, 1, bytes);
+            std::memcpy(batches.data(), readback.mapped(), bytes);
+        }
 
         constexpr double   STEPS_30BIT = 1073741824.0; // 2^30
         constexpr uint32_t MASK_10BIT  = 1023u;
 
+        // Both layouts (file-order chunks and the Morton resort) write batches
+        // in ascending output order, so batch point ranges are contiguous —
+        // read the four streams in multi-batch SPANS with ONE submit per span
+        // (the GL path issued four glGetBufferSubData per BATCH: thousands of
+        // pipeline syncs on export).
+        constexpr uint32_t kSpanPoints = 1u << 20; // 4 MB/stream, 16 MB readback
+
         std::vector<uint32_t> xyz4b, xyz8b, xyz12b, rgba;
         std::vector<PointCloudPoint> decoded;
 
-        for (const ComputeBatch& batch : batches) {
-            if (batch.numPoints <= 0) continue;
-            const size_t count = static_cast<size_t>(batch.numPoints);
+        size_t spanStartIdx = 0;
+        while (spanStartIdx < batches.size()) {
+            // Grow the span while ranges stay contiguous and under the cap.
+            const uint32_t spanFirst =
+                static_cast<uint32_t>(batches[spanStartIdx].firstPoint);
+            uint32_t spanCount = 0;
+            size_t spanEndIdx = spanStartIdx;
+            while (spanEndIdx < batches.size()) {
+                const ComputeBatch& b = batches[spanEndIdx];
+                if (b.numPoints <= 0) { ++spanEndIdx; continue; }
+                if (static_cast<uint32_t>(b.firstPoint) != spanFirst + spanCount)
+                    break; // non-contiguous (defensive) — close the span
+                if (spanCount != 0 &&
+                    spanCount + static_cast<uint32_t>(b.numPoints) > kSpanPoints)
+                    break;
+                spanCount += static_cast<uint32_t>(b.numPoints);
+                ++spanEndIdx;
+            }
+            if (spanCount == 0) { spanStartIdx = spanEndIdx; continue; }
 
-            xyz4b.resize(count); xyz8b.resize(count); xyz12b.resize(count); rgba.resize(count);
-            const GLintptr   off = static_cast<GLintptr>(batch.firstPoint) * sizeof(uint32_t);
-            const GLsizeiptr byt = static_cast<GLsizeiptr>(count) * sizeof(uint32_t);
+            const VkDeviceSize srcOff =
+                static_cast<VkDeviceSize>(spanFirst) * sizeof(uint32_t);
+            const VkDeviceSize spanBytes =
+                static_cast<VkDeviceSize>(spanCount) * sizeof(uint32_t);
+            const VkBufferCopy2 regions[4] = {
+                region(gpu.xyz4bOffset + srcOff, 0 * spanBytes, spanBytes),
+                region(gpu.xyz8bOffset + srcOff, 1 * spanBytes, spanBytes),
+                region(gpu.xyz12bOffset + srcOff, 2 * spanBytes, spanBytes),
+                region(gpu.rgbaOffset + srcOff, 3 * spanBytes, spanBytes),
+            };
+            readRanges(regions, 4, 4 * spanBytes);
 
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, pointCloud.computeXyz4bSSBO);
-            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, off, byt, xyz4b.data());
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, pointCloud.computeXyz8bSSBO);
-            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, off, byt, xyz8b.data());
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, pointCloud.computeXyz12bSSBO);
-            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, off, byt, xyz12b.data());
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, pointCloud.computeRGBASSBO);
-            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, off, byt, rgba.data());
+            xyz4b.resize(spanCount); xyz8b.resize(spanCount);
+            xyz12b.resize(spanCount); rgba.resize(spanCount);
+            const char* mapped = static_cast<const char*>(readback.mapped());
+            std::memcpy(xyz4b.data(),  mapped + 0 * spanBytes, spanBytes);
+            std::memcpy(xyz8b.data(),  mapped + 1 * spanBytes, spanBytes);
+            std::memcpy(xyz12b.data(), mapped + 2 * spanBytes, spanBytes);
+            std::memcpy(rgba.data(),   mapped + 3 * spanBytes, spanBytes);
 
-            // Decode the 30-bit quantised coordinates back to floats using the
-            // batch bounds (inverse of buildComputeCloud's quantiser). +0.5 centres
-            // the value inside its quantisation step to minimise round-trip error.
-            const glm::dvec3 bMin(batch.min_x, batch.min_y, batch.min_z);
-            const glm::dvec3 bSize(
-                std::max(static_cast<double>(batch.max_x) - bMin.x, 1e-6),
-                std::max(static_cast<double>(batch.max_y) - bMin.y, 1e-6),
-                std::max(static_cast<double>(batch.max_z) - bMin.z, 1e-6));
+            for (size_t bi = spanStartIdx; bi < spanEndIdx; ++bi) {
+                const ComputeBatch& batch = batches[bi];
+                if (batch.numPoints <= 0) continue;
+                const size_t count = static_cast<size_t>(batch.numPoints);
+                const size_t base =
+                    static_cast<uint32_t>(batch.firstPoint) - spanFirst;
 
-            decoded.resize(count);
-            for (size_t i = 0; i < count; i++) {
-                const uint32_t X = ((xyz4b[i]      ) & MASK_10BIT) << 20 |
-                                   ((xyz8b[i]      ) & MASK_10BIT) << 10 |
-                                   ((xyz12b[i]     ) & MASK_10BIT);
-                const uint32_t Y = ((xyz4b[i] >> 10) & MASK_10BIT) << 20 |
-                                   ((xyz8b[i] >> 10) & MASK_10BIT) << 10 |
-                                   ((xyz12b[i]>> 10) & MASK_10BIT);
-                const uint32_t Z = ((xyz4b[i] >> 20) & MASK_10BIT) << 20 |
-                                   ((xyz8b[i] >> 20) & MASK_10BIT) << 10 |
-                                   ((xyz12b[i]>> 20) & MASK_10BIT);
+                // Decode the 30-bit quantised coordinates back to floats using
+                // the batch bounds (inverse of buildComputeCloud's quantiser).
+                // +0.5 centres the value inside its quantisation step to
+                // minimise round-trip error.
+                const glm::dvec3 bMin(batch.min_x, batch.min_y, batch.min_z);
+                const glm::dvec3 bSize(
+                    std::max(static_cast<double>(batch.max_x) - bMin.x, 1e-6),
+                    std::max(static_cast<double>(batch.max_y) - bMin.y, 1e-6),
+                    std::max(static_cast<double>(batch.max_z) - bMin.z, 1e-6));
 
-                PointCloudPoint& pt = decoded[i];
-                pt.position = glm::vec3(
-                    static_cast<float>(bMin.x + (X + 0.5) / STEPS_30BIT * bSize.x),
-                    static_cast<float>(bMin.y + (Y + 0.5) / STEPS_30BIT * bSize.y),
-                    static_cast<float>(bMin.z + (Z + 0.5) / STEPS_30BIT * bSize.z));
-                pt.color = glm::vec3(( rgba[i]        & 0xFFu) / 255.0f,
-                                     ((rgba[i] >>  8) & 0xFFu) / 255.0f,
-                                     ((rgba[i] >> 16) & 0xFFu) / 255.0f);
-                pt.intensity = ((rgba[i] >> 24) & 0xFFu) / 255.0f;
+                decoded.resize(count);
+                for (size_t i = 0; i < count; i++) {
+                    const size_t s = base + i;
+                    const uint32_t X = ((xyz4b[s]      ) & MASK_10BIT) << 20 |
+                                       ((xyz8b[s]      ) & MASK_10BIT) << 10 |
+                                       ((xyz12b[s]     ) & MASK_10BIT);
+                    const uint32_t Y = ((xyz4b[s] >> 10) & MASK_10BIT) << 20 |
+                                       ((xyz8b[s] >> 10) & MASK_10BIT) << 10 |
+                                       ((xyz12b[s]>> 10) & MASK_10BIT);
+                    const uint32_t Z = ((xyz4b[s] >> 20) & MASK_10BIT) << 20 |
+                                       ((xyz8b[s] >> 20) & MASK_10BIT) << 10 |
+                                       ((xyz12b[s]>> 20) & MASK_10BIT);
+
+                    PointCloudPoint& pt = decoded[i];
+                    pt.position = glm::vec3(
+                        static_cast<float>(bMin.x + (X + 0.5) / STEPS_30BIT * bSize.x),
+                        static_cast<float>(bMin.y + (Y + 0.5) / STEPS_30BIT * bSize.y),
+                        static_cast<float>(bMin.z + (Z + 0.5) / STEPS_30BIT * bSize.z));
+                    pt.color = glm::vec3(( rgba[s]        & 0xFFu) / 255.0f,
+                                         ((rgba[s] >>  8) & 0xFFu) / 255.0f,
+                                         ((rgba[s] >> 16) & 0xFFu) / 255.0f);
+                    pt.intensity = ((rgba[s] >> 24) & 0xFFu) / 255.0f;
+                }
+
+                callback(decoded.data(), count);
             }
 
-            callback(decoded.data(), count);
+            spanStartIdx = spanEndIdx;
         }
 
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
         return true;
     }
 
@@ -1593,18 +1650,18 @@ namespace Engine {
         }
         catch (const std::exception& e) {
             std::cerr << "[PCB] Error: " << e.what() << "\n";
-            deleteComputeSSBOs(pointCloud);
+            releaseGpuBuffers(pointCloud);
         }
 
         return std::move(pointCloud);
     }
 
 
-    void PointCloudLoader::setupPointCloudGLBuffers(PointCloud& pointCloud) {
-        // The compute rasterizer path does not use a VAO/VBO; the SSBOs are
-        // built by buildComputeCloud.  This function is kept for the rare case
-        // where a loader has already populated pointCloud.points (e.g. the f5
-        // separate-arrays path).  For loaders that build directly, it is a no-op.
+    void PointCloudLoader::setupPointCloudGpuBuffers(PointCloud& pointCloud) {
+        // The GPU residency is built by buildComputeCloud.  This function is
+        // kept for the rare case where a loader has already populated
+        // pointCloud.points (e.g. the f5 separate-arrays path).  For loaders
+        // that build directly, it is a no-op.
         if (!pointCloud.points.empty() && pointCloud.numBatches == 0) {
             const size_t N = pointCloud.points.size();
 
@@ -1612,7 +1669,7 @@ namespace Engine {
             // CPU-side points vector, releasing it on success).
             buildComputeCloud(pointCloud, pointCloud.points);
 
-            std::cout << "[ComputePC] setupPointCloudGLBuffers: built "
+            std::cout << "[ComputePC] setupPointCloudGpuBuffers: built "
                       << pointCloud.numBatches << " batches (" << N << " points)\n";
         }
     }
@@ -2353,7 +2410,7 @@ namespace Engine {
         // If the compound-type path already built the SSBOs, we're done.
         // If pointCloud.points was somehow populated (fallback paths), run the
         // legacy setup which will also stream-upload and clear the CPU vector.
-        setupPointCloudGLBuffers(pointCloud);
+        setupPointCloudGpuBuffers(pointCloud);
 
         return std::move(pointCloud);
     }
@@ -2699,12 +2756,13 @@ namespace Engine {
 
     // -------------------------------------------------------------------------
     // Progressive single-file LAS/LAZ loader
-    // Reads the header on the calling (GL) thread to learn the exact point count
-    // and bounds, pre-allocates the compute SSBOs to that size, then spawns a
-    // background worker that streams the points in.  Returns immediately with a
-    // PointCloud whose bounds are already valid and whose batches grow each frame
-    // (via updateStreaming).  globalCenter shares a centre across a multi-file
-    // load so tiles stay correctly positioned relative to each other.
+    // Reads the header on the calling (main) thread to learn the exact point
+    // count and bounds, pre-allocates the device buffer to that size, then
+    // spawns a background worker that streams the points in.  Returns
+    // immediately with a PointCloud whose bounds are already valid and whose
+    // batches grow each frame (via updateStreaming).  globalCenter shares a
+    // centre across a multi-file load so tiles stay correctly positioned
+    // relative to each other.
     // -------------------------------------------------------------------------
     PointCloud PointCloudLoader::beginLoadLASProgressive(const std::string& filePath,
                                                          size_t downsampleFactor,
@@ -2772,54 +2830,23 @@ namespace Engine {
         const uint32_t allocBatches =
             (allocPoints + PointCloud::kComputeBatchSize - 1) / PointCloud::kComputeBatchSize;
 
-        // Pre-allocate the 5 SSBOs to full size.  When GL_ARB_sparse_buffer is
-        // available we reserve sparsely (glBufferStorage + SPARSE bit) and commit
-        // physical pages on demand as chunks arrive (Schütz), so VRAM tracks the
-        // loaded portion; otherwise we fall back to a plain glBufferData
-        // reservation.  Either way VRAM scales with the cloud (no artificial cap)
-        // and allocation fails cleanly if the cloud exceeds VRAM.
-        bool useSparse = sparseBuffersAvailable();
-        auto allocAll = [&]() -> bool {
-            deleteComputeSSBOs(pc);
-            auto alloc = [&](GLuint& id, GLsizeiptr bytes) -> bool {
-                glGenBuffers(1, &id);
-                glBindBuffer(GL_SHADER_STORAGE_BUFFER, id);
-                if (useSparse)
-                    glBufferStorage(GL_SHADER_STORAGE_BUFFER, bytes, nullptr,
-                                    GL_DYNAMIC_STORAGE_BIT | GL_SPARSE_STORAGE_BIT_ARB);
-                else
-                    glBufferData(GL_SHADER_STORAGE_BUFFER, bytes, nullptr, GL_STATIC_DRAW);
-                return glGetError() == GL_NO_ERROR;
-            };
-            bool ok = true;
-            ok = alloc(pc.computeBatchSSBO,  static_cast<GLsizeiptr>(allocBatches) * sizeof(ComputeBatch)) && ok;
-            ok = alloc(pc.computeXyz4bSSBO,  static_cast<GLsizeiptr>(allocPoints)  * sizeof(uint32_t)) && ok;
-            ok = alloc(pc.computeXyz8bSSBO,  static_cast<GLsizeiptr>(allocPoints)  * sizeof(uint32_t)) && ok;
-            ok = alloc(pc.computeXyz12bSSBO, static_cast<GLsizeiptr>(allocPoints)  * sizeof(uint32_t)) && ok;
-            ok = alloc(pc.computeRGBASSBO,   static_cast<GLsizeiptr>(allocPoints)  * sizeof(uint32_t)) && ok;
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-            return ok;
-        };
-        // Drain any GL error left pending by earlier rendering so the per-buffer
-        // glGetError() checks reflect ONLY our allocation calls. Without this, a
-        // stale error from the previously-loaded cloud's rendering would make the
-        // first allocation check below report a false failure on every load after
-        // the first (the reported "second load doesn't start / no progress UI").
-        while (glGetError() != GL_NO_ERROR) { /* discard */ }
-
-        bool ok = allocAll();
-        if (!ok && useSparse) {
-            // Sparse storage was reported available but the driver rejected it;
-            // disable sparse globally and retry with a normal reservation.
-            std::cerr << "[LAS-Stream] sparse allocation rejected – retrying non-sparse\n";
-            s_sparseAvailable = false;
-            useSparse = false;
-            ok = allocAll();
+        // Pre-allocate the device buffer to full size (dedicated allocation
+        // for big clouds — PointCloudGpu::kDedicatedBytes). VRAM scales with
+        // the cloud (no artificial cap) and allocation fails cleanly if the
+        // cloud exceeds VRAM. GL's sparse on-demand page commitment was not
+        // ported (see the streaming infrastructure note above).
+        if (!s_device) {
+            std::cerr << "[LAS-Stream] PointCloudLoader::initGpu was not called – "
+                         "cannot stream '" << filePath << "'\n";
+            pc.boundsMin = glm::vec3( FLT_MAX);
+            pc.boundsMax = glm::vec3(-FLT_MAX);
+            return pc; // isLoaded() == false → caller reports failure
         }
-        if (!ok) {
+        pc.gpu = std::make_shared<renderer::PointCloudGpu>();
+        if (!pc.gpu->create(*s_device, s_ring, allocPoints, allocBatches, pc.name)) {
             std::cerr << "[LAS-Stream] GPU allocation failed for " << allocPoints
                       << " points – file likely exceeds available VRAM\n";
-            deleteComputeSSBOs(pc);
+            releaseGpuBuffers(pc);
             pc.boundsMin = glm::vec3( FLT_MAX);
             pc.boundsMax = glm::vec3(-FLT_MAX);
             return pc; // isLoaded() == false → caller reports failure
@@ -2834,7 +2861,6 @@ namespace Engine {
         pc.stream->targetPoints  = allocPoints;
         pc.stream->targetBatches = allocBatches;
         pc.stream->resort        = mortonResort;
-        pc.stream->sparse        = useSparse;
         PointCloudStream* S = pc.stream.get();
         S->worker = std::thread(streamWorkerLAS, S, filePath, downsampleFactor,
                                 sx, sy, sz, ox, oy, oz, cx, cy, cz,
@@ -2843,7 +2869,7 @@ namespace Engine {
         std::cout << "[LAS-Stream] " << (comp ? "LAZ" : "LAS") << " " << filePath
                   << " – streaming " << nPoints << " points (" << allocBatches << " batches), "
                   << (mortonResort ? "two-phase (file-order → Morton resort)" : "file-order only")
-                  << (useSparse ? ", sparse VRAM" : "") << "\n";
+                  << "\n";
         return pc;
     }
 
@@ -2881,77 +2907,107 @@ namespace Engine {
         return out;
     }
 
-    // Per-frame pump (GL/main thread).  Phase 1: drain ready file-order chunks
-    // into the pre-allocated SSBOs (committing sparse pages first), growing
-    // numBatches so the rasterizer draws newly-arrived points.  Phase 2: once the
-    // worker publishes the globally Morton-sorted arrays, overwrite the SSBOs in
-    // place (visually identical re-ordering) for full render speed.  No-op for
-    // non-streaming clouds.
+    // Per-frame pump (main/render thread).  Phase 1: stage ready file-order
+    // chunks through the upload ring into the pre-allocated device buffer,
+    // growing numBatches so the (Phase 5) rasterizer draws newly-arrived
+    // points.  Phase 2: once the worker publishes the globally Morton-sorted
+    // arrays, overwrite the buffer in ring-budgeted slices across frames.
+    // No-op for non-streaming clouds.  A full ring simply defers work to the
+    // next frame — that backpressures the worker via maxInFlight, exactly the
+    // GL contract with driver-managed throttling made explicit.
     void PointCloudLoader::updateStreaming(PointCloud& pc) {
         PointCloudStream* S = pc.stream.get();
         if (!S) return;
+        if (!pc.gpu || !pc.gpu->valid() || !s_ring || !s_ring->valid()) {
+            // No GPU destination (begin failed and the caller kept the cloud
+            // anyway): nothing to pump. The stream keeps buffering until its
+            // owner drops the cloud.
+            return;
+        }
+        renderer::PointCloudGpu& gpu = *pc.gpu;
 
-        const GLsizeiptr ptBufBytes  = static_cast<GLsizeiptr>(pc.streamTargetCount) * sizeof(uint32_t);
-        const GLsizeiptr batBufBytes = static_cast<GLsizeiptr>(S->targetBatches) * sizeof(ComputeBatch);
-
-        auto put = [&](GLuint id, GLintptr off, GLsizeiptr byt, const void* data, GLsizeiptr total) {
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, id);
-            commitSparseRange(S->sparse, off, byt, total);
-            glBufferSubData(GL_SHADER_STORAGE_BUFFER, off, byt, data);
-        };
-
-        // ── Phase 1: drain ready file-order chunks ───────────────────────────
-        constexpr int maxChunksPerFrame = 8; // cap upload work per frame
-        int processed = 0;
+        // ── Phase 1: stage ready file-order chunks ───────────────────────────
         for (;;) {
             StreamChunk ck;
             {
                 std::unique_lock<std::mutex> lk(S->mtx);
                 if (S->ready.empty()) break;
                 ck = std::move(S->ready.front());
-                S->ready.pop();
+                S->ready.pop_front();
             }
-            S->cv.notify_all(); // release backpressure for the worker
 
-            const GLintptr   pOff = static_cast<GLintptr>(ck.firstPoint) * sizeof(uint32_t);
-            const GLsizeiptr pByt = static_cast<GLsizeiptr>(ck.numPoints) * sizeof(uint32_t);
-            put(pc.computeXyz4bSSBO,  pOff, pByt, ck.xyz4b.data(),  ptBufBytes);
-            put(pc.computeXyz8bSSBO,  pOff, pByt, ck.xyz8b.data(),  ptBufBytes);
-            put(pc.computeXyz12bSSBO, pOff, pByt, ck.xyz12b.data(), ptBufBytes);
-            put(pc.computeRGBASSBO,   pOff, pByt, ck.rgba.data(),   ptBufBytes);
-            put(pc.computeBatchSSBO,
-                static_cast<GLintptr>(ck.firstBatch) * sizeof(ComputeBatch),
-                static_cast<GLsizeiptr>(ck.batches.size()) * sizeof(ComputeBatch),
-                ck.batches.data(), batBufBytes);
+            // Stage the chunk all-or-nothing so a full ring can retry it next
+            // frame without splitting.
+            const rhi::UploadRing::Marker m = s_ring->mark();
+            const VkDeviceSize pOff = static_cast<VkDeviceSize>(ck.firstPoint) * sizeof(uint32_t);
+            const VkDeviceSize pByt = static_cast<VkDeviceSize>(ck.numPoints) * sizeof(uint32_t);
+            bool ok = true;
+            ok = ok && s_ring->stage(gpu.storage, gpu.xyz4bOffset  + pOff, ck.xyz4b.data(),  pByt);
+            ok = ok && s_ring->stage(gpu.storage, gpu.xyz8bOffset  + pOff, ck.xyz8b.data(),  pByt);
+            ok = ok && s_ring->stage(gpu.storage, gpu.xyz12bOffset + pOff, ck.xyz12b.data(), pByt);
+            ok = ok && s_ring->stage(gpu.storage, gpu.rgbaOffset   + pOff, ck.rgba.data(),   pByt);
+            ok = ok && s_ring->stage(gpu.storage,
+                                     gpu.batchesOffset +
+                                         static_cast<VkDeviceSize>(ck.firstBatch) * sizeof(ComputeBatch),
+                                     ck.batches.data(),
+                                     static_cast<VkDeviceSize>(ck.batches.size()) * sizeof(ComputeBatch));
+            if (!ok) {
+                s_ring->rollback(m);
+                std::lock_guard<std::mutex> lk(S->mtx);
+                S->ready.push_front(std::move(ck)); // retry next frame
+                break;
+            }
+            S->cv.notify_all(); // released a backpressure slot
 
             pc.totalPointCount += ck.numPoints;
             pc.numBatches      += static_cast<uint32_t>(ck.batches.size());
-            if (++processed >= maxChunksPerFrame) break;
         }
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
-        // ── Phase 2: in-place swap to the global Morton-sorted arrays ─────────
-        // Only after every phase-1 chunk is uploaded (numBatches final, pages
-        // committed). Boundaries align to kComputeBatchSize and re-ordering is
-        // visually identical, so this single overwrite is safe.
+        // ── Phase 2: sliced in-place swap to the Morton-sorted arrays ─────────
+        // Only after every phase-1 chunk is uploaded (numBatches final).
+        // Boundaries align to kComputeBatchSize, so each slice overwrites a
+        // matching [points, descriptors] region; counts don't change until the
+        // last slice lands (see the streaming infrastructure note on transient
+        // mixed ordering while slices are in flight).
         if (S->resortReady.load()) {
             bool drained = false;
             { std::lock_guard<std::mutex> lk(S->mtx); drained = S->ready.empty(); }
             if (drained) {
-                const GLsizeiptr nBy = static_cast<GLsizeiptr>(S->r_xyz4b.size()) * sizeof(uint32_t);
-                const GLsizeiptr bBy = static_cast<GLsizeiptr>(S->r_batches.size()) * sizeof(ComputeBatch);
-                put(pc.computeXyz4bSSBO,  0, nBy, S->r_xyz4b.data(),  ptBufBytes);
-                put(pc.computeXyz8bSSBO,  0, nBy, S->r_xyz8b.data(),  ptBufBytes);
-                put(pc.computeXyz12bSSBO, 0, nBy, S->r_xyz12b.data(), ptBufBytes);
-                put(pc.computeRGBASSBO,   0, nBy, S->r_rgba.data(),   ptBufBytes);
-                put(pc.computeBatchSSBO,  0, bBy, S->r_batches.data(), batBufBytes);
-                glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-                pc.numBatches      = static_cast<uint32_t>(S->r_batches.size());
-                pc.totalPointCount = static_cast<uint32_t>(S->r_xyz4b.size());
-                std::cout << "[LAS-Stream] '" << pc.name << "' Morton resort applied ("
-                          << pc.totalPointCount << " points, " << pc.numBatches << " batches)\n";
-                pc.stream.reset(); // done (dtor joins the finished worker)
-                return;
+                const uint32_t totalBatches = static_cast<uint32_t>(S->r_batches.size());
+                const uint32_t totalPoints  = static_cast<uint32_t>(S->r_xyz4b.size());
+                const uint32_t B = static_cast<uint32_t>(PointCloud::kComputeBatchSize);
+                constexpr uint32_t kSliceBatches = 64; // ~10 MB of staging per slice
+                while (S->resortBatchesUploaded < totalBatches) {
+                    const uint32_t first   = S->resortBatchesUploaded;
+                    const uint32_t count   = std::min(kSliceBatches, totalBatches - first);
+                    const uint32_t firstPt = first * B;
+                    const uint32_t endPt   = (first + count == totalBatches)
+                                                 ? totalPoints
+                                                 : (first + count) * B;
+                    const VkDeviceSize pOff = static_cast<VkDeviceSize>(firstPt) * sizeof(uint32_t);
+                    const VkDeviceSize pByt = static_cast<VkDeviceSize>(endPt - firstPt) * sizeof(uint32_t);
+                    const rhi::UploadRing::Marker m = s_ring->mark();
+                    bool ok = true;
+                    ok = ok && s_ring->stage(gpu.storage, gpu.xyz4bOffset  + pOff, S->r_xyz4b.data()  + firstPt, pByt);
+                    ok = ok && s_ring->stage(gpu.storage, gpu.xyz8bOffset  + pOff, S->r_xyz8b.data()  + firstPt, pByt);
+                    ok = ok && s_ring->stage(gpu.storage, gpu.xyz12bOffset + pOff, S->r_xyz12b.data() + firstPt, pByt);
+                    ok = ok && s_ring->stage(gpu.storage, gpu.rgbaOffset   + pOff, S->r_rgba.data()   + firstPt, pByt);
+                    ok = ok && s_ring->stage(gpu.storage,
+                                             gpu.batchesOffset +
+                                                 static_cast<VkDeviceSize>(first) * sizeof(ComputeBatch),
+                                             S->r_batches.data() + first,
+                                             static_cast<VkDeviceSize>(count) * sizeof(ComputeBatch));
+                    if (!ok) { s_ring->rollback(m); break; } // ring full — next frame
+                    S->resortBatchesUploaded += count;
+                }
+                if (S->resortBatchesUploaded >= totalBatches) {
+                    pc.numBatches      = totalBatches;
+                    pc.totalPointCount = totalPoints;
+                    std::cout << "[LAS-Stream] '" << pc.name << "' Morton resort applied ("
+                              << pc.totalPointCount << " points, " << pc.numBatches << " batches)\n";
+                    pc.stream.reset(); // done (dtor joins the finished worker)
+                    return;
+                }
             }
         }
 
@@ -2974,12 +3030,12 @@ namespace Engine {
         }
     }
 
-    // Set the GL extension loader (e.g. glfwGetProcAddress) so sparse buffers can
-    // be probed lazily on first use. Call once from main after the GL context and
-    // GLAD are initialised. Safe to pass nullptr (disables sparse buffers).
-    void PointCloudLoader::initGLExtensions(void* (*procLoader)(const char*)) {
-        s_glProcLoader  = procLoader;
-        s_sparseChecked = false; // re-probe on next allocation
+    // Set the GPU context (device for allocations + blocking loading-time
+    // uploads, upload ring for the per-frame streaming path). Call once at
+    // startup after the renderer exists; both must outlive every loaded cloud.
+    void PointCloudLoader::initGpu(rhi::Device* device, rhi::UploadRing* streamRing) {
+        s_device = device;
+        s_ring   = streamRing;
     }
 
     PointCloudLoader::StreamProgress PointCloudLoader::getStreamProgress(const PointCloud& pc) {

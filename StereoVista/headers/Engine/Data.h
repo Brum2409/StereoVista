@@ -1,17 +1,25 @@
 #pragma once
-#include "Core.h"
-#include <memory>
+// Engine data types shared by the loaders, scene management and (from Phase 5
+// on) the point-cloud renderer. GPU-API-free since the Vulkan migration: GPU
+// residency lives behind renderer::PointCloudGpu (RHI buffers), so everything
+// here is plain CPU state and the types are default-movable — the GL era's
+// hand-rolled move constructors existed only to zero raw GL handles.
+
+#include <glm/glm.hpp>
+
 #include <array>
-#include <unordered_map>
-#include <unordered_set>
-#include <list>
+#include <cfloat>
 #include <chrono>
-#include <filesystem>
-#include <numeric>
-#include <mutex>
-#include <thread>
-#include <future>
-#include <atomic>
+#include <cstdint>
+#include <list>
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+namespace renderer {
+struct PointCloudGpu;
+}
 
 namespace Engine {
 
@@ -32,12 +40,13 @@ namespace Engine {
 
     // GPU-side batch descriptor for the Schütz compute rasterizer.
     // Each batch covers up to kComputeBatchSize contiguous points in the flat
-    // packed-coordinate SSBOs.  The bounding box (local space) lets the shader
-    // cull the whole batch with a single frustum test and decode quantised
-    // coordinates back to float.
+    // packed-coordinate streams.  The bounding box (local space) lets the
+    // shader cull the whole batch with a single frustum test and decode
+    // quantised coordinates back to float.
     //
-    // Layout must match the GLSL Batch struct in pointcloud_rasterize.comp
-    // (std430, 8 × 4 = 32 bytes, no padding required).
+    // Layout must match the GLSL Batch struct consumed by the Phase 5
+    // rasterizer (tightly packed scalars: 8 x 4 = 32 bytes, identical under
+    // scalar and std430 rules).
     struct ComputeBatch {
         float min_x, min_y, min_z;
         float max_x, max_y, max_z;
@@ -47,7 +56,9 @@ namespace Engine {
     static_assert(sizeof(ComputeBatch) == 32,
                   "ComputeBatch size mismatch – GLSL struct alignment will break");
 
-    // Octree-based point cloud node
+    // Octree-based point cloud node (CPU/disk-cache structure; the GL-era
+    // GL_POINTS LOD fallback and its per-node VBOs are gone — the compute
+    // rasterizer path is guaranteed on the Vulkan 1.3 feature set).
     struct PointCloudOctreeNode {
         // Node identification
         uint64_t nodeId;
@@ -64,11 +75,6 @@ namespace Engine {
         std::string diskFilePath;
         size_t diskFileOffset;
 
-        // LOD information (used by GL_POINTS fallback path only)
-        std::vector<size_t> lodPointCounts;
-        std::vector<GLuint> lodVBOs;
-        bool vbosGenerated;
-
         // Memory management
         bool isLoaded;
         std::chrono::steady_clock::time_point lastAccessed;
@@ -81,24 +87,7 @@ namespace Engine {
         PointCloudOctreeNode() :
             nodeId(0), depth(0), center(0.0f), bounds(0.0f),
             totalPointCount(0), isOnDisk(false), diskFileOffset(0),
-            vbosGenerated(false), isLoaded(false), memoryUsage(0), isLeaf(true) {
-            lodPointCounts.resize(5);
-            lodVBOs.resize(5, 0);
-        }
-
-        ~PointCloudOctreeNode() {
-            cleanup();
-        }
-
-        void cleanup() {
-            for (GLuint vbo : lodVBOs) {
-                if (vbo != 0) {
-                    glDeleteBuffers(1, &vbo);
-                }
-            }
-            std::fill(lodVBOs.begin(), lodVBOs.end(), 0);
-            vbosGenerated = false;
-        }
+            isLoaded(false), memoryUsage(0), isLeaf(true) {}
     };
 
     // Memory and disk cache management for the octree
@@ -121,15 +110,21 @@ namespace Engine {
         std::string name;
         std::string filePath;
         std::string sourceScenePath = ""; // Path to the scene file this object was loaded from (empty = manually created)
-        std::vector<PointCloudPoint> points; // Raw points for initial loading (cleared after octree build)
-        glm::vec3 position;
-        glm::vec3 rotation;
-        glm::vec3 scale;
+        std::vector<PointCloudPoint> points; // Raw points for initial loading (cleared after GPU build)
+        glm::vec3 position{ 0.0f };
+        glm::vec3 rotation{ 0.0f };
+        glm::vec3 scale{ 1.0f };
         bool visible = true;
-        GLuint vao = 0;
-        GLuint vbo = 0;
-        // Total points uploaded to vbo. Set by setupPointCloudGLBuffers() before
-        // buildOctree() clears the cpu-side points vector.
+
+        // ── GPU residency (compute rasterizer streams + batch descriptors) ───
+        // One suballocated device-local buffer behind an RHI type; null until a
+        // loader builds it. shared_ptr keeps PointCloud cheaply movable and
+        // lets in-flight frames extend the lifetime later (Phase 5).
+        // DECLARED BEFORE `stream`: members destroy in reverse order, so the
+        // stream's worker thread is joined before the GPU buffers die.
+        std::shared_ptr<renderer::PointCloudGpu> gpu;
+
+        // Total points uploaded so far (grows while streaming).
         uint32_t totalPointCount = 0;
 
         // ── World-space bounding box (set by streaming loaders) ───────────────
@@ -143,36 +138,28 @@ namespace Engine {
         // bounding boxes enable a single frustum-cull test per workgroup, and
         // coordinates are quantised to 10/20/30-bit integers to cut bandwidth.
         static constexpr int kComputeBatchSize = 10240; // multiple of 128
-        GLuint computeBatchSSBO  = 0; // binding 40 – ComputeBatch descriptors
-        GLuint computeXyz12bSSBO = 0; // binding 41 – finest 10 bits per axis
-        GLuint computeXyz8bSSBO  = 0; // binding 42 – middle 10 bits per axis
-        GLuint computeXyz4bSSBO  = 0; // binding 43 – coarsest 10 bits per axis
-        GLuint computeRGBASSBO   = 0; // binding 44 – pre-packed uint RGBA
         uint32_t numBatches           = 0;
         int      computePointsPerThread = 0; // ceil(kComputeBatchSize / 128)
 
         // ── Progressive streaming (compute_loop_las style) ───────────────────
-        // While `stream` is non-null the cloud is still loading: SSBOs are
-        // pre-allocated to streamTargetCount points and numBatches/totalPointCount
-        // grow each frame as PointCloudLoader::updateStreaming() uploads chunks.
-        // `stream` resets to null when loading completes.
+        // While `stream` is non-null the cloud is still loading: the GPU buffer
+        // is pre-allocated for streamTargetCount points and numBatches/
+        // totalPointCount grow each frame as PointCloudLoader::updateStreaming()
+        // stages chunks through the upload ring.  `stream` resets to null when
+        // loading completes.
         std::shared_ptr<PointCloudStream> stream;
         uint32_t streamTargetCount = 0; // expected final point count (0 = N/A)
 
         float basePointSize = 2.0f;
 
-        // Octree-based system (legacy; kept for binary compatibility)
+        // Octree-based system (legacy; kept for the disk-cache logic)
         std::unique_ptr<PointCloudOctreeNode> octreeRoot;
-        glm::vec3 octreeBoundsMin;
-        glm::vec3 octreeBoundsMax;
-        glm::vec3 octreeCenter;
-        float octreeSize;
+        glm::vec3 octreeBoundsMin{ 0.0f };
+        glm::vec3 octreeBoundsMax{ 0.0f };
+        glm::vec3 octreeCenter{ 0.0f };
+        float octreeSize = 0.0f;
         int maxOctreeDepth = 12;
         size_t maxPointsPerNode = 5000;
-
-        // LOD distances (used by GL_POINTS fallback path only)
-        float lodDistances[5] = { 10.0f, 25.0f, 50.0f, 100.0f, 200.0f };
-        float lodMultiplier = 1.0f;
 
         // Memory and disk management
         PointCloudChunkCache chunkCache;
@@ -180,9 +167,8 @@ namespace Engine {
         bool useDiskCache = true;
         size_t totalLoadedNodes = 0;
 
-        // Octree visualization
-        GLuint chunkOutlineVAO = 0;
-        GLuint chunkOutlineVBO = 0;
+        // Octree visualization (CPU outline vertices; drawing returns with the
+        // Phase 6 overlay renderer)
         std::vector<glm::vec3> chunkOutlineVertices;
         bool visualizeOctree = false;
         int visualizeDepth = 3;
@@ -191,141 +177,12 @@ namespace Engine {
             chunkCache.cacheDirectory = "pointcloud_cache";
         }
 
-        // Move constructor
-        PointCloud(PointCloud&& other) noexcept
-            : name(std::move(other.name)), filePath(std::move(other.filePath)),
-              points(std::move(other.points)), position(other.position),
-              rotation(other.rotation), scale(other.scale), visible(other.visible),
-              vao(other.vao), vbo(other.vbo), totalPointCount(other.totalPointCount),
-              boundsMin(other.boundsMin), boundsMax(other.boundsMax),
-              basePointSize(other.basePointSize), octreeRoot(std::move(other.octreeRoot)),
-              octreeBoundsMin(other.octreeBoundsMin), octreeBoundsMax(other.octreeBoundsMax),
-              octreeCenter(other.octreeCenter), octreeSize(other.octreeSize),
-              maxOctreeDepth(other.maxOctreeDepth), maxPointsPerNode(other.maxPointsPerNode),
-              lodMultiplier(other.lodMultiplier), chunkCache(std::move(other.chunkCache)),
-              useOctree(other.useOctree), useDiskCache(other.useDiskCache),
-              totalLoadedNodes(other.totalLoadedNodes), chunkOutlineVAO(other.chunkOutlineVAO),
-              chunkOutlineVBO(other.chunkOutlineVBO), chunkOutlineVertices(std::move(other.chunkOutlineVertices)),
-              visualizeOctree(other.visualizeOctree), visualizeDepth(other.visualizeDepth),
-              computeBatchSSBO(other.computeBatchSSBO),
-              computeXyz12bSSBO(other.computeXyz12bSSBO),
-              computeXyz8bSSBO(other.computeXyz8bSSBO),
-              computeXyz4bSSBO(other.computeXyz4bSSBO),
-              computeRGBASSBO(other.computeRGBASSBO),
-              numBatches(other.numBatches),
-              computePointsPerThread(other.computePointsPerThread),
-              stream(std::move(other.stream)),
-              streamTargetCount(other.streamTargetCount) {
-
-            // Copy lodDistances array
-            for (int i = 0; i < 5; i++) {
-                lodDistances[i] = other.lodDistances[i];
-            }
-
-            // Reset other object
-            other.vao = 0;
-            other.vbo = 0;
-            other.totalPointCount = 0;
-            other.boundsMin = glm::vec3( FLT_MAX);
-            other.boundsMax = glm::vec3(-FLT_MAX);
-            other.chunkOutlineVAO = 0;
-            other.chunkOutlineVBO = 0;
-            other.computeBatchSSBO   = 0;
-            other.computeXyz12bSSBO  = 0;
-            other.computeXyz8bSSBO   = 0;
-            other.computeXyz4bSSBO   = 0;
-            other.computeRGBASSBO    = 0;
-            other.numBatches         = 0;
-            other.computePointsPerThread = 0;
-            other.streamTargetCount  = 0; // stream already nulled by std::move
-        }
-
-        // Move assignment operator
-        PointCloud& operator=(PointCloud&& other) noexcept {
-            if (this != &other) {
-                cleanup();
-
-                name = std::move(other.name);
-                filePath = std::move(other.filePath);
-                points = std::move(other.points);
-                position = other.position;
-                rotation = other.rotation;
-                scale = other.scale;
-                visible = other.visible;
-                vao = other.vao;
-                vbo = other.vbo;
-                totalPointCount = other.totalPointCount;
-                boundsMin = other.boundsMin;
-                boundsMax = other.boundsMax;
-                basePointSize = other.basePointSize;
-
-                octreeRoot = std::move(other.octreeRoot);
-                octreeBoundsMin = other.octreeBoundsMin;
-                octreeBoundsMax = other.octreeBoundsMax;
-                octreeCenter = other.octreeCenter;
-                octreeSize = other.octreeSize;
-                maxOctreeDepth = other.maxOctreeDepth;
-                maxPointsPerNode = other.maxPointsPerNode;
-
-                for (int i = 0; i < 5; i++) {
-                    lodDistances[i] = other.lodDistances[i];
-                }
-                lodMultiplier = other.lodMultiplier;
-
-                chunkCache = std::move(other.chunkCache);
-                useOctree = other.useOctree;
-                useDiskCache = other.useDiskCache;
-                totalLoadedNodes = other.totalLoadedNodes;
-
-                chunkOutlineVAO = other.chunkOutlineVAO;
-                chunkOutlineVBO = other.chunkOutlineVBO;
-                chunkOutlineVertices = std::move(other.chunkOutlineVertices);
-                visualizeOctree = other.visualizeOctree;
-                visualizeDepth = other.visualizeDepth;
-
-                computeBatchSSBO        = other.computeBatchSSBO;
-                computeXyz12bSSBO       = other.computeXyz12bSSBO;
-                computeXyz8bSSBO        = other.computeXyz8bSSBO;
-                computeXyz4bSSBO        = other.computeXyz4bSSBO;
-                computeRGBASSBO         = other.computeRGBASSBO;
-                numBatches              = other.numBatches;
-                computePointsPerThread  = other.computePointsPerThread;
-                stream                  = std::move(other.stream);
-                streamTargetCount       = other.streamTargetCount;
-
-                // Reset other object
-                other.vao = 0;
-                other.vbo = 0;
-                other.totalPointCount = 0;
-                other.boundsMin = glm::vec3( FLT_MAX);
-                other.boundsMax = glm::vec3(-FLT_MAX);
-                other.chunkOutlineVAO = 0;
-                other.chunkOutlineVBO = 0;
-                other.computeBatchSSBO   = 0;
-                other.computeXyz12bSSBO  = 0;
-                other.computeXyz8bSSBO   = 0;
-                other.computeXyz4bSSBO   = 0;
-                other.computeRGBASSBO    = 0;
-                other.numBatches         = 0;
-                other.computePointsPerThread = 0;
-                other.streamTargetCount  = 0; // stream already nulled by std::move
-            }
-            return *this;
-        }
-
-        // Disable copy constructor and copy assignment
+        // Every member is RAII — default moves are correct (the moved-from
+        // object's gpu/stream/points are null/empty, so it destroys cleanly).
+        PointCloud(PointCloud&&) = default;
+        PointCloud& operator=(PointCloud&&) = default;
         PointCloud(const PointCloud&) = delete;
         PointCloud& operator=(const PointCloud&) = delete;
-
-        ~PointCloud() {
-            cleanup();
-        }
-
-        void cleanup() {
-            if (octreeRoot) {
-                octreeRoot.reset();
-            }
-        }
 
         // Returns true if point cloud data is loaded and ready to render.
         // A streaming cloud counts as loaded as soon as its background load has
@@ -420,10 +277,9 @@ namespace Engine {
         }
     };
 
-    // Maximum number of simultaneous user section/clip planes. The scene
-    // vertex shaders write these to gl_ClipDistance[1..MAX_CLIP_PLANES]; index 0
-    // stays reserved for the legacy radar top-down slice. 6 user planes + the
-    // radar slice = 7 clip distances, within the GL-guaranteed minimum of 8.
+    // Maximum number of simultaneous user section/clip planes. The GL scene
+    // vertex shaders wrote these to gl_ClipDistance[1..MAX_CLIP_PLANES]; the
+    // Vulkan pipelines re-introduce them in Phase 5/6 (point clouds first).
     static constexpr int MAX_CLIP_PLANES = 6;
 
     // A user-controllable section / clipping plane. Geometry on the negative
