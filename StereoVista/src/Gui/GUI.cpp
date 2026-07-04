@@ -7039,11 +7039,19 @@ void renderMeasurementToolWindow() {
   ImGui::SliderFloat("Line Width", &measurementTool.lineWidth, 1.0f, 8.0f,
                      "%.1f");
 
-  // Unit selection: world units are treated as meters
+  // Unit selection: world units are treated as meters. Derive the combo's
+  // selection from the tool's current unit each frame so it reflects the
+  // persisted setting (and any programmatic change) instead of drifting.
   static const char *unitNames[] = {"m", "dm", "cm", "mm", "km", "ft", "in"};
   static const float unitScales[] = {1.0f,    10.0f,    100.0f, 1000.0f,
                                      0.001f,  3.28084f, 39.3701f};
-  static int unitIndex = 0;
+  int unitIndex = 0;
+  for (int u = 0; u < IM_ARRAYSIZE(unitNames); ++u) {
+    if (measurementTool.unitSuffix == unitNames[u]) {
+      unitIndex = u;
+      break;
+    }
+  }
   if (ImGui::Combo("Units", &unitIndex, unitNames, IM_ARRAYSIZE(unitNames))) {
     measurementTool.unitScale = unitScales[unitIndex];
     measurementTool.unitSuffix = unitNames[unitIndex];

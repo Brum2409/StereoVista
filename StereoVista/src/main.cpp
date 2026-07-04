@@ -2472,6 +2472,29 @@ void savePreferences() {
       preferences.applySceneEnvironmentOnLoad;
   j["scene"]["recent"] = preferences.recentScenes;
 
+  // Measurement tool display settings. The live tool is the source of truth
+  // (the GUI edits it directly), so mirror its current state into preferences
+  // before serializing.
+  preferences.measurementSettings.lineWidth = measurementTool.lineWidth;
+  preferences.measurementSettings.showLabels = measurementTool.showLabels;
+  preferences.measurementSettings.showSegmentLabels =
+      measurementTool.showSegmentLabels;
+  preferences.measurementSettings.xRay = measurementTool.xRay;
+  preferences.measurementSettings.unitScale = measurementTool.unitScale;
+  preferences.measurementSettings.unitSuffix = measurementTool.unitSuffix;
+  preferences.measurementSettings.defaultColor = measurementTool.nextColor;
+  j["measurement"]["lineWidth"] = preferences.measurementSettings.lineWidth;
+  j["measurement"]["showLabels"] = preferences.measurementSettings.showLabels;
+  j["measurement"]["showSegmentLabels"] =
+      preferences.measurementSettings.showSegmentLabels;
+  j["measurement"]["xRay"] = preferences.measurementSettings.xRay;
+  j["measurement"]["unitScale"] = preferences.measurementSettings.unitScale;
+  j["measurement"]["unitSuffix"] = preferences.measurementSettings.unitSuffix;
+  j["measurement"]["defaultColor"] = {
+      preferences.measurementSettings.defaultColor.r,
+      preferences.measurementSettings.defaultColor.g,
+      preferences.measurementSettings.defaultColor.b};
+
   // Save lighting settings
   j["lighting"]["mode"] = static_cast<int>(preferences.lightingMode);
   j["lighting"]["enableShadows"] = preferences.enableShadows;
@@ -3049,6 +3072,25 @@ void loadPreferences() {
       if (sj.contains("recent") && sj["recent"].is_array()) {
         preferences.recentScenes =
             sj["recent"].get<std::vector<std::string>>();
+      }
+    }
+
+    // Measurement tool display settings. Applied to the live tool after it is
+    // created/bound (see the measurement-tool setup in the render-loop init).
+    if (j.contains("measurement")) {
+      const auto &mj = j["measurement"];
+      auto &ms = preferences.measurementSettings;
+      ms.lineWidth = mj.value("lineWidth", ms.lineWidth);
+      ms.showLabels = mj.value("showLabels", ms.showLabels);
+      ms.showSegmentLabels = mj.value("showSegmentLabels", ms.showSegmentLabels);
+      ms.xRay = mj.value("xRay", ms.xRay);
+      ms.unitScale = mj.value("unitScale", ms.unitScale);
+      ms.unitSuffix = mj.value("unitSuffix", ms.unitSuffix);
+      if (mj.contains("defaultColor") && mj["defaultColor"].is_array() &&
+          mj["defaultColor"].size() == 3) {
+        ms.defaultColor = glm::vec3(mj["defaultColor"][0].get<float>(),
+                                    mj["defaultColor"][1].get<float>(),
+                                    mj["defaultColor"][2].get<float>());
       }
     }
 
@@ -3859,6 +3901,19 @@ int main() {
 
   loadPreferences();
   initializeVCTSettings();
+
+  // ---- Apply persisted Measurement Tool display settings ----
+  // These are pure CPU state on the tool object (no GL context required), so
+  // it is safe to push them here right after preferences load; the tool's GL
+  // resources are created lazily on first render.
+  measurementTool.lineWidth = preferences.measurementSettings.lineWidth;
+  measurementTool.showLabels = preferences.measurementSettings.showLabels;
+  measurementTool.showSegmentLabels =
+      preferences.measurementSettings.showSegmentLabels;
+  measurementTool.xRay = preferences.measurementSettings.xRay;
+  measurementTool.unitScale = preferences.measurementSettings.unitScale;
+  measurementTool.unitSuffix = preferences.measurementSettings.unitSuffix;
+  measurementTool.nextColor = preferences.measurementSettings.defaultColor;
 
   // ---- Load Shortcuts ----
   if (!shortcutManager.loadFromFile("shortcuts.json")) {

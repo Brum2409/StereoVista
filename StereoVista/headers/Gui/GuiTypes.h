@@ -460,5 +460,21 @@ struct ApplicationPreferences {
     float minSpacing = 0.1f;     // Minimum distance between instances
     bool showBrushCursor = true; // Show brush cursor indicator
   } brushToolSettings;
+
+  // Measurement Tool display settings. These mirror the runtime fields on
+  // Tools::MeasurementTool; they are copied to the live tool at startup and
+  // read back from it when preferences are saved, so a user's preferred units
+  // and overlay style persist across sessions. Defaults match the tool's own
+  // in-code defaults.
+  struct MeasurementSettings {
+    float lineWidth = 2.5f;          // overlay line thickness
+    bool showLabels = true;          // draw screen-space value labels
+    bool showSegmentLabels = true;   // per-segment length labels on polylines
+    bool xRay = true;                // ghost-render occluded overlay parts
+    float unitScale = 1.0f;          // world units -> displayed units
+    std::string unitSuffix = "m";    // displayed unit suffix
+    glm::vec3 defaultColor =
+        glm::vec3(1.0f, 0.76f, 0.03f); // colour for new measurements
+  } measurementSettings;
 };
 } // namespace GUI
