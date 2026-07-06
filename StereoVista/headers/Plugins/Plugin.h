@@ -9,13 +9,15 @@
 //  only info() plus the one or two hooks it cares about.
 //
 //  All per-frame and event hooks receive a Plugins::PluginContext& giving safe
-//  access to the scene, picking, preferences, undo, toasts and a GL helper.
+//  access to the scene, overlay, picking, selection, undo and toasts.
+//
+//  Vulkan rewrite: the GL lifecycle (onInitializeGL/onShutdownGL) is gone —
+//  the overlay is immediate-mode, so plugins own no GPU objects — and the
+//  per-eye onRenderViewport is replaced by a single onBuildOverlay that appends
+//  world-space geometry to ctx.overlay() once per frame.
 //
 //  Registration is automatic: drop REGISTER_PLUGIN(MyPlugin) in the plugin's
-//  .cpp (see PluginRegistry.h) and the PluginManager will instantiate it at
-//  startup — no edits to main.cpp or GUI.cpp required.
-//
-//  See docs/PLUGINS.md for the lifecycle diagram and a step-by-step guide.
+//  .cpp (see PluginRegistry.h); the PluginManager instantiates it at startup.
 // ============================================================================
 
 #include "PluginContext.h"
@@ -42,7 +44,6 @@ struct PluginInfo {
     std::string    version  = "1.0.0";
     PluginCategory category = PluginCategory::Tool;
     std::string    shortcut;           // optional display hint, e.g. "Ctrl+H"
-                                       // (binding itself stays external)
 };
 
 class Plugin {
@@ -53,18 +54,14 @@ public:
     virtual PluginInfo info() const = 0;
 
     // ── Lifecycle ───────────────────────────────────────────────────────────
-    // onRegister     : called once when the plugin is added to the manager,
-    //                  before any GL context work. Good for wiring scene data.
-    // onInitializeGL : called once with a valid GL context; create VAOs/shaders.
-    // onShutdownGL   : called once at exit (GL context still valid); free them.
-    virtual void onRegister(PluginContext&)     {}
-    virtual void onInitializeGL(PluginContext&) {}
-    virtual void onShutdownGL()                 {}
+    // onRegister: called once when the plugin is added to the manager. Good for
+    // wiring scene data. (No GL lifecycle — the overlay owns no per-plugin GPU
+    // objects.)
+    virtual void onRegister(PluginContext&) {}
 
     // ── Enabled (active) state ──────────────────────────────────────────────
     // "Enabled" means the tool is actively capturing interaction (e.g. clicks
-    // place points). Toggled by the host or the plugin's own UI. onEnable /
-    // onDisable fire only on an actual transition.
+    // place points). onEnable/onDisable fire only on an actual transition.
     bool isEnabled() const { return m_enabled; }
     void setEnabled(bool enabled) {
         if (enabled == m_enabled) return;
@@ -78,20 +75,18 @@ public:
     // Logic update, once per frame before rendering. dt is seconds.
     virtual void onUpdate(PluginContext&, float /*dt*/) {}
 
-    // World-space overlay. Called once PER EYE with that eye's matrices, during
-    // the scene render. Draw 3D gizmos / annotations here. Never assume this is
-    // the only eye — keep it stateless w.r.t. the matrices passed in.
-    virtual void onRenderViewport(PluginContext&, const glm::mat4& /*projection*/,
-                                  const glm::mat4& /*view*/,
-                                  const glm::vec3& /*cameraPos*/) {}
+    // World-space overlay. Called once per frame; append geometry to
+    // ctx.overlay(). Purely descriptive — no GPU state, no matrices; the
+    // renderer transforms and draws it for every eye.
+    virtual void onBuildOverlay(PluginContext&) {}
 
-    // ImGui pass. Called once per frame (left-eye GUI build). Draw your own
-    // ImGui windows here; gate them on windowOpen() if you use the default
+    // ImGui pass. Called once per frame (inside the host's ImGui frame). Draw
+    // your own windows here; gate them on windowOpen() if you use the default
     // menu entry below.
     virtual void onRenderUI(PluginContext&) {}
 
-    // Tools-menu entry. Default implementation adds a checkbox menu item that
-    // toggles windowOpen(). Override for a custom submenu.
+    // Tools-menu entry. Default: a checkbox menu item toggling windowOpen().
+    // Override for a custom submenu.
     virtual void onRenderMenu(PluginContext&);
 
     // ── Input hooks (return true to CONSUME the event) ──────────────────────
@@ -105,7 +100,7 @@ public:
                        int /*action*/, int /*mods*/)               { return false; }
 
     // Window-visibility flag the default menu entry toggles and onRenderUI can
-    // read. Plugins without a window can simply ignore it.
+    // read. Plugins without a window can ignore it.
     bool&       windowOpen()       { return m_windowOpen; }
     const bool& windowOpen() const { return m_windowOpen; }
 

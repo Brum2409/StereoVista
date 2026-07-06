@@ -1,92 +1,87 @@
 #include "Cursors/Base/CursorManager.h"
-#include "Gui/GuiTypes.h"
-#include <GLFW/glfw3.h>
-#include <cmath>
-#include <imgui.h>
-#include <iostream>
 
-extern Camera camera;
-extern int windowWidth;
-extern int windowHeight;
+#include "Core/Camera.h"
+#include "Gui/GuiTypes.h"
+#include "Renderer/FrameSubmission.h"
+#include "Renderer/OverlayDrawList.h"
+
+#include <GLFW/glfw3.h>
+
+#include "imgui/imgui.h"
+
+#include <cmath>
 
 namespace Cursor {
-// Initialize cursor manager with default properties
+namespace {
+
+// Reverse-Z convention: the cleared background / far plane maps to depth ~0,
+// and any real geometry writes depth > 0 (the GL code tested depth < 0.9999
+// against a far=1.0 buffer). Anything at or below this is "no hit".
+constexpr float kBackgroundDepthEps = 1e-4f;
+
+// Reconstruct a world position from a scene-target pixel + a [0,1] reverse-Z
+// depth using an inverse view-projection. Vulkan NDC: the framebuffer TOP
+// (py = 0) maps to ndc.y = -1 because the Y-flip is baked into the projection
+// (renderer::perspective), so a straight (pixel / extent) * 2 - 1 is correct
+// for both axes.
+glm::vec3 reconstructWorld(const glm::mat4 &invViewProj, const glm::vec2 &pixel,
+                           const glm::vec2 &extent, float depth) {
+  const glm::vec4 ndc((pixel.x / extent.x) * 2.0f - 1.0f,
+                      (pixel.y / extent.y) * 2.0f - 1.0f, depth, 1.0f);
+  const glm::vec4 world = invViewProj * ndc;
+  return glm::vec3(world) / world.w;
+}
+
+} // namespace
+
 CursorManager::CursorManager()
     : m_cursorPosition(0.0f), m_cursorPositionValid(false),
       m_cursorPositionCalculatedThisFrame(false),
       m_backgroundCursorPosition(0.0f), m_hasBackgroundCursorPosition(false),
       m_showOrbitCenter(false), m_alwaysShowOrbitCenter(false),
-      m_orbitCenterColor(0.0f, 1.0f, 0.0f, 0.7f),
-      m_orbitCenterSphereRadius(0.2f), m_windowWidth(1920),
-      m_windowHeight(1080), m_lastX(0.0f), m_lastY(0.0f),
+      m_orbitCenterColor(0.0f, 1.0f, 0.0f, 0.7f), m_orbitCenterSphereRadius(0.2f),
+      m_windowWidth(1920), m_windowHeight(1080), m_lastX(0.0f), m_lastY(0.0f),
       m_cursorInsideWindow(true), m_positionLocked(false) {
   m_sphereCursor = std::make_unique<SphereCursor>();
   m_fragmentCursor = std::make_unique<FragmentCursor>();
   m_planeCursor = std::make_unique<PlaneCursor>();
 }
 
-CursorManager::~CursorManager() { cleanup(); }
+CursorManager::~CursorManager() = default;
 
-// Initialize all cursor types and set window dimensions
 void CursorManager::initialize() {
   m_sphereCursor->initialize();
   m_fragmentCursor->initialize();
   m_planeCursor->initialize();
-
-  m_windowWidth = windowWidth;
-  m_windowHeight = windowHeight;
 }
 
-// Updates 3D cursor position based on mouse position and depth buffer
 void CursorManager::updateCursorPosition(GLFWwindow *window,
                                          const glm::mat4 &projection,
                                          const glm::mat4 &view,
-                                         Engine::Shader *shader) {
-  updateCursorPosition(window, projection, view, shader, true, false, nullptr,
-                       nullptr, nullptr, nullptr);
-}
-
-// Updates 3D cursor position with control over when to actually calculate
-void CursorManager::updateCursorPosition(GLFWwindow *window,
-                                         const glm::mat4 &projection,
-                                         const glm::mat4 &view,
-                                         Engine::Shader *shader,
+                                         const Camera &camera,
+                                         const renderer::DepthReadback &depth,
                                          bool forceRecalculate) {
-  updateCursorPosition(window, projection, view, shader, forceRecalculate,
-                       false, nullptr, nullptr, nullptr, nullptr);
-}
-
-// Updates 3D cursor position with stereo support (checks both eye buffers)
-void CursorManager::updateCursorPosition(
-    GLFWwindow *window, const glm::mat4 &projection, const glm::mat4 &view,
-    Engine::Shader *shader, bool forceRecalculate, bool isStereo,
-    const glm::mat4 *leftProjection, const glm::mat4 *leftView,
-    const glm::mat4 *rightProjection, const glm::mat4 *rightView) {
-  // If we already calculated this frame and not forcing recalculation, return
-  if (m_cursorPositionCalculatedThisFrame && !forceRecalculate) {
+  // Already resolved this frame (unless a caller forces a recompute).
+  if (m_cursorPositionCalculatedThisFrame && !forceRecalculate)
     return;
-  }
-  // Skip if ImGui wants mouse input
+
+  // ImGui owns the mouse (hovering a panel): show the OS cursor, do nothing.
   if (ImGui::GetIO().WantCaptureMouse) {
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
     return;
   }
-  // Skip if cursor is outside the window to prevent edge rendering
-  if (!m_cursorInsideWindow) {
+  if (!m_cursorInsideWindow)
     return;
-  }
 
-  // If position is locked, don't update (keeps cursor stationary during
-  // parameter adjustments)
+  // Position locked (e.g. tweaking a cursor parameter): keep it put.
   if (m_positionLocked) {
     m_cursorPositionCalculatedThisFrame = true;
     return;
   }
 
-  // During orbiting, maintain cursor at the captured position
+  // Orbiting: the shared cursor stays at the captured world point; just keep
+  // the per-type cursors and the sphere radius in sync with it.
   if (camera.IsOrbiting) {
-    // The cursor position should already be set via setCapturedCursorPosition
-    // Just update the individual cursor types with the current position
     if (m_cursorPositionValid) {
       m_sphereCursor->setPosition(m_cursorPosition);
       m_sphereCursor->setPositionValid(true);
@@ -94,37 +89,38 @@ void CursorManager::updateCursorPosition(
       m_fragmentCursor->setPositionValid(true);
       m_planeCursor->setPosition(m_cursorPosition);
       m_planeCursor->setPositionValid(true);
-
-      // Update sphere radius based on camera distance
       m_sphereCursor->calculateRadius(camera.Position);
     }
     m_cursorPositionCalculatedThisFrame = true;
     return;
   }
 
-  // Only update if not animating
-  if (camera.IsAnimating) {
+  if (camera.IsAnimating)
     return;
-  }
 
-  double xpos, ypos;
+  // Current mouse position (window pixels). The actual geometry pick uses the
+  // renderer's depth readback rect (queued last frame); the current mouse is
+  // used only for the region bounds test, the background fallback ray, and the
+  // last-depth cache.
+  double xpos = 0.0, ypos = 0.0;
   glfwGetCursorPos(window, &xpos, &ypos);
   m_lastX = static_cast<float>(xpos);
   m_lastY = static_cast<float>(ypos);
 
-  m_windowWidth = windowWidth;
-  m_windowHeight = windowHeight;
+  int winW = 0, winH = 0;
+  glfwGetWindowSize(window, &winW, &winH);
+  if (winW > 0)
+    m_windowWidth = winW;
+  if (winH > 0)
+    m_windowHeight = winH;
 
-  // Resolve the scene-region sub-rectangle. When unset, fall back to the full
-  // window so behavior is unchanged.
+  // Resolve the scene-region sub-rectangle (falls back to the full window).
   const int vpW = (m_vpWidth > 0) ? m_vpWidth : m_windowWidth;
   const int vpH = (m_vpHeight > 0) ? m_vpHeight : m_windowHeight;
-  // Region-local cursor position (origin at the top-left of the scene region).
   const float rx = m_lastX - static_cast<float>(m_vpLeftInset);
   const float ryTop = m_lastY - static_cast<float>(m_vpTopInset);
 
-  // Bounds check: the cursor must be inside the scene region (not over the
-  // docked GUI panels). This avoids picking through the panels.
+  // Outside the scene region (over a docked panel / letterbox): invalidate.
   if (rx < 0.0f || rx >= static_cast<float>(vpW) || ryTop < 0.0f ||
       ryTop >= static_cast<float>(vpH)) {
     m_cursorPositionValid = false;
@@ -135,71 +131,69 @@ void CursorManager::updateCursorPosition(
     return;
   }
 
-  // Depth threshold for detecting skybox/background (anything at or very close
-  // to far plane)
-  const float DEPTH_THRESHOLD = 0.9999f;
-
-  float depth;
-  glReadPixels(static_cast<GLint>(m_vpOriginX + rx),
-               static_cast<GLint>(m_vpOriginYGL + (vpH - ryTop)),
-               1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &depth);
-
-  // Convert cursor position to world space using center projection/view
-  // Always use the center matrices to avoid jumps when eye selection changes
-  glm::mat4 vpInv = glm::inverse(projection * view);
-  glm::vec4 ndc = glm::vec4((rx / (float)vpW) * 2.0 - 1.0,
-                            1.0 - (ryTop / (float)vpH) * 2.0,
-                            depth * 2.0 - 1.0, 1.0);
-  auto worldPosH = vpInv * ndc;
-  auto worldPos = worldPosH / worldPosH.w;
-  auto isHit = depth < DEPTH_THRESHOLD;
-
   const bool anyCursorVisible = m_sphereCursor->isVisible() ||
                                 m_fragmentCursor->isVisible() ||
                                 m_planeCursor->isVisible();
 
-  if (isHit) {
-    // Remember the depth of the last geometry hit so the cursor can stay at
-    // this depth while the mouse passes over the background (sparse point
-    // clouds would otherwise make it flicker between 2D and 3D). Also capture
-    // the mouse position and time so the timed / distance cache modes can
-    // measure how long / how far we've been off geometry.
-    m_lastValidDepth = depth;
-    m_hasLastValidDepth = true;
-    m_lastHitTime = glfwGetTime();
-    m_lastHitScreenX = m_lastX;
-    m_lastHitScreenY = m_lastY;
-  } else if (m_keepLastDepthOnBackground && m_hasLastValidDepth &&
-             anyCursorVisible) {
-    // Over background: decide whether the cached depth is still "fresh" enough
-    // to keep using, based on the configured expiry mode. INDEFINITE always
-    // keeps it; TIMED expires after a number of seconds off geometry; DISTANCE
-    // expires once the mouse has travelled too far from the last hit point.
+  // NDC of the current mouse within the scene region (Vulkan convention:
+  // top -> -1), reused by the cache re-projection and background fallback.
+  const float ndcX = (rx / static_cast<float>(vpW)) * 2.0f - 1.0f;
+  const float ndcY = (ryTop / static_cast<float>(vpH)) * 2.0f - 1.0f;
+  const glm::mat4 currentInvVP = glm::inverse(projection * view);
+
+  // --- Geometry pick from the renderer's depth readback (one frame stale) ---
+  // The renderer copied a small rect at last frame's mouse pixel and published
+  // it with the invViewProj/extent of THAT frame; reconstructing with those
+  // (not the live camera) keeps the picked point from smearing under motion.
+  bool isHit = false;
+  glm::vec3 worldPos(0.0f);
+  if (depth.valid && !depth.rects.empty()) {
+    const renderer::DepthQueryRect &rect = depth.rects[0];
+    const glm::ivec2 centerPixel = rect.origin + rect.size / 2;
+    float sampled = 0.0f;
+    if (depth.sample(centerPixel, sampled) && sampled > kBackgroundDepthEps) {
+      worldPos = reconstructWorld(
+          depth.invViewProj, glm::vec2(centerPixel) + 0.5f,
+          glm::vec2(static_cast<float>(depth.extent.width),
+                    static_cast<float>(depth.extent.height)),
+          sampled);
+      isHit = true;
+      // Remember this hit so the cursor can stay at this depth while the mouse
+      // skims over the background (sparse point clouds would otherwise flicker
+      // the cursor between 2D and 3D).
+      m_lastValidDepth = sampled;
+      m_hasLastValidDepth = true;
+      m_lastHitTime = glfwGetTime();
+      m_lastHitScreenX = m_lastX;
+      m_lastHitScreenY = m_lastY;
+    }
+  }
+
+  // --- Over background: optionally keep following at the last valid depth ---
+  if (!isHit && m_keepLastDepthOnBackground && m_hasLastValidDepth &&
+      anyCursorVisible) {
     bool cacheValid = true;
     if (m_backgroundCacheMode == GUI::CURSOR_CACHE_TIMED) {
-      cacheValid =
-          (glfwGetTime() - m_lastHitTime) <= m_backgroundCacheTime;
+      cacheValid = (glfwGetTime() - m_lastHitTime) <= m_backgroundCacheTime;
     } else if (m_backgroundCacheMode == GUI::CURSOR_CACHE_DISTANCE) {
-      float dx = m_lastX - m_lastHitScreenX;
-      float dy = m_lastY - m_lastHitScreenY;
+      const float dx = m_lastX - m_lastHitScreenX;
+      const float dy = m_lastY - m_lastHitScreenY;
       cacheValid =
           std::sqrt(dx * dx + dy * dy) <= m_backgroundCacheDistance;
     }
     if (cacheValid) {
-      // Re-project the mouse position at the cached depth so the 3D cursor
-      // keeps following the mouse at the last known distance from the camera
-      // until it hits geometry again (or the cache expires).
-      ndc.z = m_lastValidDepth * 2.0f - 1.0f;
-      worldPosH = vpInv * ndc;
-      worldPos = worldPosH / worldPosH.w;
+      // Re-project the CURRENT mouse at the cached depth with the CURRENT
+      // camera, so the cursor keeps tracking the mouse at that distance until
+      // it hits geometry again (or the cache expires).
+      const glm::vec4 h = currentInvVP * glm::vec4(ndcX, ndcY, m_lastValidDepth, 1.0f);
+      worldPos = glm::vec3(h) / h.w;
       isHit = true;
     }
   }
 
-  // Update cursor properties based on whether it hit geometry
   if (isHit && anyCursorVisible) {
     m_cursorPositionValid = true;
-    m_cursorPosition = glm::vec3(worldPos);
+    m_cursorPosition = worldPos;
 
     m_sphereCursor->setPosition(m_cursorPosition);
     m_sphereCursor->setPositionValid(true);
@@ -207,17 +201,13 @@ void CursorManager::updateCursorPosition(
     m_fragmentCursor->setPositionValid(true);
     m_planeCursor->setPosition(m_cursorPosition);
     m_planeCursor->setPositionValid(true);
-
-    // Update radius for sphere cursor based on camera distance
     m_sphereCursor->calculateRadius(camera.Position);
 
-    // Clear background cursor when we have a valid 3D cursor
     m_hasBackgroundCursorPosition = false;
 
-    // Panning keeps its own locked (DISABLED) cursor, so don't override the
-    // mode here. Right-button free-look intentionally leaves the cursor visible
-    // and moving, so fall through to the normal hover handling (3D sphere
-    // cursor over geometry) instead of freezing the mode.
+    // Panning keeps its own (disabled) cursor mode; right-button free-look
+    // leaves the OS cursor visible. Otherwise hide the OS cursor so only the
+    // 3D cursor shows over geometry.
     if (camera.IsPanning) {
       m_cursorPositionCalculatedThisFrame = true;
       return;
@@ -225,19 +215,14 @@ void CursorManager::updateCursorPosition(
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
   } else {
     m_cursorPositionValid = false;
-
     m_sphereCursor->setPositionValid(false);
     m_fragmentCursor->setPositionValid(false);
     m_planeCursor->setPositionValid(false);
 
-    // Calculate background cursor position when cursor is over empty space
-    m_backgroundCursorPosition =
-        calculateBackgroundCursorPosition(window, projection, view);
+    // Background cursor (a point along the mouse ray) for zoom/orbit fallback.
+    m_backgroundCursorPosition = calculateBackgroundCursorPosition(projection, view);
     m_hasBackgroundCursorPosition = true;
 
-    // See the matching note above: only panning freezes the cursor mode;
-    // right-button free-look keeps the cursor visible (OS cursor over empty
-    // space) and moving with the mouse.
     if (camera.IsPanning) {
       m_cursorPositionCalculatedThisFrame = true;
       return;
@@ -245,23 +230,21 @@ void CursorManager::updateCursorPosition(
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
   }
 
-  // Mark that cursor position has been calculated this frame
   m_cursorPositionCalculatedThisFrame = true;
 }
 
-// Reset frame calculation flag (call at start of each frame)
 void CursorManager::resetFrameCalculationFlag() {
   m_cursorPositionCalculatedThisFrame = false;
 }
 
-// Pin the shared cursor (and every cursor type) onto an explicit world point.
-void CursorManager::setForcedCursorPosition(const glm::vec3 &position) {
+void CursorManager::setForcedCursorPosition(const glm::vec3 &position,
+                                            const glm::vec3 &cameraPosition) {
   m_cursorPosition = position;
   m_cursorPositionValid = true;
 
   m_sphereCursor->setPosition(position);
   m_sphereCursor->setPositionValid(true);
-  m_sphereCursor->calculateRadius(camera.Position);
+  m_sphereCursor->calculateRadius(cameraPosition);
   m_fragmentCursor->setPosition(position);
   m_fragmentCursor->setPositionValid(true);
   m_planeCursor->setPosition(position);
@@ -272,156 +255,69 @@ void CursorManager::setForcedCursorPosition(const glm::vec3 &position) {
   m_hasBackgroundCursorPosition = false;
 }
 
-// Render visible 3D cursors in the scene
-void CursorManager::renderCursors(const glm::mat4 &projection,
-                                  const glm::mat4 &view) {
-  // Don't render 3D cursor if mouse cursor has exited the window
-  if (!m_cursorInsideWindow) {
+void CursorManager::renderCursors(renderer::OverlayDrawList &list,
+                                  const Camera &camera) {
+  if (!m_cursorInsideWindow)
     return;
-  }
-
-  if (m_sphereCursor->isVisible()) {
-    m_sphereCursor->render(projection, view, camera.Position);
-  }
-
-  if (m_planeCursor->isVisible()) {
-    m_planeCursor->render(projection, view, camera.Position);
-  }
-
-  // Fragment cursor is rendered in the fragment shader via updateShaderUniforms
+  if (m_sphereCursor->isVisible())
+    m_sphereCursor->appendTo(list, camera.Position);
+  if (m_planeCursor->isVisible())
+    m_planeCursor->appendTo(list, camera.Position);
+  // The fragment (ring) cursor is drawn by mesh.frag via FrameSubmission, not
+  // the overlay list — see fillFragmentCursorState.
 }
 
-// Update shader uniforms for cursor visualization in fragment shaders
-void CursorManager::updateShaderUniforms(Engine::Shader *shader) {
-  if (!shader)
-    return;
-
-  // Set cursor position for fragment shader
-  shader->setVec4(
-      "cursorPos",
-      camera.IsOrbiting ? glm::vec4(m_cursorPosition, true)
-                        : // Always valid during orbiting
-          glm::vec4(m_cursorPosition, m_cursorPositionValid ? 1.0f : 0.0f));
-
-  // Update fragment cursor uniforms if visible
-  if (m_fragmentCursor->isVisible()) {
-    m_fragmentCursor->updateShaderUniforms(shader);
-  } else {
-    shader->setFloat("baseOuterRadius", 0.0f);
-    shader->setFloat("baseOuterBorderThickness", 0.0f);
-    shader->setFloat("baseInnerRadius", 0.0f);
-    shader->setFloat("baseInnerBorderThickness", 0.0f);
-    shader->setVec4("outerCursorColor", glm::vec4(0.0f));
-    shader->setVec4("innerCursorColor", glm::vec4(0.0f));
-    shader->setBool("showFragmentCursor", false);
+void CursorManager::fillFragmentCursorState(renderer::FragmentCursorState &out,
+                                            const Camera &camera) const {
+  m_fragmentCursor->fillState(out);
+  // Always valid while orbiting (matches the GL uber-shader path, which kept
+  // the ring pinned to the captured point during an orbit).
+  if (camera.IsOrbiting) {
+    out.position = m_cursorPosition;
+    out.valid = true;
   }
+  out.show = m_fragmentCursor->isVisible() && out.valid;
 }
 
-// Renders a sphere at the orbit center point for visual reference
-void CursorManager::renderOrbitCenter(const glm::mat4 &projection,
-                                      const glm::mat4 &view,
+void CursorManager::renderOrbitCenter(renderer::OverlayDrawList &list,
                                       const glm::vec3 &orbitPoint) {
   if (!m_showOrbitCenter)
     return;
-
-  // Use the sphere cursor's shader to render the orbit center
-  auto sphereShader = m_sphereCursor->getShader();
-  if (!sphereShader)
-    return;
-
-  // Enable depth testing and blending
-  glEnable(GL_DEPTH_TEST);
-  glDepthFunc(GL_LESS);
-  glEnable(GL_BLEND);
-  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-  sphereShader->use();
-  sphereShader->setMat4("projection", projection);
-  sphereShader->setMat4("view", view);
-
-  // Create model matrix for orbit center
-  glm::mat4 model = glm::translate(glm::mat4(1.0f), orbitPoint);
-  model = glm::scale(model, glm::vec3(m_orbitCenterSphereRadius));
-
-  sphereShader->setMat4("model", model);
-  sphereShader->setVec3("viewPos", camera.Position);
-  sphereShader->setVec4("sphereColor", m_orbitCenterColor);
-  sphereShader->setFloat("transparency", 1.0f);
-  sphereShader->setFloat("edgeSoftness", 0.0f);
-  sphereShader->setFloat("centerTransparencyFactor", 0.0f);
-
-  // Render orbit center sphere using two-pass approach for correct face ordering
-  glBindVertexArray(m_sphereCursor->getVAO());
-  glEnable(GL_CULL_FACE);
-
-  // First pass: Render back faces with depth write enabled
-  glDepthMask(GL_TRUE);
-  glCullFace(GL_FRONT);
-  glDrawElements(GL_TRIANGLES, m_sphereCursor->getIndices().size(),
-                 GL_UNSIGNED_INT, 0);
-
-  // Second pass: Render front faces with depth write disabled
-  glDepthMask(GL_FALSE);
-  glCullFace(GL_BACK);
-  glDrawElements(GL_TRIANGLES, m_sphereCursor->getIndices().size(),
-                 GL_UNSIGNED_INT, 0);
-
-  // Reset OpenGL state
-  glDepthMask(GL_TRUE);
-  glCullFace(GL_BACK);
-  glBindVertexArray(0);
-
-  glDisable(GL_BLEND);
+  m_sphereCursor->appendOrbitSphere(list, orbitPoint, m_orbitCenterSphereRadius,
+                                    m_orbitCenterColor);
 }
 
-// Release resources for all cursor types
-void CursorManager::cleanup() {
-  m_sphereCursor->cleanup();
-  m_fragmentCursor->cleanup();
-  m_planeCursor->cleanup();
-}
-
-// Calculate background cursor position when cursor is over empty space
-glm::vec3 CursorManager::calculateBackgroundCursorPosition(
-    GLFWwindow *window, const glm::mat4 &projection, const glm::mat4 &view) {
-  // Use already stored mouse position from updateCursorPosition, mapped into
-  // the scene-region sub-rectangle (falls back to full window when unset).
+glm::vec3
+CursorManager::calculateBackgroundCursorPosition(const glm::mat4 &projection,
+                                                 const glm::mat4 &view) {
   const int vpW = (m_vpWidth > 0) ? m_vpWidth : m_windowWidth;
   const int vpH = (m_vpHeight > 0) ? m_vpHeight : m_windowHeight;
-  float mouseX = m_lastX - static_cast<float>(m_vpLeftInset);
-  float mouseY = m_lastY - static_cast<float>(m_vpTopInset);
+  const float mouseX = m_lastX - static_cast<float>(m_vpLeftInset);
+  const float mouseY = m_lastY - static_cast<float>(m_vpTopInset);
 
-  // Convert to normalized device coordinates
-  float x = (2.0f * mouseX) / (float)vpW - 1.0f;
-  float y = 1.0f - (2.0f * mouseY) / (float)vpH;
+  // NDC (Vulkan convention: top -> -1; the projection carries the Y-flip).
+  const float x = (mouseX / static_cast<float>(vpW)) * 2.0f - 1.0f;
+  const float y = (mouseY / static_cast<float>(vpH)) * 2.0f - 1.0f;
 
-  // Project to a reasonable distance from camera (middle of view frustum)
-  float targetDepth = 0.5f; // NDC depth between near (0) and far (1)
-  glm::vec4 nearPoint = glm::vec4(x, y, -1.0f, 1.0f); // Near plane
-  glm::vec4 farPoint = glm::vec4(x, y, 1.0f, 1.0f);   // Far plane
-
-  // Transform to world space
-  glm::mat4 invViewProj = glm::inverse(projection * view);
-  glm::vec4 nearWorld = invViewProj * nearPoint;
-  glm::vec4 farWorld = invViewProj * farPoint;
-
+  // Reverse-Z: near plane -> 1, far plane -> 0. Mix the two ray hits to land a
+  // point mid-frustum along the mouse ray.
+  const glm::mat4 invViewProj = glm::inverse(projection * view);
+  glm::vec4 nearWorld = invViewProj * glm::vec4(x, y, 1.0f, 1.0f);
+  glm::vec4 farWorld = invViewProj * glm::vec4(x, y, 0.0f, 1.0f);
   nearWorld /= nearWorld.w;
   farWorld /= farWorld.w;
 
-  // Interpolate between near and far points at the target depth
-  glm::vec3 worldPos =
-      glm::mix(glm::vec3(nearWorld), glm::vec3(farWorld), targetDepth);
-
-  return worldPos;
+  return glm::mix(glm::vec3(nearWorld), glm::vec3(farWorld), 0.5f);
 }
 
-void CursorManager::setViewport(int originX, int originYGL, int width,
+void CursorManager::setViewport(int originX, int originYTop, int width,
                                 int height, int leftInset, int topInset) {
   m_vpOriginX = originX;
-  m_vpOriginYGL = originYGL;
+  m_vpOriginYTop = originYTop;
   m_vpWidth = width;
   m_vpHeight = height;
   m_vpLeftInset = leftInset;
   m_vpTopInset = topInset;
 }
+
 } // namespace Cursor

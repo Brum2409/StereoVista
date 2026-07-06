@@ -1,516 +1,328 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+
 #include "Tools/MeasurementTool.h"
+
+#include "Renderer/OverlayDrawList.h"
+
+#include "imgui/imgui.h"
+
+#include <algorithm>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
 
 namespace Tools {
 
-    // ── Embedded overlay shaders ─────────────────────────────────────────────
-    // Same pattern as BVHDebugRenderer: tiny self-contained programs so the
-    // tool has no asset-file dependency.
+using renderer::OverlayDepth;
+using renderer::OverlayDrawList;
 
-    static const char* kLineVertexSrc = R"(
-#version 330 core
-layout (location = 0) in vec3 aPos;
-layout (location = 1) in vec3 aColor;
-
-uniform mat4 uViewProj;
-
-out vec3 vColor;
-
-void main() {
-    gl_Position = uViewProj * vec4(aPos, 1.0);
-    vColor = aColor;
-}
-)";
-
-    static const char* kLineFragmentSrc = R"(
-#version 330 core
-in vec3 vColor;
-out vec4 FragColor;
-
-uniform float uAlpha;
-
-void main() {
-    FragColor = vec4(vColor, uAlpha);
-}
-)";
-
-    static const char* kPointVertexSrc = R"(
-#version 330 core
-layout (location = 0) in vec3 aPos;
-layout (location = 1) in vec3 aColor;
-
-uniform mat4 uViewProj;
-uniform float uPointSize;
-
-out vec3 vColor;
-
-void main() {
-    gl_Position = uViewProj * vec4(aPos, 1.0);
-    gl_PointSize = uPointSize;
-    vColor = aColor;
-}
-)";
-
-    static const char* kPointFragmentSrc = R"(
-#version 330 core
-in vec3 vColor;
-out vec4 FragColor;
-
-uniform float uAlpha;
-
-void main() {
-    // Round marker with a dark rim for contrast on any background.
-    vec2 d = gl_PointCoord * 2.0 - 1.0;
-    float r2 = dot(d, d);
-    if (r2 > 1.0) discard;
-    float rim = smoothstep(0.45, 0.85, r2);
-    FragColor = vec4(mix(vColor, vec3(0.05), rim), uAlpha);
-}
-)";
-
-    static GLuint compileProgram(const char* vsSrc, const char* fsSrc, const char* label) {
-        auto compile = [&](GLenum type, const char* src) -> GLuint {
-            GLuint shader = glCreateShader(type);
-            glShaderSource(shader, 1, &src, nullptr);
-            glCompileShader(shader);
-            GLint ok = GL_FALSE;
-            glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
-            if (!ok) {
-                char log[1024];
-                glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
-                std::cerr << "[MeasurementTool] " << label << " shader compile error: "
-                          << log << std::endl;
-            }
-            return shader;
-        };
-
-        GLuint vs = compile(GL_VERTEX_SHADER, vsSrc);
-        GLuint fs = compile(GL_FRAGMENT_SHADER, fsSrc);
-        GLuint program = glCreateProgram();
-        glAttachShader(program, vs);
-        glAttachShader(program, fs);
-        glLinkProgram(program);
-        glDeleteShader(vs);
-        glDeleteShader(fs);
-
-        GLint ok = GL_FALSE;
-        glGetProgramiv(program, GL_LINK_STATUS, &ok);
-        if (!ok) {
-            char log[1024];
-            glGetProgramInfoLog(program, sizeof(log), nullptr, log);
-            std::cerr << "[MeasurementTool] " << label << " program link error: "
-                      << log << std::endl;
-        }
-        return program;
-    }
-
-    MeasurementTool::MeasurementTool() = default;
-
-    MeasurementTool::~MeasurementTool() {
-        cleanup();
-    }
-
-    void MeasurementTool::initialize() {
-        if (m_initialized) return;
-
-        auto makeBuffers = [](GLuint& vao, GLuint& vbo) {
-            glGenVertexArrays(1, &vao);
-            glGenBuffers(1, &vbo);
-            glBindVertexArray(vao);
-            glBindBuffer(GL_ARRAY_BUFFER, vbo);
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
-            glEnableVertexAttribArray(0);
-            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float),
-                                  (void*)(3 * sizeof(float)));
-            glEnableVertexAttribArray(1);
-            glBindBuffer(GL_ARRAY_BUFFER, 0);
-            glBindVertexArray(0);
-        };
-
-        makeBuffers(m_lineVAO, m_lineVBO);
-        makeBuffers(m_pointVAO, m_pointVBO);
-        makeBuffers(m_triVAO, m_triVBO);
-
-        m_lineProgram = compileProgram(kLineVertexSrc, kLineFragmentSrc, "line");
-        m_pointProgram = compileProgram(kPointVertexSrc, kPointFragmentSrc, "point");
-
-        m_initialized = true;
-    }
-
-    void MeasurementTool::cleanup() {
-        if (m_lineVAO) { glDeleteVertexArrays(1, &m_lineVAO); m_lineVAO = 0; }
-        if (m_lineVBO) { glDeleteBuffers(1, &m_lineVBO); m_lineVBO = 0; }
-        if (m_pointVAO) { glDeleteVertexArrays(1, &m_pointVAO); m_pointVAO = 0; }
-        if (m_pointVBO) { glDeleteBuffers(1, &m_pointVBO); m_pointVBO = 0; }
-        if (m_triVAO) { glDeleteVertexArrays(1, &m_triVAO); m_triVAO = 0; }
-        if (m_triVBO) { glDeleteBuffers(1, &m_triVBO); m_triVBO = 0; }
-        if (m_lineProgram) { glDeleteProgram(m_lineProgram); m_lineProgram = 0; }
-        if (m_pointProgram) { glDeleteProgram(m_pointProgram); m_pointProgram = 0; }
-        m_initialized = false;
-    }
-
-    void MeasurementTool::setEnabled(bool enabled) {
-        if (m_enabled == enabled) return;
-        m_enabled = enabled;
-        if (!enabled) {
-            finishActive(); // commit (or discard) whatever was in progress
-            m_previewValid = false;
-        }
-    }
-
-    void MeasurementTool::setMode(Engine::Measurement::Type mode) {
-        if (m_mode == mode) return;
-        finishActive();
-        m_mode = mode;
-    }
-
-    void MeasurementTool::addPoint(const glm::vec3& worldPos) {
-        if (!m_hasActive) {
-            m_active = Engine::Measurement();
-            m_active.type = m_mode;
-            m_active.color = nextColor;
-            m_nameCounter++;
-            const char* prefix =
-                (m_mode == Engine::Measurement::Type::Angle) ? "Angle" :
-                (m_mode == Engine::Measurement::Type::Point) ? "Point" :
-                (m_mode == Engine::Measurement::Type::Area)  ? "Area"  : "Distance";
-            m_active.name = std::string(prefix) + " " + std::to_string(m_nameCounter);
-            m_hasActive = true;
-        }
-
-        m_active.points.push_back(worldPos);
-
-        if (m_active.type == Engine::Measurement::Type::Point &&
-            m_active.points.size() >= 1) {
-            commitActive();
-        } else if (m_active.type == Engine::Measurement::Type::Angle &&
-                   m_active.points.size() >= 3) {
-            commitActive();
-        }
-    }
-
-    void MeasurementTool::finishActive() {
-        if (!m_hasActive) return;
-        const size_t required =
-            (m_active.type == Engine::Measurement::Type::Angle) ? 3 :
-            (m_active.type == Engine::Measurement::Type::Area)  ? 3 :
-            (m_active.type == Engine::Measurement::Type::Point) ? 1 : 2;
-        if (m_active.points.size() >= required) {
-            commitActive();
-        } else {
-            cancelActive();
-        }
-    }
-
-    void MeasurementTool::cancelActive() {
-        m_hasActive = false;
-        m_active = Engine::Measurement();
-    }
-
-    void MeasurementTool::undoLastPoint() {
-        if (!m_hasActive || m_active.points.empty()) return;
-        m_active.points.pop_back();
-        if (m_active.points.empty()) {
-            cancelActive();
-        }
-    }
-
-    void MeasurementTool::commitActive() {
-        if (m_measurements && !m_active.points.empty()) {
-            m_measurements->push_back(std::move(m_active));
-        }
-        m_hasActive = false;
-        m_active = Engine::Measurement();
-    }
-
-    void MeasurementTool::deleteMeasurement(int index) {
-        if (!m_measurements) return;
-        if (index >= 0 && index < static_cast<int>(m_measurements->size())) {
-            m_measurements->erase(m_measurements->begin() + index);
-        }
-    }
-
-    void MeasurementTool::clearAll() {
-        cancelActive();
-        if (m_measurements) m_measurements->clear();
-    }
-
-    std::string MeasurementTool::formatLength(float worldLength) const {
-        char buf[64];
-        std::snprintf(buf, sizeof(buf), "%.3f %s",
-                      worldLength * unitScale, unitSuffix.c_str());
-        return buf;
-    }
-
-    std::string MeasurementTool::formatArea(float worldArea) const {
-        char buf[64];
-        // Area scales with the square of the length unit; "\xC2\xB2" is the
-        // UTF-8 superscript two so the suffix reads e.g. "m²".
-        std::snprintf(buf, sizeof(buf), "%.3f %s\xC2\xB2",
-                      worldArea * unitScale * unitScale, unitSuffix.c_str());
-        return buf;
-    }
-
-    bool MeasurementTool::exportToCSV(const std::string& path) const {
-        std::ofstream file(path, std::ios::out | std::ios::trunc);
-        if (!file.is_open()) {
-            std::cerr << "[MeasurementTool] failed to open '" << path
-                      << "' for writing" << std::endl;
-            return false;
-        }
-
-        // Quote a field and escape embedded quotes per RFC 4180 so names with
-        // commas/quotes survive a round trip through spreadsheet software.
-        auto csvQuote = [](const std::string& s) {
-            std::string out = "\"";
-            for (char c : s) {
-                if (c == '"') out += "\"\"";
-                else out += c;
-            }
-            out += "\"";
-            return out;
-        };
-
-        file << "Name,Type,Summary,Unit,PointIndex,X,Y,Z\n";
-
-        if (m_measurements) {
-            for (const auto& m : *m_measurements) {
-                const char* typeName =
-                    (m.type == Engine::Measurement::Type::Angle) ? "Angle" :
-                    (m.type == Engine::Measurement::Type::Point) ? "Point" :
-                    (m.type == Engine::Measurement::Type::Area)  ? "Area"  : "Distance";
-
-                // Summary value + unit, depending on measurement type. Lengths
-                // are converted to the configured display units; points have no
-                // scalar summary (their coordinates are the value).
-                char summary[48] = "";
-                const char* unit = "";
-                std::string areaUnit; // backing store for the squared-unit suffix
-                if (m.type == Engine::Measurement::Type::Distance) {
-                    std::snprintf(summary, sizeof(summary), "%.6f",
-                                  m.totalLength() * unitScale);
-                    unit = unitSuffix.c_str();
-                } else if (m.type == Engine::Measurement::Type::Angle) {
-                    std::snprintf(summary, sizeof(summary), "%.4f", m.angleDegrees());
-                    unit = "deg";
-                } else if (m.type == Engine::Measurement::Type::Area) {
-                    std::snprintf(summary, sizeof(summary), "%.6f",
-                                  m.area() * unitScale * unitScale);
-                    areaUnit = unitSuffix + "^2"; // plain ASCII for spreadsheets
-                    unit = areaUnit.c_str();
-                }
-
-                if (m.points.empty()) {
-                    file << csvQuote(m.name) << ',' << typeName << ','
-                         << summary << ',' << csvQuote(unit) << ",,,,\n";
-                    continue;
-                }
-                for (size_t i = 0; i < m.points.size(); i++) {
-                    const glm::vec3& p = m.points[i];
-                    char coords[96];
-                    std::snprintf(coords, sizeof(coords), "%.6f,%.6f,%.6f",
-                                  p.x, p.y, p.z);
-                    file << csvQuote(m.name) << ',' << typeName << ','
-                         << summary << ',' << csvQuote(unit) << ',' << i << ','
-                         << coords << '\n';
-                }
-            }
-        }
-
-        return file.good();
-    }
-
-    void MeasurementTool::appendLine(std::vector<float>& out, const glm::vec3& a,
-                                     const glm::vec3& b, const glm::vec3& color) const {
-        out.insert(out.end(), { a.x, a.y, a.z, color.r, color.g, color.b,
-                                b.x, b.y, b.z, color.r, color.g, color.b });
-    }
-
-    void MeasurementTool::appendPoint(std::vector<float>& out, const glm::vec3& p,
-                                      const glm::vec3& color) const {
-        out.insert(out.end(), { p.x, p.y, p.z, color.r, color.g, color.b });
-    }
-
-    void MeasurementTool::appendFan(std::vector<float>& out,
-                                    const std::vector<glm::vec3>& pts,
-                                    const glm::vec3& color) const {
-        if (pts.size() < 3) return;
-        glm::vec3 c(0.0f);
-        for (const auto& p : pts) c += p;
-        c /= static_cast<float>(pts.size());
-        // Fan from the centroid so the fill covers convex polygons fully and
-        // star-shaped ones reasonably; the fill is purely illustrative.
-        for (size_t i = 0; i < pts.size(); i++) {
-            const glm::vec3& a = pts[i];
-            const glm::vec3& b = pts[(i + 1) % pts.size()];
-            out.insert(out.end(), {
-                c.x, c.y, c.z, color.r, color.g, color.b,
-                a.x, a.y, a.z, color.r, color.g, color.b,
-                b.x, b.y, b.z, color.r, color.g, color.b });
-        }
-    }
-
-    void MeasurementTool::render(const glm::mat4& projection, const glm::mat4& view,
-                                 const glm::vec3* previewPoint) {
-        if (!m_initialized) initialize();
-
-        std::vector<float> lineVerts;
-        std::vector<float> pointVerts;
-        std::vector<float> triVerts;
-
-        // Committed measurements (scene data)
-        if (m_measurements) {
-            for (const auto& m : *m_measurements) {
-                if (!m.visible) continue;
-                for (size_t i = 1; i < m.points.size(); i++)
-                    appendLine(lineVerts, m.points[i - 1], m.points[i], m.color);
-                // Area polygons close back to the first vertex and get a fill.
-                if (m.type == Engine::Measurement::Type::Area && m.points.size() >= 3) {
-                    appendLine(lineVerts, m.points.back(), m.points.front(), m.color);
-                    appendFan(triVerts, m.points, m.color);
-                }
-                for (const auto& p : m.points)
-                    appendPoint(pointVerts, p, m.color);
-            }
-        }
-
-        // In-progress measurement + live rubber-band to the cursor
-        const glm::vec3 activeColor = glm::mix(nextColor, glm::vec3(1.0f), 0.25f);
-        if (m_hasActive) {
-            for (size_t i = 1; i < m_active.points.size(); i++)
-                appendLine(lineVerts, m_active.points[i - 1], m_active.points[i], activeColor);
-            for (const auto& p : m_active.points)
-                appendPoint(pointVerts, p, activeColor);
-        }
-
+// ────────────────────────────────────────────────────────────────────────────
+// Interaction / data (unchanged from the GL tool, now owning its measurements)
+// ────────────────────────────────────────────────────────────────────────────
+void MeasurementTool::setEnabled(bool enabled) {
+    if (m_enabled == enabled) return;
+    m_enabled = enabled;
+    if (!enabled) {
+        finishActive(); // commit (or discard) whatever was in progress
         m_previewValid = false;
-        if (m_enabled && previewPoint) {
-            m_previewPoint = *previewPoint;
-            m_previewValid = true;
-            if (m_hasActive && !m_active.points.empty()) {
-                const glm::vec3 previewColor = glm::mix(activeColor, glm::vec3(1.0f), 0.5f);
-                appendLine(lineVerts, m_active.points.back(), m_previewPoint, previewColor);
-                // For an in-progress area, also rubber-band the closing edge and
-                // preview-fill the polygon the cursor is sketching.
-                if (m_active.type == Engine::Measurement::Type::Area &&
-                    m_active.points.size() >= 2) {
-                    appendLine(lineVerts, m_previewPoint, m_active.points.front(),
-                               previewColor);
-                    std::vector<glm::vec3> ghost = m_active.points;
-                    ghost.push_back(m_previewPoint);
-                    appendFan(triVerts, ghost, activeColor);
+    }
+}
+
+void MeasurementTool::setMode(Engine::Measurement::Type mode) {
+    if (m_mode == mode) return;
+    finishActive();
+    m_mode = mode;
+}
+
+void MeasurementTool::addPoint(const glm::vec3& worldPos) {
+    if (!m_hasActive) {
+        m_active = Engine::Measurement();
+        m_active.type = m_mode;
+        m_active.color = nextColor;
+        m_nameCounter++;
+        const char* prefix =
+            (m_mode == Engine::Measurement::Type::Angle) ? "Angle" :
+            (m_mode == Engine::Measurement::Type::Point) ? "Point" :
+            (m_mode == Engine::Measurement::Type::Area)  ? "Area"  : "Distance";
+        m_active.name = std::string(prefix) + " " + std::to_string(m_nameCounter);
+        m_hasActive = true;
+    }
+
+    m_active.points.push_back(worldPos);
+
+    if (m_active.type == Engine::Measurement::Type::Point &&
+        m_active.points.size() >= 1) {
+        commitActive();
+    } else if (m_active.type == Engine::Measurement::Type::Angle &&
+               m_active.points.size() >= 3) {
+        commitActive();
+    }
+}
+
+void MeasurementTool::finishActive() {
+    if (!m_hasActive) return;
+    const size_t required =
+        (m_active.type == Engine::Measurement::Type::Angle) ? 3 :
+        (m_active.type == Engine::Measurement::Type::Area)  ? 3 :
+        (m_active.type == Engine::Measurement::Type::Point) ? 1 : 2;
+    if (m_active.points.size() >= required) commitActive();
+    else cancelActive();
+}
+
+void MeasurementTool::cancelActive() {
+    m_hasActive = false;
+    m_active = Engine::Measurement();
+}
+
+void MeasurementTool::undoLastPoint() {
+    if (!m_hasActive || m_active.points.empty()) return;
+    m_active.points.pop_back();
+    if (m_active.points.empty()) cancelActive();
+}
+
+void MeasurementTool::commitActive() {
+    if (!m_active.points.empty())
+        m_measurements.push_back(std::move(m_active));
+    m_hasActive = false;
+    m_active = Engine::Measurement();
+}
+
+void MeasurementTool::deleteMeasurement(int index) {
+    if (index >= 0 && index < static_cast<int>(m_measurements.size()))
+        m_measurements.erase(m_measurements.begin() + index);
+}
+
+void MeasurementTool::clearAll() {
+    cancelActive();
+    m_measurements.clear();
+}
+
+std::string MeasurementTool::formatLength(float worldLength) const {
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%.3f %s", worldLength * unitScale,
+                  unitSuffix.c_str());
+    return buf;
+}
+
+std::string MeasurementTool::formatArea(float worldArea) const {
+    char buf[64];
+    // "\xC2\xB2" is the UTF-8 superscript two so the suffix reads e.g. "m²".
+    std::snprintf(buf, sizeof(buf), "%.3f %s\xC2\xB2",
+                  worldArea * unitScale * unitScale, unitSuffix.c_str());
+    return buf;
+}
+
+bool MeasurementTool::exportToCSV(const std::string& path) const {
+    std::ofstream file(path, std::ios::out | std::ios::trunc);
+    if (!file.is_open()) {
+        std::cerr << "[MeasurementTool] failed to open '" << path
+                  << "' for writing\n";
+        return false;
+    }
+
+    auto csvQuote = [](const std::string& s) {
+        std::string out = "\"";
+        for (char c : s) { if (c == '"') out += "\"\""; else out += c; }
+        out += "\"";
+        return out;
+    };
+
+    file << "Name,Type,Summary,Unit,PointIndex,X,Y,Z\n";
+    for (const auto& m : m_measurements) {
+        const char* typeName =
+            (m.type == Engine::Measurement::Type::Angle) ? "Angle" :
+            (m.type == Engine::Measurement::Type::Point) ? "Point" :
+            (m.type == Engine::Measurement::Type::Area)  ? "Area"  : "Distance";
+
+        char summary[48] = "";
+        const char* unit = "";
+        std::string areaUnit;
+        if (m.type == Engine::Measurement::Type::Distance) {
+            std::snprintf(summary, sizeof(summary), "%.6f", m.totalLength() * unitScale);
+            unit = unitSuffix.c_str();
+        } else if (m.type == Engine::Measurement::Type::Angle) {
+            std::snprintf(summary, sizeof(summary), "%.4f", m.angleDegrees());
+            unit = "deg";
+        } else if (m.type == Engine::Measurement::Type::Area) {
+            std::snprintf(summary, sizeof(summary), "%.6f",
+                          m.area() * unitScale * unitScale);
+            areaUnit = unitSuffix + "^2";
+            unit = areaUnit.c_str();
+        }
+
+        if (m.points.empty()) {
+            file << csvQuote(m.name) << ',' << typeName << ',' << summary << ','
+                 << csvQuote(unit) << ",,,,\n";
+            continue;
+        }
+        for (size_t i = 0; i < m.points.size(); i++) {
+            const glm::vec3& p = m.points[i];
+            char coords[96];
+            std::snprintf(coords, sizeof(coords), "%.6f,%.6f,%.6f", p.x, p.y, p.z);
+            file << csvQuote(m.name) << ',' << typeName << ',' << summary << ','
+                 << csvQuote(unit) << ',' << i << ',' << coords << '\n';
+        }
+    }
+    return file.good();
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Overlay geometry
+// ────────────────────────────────────────────────────────────────────────────
+void MeasurementTool::appendTo(OverlayDrawList& list, const glm::vec3* previewPoint) {
+    m_previewValid = false;
+    if (m_enabled && previewPoint) {
+        m_previewPoint = *previewPoint;
+        m_previewValid = true;
+    }
+
+    const float markerSize = std::max(8.0f, lineWidth * 3.0f);
+    const glm::vec3 activeColor = glm::mix(nextColor, glm::vec3(1.0f), 0.25f);
+    const glm::vec3 previewColor = glm::mix(activeColor, glm::vec3(1.0f), 0.5f);
+
+    // One geometry build per depth mode: Occluded (opaque, in front of geometry)
+    // then Hidden (x-ray ghost, only where geometry covers it) — the overlay's
+    // two depth modes replace the GL LEQUAL/GREATER two-pass.
+    auto build = [&](OverlayDepth depth, float aLine, float aFill, float aMark) {
+        auto seg = [&](const glm::vec3& a, const glm::vec3& b, const glm::vec3& c) {
+            list.line(a, b, glm::vec4(c, aLine), lineWidth, depth);
+        };
+        auto mark = [&](const glm::vec3& p, const glm::vec3& c) {
+            list.marker(p, markerSize, glm::vec4(c, aMark), depth);
+        };
+        auto fan = [&](const std::vector<glm::vec3>& pts, const glm::vec3& c) {
+            if (pts.size() < 3) return;
+            glm::vec3 centre(0.0f);
+            for (const glm::vec3& p : pts) centre += p;
+            centre /= static_cast<float>(pts.size());
+            std::vector<glm::vec3> tris;
+            tris.reserve(pts.size() * 3);
+            for (size_t i = 0; i < pts.size(); ++i) {
+                tris.push_back(centre);
+                tris.push_back(pts[i]);
+                tris.push_back(pts[(i + 1) % pts.size()]);
+            }
+            list.triangles(tris.data(), tris.size(), glm::vec4(c, aFill), depth);
+        };
+
+        // Committed measurements (fills first so outlines/markers sit on top).
+        for (const Engine::Measurement& m : m_measurements) {
+            if (!m.visible) continue;
+            const bool areaClosed =
+                m.type == Engine::Measurement::Type::Area && m.points.size() >= 3;
+            if (areaClosed) fan(m.points, m.color);
+            for (size_t i = 1; i < m.points.size(); ++i)
+                seg(m.points[i - 1], m.points[i], m.color);
+            if (areaClosed) seg(m.points.back(), m.points.front(), m.color);
+            for (const glm::vec3& p : m.points) mark(p, m.color);
+        }
+
+        // In-progress measurement.
+        if (m_hasActive) {
+            if (m_active.type == Engine::Measurement::Type::Area &&
+                m_active.points.size() >= 3 && !m_previewValid)
+                fan(m_active.points, activeColor);
+            for (size_t i = 1; i < m_active.points.size(); ++i)
+                seg(m_active.points[i - 1], m_active.points[i], activeColor);
+            for (const glm::vec3& p : m_active.points) mark(p, activeColor);
+        }
+
+        // Live rubber-band to the 3D cursor.
+        if (m_previewValid && m_hasActive && !m_active.points.empty()) {
+            seg(m_active.points.back(), m_previewPoint, previewColor);
+            if (m_active.type == Engine::Measurement::Type::Area &&
+                m_active.points.size() >= 2) {
+                seg(m_previewPoint, m_active.points.front(), previewColor);
+                std::vector<glm::vec3> ghost = m_active.points;
+                ghost.push_back(m_previewPoint);
+                fan(ghost, activeColor);
+            }
+        }
+        if (m_previewValid) {
+            mark(m_previewPoint, glm::vec3(1.0f));
+        } else if (m_hasActive &&
+                   m_active.type == Engine::Measurement::Type::Area &&
+                   m_active.points.size() >= 3) {
+            seg(m_active.points.back(), m_active.points.front(), activeColor);
+        }
+    };
+
+    build(OverlayDepth::Occluded, 1.0f, 0.18f, 1.0f);
+    if (xRay) build(OverlayDepth::Hidden, 0.22f, 0.07f, 0.22f);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Screen-space value labels (ImGui foreground draw list)
+// ────────────────────────────────────────────────────────────────────────────
+void MeasurementTool::drawLabels(const glm::mat4& viewProj,
+                                 const glm::vec2& viewportPos,
+                                 const glm::vec2& viewportSize) const {
+    if (!showLabels) return;
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+
+    auto project = [&](const glm::vec3& world, ImVec2& out) -> bool {
+        const glm::vec4 clip = viewProj * glm::vec4(world, 1.0f);
+        if (clip.w <= 1e-5f) return false; // behind the camera
+        const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+        out.x = viewportPos.x + (ndc.x * 0.5f + 0.5f) * viewportSize.x;
+        out.y = viewportPos.y + (ndc.y * 0.5f + 0.5f) * viewportSize.y;
+        return true;
+    };
+    auto label = [&](const glm::vec3& world, const std::string& text, ImU32 col) {
+        ImVec2 s;
+        if (!project(world, s)) return;
+        const ImVec2 ts = ImGui::CalcTextSize(text.c_str());
+        dl->AddRectFilled(ImVec2(s.x - 3.0f, s.y - 2.0f),
+                          ImVec2(s.x + ts.x + 3.0f, s.y + ts.y + 2.0f),
+                          IM_COL32(0, 0, 0, 150), 3.0f);
+        dl->AddText(ImVec2(s.x, s.y), col, text.c_str());
+    };
+    auto measure = [&](const Engine::Measurement& m) {
+        if (m.points.empty()) return;
+        const ImU32 col = IM_COL32(int(m.color.r * 255), int(m.color.g * 255),
+                                   int(m.color.b * 255), 255);
+        switch (m.type) {
+        case Engine::Measurement::Type::Distance: {
+            if (showSegmentLabels) {
+                for (size_t i = 1; i < m.points.size(); ++i) {
+                    const glm::vec3 mid = (m.points[i - 1] + m.points[i]) * 0.5f;
+                    label(mid, formatLength(glm::length(m.points[i] - m.points[i - 1])),
+                          col);
                 }
             }
-            appendPoint(pointVerts, m_previewPoint, glm::vec3(1.0f));
-        } else if (m_hasActive && m_active.type == Engine::Measurement::Type::Area &&
-                   m_active.points.size() >= 3) {
-            // No live cursor: still close + fill the placed area outline.
-            appendLine(lineVerts, m_active.points.back(), m_active.points.front(),
-                       activeColor);
-            appendFan(triVerts, m_active.points, activeColor);
+            if (m.points.size() >= 2)
+                label(m.points.back(), "= " + formatLength(m.totalLength()), col);
+            break;
         }
-
-        if (lineVerts.empty() && pointVerts.empty() && triVerts.empty()) return;
-
-        drawBuffers(projection, view, lineVerts, pointVerts, triVerts);
-    }
-
-    void MeasurementTool::drawBuffers(const glm::mat4& projection, const glm::mat4& view,
-                                      const std::vector<float>& lineVerts,
-                                      const std::vector<float>& pointVerts,
-                                      const std::vector<float>& triVerts) {
-        // Save the GL state we touch.
-        GLint prevDepthFunc = GL_LESS;
-        glGetIntegerv(GL_DEPTH_FUNC, &prevDepthFunc);
-        GLboolean prevDepthMask = GL_TRUE;
-        glGetBooleanv(GL_DEPTH_WRITEMASK, &prevDepthMask);
-        const GLboolean prevBlend = glIsEnabled(GL_BLEND);
-        const GLboolean prevPointSize = glIsEnabled(GL_PROGRAM_POINT_SIZE);
-        const GLboolean prevCull = glIsEnabled(GL_CULL_FACE);
-
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glEnable(GL_PROGRAM_POINT_SIZE);
-        // Area fills are double-sided; never let back-face culling drop them.
-        glDisable(GL_CULL_FACE);
-        // Overlay must never write depth: the cursor system samples scene depth
-        // from this buffer.
-        glDepthMask(GL_FALSE);
-        glLineWidth(lineWidth);
-
-        const glm::mat4 viewProj = projection * view;
-
-        // Translucent area fill, drawn under the outlines/markers.
-        auto drawFill = [&](float alpha) {
-            if (triVerts.empty()) return;
-            glUseProgram(m_lineProgram);
-            glUniformMatrix4fv(glGetUniformLocation(m_lineProgram, "uViewProj"),
-                               1, GL_FALSE, &viewProj[0][0]);
-            glUniform1f(glGetUniformLocation(m_lineProgram, "uAlpha"), alpha);
-            glBindVertexArray(m_triVAO);
-            glBindBuffer(GL_ARRAY_BUFFER, m_triVBO);
-            glBufferData(GL_ARRAY_BUFFER,
-                         static_cast<GLsizeiptr>(triVerts.size() * sizeof(float)),
-                         triVerts.data(), GL_DYNAMIC_DRAW);
-            glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(triVerts.size() / 6));
-        };
-
-        auto drawPass = [&](float alpha) {
-            if (!lineVerts.empty()) {
-                glUseProgram(m_lineProgram);
-                glUniformMatrix4fv(glGetUniformLocation(m_lineProgram, "uViewProj"),
-                                   1, GL_FALSE, &viewProj[0][0]);
-                glUniform1f(glGetUniformLocation(m_lineProgram, "uAlpha"), alpha);
-                glBindVertexArray(m_lineVAO);
-                glBindBuffer(GL_ARRAY_BUFFER, m_lineVBO);
-                glBufferData(GL_ARRAY_BUFFER,
-                             static_cast<GLsizeiptr>(lineVerts.size() * sizeof(float)),
-                             lineVerts.data(), GL_DYNAMIC_DRAW);
-                glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(lineVerts.size() / 6));
+        case Engine::Measurement::Type::Angle: {
+            if (m.points.size() >= 3) {
+                char buf[32];
+                std::snprintf(buf, sizeof(buf), "%.1f\xC2\xB0", m.angleDegrees());
+                label(m.points[1], buf, col);
             }
-            if (!pointVerts.empty()) {
-                glUseProgram(m_pointProgram);
-                glUniformMatrix4fv(glGetUniformLocation(m_pointProgram, "uViewProj"),
-                                   1, GL_FALSE, &viewProj[0][0]);
-                glUniform1f(glGetUniformLocation(m_pointProgram, "uAlpha"), alpha);
-                glUniform1f(glGetUniformLocation(m_pointProgram, "uPointSize"),
-                            glm::max(6.0f, lineWidth * 4.0f));
-                glBindVertexArray(m_pointVAO);
-                glBindBuffer(GL_ARRAY_BUFFER, m_pointVBO);
-                glBufferData(GL_ARRAY_BUFFER,
-                             static_cast<GLsizeiptr>(pointVerts.size() * sizeof(float)),
-                             pointVerts.data(), GL_DYNAMIC_DRAW);
-                glDrawArrays(GL_POINTS, 0, static_cast<GLsizei>(pointVerts.size() / 6));
-            }
-        };
-
-        // Pass 1: normally depth-tested, fully opaque.
-        glDepthFunc(GL_LEQUAL);
-        drawFill(0.18f);
-        drawPass(1.0f);
-
-        // Pass 2: occluded parts re-drawn ghosted so measurements stay legible
-        // through geometry.
-        if (xRay) {
-            glDepthFunc(GL_GREATER);
-            drawFill(0.07f);
-            drawPass(0.22f);
+            break;
         }
+        case Engine::Measurement::Type::Area: {
+            if (m.points.size() >= 3)
+                label(m.centroid(),
+                      formatArea(m.area()) + "  P=" + formatLength(m.perimeter()), col);
+            break;
+        }
+        case Engine::Measurement::Type::Point: {
+            char buf[96];
+            std::snprintf(buf, sizeof(buf), "(%.2f, %.2f, %.2f)", m.points[0].x,
+                          m.points[0].y, m.points[0].z);
+            label(m.points[0], buf, col);
+            break;
+        }
+        }
+    };
 
-        // Restore state.
-        glDepthFunc(prevDepthFunc);
-        glDepthMask(prevDepthMask);
-        if (!prevBlend) glDisable(GL_BLEND);
-        if (!prevPointSize) glDisable(GL_PROGRAM_POINT_SIZE);
-        if (prevCull) glEnable(GL_CULL_FACE);
-        glBindVertexArray(0);
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-        glUseProgram(0);
-    }
+    for (const Engine::Measurement& m : m_measurements)
+        if (m.visible) measure(m);
+    if (m_hasActive) measure(m_active);
+}
 
 } // namespace Tools

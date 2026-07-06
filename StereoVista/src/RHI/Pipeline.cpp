@@ -387,6 +387,11 @@ GraphicsPipelineBuilder& GraphicsPipelineBuilder::externalSetLayout(uint32_t set
     return *this;
 }
 
+GraphicsPipelineBuilder& GraphicsPipelineBuilder::addDynamicState(VkDynamicState state) {
+    extraDynamicStates_.push_back(state);
+    return *this;
+}
+
 GraphicsPipelineBuilder& GraphicsPipelineBuilder::setDebugName(std::string name) {
     debugName_ = std::move(name);
     return *this;
@@ -532,11 +537,14 @@ Pipeline GraphicsPipelineBuilder::build(Device& device) {
     blend.attachmentCount = static_cast<uint32_t>(blendAttachments.size());
     blend.pAttachments = blendAttachments.data();
 
-    VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+    std::vector<VkDynamicState> dynamicStates = { VK_DYNAMIC_STATE_VIEWPORT,
+                                                  VK_DYNAMIC_STATE_SCISSOR };
+    dynamicStates.insert(dynamicStates.end(), extraDynamicStates_.begin(),
+                         extraDynamicStates_.end());
     VkPipelineDynamicStateCreateInfo dynamic{};
     dynamic.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dynamic.dynamicStateCount = 2;
-    dynamic.pDynamicStates = dynamicStates;
+    dynamic.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+    dynamic.pDynamicStates = dynamicStates.data();
 
     VkPipelineRenderingCreateInfo rendering{};
     rendering.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;

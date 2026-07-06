@@ -1,0 +1,71 @@
+#version 460
+// Schütz High-Quality Shading — PASS 2 of 3: colour accumulation.
+//
+// Runs after ALL clouds' depth dispatches (the depth buffer must be final).
+// Re-projects every point and, for each covered pixel, accumulates R,G,B and
+// a count with atomicAdd — but only when the point lies within the relative
+// depth window of the nearest surface:
+//
+//     contribute  iff  linearDepth <= nearestDepth * (1 + hqsThreshold)
+//
+// Points behind the surface (a farther wall seen between nearer points) fail
+// the test and never bleed into the average. The resolve divides RGB by the
+// count for the anti-aliased pixel.
+
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference2 : require
+#extension GL_EXT_scalar_block_layout : require
+
+#include "pointcloud_common.glsl"
+
+layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer PcHqsDepthRO {
+    uint v[];
+};
+layout(buffer_reference, scalar, buffer_reference_align = 4) coherent buffer PcHqsAccum {
+    uint v[]; // R,G,B,count interleaved, 4 per pixel
+};
+layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer PcRgbaRO {
+    uint v[];
+};
+
+void pcAccumPixel(int idx, float linearDepth, uint R, uint G, uint B, float threshFactor) {
+    // Sentinel bits decode to NaN-ish garbage; the comparison then fails and
+    // nothing accumulates — exactly the GL behaviour.
+    float nearest = uintBitsToFloat(PcHqsDepthRO(g_d.hqsDepth).v[idx]);
+    if (linearDepth <= nearest * threshFactor) {
+        PcHqsAccum accum = PcHqsAccum(g_d.hqsAccum);
+        atomicAdd(accum.v[4 * idx + 0], R);
+        atomicAdd(accum.v[4 * idx + 1], G);
+        atomicAdd(accum.v[4 * idx + 2], B);
+        atomicAdd(accum.v[4 * idx + 3], 1u);
+    }
+}
+
+void pcProcessPoint(ivec2 px, float ndcZ, float viewDepth, int radius, uint index) {
+    uint color = PcRgbaRO(g_d.rgba).v[index];
+    uint R = (color >> 0) & 0xFFu;
+    uint G = (color >> 8) & 0xFFu;
+    uint B = (color >> 16) & 0xFFu;
+    float threshFactor = 1.0 + g_d.hqsThreshold;
+
+    if (radius <= 0) {
+        ivec2 p = clamp(px, ivec2(0), ivec2(g_d.imageWidth - 1, g_d.imageHeight - 1));
+        pcAccumPixel(p.y * g_d.imageWidth + p.x, viewDepth, R, G, B, threshFactor);
+        return;
+    }
+    int r2 = radius * radius;
+    for (int dy = -radius; dy <= radius; ++dy) {
+        for (int dx = -radius; dx <= radius; ++dx) {
+            if (dx * dx + dy * dy > r2)
+                continue;
+            ivec2 p = px + ivec2(dx, dy);
+            if (p.x < 0 || p.y < 0 || p.x >= g_d.imageWidth || p.y >= g_d.imageHeight)
+                continue;
+            pcAccumPixel(p.y * g_d.imageWidth + p.x, viewDepth, R, G, B, threshFactor);
+        }
+    }
+}
+
+void main() {
+    pcMain();
+}

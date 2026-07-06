@@ -1,15 +1,19 @@
 #pragma once
 
+#include "RHI/VulkanCommon.h"
 #include "Renderer/GpuTypes.h"
+#include "Renderer/PointCloudGpu.h"
 
 #include <glm/glm.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 namespace renderer {
 
 class MeshBuffer;
+class OverlayDrawList;
 
 // ============================================================================
 // The renderer's per-frame SCENE INPUT. The application (scene + camera +
@@ -32,10 +36,66 @@ struct DrawItem {
     glm::mat3 normalMatrix{ 1.0f };
     uint32_t materialIndex = 0;
     bool castsShadows = true;
+    // Per-draw linear albedo multiplier (DrawPush.tint). 1,1,1 = neutral;
+    // available for per-instance colour variation / highlighting.
+    glm::vec3 tint{ 1.0f };
     // World-space bounding sphere; drives the sun shadow frustum fit (and
     // later CPU culling). Radius 0 = unknown, treated as a point.
     glm::vec3 worldBoundsCenter{ 0.0f };
     float worldBoundsRadius = 0.0f;
+};
+
+// A rectangle of the view-0 scene depth buffer to copy back to the CPU this
+// frame (pixel coordinates, top-left origin). Results surface one frame
+// later in Renderer::depthSamples() — the same one-frame staleness class as
+// the GL glReadPixels picking, but without a pipeline stall.
+struct DepthQueryRect {
+    glm::ivec2 origin{ 0 };
+    glm::ivec2 size{ 0 };
+};
+
+// Published depth-picking readback (see Renderer::depthSamples()).
+// Reconstruct world positions with THIS invViewProj — it belongs to the
+// frame that rendered the depth, not to the current camera.
+struct DepthReadback {
+    bool valid = false;
+    glm::mat4 invViewProj{ 1.0f }; // view 0, clip -> world
+    glm::vec3 cameraPos{ 0.0f };
+    VkExtent2D extent{};
+    std::vector<DepthQueryRect> rects;
+    std::vector<float> depths; // rect texels back-to-back, row-major
+
+    // Reverse-Z depth at an absolute pixel, searching all rects.
+    bool sample(const glm::ivec2& pixel, float& outDepth) const {
+        if (!valid)
+            return false;
+        size_t offset = 0;
+        for (const DepthQueryRect& rect : rects) {
+            const glm::ivec2 local = pixel - rect.origin;
+            if (local.x >= 0 && local.y >= 0 && local.x < rect.size.x &&
+                local.y < rect.size.y) {
+                outDepth = depths[offset + size_t(local.y) * rect.size.x + local.x];
+                return true;
+            }
+            offset += size_t(rect.size.x) * rect.size.y;
+        }
+        return false;
+    }
+};
+
+// Fragment (ring) cursor drawn by mesh.frag on scene surfaces (Phase 6 port
+// of the GL uber-shader cursor). Colors are LINEAR (the app converts the
+// authored sRGB values once).
+struct FragmentCursorState {
+    bool show = false;
+    glm::vec3 position{ 0.0f };
+    bool valid = false;
+    glm::vec4 outerColor{ 1.0f };
+    glm::vec4 innerColor{ 1.0f, 1.0f, 1.0f, 0.5f };
+    float outerRadius = 0.04f;
+    float outerThickness = 0.005f;
+    float innerRadius = 0.004f;
+    float innerThickness = 0.005f;
 };
 
 struct SunState {
@@ -56,6 +116,24 @@ struct PointLightState {
     float attenQuadratic = 0.032f;
     bool castsShadows = true;
     float radius = 0.05f; // emitter world radius, drives PCSS penumbra width
+};
+
+// One visible point cloud for the Schütz compute pipeline (Phase 5). The
+// addresses stay valid for the frame: PointCloudGpu::destroy waits for the
+// device before freeing, and unload happens before the submission is built.
+struct PointCloudDrawItem {
+    PointCloudGpuAddresses addresses;
+    uint32_t numBatches = 0;
+    int pointsPerThread = 0; // ceil(kComputeBatchSize / SV_PC_RASTER_WORKGROUP)
+    glm::mat4 model{ 1.0f };
+};
+
+// Frame-wide point-cloud rendering options (GL: preferences.pointSplatSettings
+// + pointCloudQuality).
+struct PointCloudSettings {
+    bool hqs = false;          // High-Quality Shading (3-pass averaging)
+    float hqsThreshold = 0.01f; // relative depth window (1% = paper default)
+    int splatMaxRadius = 0;    // 0 = single-pixel; >0 = adaptive splat clamp (px)
 };
 
 // Matches skybox.frag's SKY_MODE_* indices.
@@ -83,6 +161,25 @@ struct FrameSubmission {
     bool softShadows = true; // PCSS contact hardening (else fixed-width PCF)
     float ambient = 0.03f;   // flat ambient albedo multiplier (GL parity)
     SkyState sky;
+    std::vector<PointCloudDrawItem> pointClouds; // beyond SV_PC_MAX_CLOUDS share the last id
+    PointCloudSettings pointCloudSettings;
+    // World-space section/clip planes (n.xyz, d), kept side dot(n,p)+d >= 0.
+    // Applied to point clouds (compute rasterizer) AND meshes (mesh.vert
+    // gl_ClipDistance). Beyond SV_MAX_CLIP_PLANES ignored.
+    std::vector<glm::vec4> clipPlanes;
+
+    // ---- Phase 6: overlays, depth picking, fragment cursor ----
+    // World-space overlay geometry (cursors/tools/gizmo/plugins), drawn on
+    // the backbuffer after tonemap, depth-tested against the scene depth.
+    // The list must stay alive until renderFrame returns.
+    const OverlayDrawList* overlay = nullptr;
+    // Scene-depth rectangles to read back for picking (view 0).
+    std::vector<DepthQueryRect> depthQueries;
+    FragmentCursorState fragmentCursor;
+    // Optional extra recording at the top of the frame command buffer, before
+    // the scene passes — CursorPreview3D renders its offscreen thumbnail
+    // here so ImGui can sample it later in the same frame.
+    std::function<void(VkCommandBuffer)> recordAux;
 };
 
 } // namespace renderer

@@ -248,11 +248,93 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
       <Outputs>$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv</Outputs>
       <Message>glslc %(Filename)%(Extension)</Message>
     </CustomBuild>
+    <CustomBuild Include="assets\shaders_vk\pointcloud_rasterize.comp">
+      <FileType>Document</FileType>
+      <Command>if not exist "$(OutDir)assets\shaders_vk" mkdir "$(OutDir)assets\shaders_vk"
+"$(SolutionDir)dependencies\tools\glslc.exe" --target-env=vulkan1.3 -O -o "$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv" "%(FullPath)"</Command>
+      <Outputs>$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv</Outputs>
+      <AdditionalInputs>$(ProjectDir)assets\shaders_vk\pointcloud_types.h;$(ProjectDir)assets\shaders_vk\pointcloud_common.glsl</AdditionalInputs>
+      <Message>glslc %(Filename)%(Extension)</Message>
+    </CustomBuild>
+    <CustomBuild Include="assets\shaders_vk\pointcloud_lookup.comp">
+      <FileType>Document</FileType>
+      <Command>if not exist "$(OutDir)assets\shaders_vk" mkdir "$(OutDir)assets\shaders_vk"
+"$(SolutionDir)dependencies\tools\glslc.exe" --target-env=vulkan1.3 -O -o "$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv" "%(FullPath)"</Command>
+      <Outputs>$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv</Outputs>
+      <AdditionalInputs>$(ProjectDir)assets\shaders_vk\pointcloud_types.h</AdditionalInputs>
+      <Message>glslc %(Filename)%(Extension)</Message>
+    </CustomBuild>
+    <CustomBuild Include="assets\shaders_vk\pointcloud_hqs_depth.comp">
+      <FileType>Document</FileType>
+      <Command>if not exist "$(OutDir)assets\shaders_vk" mkdir "$(OutDir)assets\shaders_vk"
+"$(SolutionDir)dependencies\tools\glslc.exe" --target-env=vulkan1.3 -O -o "$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv" "%(FullPath)"</Command>
+      <Outputs>$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv</Outputs>
+      <AdditionalInputs>$(ProjectDir)assets\shaders_vk\pointcloud_types.h;$(ProjectDir)assets\shaders_vk\pointcloud_common.glsl</AdditionalInputs>
+      <Message>glslc %(Filename)%(Extension)</Message>
+    </CustomBuild>
+    <CustomBuild Include="assets\shaders_vk\pointcloud_hqs_color.comp">
+      <FileType>Document</FileType>
+      <Command>if not exist "$(OutDir)assets\shaders_vk" mkdir "$(OutDir)assets\shaders_vk"
+"$(SolutionDir)dependencies\tools\glslc.exe" --target-env=vulkan1.3 -O -o "$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv" "%(FullPath)"</Command>
+      <Outputs>$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv</Outputs>
+      <AdditionalInputs>$(ProjectDir)assets\shaders_vk\pointcloud_types.h;$(ProjectDir)assets\shaders_vk\pointcloud_common.glsl</AdditionalInputs>
+      <Message>glslc %(Filename)%(Extension)</Message>
+    </CustomBuild>
+    <CustomBuild Include="assets\shaders_vk\pointcloud_resolve.frag">
+      <FileType>Document</FileType>
+      <Command>if not exist "$(OutDir)assets\shaders_vk" mkdir "$(OutDir)assets\shaders_vk"
+"$(SolutionDir)dependencies\tools\glslc.exe" --target-env=vulkan1.3 -O -o "$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv" "%(FullPath)"</Command>
+      <Outputs>$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv</Outputs>
+      <AdditionalInputs>$(ProjectDir)assets\shaders_vk\pointcloud_types.h</AdditionalInputs>
+      <Message>glslc %(Filename)%(Extension)</Message>
+    </CustomBuild>
+    <CustomBuild Include="assets\shaders_vk\pointcloud_hqs_resolve.frag">
+      <FileType>Document</FileType>
+      <Command>if not exist "$(OutDir)assets\shaders_vk" mkdir "$(OutDir)assets\shaders_vk"
+"$(SolutionDir)dependencies\tools\glslc.exe" --target-env=vulkan1.3 -O -o "$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv" "%(FullPath)"</Command>
+      <Outputs>$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv</Outputs>
+      <AdditionalInputs>$(ProjectDir)assets\shaders_vk\pointcloud_types.h</AdditionalInputs>
+      <Message>glslc %(Filename)%(Extension)</Message>
+    </CustomBuild>
+    <CustomBuild Include="assets\shaders_vk\overlay.vert">
+      <FileType>Document</FileType>
+      <Command>if not exist "$(OutDir)assets\shaders_vk" mkdir "$(OutDir)assets\shaders_vk"
+"$(SolutionDir)dependencies\tools\glslc.exe" --target-env=vulkan1.3 -O -o "$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv" "%(FullPath)"</Command>
+      <Outputs>$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv</Outputs>
+      <AdditionalInputs>$(ProjectDir)assets\shaders_vk\overlay_types.h</AdditionalInputs>
+      <Message>glslc %(Filename)%(Extension)</Message>
+    </CustomBuild>
+    <CustomBuild Include="assets\shaders_vk\overlay.frag">
+      <FileType>Document</FileType>
+      <Command>if not exist "$(OutDir)assets\shaders_vk" mkdir "$(OutDir)assets\shaders_vk"
+"$(SolutionDir)dependencies\tools\glslc.exe" --target-env=vulkan1.3 -O -o "$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv" "%(FullPath)"</Command>
+      <Outputs>$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv</Outputs>
+      <AdditionalInputs>$(ProjectDir)assets\shaders_vk\overlay_types.h</AdditionalInputs>
+      <Message>glslc %(Filename)%(Extension)</Message>
+    </CustomBuild>
+    <CustomBuild Include="assets\shaders_vk\preview_lit.vert">
+      <FileType>Document</FileType>
+      <Command>if not exist "$(OutDir)assets\shaders_vk" mkdir "$(OutDir)assets\shaders_vk"
+"$(SolutionDir)dependencies\tools\glslc.exe" --target-env=vulkan1.3 -O -o "$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv" "%(FullPath)"</Command>
+      <Outputs>$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv</Outputs>
+      <Message>glslc %(Filename)%(Extension)</Message>
+    </CustomBuild>
+    <CustomBuild Include="assets\shaders_vk\preview_lit.frag">
+      <FileType>Document</FileType>
+      <Command>if not exist "$(OutDir)assets\shaders_vk" mkdir "$(OutDir)assets\shaders_vk"
+"$(SolutionDir)dependencies\tools\glslc.exe" --target-env=vulkan1.3 -O -o "$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv" "%(FullPath)"</Command>
+      <Outputs>$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv</Outputs>
+      <Message>glslc %(Filename)%(Extension)</Message>
+    </CustomBuild>
   </ItemGroup>
   <ItemGroup>
-    <!-- Shared C++/GLSL struct header (no build step of its own; the shader
-         CustomBuild entries list it as an AdditionalInput). -->
+    <!-- Shared C++/GLSL struct headers + GLSL includes (no build step of
+         their own; the shader CustomBuild entries list them as
+         AdditionalInputs). -->
     <None Include="assets\shaders_vk\scene_types.h" />
+    <None Include="assets\shaders_vk\pointcloud_types.h" />
+    <None Include="assets\shaders_vk\pointcloud_common.glsl" />
+    <None Include="assets\shaders_vk\overlay_types.h" />
   </ItemGroup>
   <ItemGroup>
     <!-- Vulkan application (active) -->
@@ -273,13 +355,17 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClCompile Include="src\Renderer\MaterialSystem.cpp" />
     <ClCompile Include="src\Renderer\MeshBuffer.cpp" />
     <ClCompile Include="src\Renderer\PointCloudGpu.cpp" />
+    <ClCompile Include="src\Renderer\OverlayDrawList.cpp" />
     <ClCompile Include="src\Renderer\passes\TonemapPass.cpp" />
     <ClCompile Include="src\Renderer\passes\ShadowPass.cpp" />
     <ClCompile Include="src\Renderer\passes\ForwardPass.cpp" />
+    <ClCompile Include="src\Renderer\passes\PointCloudPass.cpp" />
     <ClCompile Include="src\Renderer\passes\SkyboxPass.cpp" />
+    <ClCompile Include="src\Renderer\passes\OverlayPass.cpp" />
     <ClCompile Include="src\Scene\Primitives.cpp" />
     <ClCompile Include="src\Scene\ModelImporter.cpp" />
     <ClCompile Include="src\Scene\SceneLoader.cpp" />
+    <ClCompile Include="src\Scene\ScenePicking.cpp" />
     <ClCompile Include="src\Engine\Screenshot.cpp" />
     <ClCompile Include="src\Loaders\PointCloudLoader.cpp" />
     <ClCompile Include="headers\libs\spirv_reflect\spirv_reflect.c" />
@@ -293,40 +379,25 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClCompile Include="headers\libs\imgui\imgui_style.cpp" />
     <ClCompile Include="src\Engine\StbImageImpl.cpp" />
     <ClCompile Include="headers\libs\portable-file-dialogs.h" />
-    <!-- OpenGL-era sources: excluded from the build (GLAD is gone), kept
-         in-tree as the behaviour reference until their system is migrated.
-         Re-enable each file only after its Vulkan port (see
+    <!-- OpenGL-era sources: excluded from the build, kept in-tree ONLY as the
+         behaviour reference for app features not yet ported to Vulkan (full GUI,
+         SceneManager save/load, shortcuts, SpaceMouse, snapshots, cursor sync +
+         presets, out-of-core point-cloud LOD, the CursorPreview3D thumbnail).
+         The dead/superseded GL scaffolding (old main.cpp, ModelLoader, the GL
+         point-cloud renderer, GL Window/Input/Buffers, Core.h) was deleted in
+         Phase 8; git history is its reference. Re-enable a file below only after
+         its Vulkan port lands, then delete it (see
          docs/VULKAN_MIGRATION_STATUS.md phase board). -->
-    <ClCompile Include="src\main.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
     <ClCompile Include="src\Gui\GUI.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="src\Gui\CursorPreview3D.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
-    <ClCompile Include="src\Loaders\ModelLoader.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="src\Engine\ComputePointCloudRenderer.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
     <ClCompile Include="src\Engine\OctreePointCloudManager.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
-    <ClCompile Include="src\Engine\Buffers.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="src\Engine\Window.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="src\Engine\Input.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="src\Engine\XRSession.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
+    <ClCompile Include="src\Engine\XRSession.cpp" />
     <ClCompile Include="src\Engine\ShortcutManager.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
@@ -342,51 +413,32 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClCompile Include="src\Core\SnapshotManager.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
-    <ClCompile Include="src\Core\UndoManager.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
+    <ClCompile Include="src\Core\UndoManager.cpp" />
     <ClCompile Include="src\Core\CursorSynchronizer.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="src\Cursors\CursorPresets.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
-    <ClCompile Include="src\Cursors\Base\Cursor.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="src\Cursors\Base\CursorManager.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="src\Cursors\Types\FragmentCursor.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="src\Cursors\Types\PlaneCursor.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="src\Cursors\Types\SphereCursor.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="src\Tools\BrushTool.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="src\Tools\ClipPlaneTool.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="src\Tools\MeasurementTool.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="src\Tools\TransformGizmo.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="src\Plugins\PluginManager.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="src\Plugins\MeasurementPlugin.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="src\Plugins\Examples\CrosshairPlugin.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
+    <ClCompile Include="src\Cursors\Base\Cursor.cpp" />
+    <ClCompile Include="src\Cursors\Base\CursorManager.cpp" />
+    <ClCompile Include="src\Cursors\Types\FragmentCursor.cpp" />
+    <ClCompile Include="src\Cursors\Types\PlaneCursor.cpp" />
+    <ClCompile Include="src\Cursors\Types\SphereCursor.cpp" />
+    <ClCompile Include="src\Tools\ClipPlaneTool.cpp" />
+    <ClCompile Include="src\Tools\MeasurementTool.cpp" />
+    <ClCompile Include="src\Tools\TransformGizmo.cpp" />
+    <ClCompile Include="src\Plugins\PluginManager.cpp" />
+    <ClCompile Include="src\Plugins\MeasurementPlugin.cpp" />
+    <ClCompile Include="src\Plugins\Examples\CrosshairPlugin.cpp" />
+    <ClCompile Include="src\Gui\GuiSystem.cpp" />
+    <ClCompile Include="src\Gui\panels\ScenePanel.cpp" />
+    <ClCompile Include="src\Gui\panels\InspectorPanel.cpp" />
+    <ClCompile Include="src\Gui\panels\SettingsPanel.cpp" />
+    <ClCompile Include="src\Gui\panels\CursorPanel.cpp" />
+    <ClCompile Include="src\Gui\panels\PointCloudPanel.cpp" />
+    <ClCompile Include="src\Gui\panels\ClipPlanePanel.cpp" />
+    <ClCompile Include="src\Gui\panels\DiagnosticsPanel.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="headers\App\Application.h" />
@@ -410,34 +462,29 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClInclude Include="headers\Renderer\MaterialSystem.h" />
     <ClInclude Include="headers\Renderer\MeshBuffer.h" />
     <ClInclude Include="headers\Renderer\PointCloudGpu.h" />
+    <ClInclude Include="headers\Renderer\OverlayDrawList.h" />
     <ClInclude Include="headers\Renderer\passes\TonemapPass.h" />
     <ClInclude Include="headers\Renderer\passes\ShadowPass.h" />
     <ClInclude Include="headers\Renderer\passes\ForwardPass.h" />
+    <ClInclude Include="headers\Renderer\passes\PointCloudPass.h" />
     <ClInclude Include="headers\Renderer\passes\SkyboxPass.h" />
+    <ClInclude Include="headers\Renderer\passes\OverlayPass.h" />
     <ClInclude Include="headers\Scene\Scene.h" />
     <ClInclude Include="headers\libs\spirv_reflect\spirv_reflect.h" />
     <ClInclude Include="headers\libs\volk\volk.h" />
     <ClInclude Include="headers\libs\vma\vk_mem_alloc.h" />
-    <ClInclude Include="headers\core.h" />
     <ClInclude Include="headers\Core\SceneManager.h" />
     <ClInclude Include="headers\Core\SnapshotManager.h" />
     <ClInclude Include="headers\Core\UndoManager.h" />
     <ClInclude Include="headers\Core\CursorSynchronizer.h" />
     <ClInclude Include="headers\Core\CursorSyncState.h" />
-    <ClInclude Include="headers\cursor_presets.h" />
-    <ClInclude Include="headers\engine\buffers.h" />
     <ClInclude Include="headers\Engine\XRSession.h" />
-    <ClInclude Include="headers\Engine\ComputePointCloudRenderer.h" />
     <ClInclude Include="headers\engine\data.h" />
-    <ClInclude Include="headers\engine\input.h" />
     <ClInclude Include="headers\Engine\OctreePointCloudManager.h" />
     <ClInclude Include="headers\Engine\ShortcutManager.h" />
     <ClInclude Include="headers\Engine\SpaceMouseInput.h" />
     <ClInclude Include="headers\Engine\ThreeDConnexionSync.h" />
     <ClInclude Include="headers\Engine\Screenshot.h" />
-    <ClInclude Include="headers\engine\window.h" />
-    <ClInclude Include="headers\Camera.h" />
-    <ClInclude Include="headers\Tools\BrushTool.h" />
     <ClInclude Include="headers\Tools\ClipPlaneTool.h" />
     <ClInclude Include="headers\Tools\MeasurementTool.h" />
     <ClInclude Include="headers\Tools\TransformGizmo.h" />
@@ -447,83 +494,6 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClInclude Include="headers\Plugins\PluginRegistry.h" />
     <ClInclude Include="headers\Plugins\MeasurementPlugin.h" />
     <ClInclude Include="headers\Plugins\Examples\CrosshairPlugin.h" />
-    <ClInclude Include="headers\libs\assimp\aabb.h" />
-    <ClInclude Include="headers\libs\assimp\ai_assert.h" />
-    <ClInclude Include="headers\libs\assimp\anim.h" />
-    <ClInclude Include="headers\libs\assimp\AssertHandler.h" />
-    <ClInclude Include="headers\libs\assimp\Base64.hpp" />
-    <ClInclude Include="headers\libs\assimp\BaseImporter.h" />
-    <ClInclude Include="headers\libs\assimp\Bitmap.h" />
-    <ClInclude Include="headers\libs\assimp\BlobIOSystem.h" />
-    <ClInclude Include="headers\libs\assimp\ByteSwapper.h" />
-    <ClInclude Include="headers\libs\assimp\camera.h" />
-    <ClInclude Include="headers\libs\assimp\cexport.h" />
-    <ClInclude Include="headers\libs\assimp\cfileio.h" />
-    <ClInclude Include="headers\libs\assimp\cimport.h" />
-    <ClInclude Include="headers\libs\assimp\ColladaMetaData.h" />
-    <ClInclude Include="headers\libs\assimp\color4.h" />
-    <ClInclude Include="headers\libs\assimp\commonMetaData.h" />
-    <ClInclude Include="headers\libs\assimp\CreateAnimMesh.h" />
-    <ClInclude Include="headers\libs\assimp\DefaultIOStream.h" />
-    <ClInclude Include="headers\libs\assimp\DefaultIOSystem.h" />
-    <ClInclude Include="headers\libs\assimp\DefaultLogger.hpp" />
-    <ClInclude Include="headers\libs\assimp\defs.h" />
-    <ClInclude Include="headers\libs\assimp\Exceptional.h" />
-    <ClInclude Include="headers\libs\assimp\Exporter.hpp" />
-    <ClInclude Include="headers\libs\assimp\fast_atof.h" />
-    <ClInclude Include="headers\libs\assimp\GenericProperty.h" />
-    <ClInclude Include="headers\libs\assimp\GltfMaterial.h" />
-    <ClInclude Include="headers\libs\assimp\Hash.h" />
-    <ClInclude Include="headers\libs\assimp\Importer.hpp" />
-    <ClInclude Include="headers\libs\assimp\importerdesc.h" />
-    <ClInclude Include="headers\libs\assimp\IOStream.hpp" />
-    <ClInclude Include="headers\libs\assimp\IOStreamBuffer.h" />
-    <ClInclude Include="headers\libs\assimp\IOSystem.hpp" />
-    <ClInclude Include="headers\libs\assimp\light.h" />
-    <ClInclude Include="headers\libs\assimp\LineSplitter.h" />
-    <ClInclude Include="headers\libs\assimp\LogAux.h" />
-    <ClInclude Include="headers\libs\assimp\Logger.hpp" />
-    <ClInclude Include="headers\libs\assimp\LogStream.hpp" />
-    <ClInclude Include="headers\libs\assimp\material.h" />
-    <ClInclude Include="headers\libs\assimp\MathFunctions.h" />
-    <ClInclude Include="headers\libs\assimp\matrix3x3.h" />
-    <ClInclude Include="headers\libs\assimp\matrix4x4.h" />
-    <ClInclude Include="headers\libs\assimp\MemoryIOWrapper.h" />
-    <ClInclude Include="headers\libs\assimp\mesh.h" />
-    <ClInclude Include="headers\libs\assimp\metadata.h" />
-    <ClInclude Include="headers\libs\assimp\NullLogger.hpp" />
-    <ClInclude Include="headers\libs\assimp\ObjMaterial.h" />
-    <ClInclude Include="headers\libs\assimp\ParsingUtils.h" />
-    <ClInclude Include="headers\libs\assimp\pbrmaterial.h" />
-    <ClInclude Include="headers\libs\assimp\postprocess.h" />
-    <ClInclude Include="headers\libs\assimp\Profiler.h" />
-    <ClInclude Include="headers\libs\assimp\ProgressHandler.hpp" />
-    <ClInclude Include="headers\libs\assimp\qnan.h" />
-    <ClInclude Include="headers\libs\assimp\quaternion.h" />
-    <ClInclude Include="headers\libs\assimp\RemoveComments.h" />
-    <ClInclude Include="headers\libs\assimp\scene.h" />
-    <ClInclude Include="headers\libs\assimp\SceneCombiner.h" />
-    <ClInclude Include="headers\libs\assimp\SGSpatialSort.h" />
-    <ClInclude Include="headers\libs\assimp\SkeletonMeshBuilder.h" />
-    <ClInclude Include="headers\libs\assimp\SmallVector.h" />
-    <ClInclude Include="headers\libs\assimp\SmoothingGroups.h" />
-    <ClInclude Include="headers\libs\assimp\SpatialSort.h" />
-    <ClInclude Include="headers\libs\assimp\StandardShapes.h" />
-    <ClInclude Include="headers\libs\assimp\StreamReader.h" />
-    <ClInclude Include="headers\libs\assimp\StreamWriter.h" />
-    <ClInclude Include="headers\libs\assimp\StringComparison.h" />
-    <ClInclude Include="headers\libs\assimp\StringUtils.h" />
-    <ClInclude Include="headers\libs\assimp\Subdivision.h" />
-    <ClInclude Include="headers\libs\assimp\texture.h" />
-    <ClInclude Include="headers\libs\assimp\TinyFormatter.h" />
-    <ClInclude Include="headers\libs\assimp\types.h" />
-    <ClInclude Include="headers\libs\assimp\vector2.h" />
-    <ClInclude Include="headers\libs\assimp\vector3.h" />
-    <ClInclude Include="headers\libs\assimp\version.h" />
-    <ClInclude Include="headers\libs\assimp\Vertex.h" />
-    <ClInclude Include="headers\libs\assimp\XmlParser.h" />
-    <ClInclude Include="headers\libs\assimp\XMLTools.h" />
-    <ClInclude Include="headers\libs\assimp\ZipArchiveIOSystem.h" />
     <ClInclude Include="headers\libs\imgui\backends\imgui_impl_glfw.h" />
     <ClInclude Include="headers\libs\imgui\backends\imgui_impl_vulkan.h" />
     <ClInclude Include="headers\libs\imgui\imconfig.h" />
@@ -535,37 +505,14 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClInclude Include="headers\libs\imgui\imstb_textedit.h" />
     <ClInclude Include="headers\libs\imgui\imstb_truetype.h" />
     <ClInclude Include="headers\libs\json.h" />
-    <ClInclude Include="headers\Loaders\ModelLoader.h" />
-    <ClInclude Include="headers\model_loader.h" />
     <ClInclude Include="headers\libs\openLinks.h" />
-    <ClInclude Include="headers\point_cloud_loader.h" />
-    <ClInclude Include="headers\scene_manager.h" />
     <ClInclude Include="headers\libs\stb_image.h" />
+    <ClInclude Include="headers\Gui\Settings.h" />
+    <ClInclude Include="headers\Gui\Services.h" />
+    <ClInclude Include="headers\Gui\GuiSystem.h" />
+    <ClInclude Include="headers\Gui\Panels.h" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="assets\shaders\fragmentShader.glsl" />
-    <None Include="assets\shaders\planeCursorFragmentShader.glsl" />
-    <None Include="assets\shaders\planeCursorVertexShader.glsl" />
-    <None Include="assets\shaders\simpleDepthFragmentShader.glsl" />
-    <None Include="assets\shaders\simpleDepthVertexShader.glsl" />
-    <None Include="assets\shaders\skyboxFragmentShader.glsl" />
-    <None Include="assets\shaders\skyboxVertexShader.glsl" />
-    <None Include="assets\shaders\vertexShader.glsl" />
-    <None Include="assets\shaders\sphereVertexShader.glsl" />
-    <None Include="assets\shaders\sphereFragmentShader.glsl" />
-    <None Include="headers\libs\assimp\.editorconfig" />
-    <None Include="headers\libs\assimp\color4.inl" />
-    <None Include="headers\libs\assimp\config.h.in" />
-    <None Include="headers\libs\assimp\material.inl" />
-    <None Include="headers\libs\assimp\matrix3x3.inl" />
-    <None Include="headers\libs\assimp\matrix4x4.inl" />
-    <None Include="headers\libs\assimp\module.modulemap" />
-    <None Include="headers\libs\assimp\quaternion.inl" />
-    <None Include="headers\libs\assimp\revision.h.in" />
-    <None Include="headers\libs\assimp\SmoothingGroups.inl" />
-    <None Include="headers\libs\assimp\vector2.inl" />
-    <None Include="headers\libs\assimp\vector3.inl" />
-    <None Include="headers\octree.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

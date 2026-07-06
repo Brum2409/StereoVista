@@ -2,26 +2,35 @@
 
 #include "Cursors/Base/Cursor.h"
 #include "Gui/GuiTypes.h"
+#include <cstdint>
 #include <vector>
 
+namespace renderer {
+class OverlayDrawList;
+}
+
 namespace Cursor {
+    // Glassy sphere cursor. Owns only its CPU mesh (unit-ish sphere generated
+    // once); rendering appends two culling passes (back faces with depth
+    // write, then front faces) to the overlay draw list — the exact GL
+    // two-pass transparency trick, expressed as dynamic cull state.
     class SphereCursor : public BaseCursor {
     public:
         SphereCursor();
         ~SphereCursor() override;
 
-        // Implementation of base class virtual methods
         void initialize() override;
-        void render(const glm::mat4& projection, const glm::mat4& view, const glm::vec3& cameraPosition);
-        void cleanup() override;
-        void updateShaderUniforms(Engine::Shader* shader) override;
+
+        // Appends this cursor's geometry (and optionally the inner sphere).
+        void appendTo(renderer::OverlayDrawList& list, const glm::vec3& cameraPosition);
+        // Same mesh reused for the orbit-center marker (single color/size).
+        void appendOrbitSphere(renderer::OverlayDrawList& list, const glm::vec3& center,
+                               float radius, const glm::vec4& color);
 
         // Sphere cursor specific methods
         float calculateRadius(const glm::vec3& cameraPosition);
         void generateMesh(float radius, unsigned int rings, unsigned int sectors);
 
-        // Getters and setters for specific properties
-        // Note: Scaling properties now inherited from BaseCursor
         float getFixedRadius() const { return getBaseSize(); }
         void setFixedRadius(float radius) { setBaseSize(radius); }
         const glm::vec4& getColor() const { return m_color; }
@@ -38,22 +47,22 @@ namespace Cursor {
         void setInnerSphereColor(const glm::vec4& color) { m_innerSphereColor = color; }
         float getInnerSphereFactor() const { return m_innerSphereFactor; }
         void setInnerSphereFactor(float factor) { m_innerSphereFactor = factor; }
-        // Note: MinDiff, MaxDiff, and CurrentRadius now inherited from BaseCursor
         float getCurrentRadius() const { return getBaseSize() * getCurrentScale(); }
 
-        Engine::Shader* getShader() const { return m_shader; }
-        GLuint getVAO() const { return m_vao; }
-        const std::vector<unsigned int>& getIndices() const { return m_indices; }
+        // CPU mesh access (CursorPreview3D renders the same geometry).
+        const std::vector<float>& getVertices() const { return m_vertices; }
+        const std::vector<uint32_t>& getIndices() const { return m_indices; }
 
     private:
         friend class CursorManager;
 
-        GLuint m_vao, m_vbo, m_ebo;
+        // Interleaved [pos.xyz, normal.xyz]; positions baked at the initialize-
+        // time base radius, exactly like the GL VBO (later size changes only
+        // affect the model scale — GL behaviour preserved).
         std::vector<float> m_vertices;
-        std::vector<unsigned int> m_indices;
-        Engine::Shader* m_shader;
+        std::vector<uint32_t> m_indices;
+        float m_meshRadius = 0.05f;
 
-        // Specific properties (scaling properties moved to BaseCursor)
         glm::vec4 m_color;
         float m_transparency;
         float m_edgeSoftness;

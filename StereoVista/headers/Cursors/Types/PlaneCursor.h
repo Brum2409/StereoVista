@@ -3,20 +3,21 @@
 #include "Cursors/Base/Cursor.h"
 #include <glm/glm.hpp>
 
+namespace renderer {
+class OverlayDrawList;
+}
+
 namespace Cursor {
+    // Flat camera-facing disc cursor. GPU-free: one billboard on the overlay
+    // draw list (the GL triangle-fan VBO + planeCursor shaders are gone).
     class PlaneCursor : public BaseCursor {
     public:
         PlaneCursor();
         ~PlaneCursor() override;
 
-        // Implementation of base class virtual methods
         void initialize() override;
-        void render(const glm::mat4& projection, const glm::mat4& view, const glm::vec3& cameraPosition);
-        void cleanup() override;
-        void updateShaderUniforms(Engine::Shader* shader) override;
+        void appendTo(renderer::OverlayDrawList& list, const glm::vec3& cameraPosition);
 
-        // Getters and setters for specific properties
-        // Note: Diameter now uses unified scaling system
         float getDiameter() const { return getBaseSize(); }
         void setDiameter(float diameter) { setBaseSize(diameter); }
         float getCurrentDiameter() const { return getBaseSize() * getCurrentScale(); }
@@ -24,8 +25,6 @@ namespace Cursor {
         void setColor(const glm::vec4& color) { m_color = color; }
 
     private:
-        GLuint m_vao, m_vbo, m_ebo;
-        Engine::Shader* m_shader;
         glm::vec4 m_color;
     };
 }

@@ -24,6 +24,10 @@
 #define SV_POINT_SHADOW_RESOLUTION 1024
 #define SV_SUN_SHADOW_RESOLUTION 4096
 #define SV_INVALID_TEXTURE 0xFFFFFFFFu
+// User section/clip planes (Phase 6 ClipPlaneTool). Must stay in sync with
+// Engine::MAX_CLIP_PLANES (Engine/Data.h) and SV_PC_CLIP_PLANES
+// (pointcloud_types.h) — one budget across meshes and point clouds.
+#define SV_MAX_CLIP_PLANES 6
 
 // FrameData.flags bits
 #define SV_FRAME_SHADOWS_ENABLED 1u
@@ -38,7 +42,7 @@ struct ViewData {          // 144 bytes
 };
 
 // Per-frame constants, one UBO bound at set 0 binding 0 for every scene pass.
-struct FrameData {         // 1968 bytes
+struct FrameData {         // 2144 bytes
     ViewData views[SV_MAX_VIEWS];
     mat4 sunViewProj;      // world -> sun shadow clip (reverse-Z ortho)
     // Reverse-Z 90-degree face projections for every shadowed point light,
@@ -47,6 +51,23 @@ struct FrameData {         // 1968 bytes
     vec4 sunDirection;     // xyz: direction the light TRAVELS (world)
     vec4 sunColor;         // rgb color, w intensity
     vec4 ambientColor;     // rgb flat ambient (albedo multiplier)
+    // Section/clip planes, world space, packed (n.xyz, d); a point p is kept
+    // while dot(n, p) + d >= 0. mesh.vert writes them to gl_ClipDistance
+    // (hardware clipping — the Vulkan equivalent of the GL scene shaders'
+    // gl_ClipDistance path). Shadow casters deliberately do NOT clip,
+    // matching the GL app (clipped-away geometry still casts its shadow).
+    vec4 clipPlanes[SV_MAX_CLIP_PLANES];
+    // Fragment (ring) cursor, drawn by mesh.frag ON scene surfaces around the
+    // 3D cursor (port of the GL uber-shader's cursor rings). cursorPos.w > 0.5
+    // = the cursor is on valid geometry this frame.
+    vec4 cursorPos;
+    vec4 cursorOuterColor;
+    vec4 cursorInnerColor;
+    // x outerRadius, y outerThickness, z innerRadius, w innerThickness — all
+    // scaled by camera distance in the shader like the GL original.
+    vec4 cursorRingParams;
+    uint clipPlaneCount;   // 0..SV_MAX_CLIP_PLANES
+    uint showFragmentCursor;
     uint pointLightCount;
     uint flags;            // SV_FRAME_* bits
     float shadowTexelWorldSize; // world footprint of one sun shadow texel
@@ -56,6 +77,8 @@ struct FrameData {         // 1968 bytes
     // tan(sun angular radius): world penumbra width per world unit of
     // receiver-to-blocker distance (0 disables sun contact hardening).
     float sunPenumbraScale;
+    uint pad0;
+    uint pad1;
     uint pad2;
 };
 
@@ -88,13 +111,16 @@ struct MaterialData {      // 64 bytes
     uint pad2;
 };
 
-// Per-draw push constants (116 bytes, within the 128-byte core minimum).
+// Per-draw push constants (128 bytes — exactly the core minimum; do not grow).
 struct DrawPush {
     mat4 model;
     vec4 normalMatCol0;    // columns of the world-space normal matrix
     vec4 normalMatCol1;
     vec4 normalMatCol2;
     uint materialIndex;
+    // Per-draw albedo multiplier (linear). 1,1,1 for normal draws; the
+    // BrushTool's per-instance color variation rides here (Phase 6).
+    vec3 tint;
 };
 
 struct DepthSunPush {      // sun shadow casters (sunViewProj is in FrameData)

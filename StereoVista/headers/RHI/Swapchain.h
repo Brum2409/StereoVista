@@ -25,15 +25,19 @@ inline const char* presentModeName(VkPresentModeKHR mode) {
     }
 }
 
-// Present-side of the frame. Phase 1 presents mono (imageArrayLayers = 1).
+// Present-side of the frame. Mono presents imageArrayLayers = 1; quad-buffer
+// stereo (Phase 7) presents 2 layers.
 //
-// STEREO SEAM (Phase 7): quad-buffer stereo present in Vulkan is a swapchain
+// STEREO PRESENT (Phase 7): quad-buffer stereo present in Vulkan is a swapchain
 // property — imageArrayLayers = 2, available when the surface reports
 // maxImageArrayLayers >= 2 (workstation GPUs with a stereo display; consumer
-// GeForce/Radeon expose 1). stereoPresentSupported() is that runtime probe.
-// The renderer always draws into its own layered multiview target, so
-// enabling stereo present later only changes this class (2 layers + per-layer
-// copy) — not the render path.
+// GeForce/Radeon expose 1). stereoPresentSupported() is that runtime probe;
+// setStereo(true) requests it (honored on the next create/recreate, clamped to
+// the surface cap). The presented image then carries layer 0 = left eye,
+// layer 1 = right eye, and the driver routes them to the display's back
+// buffers — vkQueuePresentKHR itself is unchanged. The renderer resolves its
+// layered multiview scene target into these per-layer views; nothing in the
+// scene render path changes.
 class Swapchain {
 public:
     Swapchain() = default;
@@ -47,6 +51,13 @@ public:
     // Recreates for the current surface size (window resize / out-of-date).
     // Width/height are the framebuffer size to clamp against surface caps.
     void recreate(uint32_t width, uint32_t height);
+
+    // Requests a stereo (2-layer) swapchain for the next create/recreate. Only
+    // takes effect when the surface actually supports it (stereoPresentSupported);
+    // otherwise the swapchain stays mono. Call recreate() to apply.
+    void setStereo(bool want) { wantStereo_ = want; }
+    // Actual layer count of the current swapchain images (1 mono, 2 stereo).
+    uint32_t layers() const { return layers_; }
 
     // UINT32_MAX on VK_ERROR_OUT_OF_DATE_KHR (caller recreates and retries).
     uint32_t acquireImage(VkSemaphore signalWhenAvailable);
@@ -65,7 +76,13 @@ public:
     VkExtent2D extent() const { return extent_; }
     uint32_t imageCount() const { return static_cast<uint32_t>(images_.size()); }
     VkImage image(uint32_t i) const { return images_[i]; }
-    VkImageView imageView(uint32_t i) const { return imageViews_[i]; }
+    // Layer-0 (left/mono) single-layer view — the existing mono/UI callers.
+    VkImageView imageView(uint32_t i) const { return imageViews_[i * layers_]; }
+    // Per-layer single-layer view for the stereo backbuffer resolve
+    // (layer 0 = left, 1 = right). layer must be < layers().
+    VkImageView imageView(uint32_t i, uint32_t layer) const {
+        return imageViews_[i * layers_ + layer];
+    }
 
     // Present-completion wait semaphore, one per swapchain image (a per-frame
     // semaphore could still be in flight for an image the presenter holds).
@@ -92,9 +109,12 @@ private:
     VkColorSpaceKHR colorSpace_ = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
     VkExtent2D extent_{};
     std::vector<VkImage> images_;
+    // Single-layer 2D views, layers_ per image, flattened [image*layers_ + layer].
     std::vector<VkImageView> imageViews_;
     std::vector<VkSemaphore> renderFinished_;
     uint32_t maxSurfaceLayers_ = 1;
+    bool wantStereo_ = false; // requested; applied at create() if supported
+    uint32_t layers_ = 1;     // actual imageArrayLayers of the current swapchain
     bool supportsCapture_ = false;
 };
 

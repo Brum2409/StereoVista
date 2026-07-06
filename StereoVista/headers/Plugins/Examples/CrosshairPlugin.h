@@ -4,26 +4,26 @@
 //  CrosshairPlugin  —  the canonical example / template plugin
 // ----------------------------------------------------------------------------
 //  Copy this pair of files (.h + .cpp) as the starting point for a new tool.
-//  It is intentionally small but exercises the whole Plugin API surface:
+//  It is intentionally small but exercises the whole (Vulkan) Plugin API:
 //
-//    • info()             — identity + Tools-menu metadata
-//    • onInitializeGL /
-//      onShutdownGL       — create / destroy a tiny overlay shader + buffers
-//    • onRenderViewport   — draw a world-space crosshair at the 3D cursor and
-//                           at every dropped marker (called once per eye)
-//    • onRenderUI         — an ImGui settings window (color, size, list)
-//    • onMouseButton      — left-click drops a marker and raises a toast
-//    • the default menu /
-//      windowOpen() flow  — toggled from the Tools menu
+//    • info()           — identity + Tools-menu metadata
+//    • onBuildOverlay   — append a world-space crosshair at the 3D cursor and
+//                         at every dropped marker to ctx.overlay()
+//    • onRenderUI       — an ImGui settings window (color, size, list)
+//    • onMouseButton    — left-click drops a marker and raises a toast
+//    • the default menu / windowOpen() flow — toggled from the Tools menu
 //
-//  Everything the tool needs from the host arrives through PluginContext, and
-//  it registers itself via REGISTER_PLUGIN in the .cpp — no edits to main.cpp
-//  or GUI.cpp are required to add it.
+//  Everything the tool needs arrives through PluginContext, and it registers
+//  itself via REGISTER_PLUGIN in the .cpp — no host edits required. Note there
+//  is no GL lifecycle and no shader/VAO ownership anymore: geometry is just
+//  described into the shared overlay list.
 // ============================================================================
 
 #include "Plugins/Plugin.h"
 #include <glm/glm.hpp>
 #include <vector>
+
+namespace renderer { class OverlayDrawList; }
 
 namespace Plugins {
 
@@ -31,18 +31,13 @@ class CrosshairPlugin : public Plugin {
 public:
     PluginInfo info() const override;
 
-    void onInitializeGL(PluginContext& ctx) override;
-    void onShutdownGL() override;
-
-    void onRenderViewport(PluginContext& ctx, const glm::mat4& projection,
-                          const glm::mat4& view, const glm::vec3& cameraPos) override;
+    void onBuildOverlay(PluginContext& ctx) override;
     void onRenderUI(PluginContext& ctx) override;
-
     bool onMouseButton(PluginContext& ctx, int button, int action, int mods) override;
 
 private:
-    // Append a 3-axis crosshair (6 vertices) centred at p to the line buffer.
-    void appendCrosshair(std::vector<float>& verts, const glm::vec3& p,
+    // Append a 3-axis world-space crosshair centred at p to the overlay list.
+    void appendCrosshair(renderer::OverlayDrawList& list, const glm::vec3& p,
                          float size) const;
 
     // ── Settings (exposed in the ImGui window) ──
@@ -52,13 +47,6 @@ private:
 
     // ── Dropped markers (the tool's own data) ──
     std::vector<glm::vec3> m_markers;
-
-    // ── GL resources (created in onInitializeGL) ──
-    unsigned int m_program = 0;
-    unsigned int m_vao     = 0;
-    unsigned int m_vbo     = 0;
-    int          m_uViewProj = -1;
-    int          m_uColor    = -1;
 };
 
 } // namespace Plugins

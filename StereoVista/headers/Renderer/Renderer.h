@@ -11,6 +11,8 @@
 #include "Renderer/GpuTypes.h"
 #include "Renderer/MaterialSystem.h"
 #include "Renderer/passes/ForwardPass.h"
+#include "Renderer/passes/OverlayPass.h"
+#include "Renderer/passes/PointCloudPass.h"
 #include "Renderer/passes/ShadowPass.h"
 #include "Renderer/passes/SkyboxPass.h"
 #include "Renderer/passes/TonemapPass.h"
@@ -37,9 +39,15 @@ namespace renderer {
 // is a fixed sequence of PASS OBJECTS over that submission:
 //
 //   ShadowPass (sun map + point cubemaps)          [own depth targets]
+//     -> PointCloudPass compute (Schütz rasterize/HQS + barriers)
 //     -> ForwardPass (single metallic-roughness PBR, linear HDR)
+//     -> PointCloudPass resolve (depth-composited fullscreen draw)
 //     -> SkyboxPass (background, depth-tested)     [multiview scene target]
-//     -> TonemapPass + ImGui in ONE backbuffer pass
+//     -> depth-picking rect copies (scene depth -> per-slot readback)
+//     -> TonemapPass + OverlayPass in one backbuffer pass (scene depth
+//        attached: overlays depth-test post-tonemap, matching GL where
+//        tonemap lived in the mesh shader under the overlays)
+//     -> ImGui in its own backbuffer pass (no depth)
 //     -> optional screenshot copy -> present.
 //
 // recordFrame only sequences the passes and owns the frame-graph barriers
@@ -88,6 +96,42 @@ public:
     // Rebuilds the size-dependent scene target after the swapchain changed.
     void onSwapchainRecreated();
 
+    // Switches how many views the scene renders (1 = mono, 2 = stereo). Rebuilds
+    // the layered scene target + the multiview scene-pass pipelines (device idle;
+    // rare — a stereo-mode toggle). No-op when unchanged. The backbuffer resolve
+    // layout (mono / quad-buffer / side-by-side) is then derived each frame from
+    // viewCount_ and the swapchain's layer count, so switching side-by-side <->
+    // quad-buffer (both 2 views) only needs a swapchain recreate, not this.
+    void setViewCount(uint32_t count);
+    bool stereo() const { return viewCount_ > 1; }
+
+    // ---- OpenXR HMD output (Phase 7b) ----
+    // Enter/leave XR mode: size the layered scene target to the HMD eye
+    // resolution (both eyes = 2 views) instead of the window, and rebuild the
+    // multiview scene pipelines. endXR() restores the window-sized mono target;
+    // the app re-applies its desktop stereo mode afterwards. Device-idle, rare.
+    void beginXR(VkExtent2D eyeExtent);
+    void endXR();
+    bool xrActive() const { return xrActive_; }
+
+    // One acquired HMD eye swapchain image (from Engine::XRSession): the VkImage
+    // (for the layout barrier) + a color VkImageView (the resolve attachment).
+    struct XrEyeTarget {
+        VkImage image = VK_NULL_HANDLE;
+        VkImageView view = VK_NULL_HANDLE;
+    };
+
+    // Records + submits one XR frame: the same multiview scene pass as the
+    // desktop path (already 2-view), then a per-eye resolve into the two HMD
+    // eye images at eye resolution. The window backbuffer ALWAYS receives ImGui
+    // (so the GUI stays usable to leave VR) plus, when mirrorToWindow, the left
+    // eye behind it. eyeSrgb: the eye swapchain is an _SRGB format (resolve
+    // outputs linear, hardware encodes). Returns the window present result
+    // (OutOfDate if the window swapchain needs recreating — XR still rendered).
+    rhi::PresentResult renderFrameXR(const FrameSubmission& submission,
+                                     const XrEyeTarget eyes[2], bool eyeSrgb,
+                                     bool mirrorToWindow, ImDrawData* uiDrawData);
+
     // Records + submits + presents one frame of the submitted scene.
     // uiDrawData may be null (UI not built this frame). OutOfDate means
     // nothing was presented — the caller recreates the swapchain and calls
@@ -98,6 +142,16 @@ public:
 
     uint32_t viewCount() const { return viewCount_; }
     const FrameStats& frameStats() const { return frameStats_; }
+
+    // ---- Depth picking (Phase 6) ----
+    // Results of the depth rectangles requested via FrameSubmission
+    // ::depthQueries, published when the frame that copied them retires
+    // (typically kFramesInFlight frames later). The result type (DepthReadback,
+    // defined in FrameSubmission.h next to DepthQueryRect) carries the
+    // invViewProj OF THE FRAME THAT RENDERED THE DEPTH, so world positions are
+    // reconstructed with that matrix, not the current camera — camera motion
+    // can't smear the picked point.
+    const DepthReadback& depthSamples() const { return depthResult_; }
 
     // Scene-resource registries the loaders feed (valid after init()).
     MaterialSystem& materials() { return materials_; }
@@ -127,6 +181,11 @@ private:
         rhi::Buffer lightsBuffer;  // gpu::PointLightData[kMaxPointLights]
         rhi::Buffer materialsBuffer; // gpu::MaterialData[], grown on demand
         uint64_t submittedTimelineValue = 0;
+        // Depth-picking readback owned by this slot: the copy is recorded
+        // into this slot's frame; the result is parsed when the slot's
+        // submission retires (the next time the slot is reused).
+        rhi::Buffer depthReadback;
+        DepthReadback pendingDepth; // valid=true while a copy is in flight
     };
 
     // Deferred readback: the copy is recorded into the frame, completion is
@@ -145,7 +204,44 @@ private:
     void createFrameContexts();
     void destroyFrameContexts();
     void createSceneTarget();
+    void destroySceneDepthLayerViews();
     void createFrameSetLayout();
+    // Rebuilds the view-count-dependent GPU state (layered scene target +
+    // multiview scene-pass pipelines + dropped depth samples). Shared by
+    // setViewCount / beginXR / endXR — it always rebuilds (no unchanged-count
+    // early-out), so a same-count extent change (window <-> HMD eye-res) applies.
+    void rebuildViewDependentState();
+
+    // Per-frame slot lifecycle shared by renderFrame / renderFrameXR: block on
+    // this slot's previous submission, publish its completed depth pick, and
+    // reclaim retired upload-ring space.
+    void beginFrameSlot(FrameContext& frame);
+    // Clamp submission.depthQueries to the scene extent, size the slot readback,
+    // and arm frame.pendingDepth for this frame's copy (view 0).
+    void armDepthPick(FrameContext& frame, const FrameSubmission& submission);
+    // Shared scene recording (uploads -> shadow -> point-cloud compute ->
+    // multiview scene pass -> depth-pick copies). Leaves sceneColor_ in
+    // COLOR_ATTACHMENT_OPTIMAL and sceneDepth_ in DEPTH_ATTACHMENT_OPTIMAL. The
+    // caller owns vkBeginCommandBuffer/End and the post-scene resolve.
+    void recordScene(VkCommandBuffer cmd, FrameContext& frame,
+                     const FrameSubmission& submission, VkDescriptorSet frameSet,
+                     uint32_t shadowedLightCount);
+    void recordFrameXR(FrameContext& frame, const XrEyeTarget eyes[2], bool eyeSrgb,
+                       uint32_t windowImageIndex, bool haveWindow, bool doMirror,
+                       const FrameSubmission& submission, VkDescriptorSet frameSet,
+                       uint32_t shadowedLightCount, ImDrawData* uiDrawData);
+
+    // One backbuffer-resolve target per eye, derived from viewCount_ + the
+    // swapchain layer count: mono = 1 full-window eye; quad-buffer stereo = 2
+    // full-window eyes into the 2 swapchain layers; side-by-side = 2 half-window
+    // eyes into the single (mono) backbuffer layer.
+    struct EyeResolve {
+        VkRect2D rect;             // on-screen destination (framebuffer px)
+        uint32_t sceneLayer;       // scene-target array layer (eye) to sample
+        uint32_t backbufferLayer;  // swapchain image layer to render into
+        bool overlayDepthTest;     // true = per-eye scene depth; false = overlays on top
+    };
+    void buildEyeLayout(EyeResolve out[kMaxViews], uint32_t& outCount) const;
     // Fills the frame UBO/SSBO staging structs from the submission; returns
     // the number of point-shadow slots ShadowPass assigned.
     uint32_t buildFrameData(const FrameSubmission& submission, gpu::FrameData& frame,
@@ -179,7 +275,14 @@ private:
     // Layered HDR scene target (color + depth), one layer per view.
     rhi::Texture sceneColor_;
     rhi::Texture sceneDepth_;
+    // Single-layer depth views (one per view) for the per-eye backbuffer resolve
+    // attachment; the multiview scene pass uses sceneDepth_.view() (the array view).
+    VkImageView sceneDepthLayerViews_[kMaxViews]{};
     VkExtent2D sceneExtent_{};
+    // When non-zero, createSceneTarget sizes the scene target to this instead of
+    // the swapchain extent (Phase 7b: the HMD eye resolution while in XR).
+    VkExtent2D sceneExtentOverride_{ 0, 0 };
+    bool xrActive_ = false;
     static constexpr VkFormat kSceneColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
     static constexpr VkFormat kSceneDepthFormat = VK_FORMAT_D32_SFLOAT;
 
@@ -196,10 +299,14 @@ private:
     MaterialSystem materials_;
     ShadowPass shadowPass_;
     ForwardPass forwardPass_;
+    PointCloudPass pointCloudPass_;
     SkyboxPass skyboxPass_;
+    OverlayPass overlayPass_;
     TonemapPass tonemapPass_;
     TonemapSettings tonemapSettings_;
     VkFormat tonemapTargetFormat_ = VK_FORMAT_UNDEFINED;
+
+    DepthReadback depthResult_;
 
     Screenshot screenshot_;
     std::string screenshotStatus_;

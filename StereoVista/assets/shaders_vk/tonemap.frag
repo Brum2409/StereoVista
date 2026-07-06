@@ -1,9 +1,11 @@
 #version 460
 
 // HDR resolve: reads one layer of the multiview RGBA16F scene target and
-// writes tone-mapped, sRGB-encoded LDR to the UNORM backbuffer. 1:1 texel
-// mapping (scene target matches the swapchain extent), so texelFetch — no
-// filtering, no UVs.
+// writes tone-mapped, sRGB-encoded LDR to the backbuffer. Sampled by UV
+// (linear) computed from the fragment position relative to this eye's
+// on-screen rect: identity for a full-window eye (mono / quad-buffer stereo,
+// 1:1 at texel centres == texelFetch), and a horizontal squish when the eye
+// occupies a half-viewport (side-by-side preview).
 //
 // Operator set carried over from the GL app's bloom/final.frag with fixes,
 // per the migration's no-stale-copy rule:
@@ -19,7 +21,17 @@ layout(set = 0, binding = 0) uniform sampler2DArray uSceneColor;
 layout(push_constant) uniform TonemapPush {
     float exposure;
     int operatorIndex; // renderer::TonemapOperator
-    int layerIndex;    // multiview layer to resolve (0 = left/mono)
+    int layerIndex;    // scene-target array layer to resolve (0 = left/mono)
+    // This eye's on-screen rect in framebuffer pixels; maps gl_FragCoord to a
+    // [0,1] UV over the full scene layer (origin 0 + invSize 1/extent = full).
+    float originX;
+    float originY;
+    float invSizeX;
+    float invSizeY;
+    // 1 = apply the sRGB OETF here (UNORM targets: window backbuffer, XR UNORM
+    // fallback). 0 = output LINEAR and let an sRGB-format target's hardware
+    // encode on write (OpenXR sRGB eye swapchains) — avoids a double gamma.
+    int encodeSrgb;
 } uPush;
 
 layout(location = 0) out vec4 outColor;
@@ -117,8 +129,9 @@ vec3 srgbEncode(vec3 linear) {
 }
 
 void main() {
-    ivec2 texel = ivec2(gl_FragCoord.xy);
-    vec3 hdr = texelFetch(uSceneColor, ivec3(texel, uPush.layerIndex), 0).rgb;
+    vec2 uv = (gl_FragCoord.xy - vec2(uPush.originX, uPush.originY)) *
+              vec2(uPush.invSizeX, uPush.invSizeY);
+    vec3 hdr = textureLod(uSceneColor, vec3(uv, float(uPush.layerIndex)), 0.0).rgb;
     hdr *= uPush.exposure;
 
     vec3 mapped;
@@ -133,5 +146,6 @@ void main() {
     else
         mapped = tonemapAces(hdr); // 1 and any unknown index: ACES default
 
-    outColor = vec4(srgbEncode(clamp(mapped, 0.0, 1.0)), 1.0);
+    vec3 ldr = clamp(mapped, 0.0, 1.0);
+    outColor = vec4(uPush.encodeSrgb != 0 ? srgbEncode(ldr) : ldr, 1.0);
 }

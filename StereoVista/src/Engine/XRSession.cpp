@@ -1,21 +1,30 @@
-// OpenXR session management for StereoVista.
+// OpenXR session management for StereoVista (Phase 7b: Vulkan graphics binding).
 // Compiled only on Windows; the rest of the project is also Windows-only.
 #ifdef _WIN32
 
+// Keep Windows.h (pulled in for the registry/env probing below) from defining
+// the min/max macros — this TU also sees glm/Vulkan headers via XRSession.h.
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+
 #include "Engine/XRSession.h"
+
+#include "RHI/Device.h"
+#include "Renderer/Projection.h" // house reverse-Z / Y-flip projection factories
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/quaternion.hpp>
 
-#include <cmath>
-#include <iostream>
-#include <cstring>
+#include <Windows.h>
 
 #include <algorithm>
 #include <cctype>
-#include <cstdlib>     // _wputenv_s
+#include <cmath>
+#include <cstdlib> // _wputenv_s
+#include <cstring>
 #include <filesystem>
+#include <iostream>
 
 // RegGetValueW / registry access lives in Advapi32; make sure it is linked even
 // if it is not part of the project's default library set.
@@ -24,7 +33,7 @@
 namespace Engine {
 
 // ===========================================================================
-// System OpenXR runtime probing
+// System OpenXR runtime probing  (graphics-API-agnostic; unchanged in the port)
 // ===========================================================================
 namespace {
 
@@ -198,11 +207,30 @@ std::string getXRRuntimeOverride() {
     return wideToUtf8(getEnvW(L"XR_RUNTIME_JSON"));
 }
 
+// ===========================================================================
+// Small helpers
+// ===========================================================================
+namespace {
+
+// xrGetInstanceProcAddr wrapper for extension entry points.
+template <typename Fn>
+bool loadXrFunc(XrInstance instance, const char *name, Fn &out) {
+    return xrGetInstanceProcAddr(
+               instance, name,
+               reinterpret_cast<PFN_xrVoidFunction *>(&out)) == XR_SUCCESS &&
+           out != nullptr;
+}
+
+} // namespace
+
 // ---------------------------------------------------------------------------
 // Public: init / destroy
 // ---------------------------------------------------------------------------
 
-bool XRSession::init(HDC hdc, HGLRC hglrc) {
+bool XRSession::init(rhi::Device &device) {
+    device_   = &device;
+    vkDevice_ = device.device();
+
     // Quick DLL presence check so we report a friendly error rather than
     // triggering the delay-load failure handler.
     HMODULE hCheck = LoadLibraryExW(L"openxr_loader.dll", NULL,
@@ -214,11 +242,10 @@ bool XRSession::init(HDC hdc, HGLRC hglrc) {
     }
     FreeLibrary(hCheck);
 
-    if (!createInstance())         return false;
-    if (!createSystem())         { destroy(); return false; }
-    if (!createSession(hdc, hglrc)) { destroy(); return false; }
-    if (!createSwapchains())     { destroy(); return false; }
-    if (!createGLObjects())      { destroy(); return false; }
+    if (!createInstance())                  return false;
+    if (!createSystemAndValidateDevice()) { destroy(); return false; }
+    if (!createSession())                 { destroy(); return false; }
+    if (!createSwapchains())              { destroy(); return false; }
 
     initialized_ = true;
     statusMsg_   = "OpenXR session active – " + runtimeName_;
@@ -228,15 +255,7 @@ bool XRSession::init(HDC hdc, HGLRC hglrc) {
 }
 
 void XRSession::destroy() {
-    destroyGLObjects();
-
-    for (int i = 0; i < 2; ++i) {
-        if (eyes_[i].handle != XR_NULL_HANDLE) {
-            xrDestroySwapchain(eyes_[i].handle);
-            eyes_[i].handle = XR_NULL_HANDLE;
-        }
-        eyes_[i].images.clear();
-    }
+    destroySwapchains();
 
     // XrSpace is a child of XrSession — must be destroyed before the session.
     if (referenceSpace_ != XR_NULL_HANDLE) {
@@ -245,9 +264,8 @@ void XRSession::destroy() {
     }
 
     if (session_ != XR_NULL_HANDLE) {
-        if (running_) {
+        if (running_)
             xrRequestExitSession(session_);
-        }
         xrDestroySession(session_);
         session_ = XR_NULL_HANDLE;
     }
@@ -257,15 +275,19 @@ void XRSession::destroy() {
         instance_ = XR_NULL_HANDLE;
     }
 
-    systemId_      = XR_NULL_SYSTEM_ID;
-    sessionState_  = XR_SESSION_STATE_UNKNOWN;
-    initialized_   = false;
-    running_       = false;
-    sessionVisible_= false;
-    eyeWidth_      = 0;
-    eyeHeight_     = 0;
+    pfnGetVulkanRequirements_ = nullptr;
+    pfnGetVulkanDevice_       = nullptr;
+    systemId_       = XR_NULL_SYSTEM_ID;
+    sessionState_   = XR_SESSION_STATE_UNKNOWN;
+    initialized_    = false;
+    running_        = false;
+    sessionVisible_ = false;
+    eyeWidth_       = 0;
+    eyeHeight_      = 0;
+    colorFormat_    = VK_FORMAT_UNDEFINED;
+    colorIsSrgb_    = false;
 
-    statusMsg_     = "OpenXR session destroyed.";
+    statusMsg_ = "OpenXR session destroyed.";
 }
 
 // ---------------------------------------------------------------------------
@@ -353,8 +375,8 @@ bool XRSession::beginFrame() {
     return frameState_.shouldRender == XR_TRUE;
 }
 
-bool XRSession::getEyePoses(glm::mat4 outProj[2], glm::mat4 outRefView[2],
-                            float nearZ, float farZ, float worldScale) {
+bool XRSession::getEyePoses(XREyePose out[2], float nearZ, float farZ,
+                            float worldScale) {
     if (!running_) return false;
 
     XrViewLocateInfo locateInfo{ XR_TYPE_VIEW_LOCATE_INFO };
@@ -367,34 +389,45 @@ bool XRSession::getEyePoses(glm::mat4 outProj[2], glm::mat4 outRefView[2],
     views_[0] = { XR_TYPE_VIEW };
     views_[1] = { XR_TYPE_VIEW };
     XrResult res = xrLocateViews(session_, &locateInfo, &viewState,
-                                  viewCount, &viewCount, views_);
+                                 viewCount, &viewCount, views_);
     if (res != XR_SUCCESS) return false;
 
-    bool valid = (viewState.viewStateFlags &
-                  (XR_VIEW_STATE_POSITION_VALID_BIT |
-                   XR_VIEW_STATE_ORIENTATION_VALID_BIT)) ==
-                 (XR_VIEW_STATE_POSITION_VALID_BIT |
-                  XR_VIEW_STATE_ORIENTATION_VALID_BIT);
+    const bool valid = (viewState.viewStateFlags &
+                        (XR_VIEW_STATE_POSITION_VALID_BIT |
+                         XR_VIEW_STATE_ORIENTATION_VALID_BIT)) ==
+                       (XR_VIEW_STATE_POSITION_VALID_BIT |
+                        XR_VIEW_STATE_ORIENTATION_VALID_BIT);
     if (!valid) return false;
 
     for (int i = 0; i < 2; ++i) {
-        outProj[i]    = fovToProjection(views_[i].fov, nearZ, farZ);
-        outRefView[i] = poseToView(views_[i].pose, worldScale);
+        const XrFovf &fov = views_[i].fov;
+        // Near-plane extents from the runtime's asymmetric FOV angles, fed to
+        // the house reverse-Z + Y-flip factory (NOT the GL-convention matrix the
+        // old code built — playbook C.2: build depth the Vulkan way, don't port).
+        const float l = std::tan(fov.angleLeft)  * nearZ;
+        const float r = std::tan(fov.angleRight) * nearZ;
+        const float b = std::tan(fov.angleDown)  * nearZ;
+        const float t = std::tan(fov.angleUp)    * nearZ;
+        out[i].proj = renderer::frustumAsymmetric(l, r, b, t, nearZ, farZ);
+        out[i].view = poseToView(views_[i].pose, worldScale);
     }
     return true;
 }
 
-GLuint XRSession::acquireSwapchainImage(int eye) {
-    if (!running_ || eye < 0 || eye > 1) return 0;
+VkImageView XRSession::acquireSwapchainImage(int eye) {
+    if (!running_ || eye < 0 || eye > 1) return VK_NULL_HANDLE;
 
     XrSwapchainImageAcquireInfo ai{ XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
-    xrAcquireSwapchainImage(eyes_[eye].handle, &ai, &eyes_[eye].acquiredIndex);
+    if (xrAcquireSwapchainImage(eyes_[eye].handle, &ai,
+                                &eyes_[eye].acquiredIndex) != XR_SUCCESS)
+        return VK_NULL_HANDLE;
 
     XrSwapchainImageWaitInfo wi{ XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
     wi.timeout = XR_INFINITE_DURATION;
-    xrWaitSwapchainImage(eyes_[eye].handle, &wi);
+    if (xrWaitSwapchainImage(eyes_[eye].handle, &wi) != XR_SUCCESS)
+        return VK_NULL_HANDLE;
 
-    return eyes_[eye].images[eyes_[eye].acquiredIndex].image;
+    return eyes_[eye].views[eyes_[eye].acquiredIndex];
 }
 
 void XRSession::releaseSwapchainImage(int eye) {
@@ -415,15 +448,15 @@ void XRSession::endFrame(bool rendered) {
             projViews[i].type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
             projViews[i].pose = views_[i].pose;
             projViews[i].fov  = views_[i].fov;
-            projViews[i].subImage.swapchain             = eyes_[i].handle;
-            projViews[i].subImage.imageRect.offset      = { 0, 0 };
-            projViews[i].subImage.imageRect.extent      = { static_cast<int32_t>(eyeWidth_),
-                                                            static_cast<int32_t>(eyeHeight_) };
-            projViews[i].subImage.imageArrayIndex       = 0;
+            projViews[i].subImage.swapchain        = eyes_[i].handle;
+            projViews[i].subImage.imageRect.offset = { 0, 0 };
+            projViews[i].subImage.imageRect.extent = {
+                static_cast<int32_t>(eyeWidth_), static_cast<int32_t>(eyeHeight_) };
+            projViews[i].subImage.imageArrayIndex  = 0;
         }
-        projLayer.space      = referenceSpace_;
-        projLayer.viewCount  = 2;
-        projLayer.views      = projViews;
+        projLayer.space     = referenceSpace_;
+        projLayer.viewCount = 2;
+        projLayer.views     = projViews;
     }
 
     const XrCompositionLayerBaseHeader *layers[] = {
@@ -443,7 +476,7 @@ void XRSession::endFrame(bool rendered) {
 // ---------------------------------------------------------------------------
 
 bool XRSession::createInstance() {
-    const char *extensions[] = { XR_KHR_OPENGL_ENABLE_EXTENSION_NAME };
+    const char *extensions[] = { XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME };
 
     XrApplicationInfo appInfo{};
     strncpy_s(appInfo.applicationName, "StereoVista", XR_MAX_APPLICATION_NAME_SIZE - 1);
@@ -453,9 +486,9 @@ bool XRSession::createInstance() {
     appInfo.apiVersion         = XR_CURRENT_API_VERSION;
 
     XrInstanceCreateInfo ci{ XR_TYPE_INSTANCE_CREATE_INFO };
-    ci.applicationInfo         = appInfo;
-    ci.enabledExtensionCount   = 1;
-    ci.enabledExtensionNames   = extensions;
+    ci.applicationInfo       = appInfo;
+    ci.enabledExtensionCount = 1;
+    ci.enabledExtensionNames = extensions;
 
     XrResult res = xrCreateInstance(&ci, &instance_);
     if (res != XR_SUCCESS) {
@@ -464,8 +497,6 @@ bool XRSession::createInstance() {
         // always blaming a missing runtime.
         XRDiagnostics diag = probeXRRuntimes();
         if (diag.activeServiceBased) {
-            // e.g. Monado (bundled with ImmersaStudio): a runtime is selected but
-            // its background service isn't running, so the loader can't connect.
             statusMsg_ = "OpenXR runtime \"" + diag.activeRuntimeName +
                          "\" is selected, but its background service is not "
                          "running, so it can't be used. Start that program first, "
@@ -477,8 +508,8 @@ bool XRSession::createInstance() {
         } else {
             statusMsg_ = "Couldn't start OpenXR runtime \"" +
                          diag.activeRuntimeName + "\" (xrCreateInstance error " +
-                         std::to_string(res) + "). Make sure your headset is "
-                         "connected and its software is running, or choose "
+                         std::to_string(res) + "). It may not support the Vulkan "
+                         "graphics binding, or your headset isn't connected. Try "
                          "another runtime below.";
         }
         return false;
@@ -486,73 +517,108 @@ bool XRSession::createInstance() {
 
     // Read runtime name for display in the GUI.
     XrInstanceProperties props{ XR_TYPE_INSTANCE_PROPERTIES };
-    if (xrGetInstanceProperties(instance_, &props) == XR_SUCCESS) {
+    if (xrGetInstanceProperties(instance_, &props) == XR_SUCCESS)
         runtimeName_ = props.runtimeName;
-    }
     return true;
 }
 
-bool XRSession::createSystem() {
+bool XRSession::createSystemAndValidateDevice() {
     XrSystemGetInfo sgi{ XR_TYPE_SYSTEM_GET_INFO };
     sgi.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
 
     XrResult res = xrGetSystem(instance_, &sgi, &systemId_);
     if (res != XR_SUCCESS) {
         statusMsg_ = "No HMD detected (xrGetSystem failed, error "
-                     + std::to_string(res) + "). Is a headset connected?";
+                     + std::to_string(res) + "). Is a headset connected and its "
+                     "runtime running?";
         return false;
     }
 
-    // Check that the runtime actually supports OpenGL.
-    PFN_xrGetOpenGLGraphicsRequirementsKHR pfnGetReqs = nullptr;
-    xrGetInstanceProcAddr(instance_,
-                          "xrGetOpenGLGraphicsRequirementsKHR",
-                          reinterpret_cast<PFN_xrVoidFunction *>(&pfnGetReqs));
-    if (!pfnGetReqs) {
-        statusMsg_ = "xrGetOpenGLGraphicsRequirementsKHR not available.";
+    // Resolve the enable2 entry points (extension functions, not core).
+    if (!loadXrFunc(instance_, "xrGetVulkanGraphicsRequirements2KHR",
+                    pfnGetVulkanRequirements_) ||
+        !loadXrFunc(instance_, "xrGetVulkanGraphicsDevice2KHR",
+                    pfnGetVulkanDevice_)) {
+        statusMsg_ = "This OpenXR runtime does not expose the Vulkan graphics "
+                     "binding (XR_KHR_vulkan_enable2). Choose a Vulkan-capable "
+                     "runtime below.";
         return false;
     }
 
-    XrGraphicsRequirementsOpenGLKHR reqs{ XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_KHR };
-    pfnGetReqs(instance_, systemId_, &reqs);
-    // We don't abort on version mismatch – the runtime will reject the session
-    // if needed, which gives a more informative error message.
+    // Calling the graphics-requirements query is a REQUIRED ritual before
+    // xrCreateSession (some runtimes reject the session otherwise). We honour
+    // it and log the supported range but, like the GL path, don't hard-abort on
+    // a version mismatch — xrCreateSession is the real arbiter.
+    XrGraphicsRequirementsVulkanKHR reqs{ XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN_KHR };
+    if (pfnGetVulkanRequirements_(instance_, systemId_, &reqs) == XR_SUCCESS) {
+        std::cout << "[XR] Vulkan API range: "
+                  << XR_VERSION_MAJOR(reqs.minApiVersionSupported) << "."
+                  << XR_VERSION_MINOR(reqs.minApiVersionSupported) << " .. "
+                  << XR_VERSION_MAJOR(reqs.maxApiVersionSupported) << "."
+                  << XR_VERSION_MINOR(reqs.maxApiVersionSupported) << "\n";
+    }
+
+    // The runtime dictates which physical GPU the headset is attached to. We
+    // render on the device rhi::Device already picked; if they differ we cannot
+    // bind (Vulkan can't share images across physical devices). On single-GPU
+    // PCs and typical laptops (HMD on the dGPU we render on) they match.
+    XrVulkanGraphicsDeviceGetInfoKHR gi{ XR_TYPE_VULKAN_GRAPHICS_DEVICE_GET_INFO_KHR };
+    gi.systemId       = systemId_;
+    gi.vulkanInstance = device_->instance();
+    VkPhysicalDevice xrGpu = VK_NULL_HANDLE;
+    res = pfnGetVulkanDevice_(instance_, &gi, &xrGpu);
+    if (res != XR_SUCCESS || xrGpu == VK_NULL_HANDLE) {
+        statusMsg_ = "xrGetVulkanGraphicsDevice2KHR failed (error "
+                     + std::to_string(res) + ").";
+        return false;
+    }
+    if (xrGpu != device_->physicalDevice()) {
+        VkPhysicalDeviceProperties hmdGpu{};
+        vkGetPhysicalDeviceProperties(xrGpu, &hmdGpu);
+        statusMsg_ = std::string("The headset is driven by a different GPU (") +
+                     hmdGpu.deviceName + ") than StereoVista renders on (" +
+                     device_->deviceName() +
+                     "). Multi-GPU VR isn't supported — connect the headset to "
+                     "the render GPU (or set it as the OpenXR/driver GPU).";
+        return false;
+    }
     return true;
 }
 
-bool XRSession::createSession(HDC hdc, HGLRC hglrc) {
-    XrGraphicsBindingOpenGLWin32KHR glBinding{ XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR };
-    glBinding.hDC   = hdc;
-    glBinding.hGLRC = hglrc;
+bool XRSession::createSession() {
+    XrGraphicsBindingVulkanKHR binding{ XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR };
+    binding.instance         = device_->instance();
+    binding.physicalDevice   = device_->physicalDevice();
+    binding.device           = vkDevice_;
+    binding.queueFamilyIndex = device_->graphicsQueueFamily();
+    binding.queueIndex       = 0; // rhi::Device creates queueCount = 1
 
     XrSessionCreateInfo sci{ XR_TYPE_SESSION_CREATE_INFO };
-    sci.next     = &glBinding;
+    sci.next     = &binding;
     sci.systemId = systemId_;
 
     XrResult res = xrCreateSession(instance_, &sci, &session_);
     if (res != XR_SUCCESS) {
-        statusMsg_ = "xrCreateSession failed (error " + std::to_string(res) + ").";
+        statusMsg_ = "xrCreateSession failed (error " + std::to_string(res) +
+                     "). The runtime may require a Vulkan version or extensions "
+                     "this device wasn't created with.";
         return false;
     }
 
-    // Create a LOCAL reference space centred on the user's head at session start.
+    // LOCAL reference space centred on the user's head at session start.
     XrReferenceSpaceCreateInfo rsci{ XR_TYPE_REFERENCE_SPACE_CREATE_INFO };
-    rsci.referenceSpaceType        = XR_REFERENCE_SPACE_TYPE_LOCAL;
-    rsci.poseInReferenceSpace.orientation = { 0.0f, 0.0f, 0.0f, 1.0f }; // identity
+    rsci.referenceSpaceType               = XR_REFERENCE_SPACE_TYPE_LOCAL;
+    rsci.poseInReferenceSpace.orientation = { 0.0f, 0.0f, 0.0f, 1.0f };
     rsci.poseInReferenceSpace.position    = { 0.0f, 0.0f, 0.0f };
-
     res = xrCreateReferenceSpace(session_, &rsci, &referenceSpace_);
     if (res != XR_SUCCESS) {
         statusMsg_ = "xrCreateReferenceSpace failed (error " + std::to_string(res) + ").";
         return false;
     }
-
-    statusMsg_ = "OpenXR session created.";
     return true;
 }
 
 bool XRSession::createSwapchains() {
-    // Query the recommended eye resolution.
     uint32_t viewCount = 0;
     xrEnumerateViewConfigurationViews(instance_, systemId_,
                                       XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,
@@ -566,31 +632,35 @@ bool XRSession::createSwapchains() {
     xrEnumerateViewConfigurationViews(instance_, systemId_,
                                       XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,
                                       2, &viewCount, viewConfs.data());
-
     eyeWidth_  = viewConfs[0].recommendedImageRectWidth;
     eyeHeight_ = viewConfs[0].recommendedImageRectHeight;
 
-    // Choose a swapchain format. Prefer sRGB so compositing looks right.
+    // Choose a Vulkan color format the runtime offers. Prefer sRGB so the
+    // hardware encodes on write (the resolve then outputs LINEAR); fall back to
+    // UNORM (the resolve then applies the sRGB OETF itself, like the window).
     uint32_t fmtCount = 0;
     xrEnumerateSwapchainFormats(session_, 0, &fmtCount, nullptr);
     std::vector<int64_t> formats(fmtCount);
     xrEnumerateSwapchainFormats(session_, fmtCount, &fmtCount, formats.data());
-
-    int64_t chosenFmt = GL_RGBA8; // fallback
-    for (int64_t f : formats) {
-        if (f == GL_SRGB8_ALPHA8) { chosenFmt = f; break; }
-    }
-    if (chosenFmt == GL_RGBA8) {
-        for (int64_t f : formats) {
-            if (f == GL_RGBA8) { chosenFmt = f; break; }
-        }
-    }
+    auto offered = [&](int64_t f) {
+        return std::find(formats.begin(), formats.end(), f) != formats.end();
+    };
+    const int64_t preferred[] = {
+        VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_B8G8R8A8_SRGB,
+        VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_B8G8R8A8_UNORM,
+    };
+    int64_t chosen = formats.empty() ? int64_t(VK_FORMAT_R8G8B8A8_SRGB) : formats[0];
+    for (int64_t f : preferred)
+        if (offered(f)) { chosen = f; break; }
+    colorFormat_ = static_cast<VkFormat>(chosen);
+    colorIsSrgb_ = (colorFormat_ == VK_FORMAT_R8G8B8A8_SRGB ||
+                    colorFormat_ == VK_FORMAT_B8G8R8A8_SRGB);
 
     for (int i = 0; i < 2; ++i) {
         XrSwapchainCreateInfo sci{ XR_TYPE_SWAPCHAIN_CREATE_INFO };
         sci.usageFlags  = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT |
                           XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
-        sci.format      = chosenFmt;
+        sci.format      = chosen;
         sci.sampleCount = 1;
         sci.width       = eyeWidth_;
         sci.height      = eyeHeight_;
@@ -607,79 +677,56 @@ bool XRSession::createSwapchains() {
 
         uint32_t imgCount = 0;
         xrEnumerateSwapchainImages(eyes_[i].handle, 0, &imgCount, nullptr);
-        eyes_[i].images.resize(imgCount, { XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_KHR });
-        xrEnumerateSwapchainImages(eyes_[i].handle, imgCount, &imgCount,
+        eyes_[i].images.assign(imgCount, { XR_TYPE_SWAPCHAIN_IMAGE_VULKAN_KHR });
+        xrEnumerateSwapchainImages(
+            eyes_[i].handle, imgCount, &imgCount,
             reinterpret_cast<XrSwapchainImageBaseHeader *>(eyes_[i].images.data()));
+
+        // Our own color views over the runtime-owned VkImages (we destroy only
+        // the views; the images belong to the runtime).
+        eyes_[i].views.assign(imgCount, VK_NULL_HANDLE);
+        for (uint32_t n = 0; n < imgCount; ++n) {
+            VkImageViewCreateInfo iv{ VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+            iv.image            = eyes_[i].images[n].image;
+            iv.viewType         = VK_IMAGE_VIEW_TYPE_2D;
+            iv.format           = colorFormat_;
+            iv.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+            VK_CHECK(vkCreateImageView(vkDevice_, &iv, nullptr, &eyes_[i].views[n]));
+        }
     }
     return true;
 }
 
-bool XRSession::createGLObjects() {
-    glGenFramebuffers(1, &fbo_);
-    glGenRenderbuffers(1, &depthRbo_);
-
-    // Allocate a depth renderbuffer sized for one eye.  It is shared between
-    // both eyes since we render them sequentially (one eye at a time).
-    glBindRenderbuffer(GL_RENDERBUFFER, depthRbo_);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24,
-                          static_cast<GLsizei>(eyeWidth_),
-                          static_cast<GLsizei>(eyeHeight_));
-    glBindRenderbuffer(GL_RENDERBUFFER, 0);
-
-    glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
-                              GL_RENDERBUFFER, depthRbo_);
-    // No colour attachment yet — that is attached per-eye per-frame in the main loop.
-    // GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT is expected at this point.
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    return true;
-}
-
-void XRSession::destroyGLObjects() {
-    if (fbo_)     { glDeleteFramebuffers(1, &fbo_);      fbo_     = 0; }
-    if (depthRbo_){ glDeleteRenderbuffers(1, &depthRbo_); depthRbo_= 0; }
+void XRSession::destroySwapchains() {
+    for (int i = 0; i < 2; ++i) {
+        for (VkImageView view : eyes_[i].views)
+            if (view != VK_NULL_HANDLE)
+                vkDestroyImageView(vkDevice_, view, nullptr);
+        eyes_[i].views.clear();
+        if (eyes_[i].handle != XR_NULL_HANDLE) {
+            xrDestroySwapchain(eyes_[i].handle);
+            eyes_[i].handle = XR_NULL_HANDLE;
+        }
+        eyes_[i].images.clear();
+        eyes_[i].acquiredIndex = 0;
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Private: matrix helpers
 // ---------------------------------------------------------------------------
 
-glm::mat4 XRSession::fovToProjection(const XrFovf &fov, float nearZ, float farZ) {
-    float tanL = std::tan(fov.angleLeft);   // negative
-    float tanR = std::tan(fov.angleRight);  // positive
-    float tanU = std::tan(fov.angleUp);     // positive
-    float tanD = std::tan(fov.angleDown);   // negative
-
-    float w = tanR - tanL;
-    float h = tanU - tanD;
-
-    glm::mat4 p(0.0f);
-    p[0][0] =  2.0f / w;
-    p[2][0] = (tanR + tanL) / w;
-    p[1][1] =  2.0f / h;
-    p[2][1] = (tanU + tanD) / h;
-    p[2][2] = -(farZ + nearZ) / (farZ - nearZ);
-    p[3][2] = -(2.0f * farZ * nearZ) / (farZ - nearZ);
-    p[2][3] = -1.0f;
-    return p;
-}
-
 glm::mat4 XRSession::poseToView(const XrPosef &pose, float worldScale) {
-    glm::quat q(pose.orientation.w,
-                pose.orientation.x,
-                pose.orientation.y,
-                pose.orientation.z);
-    // worldScale is in metres-per-scene-unit (e.g. 0.01 for a cm scene, 1.0 for m).
-    // XR positions are in metres → divide by worldScale to get scene units.
-    // Example: worldScale=0.01 (cm scene), XR pos=1.0m → 100 scene units.
-    glm::vec3 p(pose.position.x / worldScale,
-                pose.position.y / worldScale,
-                pose.position.z / worldScale);
+    glm::quat q(pose.orientation.w, pose.orientation.x,
+                pose.orientation.y, pose.orientation.z);
+    // XR positions are in metres; worldScale is metres-per-scene-unit, so divide
+    // to get scene units (e.g. worldScale 0.01 for a cm scene: 1 m → 100 units).
+    const float ws = (worldScale != 0.0f) ? worldScale : 1.0f;
+    glm::vec3 p(pose.position.x / ws, pose.position.y / ws, pose.position.z / ws);
 
-    // world-from-eye = translation * rotation
-    glm::mat4 worldFromEye = glm::translate(glm::mat4(1.0f), p) * glm::mat4_cast(q);
-    // view = inverse(world-from-eye) = eye-from-world
-    return glm::inverse(worldFromEye);
+    // eye-from-reference = inverse(reference-from-eye) = inverse(T * R).
+    glm::mat4 refFromEye = glm::translate(glm::mat4(1.0f), p) * glm::mat4_cast(q);
+    return glm::inverse(refFromEye);
 }
 
 } // namespace Engine

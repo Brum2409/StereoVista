@@ -5,186 +5,91 @@
 #include <string>
 #include <vector>
 
-#include <glm/glm.hpp>
+// ============================================================================
+// Undo/redo core (Vulkan rewrite of the GL Engine::UndoManager).
+//
+// The GL version dragged in Loaders/ModelLoader.h and a whole Undo:: namespace
+// of scene-specific helpers (recordModelEdit / deleteModel / ...) bound to the
+// old global scene containers. That coupling is gone: this is the generic
+// command-stack engine only. Scene-specific commands are built with
+// LambdaUndoCommand (or a small UndoCommand subclass) at the call site — the
+// tools and the SceneManager own their own capture/apply logic and keep this
+// header free of any scene, GPU or GL dependency.
+//
+// Actions are recorded AFTER they are performed, so undo() reverts and redo()
+// re-applies. The manager is owned by the Application (no global singleton) and
+// handed to tools/plugins through the PluginContext.
+// ============================================================================
 
-#include "Engine/Data.h"
-#include "Loaders/ModelLoader.h"
+namespace core {
 
-namespace Engine {
+class UndoCommand {
+public:
+    virtual ~UndoCommand() = default;
+    virtual void undo() = 0;
+    virtual void redo() = 0;
+    virtual std::string description() const = 0;
+};
 
-    // -----------------------------------------------------------------------
-    // Universal undo/redo system.
-    //
-    // Actions are recorded *after* they have been performed, so undo() must
-    // revert an action and redo() must re-apply it. Commands reference scene
-    // objects by index; this is safe because commands are replayed in strict
-    // LIFO order and every structural scene change (add/delete) goes through
-    // this system. The history is cleared whenever a scene file is loaded,
-    // since recorded indices would no longer match the new scene.
-    // -----------------------------------------------------------------------
+// Generic command built from a pair of closures — the common case for property
+// edits where before/after snapshots are cheap to capture.
+class LambdaUndoCommand : public UndoCommand {
+public:
+    LambdaUndoCommand(std::string description, std::function<void()> undoFn,
+                      std::function<void()> redoFn)
+        : desc_(std::move(description)), undoFn_(std::move(undoFn)),
+          redoFn_(std::move(redoFn)) {}
 
-    class UndoCommand {
-    public:
-        virtual ~UndoCommand() = default;
-        virtual void undo() = 0;
-        virtual void redo() = 0;
-        virtual std::string description() const = 0;
-    };
+    void undo() override { if (undoFn_) undoFn_(); }
+    void redo() override { if (redoFn_) redoFn_(); }
+    std::string description() const override { return desc_; }
 
-    // Generic command built from a pair of closures. Used for property edits
-    // (transforms, materials, light parameters) where before/after snapshots
-    // are cheap to capture.
-    class LambdaUndoCommand : public UndoCommand {
-    public:
-        LambdaUndoCommand(std::string description, std::function<void()> undoFn,
-                          std::function<void()> redoFn)
-            : desc(std::move(description)), undoFn(std::move(undoFn)),
-              redoFn(std::move(redoFn)) {}
+private:
+    std::string desc_;
+    std::function<void()> undoFn_;
+    std::function<void()> redoFn_;
+};
 
-        void undo() override { if (undoFn) undoFn(); }
-        void redo() override { if (redoFn) redoFn(); }
-        std::string description() const override { return desc; }
+class UndoManager {
+public:
+    // Record an already-performed action. Clears the redo stack.
+    void record(std::unique_ptr<UndoCommand> command);
+    // Convenience: build + record a LambdaUndoCommand from two closures.
+    void record(std::string description, std::function<void()> undoFn,
+                std::function<void()> redoFn);
 
-    private:
-        std::string desc;
-        std::function<void()> undoFn;
-        std::function<void()> redoFn;
-    };
+    bool undo();
+    bool redo();
 
-    class UndoManager {
-    public:
-        static UndoManager& instance();
+    bool canUndo() const { return !undoStack_.empty(); }
+    bool canRedo() const { return !redoStack_.empty(); }
+    std::string undoDescription() const;
+    std::string redoDescription() const;
+    size_t undoCount() const { return undoStack_.size(); }
+    size_t redoCount() const { return redoStack_.size(); }
 
-        // Record an already-performed action. Clears the redo stack.
-        void record(std::unique_ptr<UndoCommand> command);
+    // Drops all history. Call when a scene file is loaded (recorded indices
+    // would no longer match) or when the referenced objects are destroyed.
+    void clear();
 
-        bool undo();
-        bool redo();
-
-        bool canUndo() const { return !undoStack.empty(); }
-        bool canRedo() const { return !redoStack.empty(); }
-        std::string undoDescription() const;
-        std::string redoDescription() const;
-
-        // Drops all history. Must be called when a scene file is loaded (the
-        // recorded indices would no longer match) and once at shutdown while
-        // the GL context is still valid (commands may own GPU resources of
-        // deleted objects).
-        void clear();
-
-        // Invoked after every successful undo/redo so dependent systems
-        // (voxelizer, SpaceMouse bounds, selection state) can resynchronize.
-        void setSceneChangedCallback(std::function<void()> callback);
-
-        // Invoked whenever the scene is mutated through the undo system
-        // (record / undo / redo). Used to flag the scene as having unsaved
-        // changes. Not called by clear() (which runs on scene load/shutdown).
-        void setModifiedCallback(std::function<void()> callback);
-
-    private:
-        UndoManager() = default;
-        static constexpr size_t kMaxUndoEntries = 64;
-
-        std::vector<std::unique_ptr<UndoCommand>> undoStack;
-        std::vector<std::unique_ptr<UndoCommand>> redoStack;
-        std::function<void()> sceneChangedCallback;
-        std::function<void()> modifiedCallback;
-    };
-
-    // -----------------------------------------------------------------------
-    // High-level helpers used by the GUI and input callbacks. They operate on
-    // the global scene containers (currentScene, pointLights, spotLights).
-    // -----------------------------------------------------------------------
-    namespace Undo {
-
-        // Snapshot of every property the GUI panels can edit on a Mesh.
-        struct MeshMaterialState {
-            bool visible = true;
-            glm::vec3 color = glm::vec3(1.0f);
-            float shininess = 32.0f;
-            float emissive = 0.0f;
-        };
-
-        // Snapshot of every property the GUI panels can edit on a Model.
-        // Mesh geometry is intentionally not captured; mesh add/remove is
-        // recorded as a separate structural command.
-        struct ModelEditState {
-            glm::vec3 position = glm::vec3(0.0f);
-            glm::vec3 rotation = glm::vec3(0.0f);
-            glm::vec3 scale = glm::vec3(1.0f);
-            bool visible = true;
-            glm::vec3 color = glm::vec3(1.0f);
-            float shininess = 1.0f;
-            float emissive = 0.0f;
-            float metallicFactor = 0.0f;
-            float roughnessFactor = 0.5f;
-            glm::vec3 F0 = glm::vec3(0.04f);
-            float normalScale = 1.0f;
-            float heightScale = 0.02f;
-            float diffuseReflectivity = 0.8f;
-            glm::vec3 specularColor = glm::vec3(1.0f);
-            float specularDiffusion = 0.5f;
-            float specularReflectivity = 0.0f;
-            float refractiveIndex = 1.0f;
-            float transparency = 0.0f;
-            MaterialType materialType = MaterialType::CONCRETE;
-            std::vector<MeshMaterialState> meshMaterials;
-
-            static ModelEditState capture(const Model& model);
-            void apply(Model& model) const;
-            bool operator==(const ModelEditState& other) const;
-            bool operator!=(const ModelEditState& other) const { return !(*this == other); }
-        };
-
-        // Snapshot of every property the GUI panels can edit on a PointCloud.
-        struct PointCloudEditState {
-            glm::vec3 position = glm::vec3(0.0f);
-            glm::vec3 rotation = glm::vec3(0.0f);
-            glm::vec3 scale = glm::vec3(1.0f);
-            bool visible = true;
-            float basePointSize = 2.0f;
-
-            static PointCloudEditState capture(const PointCloud& pointCloud);
-            void apply(PointCloud& pointCloud) const;
-            bool operator==(const PointCloudEditState& other) const;
-            bool operator!=(const PointCloudEditState& other) const { return !(*this == other); }
-        };
-
-        // Property edits. All of these are no-ops when before == after, so
-        // callers can invoke them unconditionally at the end of an edit
-        // gesture. Lights and the sun are small PODs and use full copies as
-        // their edit snapshots.
-        void recordModelEdit(int index, const ModelEditState& before, const ModelEditState& after);
-        void recordPointCloudEdit(int index, const PointCloudEditState& before, const PointCloudEditState& after);
-        void recordPointLightEdit(int index, const PointLight& before, const PointLight& after);
-        void recordSpotLightEdit(int index, const SpotLight& before, const SpotLight& after);
-        void recordSunEdit(const Sun& before, const Sun& after);
-
-        // Viewport drag moves (Ctrl+drag). No-ops when before == after.
-        void recordModelMoved(int index, const glm::vec3& before, const glm::vec3& after);
-        void recordPointLightMoved(int index, const glm::vec3& before, const glm::vec3& after);
-        void recordSpotLightMoved(int index, const glm::vec3& before, const glm::vec3& after);
-
-        // Structural edits: these PERFORM the deletion and record it. Deleted
-        // objects are moved into the undo entry (keeping their GPU resources
-        // alive) and moved back into the scene on undo.
-        void deleteModel(int index);
-        void deletePointCloud(int index);
-        void deletePointLight(int index);
-        void deleteSpotLight(int index);
-        void deleteMesh(int modelIndex, int meshIndex);
-        void deleteSceneGroup(std::vector<int> modelIndices,
-                              std::vector<int> pointCloudIndices,
-                              std::vector<int> pointLightIndices,
-                              std::vector<int> spotLightIndices);
-
-        // Additions: call right after the new object was appended to its
-        // container so the addition can be undone.
-        void recordModelAdded(int index);
-        void recordPointCloudAdded(int index);
-        void recordPointLightAdded(int index);
-        void recordSpotLightAdded(int index);
-
+    // Fired after any successful undo/redo so dependent systems (bounds,
+    // selection, shadow/BVH rebuilds) can resynchronize.
+    void setSceneChangedCallback(std::function<void()> callback) {
+        sceneChanged_ = std::move(callback);
+    }
+    // Fired whenever the scene is mutated through the manager (record/undo/redo)
+    // so the host can flag unsaved changes. NOT fired by clear().
+    void setModifiedCallback(std::function<void()> callback) {
+        modified_ = std::move(callback);
     }
 
-}
+private:
+    static constexpr size_t kMaxUndoEntries = 128;
+
+    std::vector<std::unique_ptr<UndoCommand>> undoStack_;
+    std::vector<std::unique_ptr<UndoCommand>> redoStack_;
+    std::function<void()> sceneChanged_;
+    std::function<void()> modified_;
+};
+
+} // namespace core

@@ -5,10 +5,24 @@
 #include "Cursors/Types/FragmentCursor.h"
 #include "Cursors/Types/PlaneCursor.h"
 #include "Cursors/Types/SphereCursor.h"
+#include <glm/glm.hpp>
 #include <memory>
 
+struct GLFWwindow;
+
+namespace renderer {
+class OverlayDrawList;
+struct FragmentCursorState;
+struct DepthReadback;
+}
+
 namespace Cursor {
-// Central manager for all cursor types
+// Central manager for all cursor types. Vulkan-era picking: instead of a
+// synchronous glReadPixels, the manager samples the renderer's depth-picking
+// readback (a small rect under the mouse, copied every frame and published
+// one frame later — the GL read was equally one frame stale) and
+// reconstructs the world position with the invViewProj THAT RENDERED the
+// depth, so camera motion can't smear the picked point.
 class CursorManager {
 public:
   CursorManager();
@@ -17,54 +31,39 @@ public:
   // Initialize all cursor types
   void initialize();
 
-  // Update cursor position based on ray casting
+  // Update the shared 3D cursor from the latest depth readback. `depth` is
+  // Renderer::depthSamples() (one frame stale — same class as the GL
+  // glReadPixels path); proj/view are the CURRENT camera matrices (used only
+  // for the background-plane fallback, like the GL version).
   void updateCursorPosition(GLFWwindow *window, const glm::mat4 &projection,
-                            const glm::mat4 &view, Engine::Shader *shader);
-
-  // Update cursor position with control over when to actually calculate
-  void updateCursorPosition(GLFWwindow *window, const glm::mat4 &projection,
-                            const glm::mat4 &view, Engine::Shader *shader,
+                            const glm::mat4 &view, const Camera &camera,
+                            const renderer::DepthReadback &depth,
                             bool forceRecalculate);
-
-  // Update cursor position with stereo support (checks both eye buffers)
-  void updateCursorPosition(GLFWwindow *window, const glm::mat4 &projection,
-                            const glm::mat4 &view, Engine::Shader *shader,
-                            bool forceRecalculate, bool isStereo,
-                            const glm::mat4 *leftProjection = nullptr,
-                            const glm::mat4 *leftView = nullptr,
-                            const glm::mat4 *rightProjection = nullptr,
-                            const glm::mat4 *rightView = nullptr);
 
   // Reset frame calculation flag (call at start of each frame)
   void resetFrameCalculationFlag();
 
   // Define the sub-rectangle of the render target the scene is drawn into, so
   // mouse picking maps correctly when the 3D viewport doesn't fill the window.
-  //  originX/originYGL : bottom-left of the scene region in the currently bound
-  //                      framebuffer's pixel space (GL origin, bottom-left).
-  //  width/height      : size of the scene region in pixels.
-  //  leftInset/topInset: window-space gap to the left of / above the region,
-  //                      used to convert the OS cursor position into the region.
-  // Defaults (all zero / unset) reproduce full-window behavior.
-  void setViewport(int originX, int originYGL, int width, int height,
+  // Vulkan-era coordinates are top-left origin (originY = top). Defaults (all
+  // zero / unset) reproduce full-window behavior.
+  void setViewport(int originX, int originYTop, int width, int height,
                    int leftInset, int topInset);
 
-  // Render all visible cursors
-  void renderCursors(const glm::mat4 &projection, const glm::mat4 &view);
+  // Append all visible cursors to the overlay draw list.
+  void renderCursors(renderer::OverlayDrawList &list, const Camera &camera);
 
-  // Update fragment shader uniforms for cursors
-  void updateShaderUniforms(Engine::Shader *shader);
-
-  // Clean up all cursors
-  void cleanup();
+  // Fill the fragment-cursor state consumed by mesh.frag via FrameSubmission.
+  void fillFragmentCursorState(renderer::FragmentCursorState &out,
+                               const Camera &camera) const;
 
   // Getters for cursor instances
   SphereCursor *getSphereCursor() { return m_sphereCursor.get(); }
   FragmentCursor *getFragmentCursor() { return m_fragmentCursor.get(); }
   PlaneCursor *getPlaneCursor() { return m_planeCursor.get(); }
 
-  // Orbit center rendering
-  void renderOrbitCenter(const glm::mat4 &projection, const glm::mat4 &view,
+  // Orbit center rendering (appends to the overlay list).
+  void renderOrbitCenter(renderer::OverlayDrawList &list,
                          const glm::vec3 &orbitPoint);
 
   // Orbit center properties
@@ -93,18 +92,15 @@ public:
 
   // Force the shared 3D cursor onto an explicit world point (e.g. a transform
   // gizmo handle), updating every cursor type so the visible cursor sits
-  // exactly there at that depth. Lets tools that draw their own always-on-top
-  // overlay keep the 3D cursor glued to them instead of punching through to the
-  // geometry behind. Call after updateCursorPosition() for the frame.
-  void setForcedCursorPosition(const glm::vec3 &position);
+  // exactly there at that depth. Call after updateCursorPosition() for the
+  // frame.
+  void setForcedCursorPosition(const glm::vec3 &position,
+                               const glm::vec3 &cameraPosition);
 
   // Enhanced cursor position setter that integrates with synchronization system
   void setCapturedCursorPositionWithSync(const glm::vec3 &position,
                                          bool enableSync = true) {
     setCapturedCursorPosition(position);
-
-    // If synchronization is enabled, this position will be used for cursor sync
-    // The actual synchronization happens in mouse button release handlers
   }
 
   // Background cursor position getters (for when cursor is over empty space)
@@ -120,15 +116,11 @@ public:
   void SetCursorInsideWindow(bool inside) { m_cursorInsideWindow = inside; }
 
   // Set cursor position lock (prevents updates while true)
-  // Used when adjusting parameters that affect projection matrices (like
-  // convergence) to keep visual cursor stable
   void setPositionLocked(bool locked) { m_positionLocked = locked; }
   bool isPositionLocked() const { return m_positionLocked; }
 
   // When enabled, the 3D cursor does not fall back to the Windows cursor over
-  // the background. Instead it stays at the last valid depth and follows the
-  // mouse at that depth until geometry is hit again. Useful for sparse point
-  // clouds where the cursor would otherwise flicker between 2D and 3D.
+  // the background; it stays at the last valid depth (see GL-era comments).
   void setKeepLastDepthOnBackground(bool keep) {
     m_keepLastDepthOnBackground = keep;
     if (!keep) {
@@ -139,11 +131,8 @@ public:
     return m_keepLastDepthOnBackground;
   }
 
-  // How the cached depth expires while the mouse is over the background.
-  // Mode values mirror GUI::CursorBackgroundCacheMode (0 = indefinite,
-  // 1 = timed, 2 = distance); kept as an int so this class stays free of the
-  // GUI headers. Time is in seconds off geometry, distance in screen pixels of
-  // mouse travel from the last geometry hit.
+  // Cache-expiry policy for the last-depth behaviour (values mirror
+  // GUI::CursorBackgroundCacheMode).
   void setBackgroundCacheMode(int mode) { m_backgroundCacheMode = mode; }
   int getBackgroundCacheMode() const { return m_backgroundCacheMode; }
   void setBackgroundCacheTime(float seconds) {
@@ -175,14 +164,13 @@ private:
   glm::vec4 m_orbitCenterColor;
   float m_orbitCenterSphereRadius;
 
-  // Window dimensions
+  // Window dimensions (framebuffer pixels, refreshed every update)
   int m_windowWidth;
   int m_windowHeight;
 
   // Scene-region sub-rectangle within the render target (see setViewport).
-  // Zero width/height means "unset" -> fall back to the full window.
   int m_vpOriginX = 0;
-  int m_vpOriginYGL = 0;
+  int m_vpOriginYTop = 0;
   int m_vpWidth = 0;
   int m_vpHeight = 0;
   int m_vpLeftInset = 0;
@@ -198,22 +186,19 @@ private:
   // Position locking
   bool m_positionLocked;
 
-  // Last-known-depth caching (see setKeepLastDepthOnBackground)
+  // Last-known-depth caching (reverse-Z [0,1] depth values now)
   bool m_keepLastDepthOnBackground = false;
-  float m_lastValidDepth = 0.5f; // depth buffer value of the last geometry hit
+  float m_lastValidDepth = 0.5f;
   bool m_hasLastValidDepth = false;
-  // Cache-expiry policy + the reference state captured at the last geometry hit
-  // so the timed / distance modes can decide when to give up the cached depth.
-  int m_backgroundCacheMode = 0;          // GUI::CursorBackgroundCacheMode
-  float m_backgroundCacheTime = 1.0f;     // seconds (timed mode)
+  int m_backgroundCacheMode = 0;            // GUI::CursorBackgroundCacheMode
+  float m_backgroundCacheTime = 1.0f;       // seconds (timed mode)
   float m_backgroundCacheDistance = 250.0f; // screen pixels (distance mode)
-  double m_lastHitTime = 0.0;             // glfwGetTime() at the last hit
-  float m_lastHitScreenX = 0.0f;          // window-space mouse pos at last hit
+  double m_lastHitTime = 0.0;               // glfwGetTime() at the last hit
+  float m_lastHitScreenX = 0.0f;
   float m_lastHitScreenY = 0.0f;
 
   // Helper function to calculate background cursor position
-  glm::vec3 calculateBackgroundCursorPosition(GLFWwindow *window,
-                                              const glm::mat4 &projection,
+  glm::vec3 calculateBackgroundCursorPosition(const glm::mat4 &projection,
                                               const glm::mat4 &view);
 };
 } // namespace Cursor

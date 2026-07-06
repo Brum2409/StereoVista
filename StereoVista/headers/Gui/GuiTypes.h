@@ -1,12 +1,14 @@
 #pragma once
 
-#include <glad/glad.h>
+// GPU-API-free since Phase 6 of the Vulkan migration (the glad include and
+// the GL-era GUI::PlaneCursor handle bundle are gone; the real PlaneCursor
+// lives in Cursors/Types and owns no GPU objects anymore).
+
 #include <glm/glm.hpp>
 #include <string>
 #include <vector>
 
 namespace Engine {
-class Shader;
 class CursorPreset;
 } // namespace Engine
 
@@ -110,14 +112,6 @@ struct FragmentShaderCursorSettings {
   float baseInnerBorderThickness = 0.005f;
   glm::vec4 outerColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
   glm::vec4 innerColor = glm::vec4(1.0f, 1.0f, 1.0f, 0.5f);
-};
-
-struct PlaneCursor {
-  GLuint VAO, VBO, EBO;
-  glm::vec4 color = glm::vec4(0.0f, 1.0f, 0.0f, 0.7f);
-  float diameter = 0.5f;
-  bool show = false;
-  Engine::Shader *shader = nullptr;
 };
 
 struct ApplicationPreferences {

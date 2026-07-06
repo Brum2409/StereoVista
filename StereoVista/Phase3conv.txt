@@ -1,0 +1,1748 @@
+ ▐▛███▜▌   Claude Code v2.1.199
+▝▜█████▛▘  Fable 5 · Claude Pro
+  ▘▘ ▝▝    ~\Downloads\Stereo Demo\StereoVista
+
+ ▎ Fable 5 is back.
+ ▎ Until July 7, you can use up to 50% of your plan's weekly usage limit on Fable 5. If you hit your limit, you can continue on Fable 5 with usage credits. Fable 5 draws down usage faster than Opus 4.8. Learn more
+
+❯ /clear                                                                        
+
+❯ /model                                                                        
+  ⎿  Set model to Fable 5 and saved as your default for new sessions
+
+❯ We are migrating StereoVista from OpenGL to Vulkan, one phase at a time. You  
+  are                                                                           
+  picking up at Phase 3 (Mesh forward PBR + shadow mapping). This is a native   
+  Vulkan REWRITE, not a line-by-line port — make it cleaner/faster/idiomatic,   
+  and                                                                           
+  FIX the OpenGL bugs rather than reproducing them.                             
+                                                                                
+  BEFORE writing any code, read these two docs in full:                         
+    1. docs/VULKAN_MIGRATION_STATUS.md   (READ THIS FIRST — living status,      
+  working                                                                       
+       rules, per-phase detail, session log)                                    
+    2. docs/VULKAN_MIGRATION.md          (design rationale + the "§6b           
+  Native-Vulkan                                                                 
+       Playbook" of best-practice nudges)                                       
+                                                                                
+  Then read the actual source you're about to touch — don't trust the docs as   
+  ground truth about the code (they lag). Key files: src/Renderer/Renderer.cpp, 
+  headers/Renderer/Renderer.h, headers/Renderer/passes/TonemapPass.h (the pass- 
+  object pattern to mirror), src/Loaders/ModelLoader.cpp, and the GL reference  
+  shaders under assets/shaders/core/ (fragmentShader.glsl, shadowMapping*,      
+  simpleDepth*, point-shadow cubemap, skybox).                                  
+                                                                                
+  START with the restructure, NOT with lighting. See the Phase 3 detail in      
+  STATUS §2 — the first "⚠ FIRST restructure the already-ported Renderer"       
+  bullet.                                                                       
+  Summary: Renderer::recordFrame currently INLINES the whole scene pass and the 
+  Renderer has NO scene input (updateViewUniforms fakes a swaying camera and    
+  draws                                                                         
+  a hardcoded triangle). If you bolt shadow/forward/skybox on as more inline    
+  blocks you rebuild the renderEye() monolith this migration exists to kill. So 
+  first:                                                                        
+    1. Extract ShadowPass / ForwardPass / SkyboxPass as objects mirroring       
+       TonemapPass; make recordFrame drive a pass LIST.                         
+    2. Give the Renderer a real per-frame scene input (camera matrices + draw   
+  list                                                                          
+       + lights).                                                               
+    3. Delete the Phase 2 demo scaffold (triangle VB/IB, checker texture,       
+       materialSampler_, trianglePipeline_, createTriangleScene) as the mesh    
+  path                                                                          
+       lands.                                                                   
+    4. Migrate ViewUniforms (Renderer.h) std140 -> layout(scalar) (playbook     
+  A.1).                                                                         
+                                                                                
+  Then the Phase 3 work itself (STATUS §2 Phase 3 "How" + "→ Nudges"):          
+  rhi::Buffer                                                                   
+  uploads for Mesh (reuse Assimp import as-is), per-view camera UBO (already    
+  multiview-aware — keep it that way, don't bake single-view assumptions),      
+  bindless materials via the reflected pipelines + bindingOverride, directional 
+  shadow map + point-light depth cubemap, skybox. Design for multiview NOW so   
+  Phase 7 stereo stays additive.                                                
+                                                                                
+  FIX these GL bugs instead of porting them (playbook §C, all verified          
+  present):                                                                     
+  one metallic-roughness PBR path (delete the Blinn-Phong duplication, C.3);    
+  drop                                                                          
+  the do-nothing SpotShadowCalculation stub or implement a real spot shadow     
+  (C.4);                                                                        
+  real per-light attenuation params (C.5); keep the lit pass linear-HDR only —  
+  no                                                                            
+  tonemap/sRGB (that lives in TonemapPass), sample albedo via sRGB image views  
+  (C6); principled normal-offset + slope-scaled shadow bias + one PCF path      
+  (C.7);                                                                        
+  bindless material struct instead of material.textures[16]/hasTexture-as-float 
+  (C.8). The RHI foundation (Device/Swapchain/Buffer/Texture/Pipeline/          
+  DescriptorAllocator/Barrier/TonemapPass/frame loop) is sound — build on it,   
+  no                                                                            
+  RHI rewrite needed.                                                           
+                                                                                
+  Working rules (from STATUS "READ ME FIRST"):                                  
+  - If unsure about a Vulkan API/extension/best pattern, DIG DEEPER: read more  
+    source and use the internet (Khronos spec/registry, Vulkan-Samples, vendor  
+    docs). Don't guess. For product/scope decisions only the owner can make,    
+  ASK.                                                                          
+  - Prefer good libraries over hand-rolling (e.g. meshoptimizer, KTX — playbook 
+    §D); if you add one, fully self-integrate it (vendor files + .vcxproj +     
+    .filters + post-build DLL copy + green build; keep license, avoid GPL) and  
+    record it in STATUS §4.                                                     
+  - Keep it compiling green (CI on push, or the local Windows/MSVC build). The  
+    agent environment can't run the GPU app — the USER verifies each phase      
+    visually on their machine. At the phase boundary: get the build green, then 
+    give the user concrete run/verify steps and wait for their result.          
+  - When you finish, UPDATE docs/VULKAN_MIGRATION_STATUS.md (phase board, Phase 
+  3                                                                             
+    detail, §4 decisions) and append a short dated Session Log entry.           
+                                                                                
+  Take your time. Restructure first, then land lighting incrementally.          
+
+● I'll start by reading the two migration docs in full, then the source files.
+
+  Read 2 files (ctrl+o to expand)
+
+● Let me read the remainder of the STATUS file (session log), then dive into the
+  source.
+
+  Read 6 files (ctrl+o to expand)
+
+● Now let me set up task tracking and read the RHI layer.
+
+  Read 3 files (ctrl+o to expand)
+
+  Searched for 4 patterns, read 11 files (ctrl+o to expand)
+● Now the Engine core types, shader compiler API, and swapchain interface:
+
+  Searched for 2 patterns, read 6 files (ctrl+o to expand)
+
+● Now the big GL reference shader. Let me map its structure first:
+
+  Searched for 2 patterns, read 7 files (ctrl+o to expand)
+
+● Now the ModelLoader implementation:
+
+  Searched for 1 pattern, read 3 files, ran 6 shell commands (ctrl+o to expand)
+
+● Now the Pipeline reflection implementation:
+
+  Searched for 2 patterns, read 4 files (ctrl+o to expand)
+
+● Source reading is essentially done. Let me check the last few details —
+  descriptor pool ratios, GUI defaults for skybox/import settings, and Window.h:
+
+  Searched for 1 pattern, read 3 files (ctrl+o to expand)
+
+● Reading is done — I have the full picture. Marking task 1 complete and
+  starting the implementation.
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● Now writing the code. First, the shared C++/GLSL header:
+
+● Write(assets\shaders_vk\scene_types.h)
+  ⎿  Wrote 106 lines to assets\shaders_vk\scene_types.h
+       1 #ifndef SV_SCENE_TYPES_H
+       3 
+       4 // =============================================================
+       5 // SINGLE SOURCE OF TRUTH for every GPU-visible scene struct (pl
+         aybook A.1).
+       7 // Included by BOTH languages:
+       8 //   * GLSL: `#include "scene_types.h"` from any shader in this 
+       9 //     blocks binding these structs must be declared `layout(...
+         , scalar)`
+         vice), which
+     … +126 lines (ctrl+o to expand)
+
+● Now the shaders. Mesh vertex + PBR fragment:
+
+● Write(assets\shaders_vk\mesh.vert)
+  ⎿  Wrote 33 lines to assets\shaders_vk\mesh.vert
+      1 #version 460
+      2 #extension GL_EXT_multiview : require
+      3 #extension GL_EXT_scalar_block_layout : require
+      4 
+      5 // Forward scene pass, multiview: camera data is a per-view array
+      6 // gl_ViewIndex (mono renders view 0 only). Projections are rever
+        se-Z, [0,1]
+      7 // depth, Y-flip baked in (Renderer/Projection.h).
+      8 
+      9 #include "scene_types.h"
+     … +28 lines (ctrl+o to expand)
+
+● Write(assets\shaders_vk\mesh.frag)
+  ⎿  Wrote 212 lines to assets\shaders_vk\mesh.frag
+       1 #version 460
+       3 #extension GL_EXT_scalar_block_layout : require
+       4 
+       5 // =============================================================
+       6 // Forward lit pass: ONE metallic-roughness Cook-Torrance path (
+         the GL
+         ately not
+       8 // ported — playbook C.3). Output is LINEAR HDR only; tone mappi
+         ng and sRGB
+      10 //
+     … +246 lines (ctrl+o to expand)
+
+● Now the depth-only shadow shaders and the skybox:
+
+● Write(assets\shaders_vk\depth_sun.vert)
+  ⎿  Wrote 16 lines to assets\shaders_vk\depth_sun.vert
+       1 #version 460
+       2 #extension GL_EXT_scalar_block_layout : require
+       4 // Sun shadow casters: depth-only, no fragment stage (early-Z fa
+         st path).
+       5 // sunViewProj is the reverse-Z ortho in FrameData.
+       7 #include "scene_types.h"
+       8 
+       9 layout(set = 0, binding = 0, scalar) uniform FrameBlock { FrameD
+      10 layout(push_constant, scalar) uniform PushBlock { DepthSunPush u
+         Push; };
+     … +10 lines (ctrl+o to expand)
+
+● Write(assets\shaders_vk\depth_point.vert)
+  ⎿  Wrote 21 lines to assets\shaders_vk\depth_point.vert
+      1 #version 460
+      3 #extension GL_EXT_scalar_block_layout : require
+      4 
+      5 // Point-light shadow casters: all 6 cube faces in ONE multiview 
+      6 // (viewMask 0x3F, gl_ViewIndex = face) — replaces the GL geometr
+        y-shader
+        e-Z face
+      8 // projection; the GL path's linear-distance gl_FragDepth write (
+        which killed
+        .
+     … +18 lines (ctrl+o to expand)
+
+● Write(assets\shaders_vk\skybox.vert)
+  ⎿  Wrote 13 lines to assets\shaders_vk\skybox.vert
+       1 #version 460
+       2 
+         FTER the
+       4 // opaque pass with GREATER_OR_EQUAL depth test (no write): only
+          background
+       6 
+       7 layout(location = 0) out vec2 vNdc;
+       8 
+      10     vec2 pos = vec2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 
+         2);
+     … +5 lines (ctrl+o to expand)
+
+● Write(assets\shaders_vk\skybox.frag)
+  ⎿  Wrote 53 lines to assets\shaders_vk\skybox.frag
+       1 #version 460
+       3 #extension GL_EXT_scalar_block_layout : require
+       4 
+       5 // Sky background. The view direction is reconstructed per pixel
+       6 // unprojecting the NDC position at the near plane (reverse-Z: z
+          = 1) through
+          multiview-
+       8 // correct by construction. Output is linear HDR (tonemap handle
+         s the rest).
+      10 #include "scene_types.h"
+     … +49 lines (ctrl+o to expand)
+
+● Update(headers\RHI\Texture.h)
+  ⎿  Added 2 lines
+      24      // VK_IMAGE_VIEW_TYPE_MAX_ENUM = derive: 1 layer -> 2D, els
+          e 2D_ARRAY.
+      25      VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_MAX_ENUM;
+      26      VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
+      27 +    // e.g. VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT for cube / cube
+         +-array views.                                                  
+      28 +    VkImageCreateFlags createFlags = 0;                        
+      29      const char* debugName = nullptr;
+      30  };
+      31  
+
+● Update(headers\RHI\Texture.h)
+  ⎿  Added 7 lines
+      60      // SHADER_READ_ONLY_OPTIMAL.
+      61      void upload(const void* pixels, size_t byteSize);
+      62  
+      63 +    // Extra view over a layer range (e.g. one cube face group 
+         +of a cube array                                                
+      64 +    // as a 2D_ARRAY attachment view). The CALLER owns the retu
+         +rned view and                                                  
+      65 +    // must vkDestroyImageView it before this texture is destro
+         +yed.                                                           
+      66 +    VkImageView createLayerView(VkImageViewType type, uint32_t 
+         +baseLayer,                                                     
+      67 +                                uint32_t layerCount,           
+      68 +                                const char* debugName = nullptr
+         +) const;                                                       
+      69 +                                                               
+      70      VkImage image() const { return image_; }
+      71      VkImageView view() const { return view_; }
+      72      VkFormat format() const { return desc_.format; }
+
+● Update(src\RHI\Texture.cpp)
+  ⎿  Added 1 line
+      89  
+      90      VkImageCreateInfo imgInfo{};
+      91      imgInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+      92 +    imgInfo.flags = desc.createFlags;                          
+      93      imgInfo.imageType = VK_IMAGE_TYPE_2D;
+      94      imgInfo.format = desc.format;
+      95      imgInfo.extent = { desc.extent.width, desc.extent.height, 1
+           };
+
+● Update(src\RHI\Texture.cpp)
+  ⎿  Added 22 lines
+      132      }
+      133  }
+      134  
+      135 +VkImageView Texture::createLayerView(VkImageViewType type, uin
+          +t32_t baseLayer,                                              
+      136 +                                     uint32_t layerCount,     
+      137 +                                     const char* debugName) co
+          +nst {                                                         
+      138 +    if (!valid())                                             
+      139 +        throw std::runtime_error("rhi::Texture::createLayerVie
+          +w on an invalid texture");                                    
+      140 +    VkImageViewCreateInfo viewInfo{};                         
+      141 +    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+      142 +    viewInfo.image = image_;                                  
+      143 +    viewInfo.viewType = type;                                 
+      144 +    viewInfo.format = desc_.format;                           
+      145 +    viewInfo.subresourceRange.aspectMask = aspect_;           
+      146 +    viewInfo.subresourceRange.levelCount = desc_.mipLevels;   
+      147 +    viewInfo.subresourceRange.baseArrayLayer = baseLayer;     
+      148 +    viewInfo.subresourceRange.layerCount = layerCount;        
+      149 +    VkImageView view = VK_NULL_HANDLE;                        
+      150 +    VK_CHECK(vkCreateImageView(device_->device(), &viewInfo, n
+          +ullptr, &view));                                              
+      151 +    if (debugName)                                            
+      152 +        device_->setDebugName(VK_OBJECT_TYPE_IMAGE_VIEW,      
+      153 +                              reinterpret_cast<uint64_t>(view)
+          +, debugName);                                                 
+      154 +    return view;                                              
+      155 +}                                                             
+      156 +                                                              
+      157  void Texture::upload(const void* pixels, size_t byteSize) {
+      158      if (!valid())
+      159          throw std::runtime_error("rhi::Texture::upload on an i
+           nvalid texture");
+
+● Now the Pipeline builder — optional fragment stage (depth-only) and static
+  depth bias:
+
+● Update(headers\RHI\Pipeline.h)
+  ⎿  Added 3 lines, removed 1 line
+       98  // COUNTER_CLOCKWISE front face, reverse-Z GREATER depth test.
+       99  class GraphicsPipelineBuilder {
+      100  public:
+      101 +    // fragmentSpirv may be empty for depth-only pipelines (sh
+          +adow casters):                                                
+      102 +    // no fragment stage, no color attachments — the early-Z f
+          +ast path.                                                     
+      103      GraphicsPipelineBuilder& setShaders(std::vector<uint32_t> 
+           vertexSpirv,
+      102 -                                        std::vector<uint32_t> 
+          -fragmentSpirv);                                               
+      104 +                                        std::vector<uint32_t> 
+          +fragmentSpirv = {});                                          
+      105      GraphicsPipelineBuilder& setColorFormats(std::vector<VkFor
+           mat> formats);
+      106      GraphicsPipelineBuilder& setDepthFormat(VkFormat format);
+      107      GraphicsPipelineBuilder& setViewMask(uint32_t mask);
+
+● Update(headers\RHI\Pipeline.h)
+  ⎿  Added 4 lines
+      111      GraphicsPipelineBuilder& setFrontFace(VkFrontFace face);
+      112      GraphicsPipelineBuilder& setDepth(bool test, bool write,
+      113                                        VkCompareOp op = VK_COMP
+           ARE_OP_GREATER);
+      114 +    // Static rasterizer depth bias for shadow casters. NOTE r
+          +everse-Z: to                                                  
+      115 +    // push casters AWAY from the light the offset must be NEG
+          +ATIVE (depth                                                  
+      116 +    // decreases with distance).                              
+      117 +    GraphicsPipelineBuilder& setDepthBias(float constantFactor
+          +, float slopeFactor);                                         
+      118      GraphicsPipelineBuilder& setBlend(BlendMode mode);
+      119      GraphicsPipelineBuilder& addVertexBinding(VertexBinding bi
+           nding);
+      120      GraphicsPipelineBuilder& bindingOverride(const BindingOver
+           ride& override_);
+● Update(headers\RHI\Pipeline.h)
+  ⎿  Added 3 lines
+      136      bool depthTest_ = false;
+      137      bool depthWrite_ = false;
+      138      VkCompareOp depthOp_ = VK_COMPARE_OP_GREATER;
+      139 +    bool depthBiasEnable_ = false;                            
+      140 +    float depthBiasConstant_ = 0.0f;                          
+      141 +    float depthBiasSlope_ = 0.0f;                             
+      142      BlendMode blend_ = BlendMode::Opaque;
+      143      std::vector<VertexBinding> vertexBindings_;
+      144      std::vector<BindingOverride> overrides_;
+
+● Update(src\RHI\Pipeline.cpp)
+  ⎿  Added 8 lines
+      344      return *this;
+      345  }
+      346  
+      347 +GraphicsPipelineBuilder& GraphicsPipelineBuilder::setDepthBias
+          +(float constantFactor,                                        
+      348 +                                                              
+          + float slopeFactor) {                                         
+      349 +    depthBiasEnable_ = true;                                  
+      350 +    depthBiasConstant_ = constantFactor;                      
+      351 +    depthBiasSlope_ = slopeFactor;                            
+      352 +    return *this;                                             
+      353 +}                                                             
+      354 +                                                              
+      355  GraphicsPipelineBuilder& GraphicsPipelineBuilder::setBlend(Ble
+           ndMode mode) {
+      356      blend_ = mode;
+      357      return *this;
+
+● Update(src\RHI\Pipeline.cpp)
+  ⎿  Added 10 lines, removed 5 lines
+      379  }
+      380  
+      381  Pipeline GraphicsPipelineBuilder::build(Device& device) {
+      382 -    if (vertexSpirv_.empty() || fragmentSpirv_.empty())       
+      383 -        throw std::runtime_error("Pipeline '" + debugName_ + "
+          -': missing shader stages");                                   
+      382 +    if (vertexSpirv_.empty())                                 
+      383 +        throw std::runtime_error("Pipeline '" + debugName_ + "
+          +': missing vertex shader");                                   
+      384 +    const bool hasFragment = !fragmentSpirv_.empty();         
+      385 +    if (!hasFragment && !colorFormats_.empty())               
+      386 +        throw std::runtime_error("Pipeline '" + debugName_ +  
+      387 +                                 "': color attachments need a 
+          +fragment shader");                                            
+      388      if (colorFormats_.empty() && depthFormat_ == VK_FORMAT_UND
+           EFINED)
+      389          throw std::runtime_error("Pipeline '" + debugName_ + "
+           ': no attachment formats");
+      390  
+      391      std::vector<StageReflection> stages;
+      392      stages.push_back(reflectStage(vertexSpirv_, debugName_));
+      389 -    stages.push_back(reflectStage(fragmentSpirv_, debugName_))
+          -;                                                             
+      393 +    if (hasFragment)                                          
+      394 +        stages.push_back(reflectStage(fragmentSpirv_, debugNam
+          +e_));                                                         
+      395      if (stages[0].stage != VK_SHADER_STAGE_VERTEX_BIT ||
+      391 -        stages[1].stage != VK_SHADER_STAGE_FRAGMENT_BIT)      
+      396 +        (hasFragment && stages[1].stage != VK_SHADER_STAGE_FRA
+          +GMENT_BIT))                                                   
+      397          throw std::runtime_error("Pipeline '" + debugName_ +
+      393 -                                 "': shaders are not a vertex+
+          -fragment pair");                                              
+      398 +                                 "': shaders are not a vertex(
+          ++fragment) pair");                                            
+      399  
+      400      MergedLayout merged = mergeStages(stages, debugName_);
+      401      applyOverrides(merged, overrides_, debugName_);
+
+● Update(src\RHI\Pipeline.cpp)
+  ⎿  Added 10 lines, removed 5 lines
+      416      pipeline.pushSize_ = pushSize;
+      417  
+      418      VkShaderModule vert = createModule(device, vertexSpirv_);
+      419 -    VkShaderModule frag = createModule(device, fragmentSpirv_)
+          -;                                                             
+      419 +    VkShaderModule frag = hasFragment ? createModule(device, f
+          +ragmentSpirv_)                                                
+      420 +                                      : VK_NULL_HANDLE;       
+      421  
+      422      VkPipelineShaderStageCreateInfo stageInfos[2]{};
+      423 +    uint32_t stageCount = 1;                                  
+      424      stageInfos[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_ST
+           AGE_CREATE_INFO;
+      425      stageInfos[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+      426      stageInfos[0].module = vert;
+      427      stageInfos[0].pName = stages[0].entryPoint.c_str();
+      426 -    stageInfos[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_ST
+          -AGE_CREATE_INFO;                                              
+      427 -    stageInfos[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;       
+      428 -    stageInfos[1].module = frag;                              
+      429 -    stageInfos[1].pName = stages[1].entryPoint.c_str();       
+      428 +    if (hasFragment) {                                        
+      429 +        stageInfos[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADE
+          +R_STAGE_CREATE_INFO;                                          
+      430 +        stageInfos[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;   
+      431 +        stageInfos[1].module = frag;                          
+      432 +        stageInfos[1].pName = stages[1].entryPoint.c_str();   
+      433 +        stageCount = 2;                                       
+      434 +    }                                                         
+      435  
+      436      std::vector<VkVertexInputBindingDescription> vkBindings;
+      437      std::vector<VkVertexInputAttributeDescription> vkAttribute
+           s;
+
+● Update(src\RHI\Pipeline.cpp)
+  ⎿  Added 3 lines
+      471      raster.polygonMode = polygonMode_;
+      472      raster.cullMode = cullMode_;
+      473      raster.frontFace = frontFace_;
+      474 +    raster.depthBiasEnable = depthBiasEnable_ ? VK_TRUE : VK_F
+          +ALSE;                                                         
+      475 +    raster.depthBiasConstantFactor = depthBiasConstant_;      
+      476 +    raster.depthBiasSlopeFactor = depthBiasSlope_;            
+      477      raster.lineWidth = 1.0f;
+      478  
+      479      VkPipelineMultisampleStateCreateInfo multisample{};
+
+● Update(src\RHI\Pipeline.cpp)
+  ⎿  Added 1 line, removed 1 line
+      534      VkGraphicsPipelineCreateInfo pipeInfo{};
+      535      pipeInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREAT
+           E_INFO;
+      536      pipeInfo.pNext = &rendering;
+      537 -    pipeInfo.stageCount = 2;                                  
+      537 +    pipeInfo.stageCount = stageCount;                         
+      538      pipeInfo.pStages = stageInfos;
+      539      pipeInfo.pVertexInputState = &vertexInput;
+      540      pipeInfo.pInputAssemblyState = &inputAssembly;
+
+● Update(src\RHI\Pipeline.cpp)
+  ⎿  Added 2 lines, removed 1 line
+      550                                         &pipeInfo, nullptr, &pi
+           peline.pipeline_));
+      551  
+      552      vkDestroyShaderModule(device.device(), vert, nullptr);
+      553 -    vkDestroyShaderModule(device.device(), frag, nullptr);    
+      553 +    if (frag != VK_NULL_HANDLE)                               
+      554 +        vkDestroyShaderModule(device.device(), frag, nullptr);
+      555  
+      556      device.setDebugName(VK_OBJECT_TYPE_PIPELINE,
+      557                          reinterpret_cast<uint64_t>(pipeline.pi
+           peline_),
+
+● Now Device.cpp — add imageCubeArray to the required feature set:
+
+● Update(src\RHI\Device.cpp)
+  ⎿  File must be read first
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(src\RHI\Device.cpp)
+  ⎿  Added 2 lines
+      31  
+      32  const FeatureRequirement kRequiredFeatures[] = {
+      33      { "samplerAnisotropy", &VkPhysicalDeviceFeatures::samplerAn
+          isotropy, nullptr, nullptr, nullptr },
+      34 +    // CUBE_ARRAY image views (point-light shadow cubemap array
+         +).                                                             
+      35 +    { "imageCubeArray", &VkPhysicalDeviceFeatures::imageCubeArr
+         +ay, nullptr, nullptr, nullptr },                               
+      36      { "shaderInt64", &VkPhysicalDeviceFeatures::shaderInt64, nu
+          llptr, nullptr, nullptr },
+      37      { "multiview", nullptr, &VkPhysicalDeviceVulkan11Features::
+          multiview, nullptr, nullptr },
+      38      { "shaderBufferInt64Atomics", nullptr, nullptr, &VkPhysical
+          DeviceVulkan12Features::shaderBufferInt64Atomics, nullptr },
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(src\RHI\Device.cpp)
+  ⎿  Added 4 lines
+      48      { "descriptorBindingUpdateUnusedWhilePending", nullptr, nul
+          lptr, &VkPhysicalDeviceVulkan12Features::descriptorBindingUpdat
+          eUnusedWhilePending, nullptr },
+      49      { "descriptorBindingVariableDescriptorCount", nullptr, null
+          ptr, &VkPhysicalDeviceVulkan12Features::descriptorBindingVariab
+          leDescriptorCount, nullptr },
+      50      { "shaderSampledImageArrayNonUniformIndexing", nullptr, nul
+          lptr, &VkPhysicalDeviceVulkan12Features::shaderSampledImageArra
+          yNonUniformIndexing, nullptr },
+      51 +    // HARD requirement since Phase 3: every scene shader binds
+         + its blocks                                                    
+      52 +    // with layout(scalar) against the shared C++/GLSL structs 
+         +(playbook A.1).                                                
+      53 +    // Universal on modern NVIDIA/AMD Windows drivers (the comp
+         +at target).                                                    
+      54 +    { "scalarBlockLayout", nullptr, nullptr, &VkPhysicalDeviceV
+         +ulkan12Features::scalarBlockLayout, nullptr },                 
+      55      { "hostQueryReset", nullptr, nullptr, &VkPhysicalDeviceVulk
+          an12Features::hostQueryReset, nullptr },
+      56      { "dynamicRendering", nullptr, nullptr, nullptr, &VkPhysica
+          lDeviceVulkan13Features::dynamicRendering },
+      57      { "synchronization2", nullptr, nullptr, nullptr, &VkPhysica
+          lDeviceVulkan13Features::synchronization2 },
+
+● Update(src\RHI\Device.cpp)
+  ⎿  Added 5 lines, removed 5 lines
+      378      enable2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES
+           _2;
+      379      enable2.pNext = &enable11;
+      380      enable2.features.samplerAnisotropy = VK_TRUE;
+      381 +    enable2.features.imageCubeArray = VK_TRUE;                
+      382      enable2.features.shaderInt64 = VK_TRUE;
+      383  
+      383 -    // scalarBlockLayout/shaderDrawParameters are enabled abov
+          -e without being                                               
+      384 -    // in the required table — verify them here so an exotic d
+          -river fails with                                              
+      385 -    // a clear message instead of VK_ERROR_FEATURE_NOT_PRESENT
+          -.                                                             
+      384 +    // shaderDrawParameters is enabled above without being in 
+          +the required                                                  
+      385 +    // table — verify it here so an exotic driver fails soft i
+          +nstead of                                                     
+      386 +    // VK_ERROR_FEATURE_NOT_PRESENT. (scalarBlockLayout used t
+          +o fall off the                                                
+      387 +    // same way; since Phase 3 it is a hard requirement checke
+          +d in the table.)                                              
+      388      QueriedFeatures avail;
+      389      avail.query(physicalDevice_);
+      388 -    if (!avail.v12.scalarBlockLayout)                         
+      389 -        enable12.scalarBlockLayout = VK_FALSE;                
+      390      if (!avail.v11.shaderDrawParameters)
+      391          enable11.shaderDrawParameters = VK_FALSE;
+      392  
+
+● RHI done. Now the renderer-side types — the C++ binder for the shared header,
+  the frame submission input, and the mesh buffer:
+
+● Write(headers\Renderer\GpuTypes.h)
+  ⎿  Wrote 41 lines to headers\Renderer\GpuTypes.h
+      1 #pragma once
+      2 
+        ource of
+      4 // truth is assets/shaders_vk/scene_types.h (see the header comme
+        nt there);
+         layout with
+      6 // static_asserts. All GPU buffers bound with layout(scalar) memc
+        py these
+      8 
+      9 #include <glm/glm.hpp>
+     … +45 lines (ctrl+o to expand)
+
+● Write(headers\Renderer\MeshBuffer.h)
+  ⎿  Wrote 65 lines to headers\Renderer\MeshBuffer.h
+      1 #pragma once
+      2 
+      3 #include "RHI/Buffer.h"
+      4 #include "RHI/Pipeline.h"
+      5 
+      6 #include <glm/glm.hpp>
+      7 
+      8 #include <cstdint>
+      9 #include <vector>
+     … +63 lines (ctrl+o to expand)
+
+● Write(headers\Renderer\FrameSubmission.h)
+  ⎿  Wrote 79 lines to headers\Renderer\FrameSubmission.h
+       1 #pragma once
+       2 
+       3 #include "Renderer/GpuTypes.h"
+       4 
+       5 #include <glm/glm.hpp>
+       6 
+       7 #include <cstdint>
+       8 #include <vector>
+       9 
+      10 namespace renderer {
+     … +79 lines (ctrl+o to expand)
+
+● Write(src\Renderer\MeshBuffer.cpp)
+  ⎿  Wrote 72 lines to src\Renderer\MeshBuffer.cpp
+      1 #include "Renderer/MeshBuffer.h"
+      2 
+      3 #include "RHI/Device.h"
+      4 
+      5 #include <cstddef>
+      6 #include <stdexcept>
+      7 #include <string>
+      8 
+      9 namespace renderer {
+     … +68 lines (ctrl+o to expand)
+
+● Now the MaterialSystem (bindless registry):
+
+● Write(headers\Renderer\MaterialSystem.h)  ⎿  Wrote 62 lines to headers\Renderer\MaterialSystem.h
+       1 #pragma once
+       2 
+       3 #include "RHI/Texture.h"
+       4 #include "RHI/VulkanCommon.h"
+       5 #include "Renderer/GpuTypes.h"
+       6 
+       7 #include <vector>
+       8 
+       9 namespace rhi {
+      10 class Device;
+     … +63 lines (ctrl+o to expand)
+
+● Write(src\Renderer\MaterialSystem.cpp)
+  ⎿  Wrote 142 lines to src\Renderer\MaterialSystem.cpp
+       1 #include "Renderer/MaterialSystem.h"
+       2 
+       3 #include "RHI/Device.h"
+       4 
+       5 #include <algorithm>
+       6 #include <stdexcept>
+       7 
+       8 namespace renderer {
+       9 
+      10 void MaterialSystem::init(rhi::Device& device) {
+     … +150 lines (ctrl+o to expand)
+
+● Now ShadowPass. First, add cube-face projection helpers to Projection.h:
+
+● Update(headers\Renderer\Projection.h)
+  ⎿  Added 25 lines
+       73      return flipY(reverseZ(glm::frustum(left, right, bottom, to
+           p, zNear, zFar)));
+       74  }
+       75  
+       76 +// ---- Cube-map face rendering (point-light shadows) ----    
+       77 +// DELIBERATELY NO flipY: the house Y-flip exists to keep the 
+          +PRESENTED image                                               
+       78 +// upright; a cube face is only ever resampled through the fix
+          +ed-function                                                   
+       79 +// cube lookup, whose direction→texel mapping is identical in 
+          +GL and Vulkan                                                 
+       80 +// (NDC -1..+1 maps to texel row 0..N the same way in both API
+          +s). Rendering                                                 
+       81 +// the faces with the classic GL cubemap view matrices and a p
+          +lain reverse-Z                                                
+       82 +// projection therefore reproduces GL sampling exactly; adding
+          + the flip would                                               
+       83 +// mirror every face. Winding does flip without the Y-flip — t
+          +he point-shadow                                               
+       84 +// pipeline culls NONE so it cannot matter.                   
+       85 +inline glm::mat4 perspectiveCubeFace(float zNear, float zFar) 
+          +{                                                             
+       86 +    return reverseZ(glm::perspective(glm::radians(90.0f), 1.0f
+          +, zNear, zFar));                                              
+       87 +}                                                             
+       88 +                                                              
+       89 +// faceIndex follows the cube-layer order +X,-X,+Y,-Y,+Z,-Z wi
+          +th the standard                                               
+       90 +// GL cubemap up vectors.                                     
+       91 +inline glm::mat4 cubeFaceView(const glm::vec3& eye, int faceIn
+          +dex) {                                                        
+       92 +    static const glm::vec3 dirs[6] = {                        
+       93 +        { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, 
+          +{ 0, 0, 1 }, { 0, 0, -1 },                                    
+       94 +    };                                                        
+       95 +    static const glm::vec3 ups[6] = {                         
+       96 +        { 0, -1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 },
+          + { 0, -1, 0 }, { 0, -1, 0 },                                  
+       97 +    };                                                        
+       98 +    return glm::lookAt(eye, eye + dirs[faceIndex], ups[faceInd
+          +ex]);                                                         
+       99 +}                                                             
+      100 +                                                              
+      101  } // namespace renderer
+
+● Update(headers\Renderer\FrameSubmission.h)
+  ⎿  Added 4 lines
+      32      glm::mat3 normalMatrix{ 1.0f };
+      33      uint32_t materialIndex = 0;
+      34      bool castsShadows = true;
+      35 +    // World-space bounding sphere; drives the sun shadow frust
+         +um fit (and                                                    
+      36 +    // later CPU culling). Radius 0 = unknown, treated as a poi
+         +nt.                                                            
+      37 +    glm::vec3 worldBoundsCenter{ 0.0f };                       
+      38 +    float worldBoundsRadius = 0.0f;                            
+      39  };
+      40  
+      41  struct SunState {
+
+● Write(headers\Renderer\passes\ShadowPass.h)
+  ⎿  Wrote 78 lines to headers\Renderer\passes\ShadowPass.h
+      1 #pragma once
+      2 
+      3 #include "RHI/Pipeline.h"
+      4 #include "RHI/Texture.h"
+      5 #include "RHI/VulkanCommon.h"
+      6 #include "Renderer/FrameSubmission.h"
+      7 #include "Renderer/GpuTypes.h"
+      8 
+      9 #include <vector>
+     … +89 lines (ctrl+o to expand)
+
+● Update(headers\Renderer\passes\ShadowPass.h)
+  ⎿  Added 1 line, removed 1 line
+      54  
+      55      // For the per-frame descriptor writes (set 0 bindings 3/4)
+          .
+      56      VkImageView sunShadowView() const { return sunShadow_.view(
+          ); }
+      57 -    VkImageView pointShadowView() const { return pointShadowSam
+         -pleView_; }                                                    
+      57 +    VkImageView pointShadowView() const { return pointShadow_.v
+         +iew(); }                                                       
+      58      VkSampler compareSampler2D() const { return compareSampler2
+          D_; }
+      59      VkSampler compareSamplerCube() const { return compareSample
+          rCube_; }
+      60  
+
+● Update(headers\Renderer\passes\ShadowPass.h)
+  ⎿  Added 2 lines, removed 2 lines
+      65      rhi::Device* device_ = nullptr;
+      66  
+      67      rhi::Texture sunShadow_;   // D32, kSunShadowResolution^2
+      68 -    rhi::Texture pointShadow_; // D32 cube array, 6 * kMaxShado
+         -wedPointLights                                                 
+      69 -    VkImageView pointShadowSampleView_ = VK_NULL_HANDLE; // CUB
+         -E_ARRAY                                                        
+      68 +    rhi::Texture pointShadow_; // D32 cube array (CUBE_ARRAY de
+         +fault view),                                                   
+      69 +                               // 6 * kMaxShadowedPointLights l
+         +ayers                                                          
+      70      VkImageView pointShadowFaceViews_[kMaxShadowedPointLights] 
+          = {}; // 6-layer 2D_ARRAY
+      71      VkSampler compareSampler2D_ = VK_NULL_HANDLE;
+      72      VkSampler compareSamplerCube_ = VK_NULL_HANDLE;
+
+● Write(src\Renderer\passes\ShadowPass.cpp)
+  ⎿  Wrote 333 lines to src\Renderer\passes\ShadowPass.cpp
+      1 #include "Renderer/passes/ShadowPass.h"
+      2 
+      3 #include "RHI/Barrier.h"
+      4 #include "RHI/Device.h"
+      5 #include "RHI/ShaderCompiler.h"
+      6 #include "Renderer/MeshBuffer.h"
+      7 #include "Renderer/Projection.h"
+      8 
+      9 #include <glm/gtc/matrix_transform.hpp>
+     … +400 lines (ctrl+o to expand)
+
+● Update(src\Renderer\passes\ShadowPass.cpp)
+  ⎿  Removed 2 lines
+      82              .setDebugName("sun shadow casters")
+      83              .build(device);
+      84  
+      85 -    sunPipeline_ = std::move(sunPipeline_); // (silence self-mo
+         -ve lint paranoia)                                              
+      86 -                                                               
+      85      pointPipeline_ =
+      86          rhi::GraphicsPipelineBuilder{}
+      87              .setShaders(shaderCompiler.load("assets/shaders_vk/
+          depth_point.vert"))
+
+● Update(src\Renderer\passes\ShadowPass.cpp)
+  ⎿  Added 1 line
+       9  #include <glm/gtc/matrix_transform.hpp>
+      10  
+      11  #include <algorithm>
+      12 +#include <cfloat>                                              
+      13  #include <cmath>
+      14  
+      15  namespace renderer {
+
+● Now ForwardPass and SkyboxPass:
+
+● Write(headers\Renderer\passes\ForwardPass.h)
+  ⎿  Wrote 39 lines to headers\Renderer\passes\ForwardPass.h
+       1 #pragma once
+       2 
+       3 #include "RHI/Pipeline.h"
+       4 #include "RHI/VulkanCommon.h"
+       5 #include "Renderer/FrameSubmission.h"
+       6 
+       7 namespace rhi {
+       8 class Device;
+       9 class ShaderCompiler;
+      10 }
+     … +36 lines (ctrl+o to expand)
+
+● Write(src\Renderer\passes\ForwardPass.cpp)
+  ⎿  Wrote 59 lines to src\Renderer\passes\ForwardPass.cpp
+       1 #include "Renderer/passes/ForwardPass.h"
+       2 
+       3 #include "RHI/Device.h"
+       4 #include "RHI/ShaderCompiler.h"
+       5 #include "Renderer/GpuTypes.h"
+       7 
+       8 namespace renderer {
+       9 
+      10 void ForwardPass::init(rhi::Device& device, rhi::ShaderCompiler&
+          shaderCompiler,
+     … +55 lines (ctrl+o to expand)
+
+● Write(headers\Renderer\passes\SkyboxPass.h)
+  ⎿  Wrote 70 lines to headers\Renderer\passes\SkyboxPass.h
+       1 #pragma once
+       2 
+       3 #include "RHI/Pipeline.h"
+       4 #include "RHI/Texture.h"
+       5 #include "RHI/VulkanCommon.h"
+       6 #include "Renderer/FrameSubmission.h"
+       7 
+       8 #include <string>
+       9 
+      10 namespace rhi {
+     … +71 lines (ctrl+o to expand)
+
+● Write(headers\Platform\Paths.h)
+  ⎿  Wrote 51 lines to headers\Platform\Paths.h
+       1 #pragma once
+       3 // Asset/file path resolution shared by every runtime loader: tr
+         y the working
+       4 // directory first (VS debugging runs with the project dir as cw
+       5 // source assets live), then next to the executable (the post-bu
+         ild robocopy
+         ...\*.exe from
+       7 // a checkout). Returns an empty path when nothing exists.
+       8 
+      10 #include <string>
+     … +47 lines (ctrl+o to expand)
+
+● Write(src\Renderer\passes\SkyboxPass.cpp)
+  ⎿  Wrote 234 lines to src\Renderer\passes\SkyboxPass.cpp
+      1 #include "Renderer/passes/SkyboxPass.h"
+      2 
+      3 #include "Platform/Paths.h"
+      4 #include "RHI/Device.h"
+      5 #include "RHI/ShaderCompiler.h"
+      6 
+      7 #include <glm/gtc/packing.hpp>
+      8 
+      9 #include <stb_image.h>
+     … +259 lines (ctrl+o to expand)
+
+● Update(src\Renderer\passes\SkyboxPass.cpp)
+  ⎿  Added 1 line
+       9  #include <stb_image.h>
+      10  
+      11  #include <cstdint>
+      12 +#include <cstring>                                             
+      13  #include <iostream>
+      14  #include <vector>
+      15  
+● Now the core restructure — rewriting Renderer.h:
+
+● Write(headers\Renderer\Renderer.h)
+  ⎿  Added 66 lines, removed 31 lines
+       6  #include "RHI/Swapchain.h"
+       7  #include "RHI/Texture.h"
+       8  #include "RHI/VulkanCommon.h"
+       9 +#include "Renderer/FrameSubmission.h"                          
+      10 +#include "Renderer/GpuTypes.h"                                 
+      11 +#include "Renderer/MaterialSystem.h"                           
+      12 +#include "Renderer/passes/ForwardPass.h"                       
+      13 +#include "Renderer/passes/ShadowPass.h"                        
+      14 +#include "Renderer/passes/SkyboxPass.h"                        
+      15  #include "Renderer/passes/TonemapPass.h"
+      16  
+      17  #include <glm/glm.hpp>
+     ...
+      31  
+      32  // Frame orchestration for the Vulkan renderer.
+      33  //
+      34 +// SCENE INPUT: the renderer holds no scene state. Every frame 
+         +the application                                                
+      35 +// hands it a FrameSubmission (cameras + draw list + lights + s
+         +ky); rendering                                                 
+      36 +// is a fixed sequence of PASS OBJECTS over that submission:   
+      37 +//                                                             
+      38 +//   ShadowPass (sun map + point cubemaps)          [own depth 
+         +targets]                                                       
+      39 +//     -> ForwardPass (single metallic-roughness PBR, linear HD
+         +R)                                                             
+      40 +//     -> SkyboxPass (background, depth-tested)     [multiview 
+         +scene target]                                                  
+      41 +//     -> TonemapPass + ImGui in ONE backbuffer pass           
+      42 +//     -> optional screenshot copy -> present.                 
+      43 +//                                                             
+      44 +// recordFrame only sequences the passes and owns the frame-gra
+         +ph barriers                                                    
+      45 +// between them; everything drawn lives in the pass objects (th
+         +e renderEye()                                                  
+      46 +// monolith this migration kills must not regrow here).        
+      47 +//                                                             
+      48  // MULTIVIEW BY DESIGN: the scene is always drawn into a layere
+          d offscreen
+      29 -// target through VK_KHR_multiview (core 1.1). The camera UBO i
+         -s a per-view                                                   
+      49 +// target through VK_KHR_multiview (core 1.1). Camera data is a
+         + per-view                                                      
+      50  // array indexed by gl_ViewIndex in every shader. Mono is simpl
+          y viewCount()
+      51  // == 1; quad-buffer stereo (Phase 7) raises it to 2 and resolv
+          es both layers
+      52  // to a stereo swapchain — nothing in the scene pass changes. D
+          o not write
+      53  // single-view assumptions into passes or shaders.
+      54  //
+      35 -// Frame shape since Phase 2:                                  
+      36 -//   scene pass (multiview, HDR RGBA16F + reverse-Z D32)       
+      37 -//     -> tonemap resolve + ImGui in ONE backbuffer render pass
+      38 -//     -> optional screenshot copy-to-buffer -> present.       
+      55 +// DESCRIPTORS: set 0 is ONE shared per-frame set (layout below
+         +) written once                                                 
+      56 +// per frame and bound by every scene pipeline (via externalSet
+         +Layout); set 1                                                 
+      57 +// is the MaterialSystem's persistent bindless set. Per-draw da
+         +ta rides push                                                  
+      58 +// constants. GPU-visible structs live in assets/shaders_vk/sce
+         +ne_types.h                                                     
+      59 +// (scalar layout, shared with GLSL — playbook A.1).           
+      60  //
+      61  // Synchronization: one timeline semaphore paces the CPU agains
+          t the GPU
+      62  // (per-slot wait before reuse — no fences); binary semaphores 
+          exist only
+      42 -// where WSI demands them (acquire per frame slot, present per 
+         -swapchain                                                      
+      43 -// image). All barriers/submits use synchronization2.          
+      63 +// where WSI demands them. All barriers/submits use synchroniza
+         +tion2.                                                         
+      64  class Renderer {
+      65  public:
+      66      static constexpr uint32_t kFramesInFlight = 2;
+      47 -    static constexpr uint32_t kMaxViews = 2;                   
+      67  
+      68      // Where the frame time goes, exponentially smoothed. slotW
+          aitMs is the
+      69      // CPU blocking on this slot's previous GPU submission; acq
+          uireMs and
+     ...
+       87      // Rebuilds the size-dependent scene target after the swap
+           chain changed.
+       88      void onSwapchainRecreated();
+       89  
+       71 -    // Records + submits + presents one frame. uiDrawData may 
+          -be null (UI not                                               
+       72 -    // built this frame). OutOfDate means nothing was presente
+          -d — the caller                                                
+       73 -    // recreates the swapchain and calls onSwapchainRecreated(
+          -). Suboptimal                                                 
+       74 -    // still presented; the caller decides whether a recreate 
+          -is worth it.                                                  
+       75 -    rhi::PresentResult renderFrame(ImDrawData* uiDrawData, dou
+          -ble timeSeconds);                                             
+       90 +    // Records + submits + presents one frame of the submitted
+          + scene.                                                       
+       91 +    // uiDrawData may be null (UI not built this frame). OutOf
+          +Date means                                                    
+       92 +    // nothing was presented — the caller recreates the swapch
+          +ain and calls                                                 
+       93 +    // onSwapchainRecreated(). Suboptimal still presented; the
+          + caller decides                                               
+       94 +    // whether a recreate is worth it.                        
+       95 +    rhi::PresentResult renderFrame(const FrameSubmission& subm
+          +ission,                                                       
+       96 +                                   ImDrawData* uiDrawData);   
+       97  
+       98      uint32_t viewCount() const { return viewCount_; }
+       99      const FrameStats& frameStats() const { return frameStats_;
+            }
+      100  
+      101 +    // Scene-resource registries the loaders feed (valid after
+          + init()).                                                     
+      102 +    MaterialSystem& materials() { return materials_; }        
+      103 +    SkyboxPass& skybox() { return skyboxPass_; }              
+      104 +                                                              
+      105      TonemapSettings& tonemapSettings() { return tonemapSetting
+           s_; }
+      106  
+      107      // Queues a capture of the next presented frame (tonemappe
+           d scene + UI) to
+     ...
+      112      const std::string& screenshotStatus() const { return scree
+           nshotStatus_; }
+      113  
+      114  private:
+       90 -    // GPU camera data, one slot per multiview view (std140-co
+          -mpatible).                                                    
+       91 -    struct ViewUniforms {                                     
+       92 -        glm::mat4 viewProj[kMaxViews];                        
+       93 -        glm::vec4 cameraPos[kMaxViews];                       
+       94 -    };                                                        
+       95 -                                                              
+      115      struct FrameContext {
+      116          VkCommandPool commandPool = VK_NULL_HANDLE;
+      117          VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+      118          VkSemaphore acquireSemaphore = VK_NULL_HANDLE;
+      119          rhi::DescriptorAllocator descriptors;
+      101 -        rhi::Buffer viewUbo;                                  
+      120 +        rhi::Buffer frameUbo;      // gpu::FrameData          
+      121 +        rhi::Buffer lightsBuffer;  // gpu::PointLightData[kMax
+          +PointLights]                                                  
+      122 +        rhi::Buffer materialsBuffer; // gpu::MaterialData[], g
+          +rown on demand                                                
+      123          uint64_t submittedTimelineValue = 0;
+      124      };
+      125  
+     ...
+      139      void createFrameContexts();
+      140      void destroyFrameContexts();
+      141      void createSceneTarget();
+      121 -    void createTriangleScene(rhi::ShaderCompiler& shaderCompil
+          -er);                                                          
+      122 -    void updateViewUniforms(FrameContext& frame, double timeSe
+          -conds);                                                       
+      123 -    void recordFrame(FrameContext& frame, uint32_t imageIndex,
+          - ImDrawData* uiDrawData,                                      
+      142 +    void createFrameSetLayout();                              
+      143 +    // Fills the frame UBO/SSBO staging structs from the submi
+          +ssion; returns                                                
+      144 +    // the number of point-shadow slots ShadowPass assigned.  
+      145 +    uint32_t buildFrameData(const FrameSubmission& submission,
+          + gpu::FrameData& frame,                                       
+      146 +                            std::vector<gpu::PointLightData>& 
+          +lights) const;                                                
+      147 +    void uploadFrameBuffers(FrameContext& frame, const gpu::Fr
+          +ameData& frameData,                                           
+      148 +                            const std::vector<gpu::PointLightD
+          +ata>& lights);                                                
+      149 +    VkDescriptorSet writeFrameSet(FrameContext& frame,        
+      150 +                                  const std::vector<gpu::Point
+          +LightData>& lights);                                          
+      151 +    void recordFrame(FrameContext& frame, uint32_t imageIndex,
+      152 +                     const FrameSubmission& submission, VkDesc
+          +riptorSet frameSet,                                           
+      153 +                     uint32_t shadowedLightCount, ImDrawData* 
+          +uiDrawData,                                                   
+      154                       bool captureThisFrame);
+      155      void pollScreenshot(bool blockUntilDone);
+      156      void finishScreenshot();
+     ...
+      174      static constexpr VkFormat kSceneColorFormat = VK_FORMAT_R1
+           6G16B16A16_SFLOAT;
+      175      static constexpr VkFormat kSceneDepthFormat = VK_FORMAT_D3
+           2_SFLOAT;
+      176  
+      147 -    // Phase 2 demo scene: staged-upload vertex/index buffers 
+          -+ mipmapped                                                   
+      148 -    // checker texture through the reflected pipeline. Replace
+          -d by the real                                                 
+      149 -    // mesh renderer in Phase 3.                              
+      150 -    rhi::Pipeline trianglePipeline_;                          
+      151 -    rhi::Buffer triangleVertices_;                            
+      152 -    rhi::Buffer triangleIndices_;                             
+      153 -    rhi::Texture checkerTexture_;                             
+      154 -    VkSampler materialSampler_ = VK_NULL_HANDLE;              
+      177 +    // Shared per-frame set layout (set 0 of every scene pipel
+          +ine):                                                         
+      178 +    //   0 UBO    FrameData                      (vertex | fra
+          +gment)                                                        
+      179 +    //   1 SSBO   PointLightData[]               (fragment)   
+      180 +    //   2 SSBO   MaterialData[]                 (fragment)   
+      181 +    //   3 CIS    sun shadow map + compare       (fragment)   
+      182 +    //   4 CIS    point shadow cube array + cmp  (fragment)   
+      183 +    //   5 CIS    sky cubemap                    (fragment)   
+      184 +    //   6 CIS    sky equirect                   (fragment)   
+      185 +    VkDescriptorSetLayout frameSetLayout_ = VK_NULL_HANDLE;   
+      186  
+      187 +    MaterialSystem materials_;                                
+      188 +    ShadowPass shadowPass_;                                   
+      189 +    ForwardPass forwardPass_;                                 
+      190 +    SkyboxPass skyboxPass_;                                   
+      191      TonemapPass tonemapPass_;
+      192      TonemapSettings tonemapSettings_;
+      193      VkFormat tonemapTargetFormat_ = VK_FORMAT_UNDEFINED;
+
+● Now the Renderer.cpp rewrite:
+
+● Write(src\Renderer\Renderer.cpp)
+  ⎿  Added 176 lines, removed 150 lines
+       5  #include "RHI/Device.h"
+       6  #include "RHI/ShaderCompiler.h"
+       7  #include "RHI/Swapchain.h"
+       8 -#include "Renderer/Projection.h"                               
+       8  
+      10 -#include <glm/gtc/matrix_transform.hpp>                        
+       9 +#include <glm/gtc/matrix_inverse.hpp>                          
+      10  
+      11  #include "imgui/imgui.h"
+      12  #include "imgui/backends/imgui_impl_vulkan.h"
+      13  
+      14  #include <algorithm>
+      15  #include <chrono>
+      17 -#include <cmath>                                               
+      18 -#include <cstddef>                                             
+      16  #include <cstring>
+      17  #include <iostream>
+      18  
+     ...
+      30      average += 0.08f * (sample - average);
+      31  }
+      32  
+      36 -// Phase 2 demo geometry (real mesh rendering replaces this in 
+         -Phase 3).                                                      
+      37 -// Same on-screen triangle as Phase 1, but now sourced from sta
+         -ged-upload                                                     
+      38 -// vertex/index buffers, with HDR vertex intensities (top corne
+         -r 8x, right                                                    
+      39 -// corner 0.25x) so the tonemap operators have range to show, a
+         -nd checker                                                     
+      40 -// UVs to prove sampling + the generated mip chain.            
+      41 -struct DemoVertex {                                            
+      42 -    float position[3];                                         
+      43 -    float color[3];                                            
+      44 -    float uv[2];                                               
+      45 -};                                                             
+      33 +constexpr uint32_t kInitialMaterialCapacity = 256;             
+      34  
+      47 -const DemoVertex kTriangleVertices[3] = {                      
+      48 -    { {  0.0f,  0.8f, 0.0f }, { 7.6f,   2.8f,   2.4f  }, { 3.0f
+         -, 0.0f } },                                                    
+      49 -    { { -0.8f, -0.5f, 0.0f }, { 0.35f,  0.85f,  0.45f }, { 0.0f
+         -, 6.0f } },                                                    
+      50 -    { {  0.8f, -0.5f, 0.0f }, { 0.075f, 0.125f, 0.24f }, { 6.0f
+         -, 6.0f } },                                                    
+      51 -};                                                             
+      52 -                                                               
+      53 -const uint32_t kTriangleIndices[3] = { 0, 1, 2 };              
+      54 -                                                               
+      35  } // namespace
+      36  
+      37  void Renderer::init(rhi::Device& device, rhi::Swapchain& swapch
+          ain,
+     ...
+      51  
+      52      createFrameContexts();
+      53      createSceneTarget();
+      74 -    createTriangleScene(shaderCompiler);                       
+      54  
+      55 +    materials_.init(device);                                   
+      56 +    createFrameSetLayout();                                    
+      57 +                                                               
+      58 +    const uint32_t viewMask = (1u << viewCount_) - 1u;         
+      59 +    shadowPass_.init(device, shaderCompiler, frameSetLayout_); 
+      60 +    forwardPass_.init(device, shaderCompiler, kSceneColorFormat
+         +, kSceneDepthFormat,                                           
+      61 +                      viewMask, frameSetLayout_, materials_.set
+         +Layout());                                                     
+      62 +    skyboxPass_.init(device, shaderCompiler, kSceneColorFormat,
+         + kSceneDepthFormat,                                            
+      63 +                     viewMask, frameSetLayout_);               
+      64 +                                                               
+      65      tonemapTargetFormat_ = swapchain_->format();
+      66      tonemapPass_.init(device, shaderCompiler, tonemapTargetForm
+          at_);
+      67  }
+     ...
+       90          frame.descriptors.init(*device_, 64);
+       91  
+       92          rhi::BufferDesc uboDesc{};
+      104 -        uboDesc.size = sizeof(ViewUniforms);                  
+       93 +        uboDesc.size = sizeof(gpu::FrameData);                
+       94          uboDesc.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+       95          uboDesc.memory = rhi::MemoryUsage::HostUpload;
+      107 -        uboDesc.debugName = "view uniforms";                  
+      108 -        frame.viewUbo.create(*device_, uboDesc);              
+       96 +        uboDesc.debugName = "frame data";                     
+       97 +        frame.frameUbo.create(*device_, uboDesc);             
+       98 +                                                              
+       99 +        rhi::BufferDesc lightsDesc{};                         
+      100 +        lightsDesc.size = sizeof(gpu::PointLightData) * kMaxPo
+          +intLights;                                                    
+      101 +        lightsDesc.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+      102 +        lightsDesc.memory = rhi::MemoryUsage::HostUpload;     
+      103 +        lightsDesc.debugName = "point lights";                
+      104 +        frame.lightsBuffer.create(*device_, lightsDesc);      
+      105 +                                                              
+      106 +        rhi::BufferDesc materialsDesc{};                      
+      107 +        materialsDesc.size = sizeof(gpu::MaterialData) * kInit
+          +ialMaterialCapacity;                                          
+      108 +        materialsDesc.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_B
+          +IT;                                                           
+      109 +        materialsDesc.memory = rhi::MemoryUsage::HostUpload;  
+      110 +        materialsDesc.debugName = "materials";                
+      111 +        frame.materialsBuffer.create(*device_, materialsDesc);
+      112      }
+      113  }
+      114  
+     ...
+      134      sceneDepth_.create(*device_, depthDesc);
+      135  }
+      136  
+      134 -void Renderer::createTriangleScene(rhi::ShaderCompiler& shader
+          -Compiler) {                                                   
+      135 -    rhi::BufferDesc vbDesc{};                                 
+      136 -    vbDesc.size = sizeof(kTriangleVertices);                  
+      137 -    vbDesc.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;         
+      138 -    vbDesc.debugName = "triangle vertices";                   
+      139 -    triangleVertices_.create(*device_, vbDesc);               
+      140 -    triangleVertices_.upload(kTriangleVertices, sizeof(kTriang
+          -leVertices));                                                 
+      137 +void Renderer::createFrameSetLayout() {                       
+      138 +    VkDescriptorSetLayoutBinding bindings[7]{};               
+      139 +    for (uint32_t i = 0; i < 7; ++i) {                        
+      140 +        bindings[i].binding = i;                              
+      141 +        bindings[i].descriptorCount = 1;                      
+      142 +        bindings[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+      143 +    }                                                         
+      144 +    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BU
+          +FFER;                                                         
+      145 +    bindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_S
+          +HADER_STAGE_FRAGMENT_BIT;                                     
+      146 +    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BU
+          +FFER;                                                         
+      147 +    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BU
+          +FFER;                                                         
+      148 +    bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_I
+          +MAGE_SAMPLER;                                                 
+      149 +    bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_I
+          +MAGE_SAMPLER;                                                 
+      150 +    bindings[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_I
+          +MAGE_SAMPLER;                                                 
+      151 +    bindings[6].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_I
+          +MAGE_SAMPLER;                                                 
+      152  
+      142 -    rhi::BufferDesc ibDesc{};                                 
+      143 -    ibDesc.size = sizeof(kTriangleIndices);                   
+      144 -    ibDesc.usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT;          
+      145 -    ibDesc.debugName = "triangle indices";                    
+      146 -    triangleIndices_.create(*device_, ibDesc);                
+      147 -    triangleIndices_.upload(kTriangleIndices, sizeof(kTriangle
+          -Indices));                                                    
+      153 +    VkDescriptorSetLayoutCreateInfo layoutInfo{};             
+      154 +    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT
+          +_CREATE_INFO;                                                 
+      155 +    layoutInfo.bindingCount = 7;                              
+      156 +    layoutInfo.pBindings = bindings;                          
+      157 +    VK_CHECK(vkCreateDescriptorSetLayout(device_->device(), &l
+          +ayoutInfo, nullptr,                                           
+      158 +                                         &frameSetLayout_));  
+      159 +}                                                             
+      160  
+      149 -    // Procedural checkerboard, sRGB so sampling returns linea
+          -r values, with a                                              
+      150 -    // full mip chain generated on upload.                    
+      151 -    constexpr uint32_t kTexSize = 256;                        
+      152 -    constexpr uint32_t kCell = 32;                            
+      153 -    std::vector<uint8_t> pixels(kTexSize * kTexSize * 4);     
+      154 -    for (uint32_t y = 0; y < kTexSize; ++y) {                 
+      155 -        for (uint32_t x = 0; x < kTexSize; ++x) {             
+      156 -            const bool a = (((x / kCell) + (y / kCell)) & 1u) 
+          -!= 0;                                                         
+      157 -            const uint8_t value = a ? 255 : 178;              
+      158 -            uint8_t* px = &pixels[(y * kTexSize + x) * 4];    
+      159 -            px[0] = px[1] = px[2] = value;                    
+      160 -            px[3] = 255;                                      
+      161 -        }                                                     
+      161 +uint32_t Renderer::buildFrameData(const FrameSubmission& submi
+          +ssion,                                                        
+      162 +                                  gpu::FrameData& frame,      
+      163 +                                  std::vector<gpu::PointLightD
+          +ata>& lights) const {                                         
+      164 +    for (uint32_t v = 0; v < kMaxViews; ++v) {                
+      165 +        // Mono renders view 0 only, but both slots stay valid
+          + so nothing may                                               
+      166 +        // ever depend on a single-view assumption.           
+      167 +        const ViewCamera& cam =                               
+      168 +            submission.views[std::min(v, uint32_t(viewCount_ -
+          + 1))];                                                        
+      169 +        const glm::mat4 viewProj = cam.proj * cam.view;       
+      170 +        frame.views[v].viewProj = viewProj;                   
+      171 +        frame.views[v].invViewProj = glm::inverse(viewProj);  
+      172 +        frame.views[v].cameraPos = glm::vec4(cam.position, 1.0
+          +f);                                                           
+      173      }
+      163 -    rhi::TextureDesc texDesc{};                               
+      164 -    texDesc.format = VK_FORMAT_R8G8B8A8_SRGB;                 
+      165 -    texDesc.extent = { kTexSize, kTexSize };                  
+      166 -    texDesc.mipLevels = rhi::computeMipCount(kTexSize, kTexSiz
+          -e);                                                           
+      167 -    texDesc.usage = VK_IMAGE_USAGE_SAMPLED_BIT;               
+      168 -    texDesc.debugName = "checker texture";                    
+      169 -    checkerTexture_.create(*device_, texDesc);                
+      170 -    checkerTexture_.upload(pixels.data(), pixels.size());     
+      174  
+      172 -    VkSamplerCreateInfo samplerInfo{};                        
+      173 -    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+      174 -    samplerInfo.magFilter = VK_FILTER_LINEAR;                 
+      175 -    samplerInfo.minFilter = VK_FILTER_LINEAR;                 
+      176 -    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;   
+      177 -    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+      178 -    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+      179 -    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+      180 -    samplerInfo.anisotropyEnable = VK_TRUE;                   
+      181 -    samplerInfo.maxAnisotropy =                               
+      182 -        std::min(16.0f, device_->properties().limits.maxSample
+          -rAnisotropy);                                                 
+      183 -    samplerInfo.maxLod = VK_LOD_CLAMP_NONE;                   
+      184 -    VK_CHECK(vkCreateSampler(device_->device(), &samplerInfo, 
+          -nullptr, &materialSampler_));                                 
+      175 +    frame.sunDirection = glm::vec4(glm::normalize(submission.s
+          +un.direction), 0.0f);                                         
+      176 +    frame.sunColor = glm::vec4(submission.sun.color, submissio
+          +n.sun.intensity);                                             
+      177 +    frame.ambientColor = glm::vec4(glm::vec3(submission.ambien
+          +t), 0.0f);                                                    
+      178 +    frame.flags = 0;                                          
+      179 +    if (submission.shadowsEnabled)                            
+      180 +        frame.flags |= SV_FRAME_SHADOWS_ENABLED;              
+      181 +    if (submission.sun.enabled)                               
+      182 +        frame.flags |= SV_FRAME_SUN_ENABLED;                  
+      183  
+      186 -    // Layouts (set 0: view UBO, set 1: material sampler) come
+          - from SPIR-V                                                  
+      187 -    // reflection; raster/depth defaults are the house convent
+          -ions.                                                         
+      188 -    rhi::VertexBinding vertexBinding{};                       
+      189 -    vertexBinding.binding = 0;                                
+      190 -    vertexBinding.stride = sizeof(DemoVertex);                
+      191 -    vertexBinding.attributes = {                              
+      192 -        { 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(DemoVertex, 
+          -position) },                                                  
+      193 -        { 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(DemoVertex, 
+          -color) },                                                     
+      194 -        { 2, VK_FORMAT_R32G32_SFLOAT, offsetof(DemoVertex, uv)
+          - },                                                           
+      195 -    };                                                        
+      196 -    trianglePipeline_ =                                       
+      197 -        rhi::GraphicsPipelineBuilder{}                        
+      198 -            .setShaders(shaderCompiler.load("assets/shaders_vk
+          -/triangle.vert"),                                             
+      199 -                        shaderCompiler.load("assets/shaders_vk
+          -/triangle.frag"))                                             
+      200 -            .setColorFormats({ kSceneColorFormat })           
+      201 -            .setDepthFormat(kSceneDepthFormat)                
+      202 -            .setViewMask((1u << viewCount_) - 1u)             
+      203 -            .setDepth(true, true)                             
+      204 -            .addVertexBinding(vertexBinding)                  
+      205 -            .setDebugName("triangle demo")                    
+      206 -            .build(*device_);                                 
+      184 +    // Shadow matrices + cube-array slot assignment.          
+      185 +    const std::vector<int> slots = shadowPass_.prepare(submiss
+          +ion, frame);                                                  
+      186 +                                                              
+      187 +    lights.clear();                                           
+      188 +    uint32_t shadowedCount = 0;                               
+      189 +    const size_t lightCount =                                 
+      190 +        std::min<size_t>(submission.pointLights.size(), kMaxPo
+          +intLights);                                                   
+      191 +    for (size_t i = 0; i < lightCount; ++i) {                 
+      192 +        const PointLightState& state = submission.pointLights[
+          +i];                                                           
+      193 +        gpu::PointLightData data{};                           
+      194 +        data.position = glm::vec4(state.position, state.intens
+          +ity);                                                         
+      195 +        data.color = glm::vec4(state.color, 0.0f);            
+      196 +        data.attenLinear = state.attenLinear;                 
+      197 +        data.attenQuadratic = state.attenQuadratic;           
+      198 +        data.shadowIndex = slots[i];                          
+      199 +        if (slots[i] >= 0)                                    
+      200 +            shadowedCount = std::max(shadowedCount, uint32_t(s
+          +lots[i]) + 1);                                                
+      201 +        lights.push_back(data);                               
+      202 +    }                                                         
+      203 +    frame.pointLightCount = static_cast<uint32_t>(lights.size(
+          +));                                                           
+      204 +    return shadowedCount;                                     
+      205  }
+      206  
+      209 -void Renderer::updateViewUniforms(FrameContext& frame, double 
+          -timeSeconds) {                                                
+      210 -    // Gentle ±60° sway: proves the per-frame UBO path while k
+          -eeping the                                                    
+      211 -    // back-face-culled triangle facing the camera — if it van
+          -ishes, the                                                    
+      212 -    // COUNTER_CLOCKWISE front-face convention (Projection.h) 
+          -is broken.                                                    
+      213 -    const float angle = std::sin(static_cast<float>(timeSecond
+          -s) * 0.5f) * glm::radians(60.0f);                             
+      214 -    const glm::vec3 eye(3.0f * std::sin(angle), 1.2f, 3.0f * s
+          -td::cos(angle));                                              
+      215 -    const glm::vec3 target(0.0f);                             
+      216 -    const glm::mat4 view = glm::lookAt(eye, target, glm::vec3(
+          -0.0f, 1.0f, 0.0f));                                           
+      217 -    const float aspect = sceneExtent_.height                  
+      218 -                             ? static_cast<float>(sceneExtent_
+          -.width) / sceneExtent_.height                                 
+      219 -                             : 1.0f;                          
+      220 -    const glm::mat4 proj = renderer::perspective(glm::radians(
+          -60.0f), aspect, 0.05f, 100.0f);                               
+      207 +void Renderer::uploadFrameBuffers(FrameContext& frame, const g
+          +pu::FrameData& frameData,                                     
+      208 +                                  const std::vector<gpu::Point
+          +LightData>& lights) {                                         
+      209 +    frame.frameUbo.upload(&frameData, sizeof(frameData));     
+      210 +    if (!lights.empty())                                      
+      211 +        frame.lightsBuffer.upload(lights.data(),              
+      212 +                                  lights.size() * sizeof(gpu::
+          +PointLightData));                                             
+      213  
+      222 -    ViewUniforms uniforms{};                                  
+      223 -    for (uint32_t v = 0; v < kMaxViews; ++v) {                
+      224 -        // Identical eyes until stereo (Phase 7) supplies per-
+          -eye transforms.                                               
+      225 -        uniforms.viewProj[v] = proj * view;                   
+      226 -        uniforms.cameraPos[v] = glm::vec4(eye, 1.0f);         
+      214 +    const std::vector<gpu::MaterialData>& materials = material
+          +s_.materials();                                               
+      215 +    const VkDeviceSize materialBytes =                        
+      216 +        std::max<VkDeviceSize>(materials.size(), 1) * sizeof(g
+          +pu::MaterialData);                                            
+      217 +    if (frame.materialsBuffer.size() < materialBytes) {       
+      218 +        // This slot's previous submission has already retired
+          + (renderFrame                                                 
+      219 +        // waits on the timeline before touching the slot), so
+          + recreating the                                               
+      220 +        // buffer here is safe.                               
+      221 +        rhi::BufferDesc desc{};                               
+      222 +        desc.size = materialBytes * 2;                        
+      223 +        desc.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;      
+      224 +        desc.memory = rhi::MemoryUsage::HostUpload;           
+      225 +        desc.debugName = "materials";                         
+      226 +        frame.materialsBuffer.create(*device_, desc);         
+      227      }
+      228 -    frame.viewUbo.upload(&uniforms, sizeof(uniforms));        
+      228 +    if (!materials.empty())                                   
+      229 +        frame.materialsBuffer.upload(materials.data(),        
+      230 +                                     materials.size() * sizeof
+          +(gpu::MaterialData));                                         
+      231  }
+      232  
+      231 -rhi::PresentResult Renderer::renderFrame(ImDrawData* uiDrawDat
+          -a, double timeSeconds) {                                      
+      233 +VkDescriptorSet Renderer::writeFrameSet(FrameContext& frame,  
+      234 +                                        const std::vector<gpu:
+          +:PointLightData>& lights) {                                   
+      235 +    VkDescriptorSet set = frame.descriptors.allocate(frameSetL
+          +ayout_);                                                      
+      236 +    rhi::DescriptorWriter{}                                   
+      237 +        .writeBuffer(0, frame.frameUbo.handle(), 0, sizeof(gpu
+          +::FrameData),                                                 
+      238 +                     VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)       
+      239 +        .writeBuffer(1, frame.lightsBuffer.handle(), 0,       
+      240 +                     std::max<VkDeviceSize>(lights.size(), 1) 
+          +*                                                             
+      241 +                         sizeof(gpu::PointLightData),         
+      242 +                     VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)       
+      243 +        .writeBuffer(2, frame.materialsBuffer.handle(), 0, fra
+          +me.materialsBuffer.size(),                                    
+      244 +                     VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)       
+      245 +        .writeImage(3, shadowPass_.sunShadowView(), shadowPass
+          +_.compareSampler2D(),                                         
+      246 +                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 
+      247 +                    VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+      248 +        .writeImage(4, shadowPass_.pointShadowView(), shadowPa
+          +ss_.compareSamplerCube(),                                     
+      249 +                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 
+      250 +                    VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+      251 +        .writeImage(5, skyboxPass_.cubemapView(), skyboxPass_.
+          +sampler(),                                                    
+      252 +                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 
+      253 +                    VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+      254 +        .writeImage(6, skyboxPass_.equirectView(), skyboxPass_
+          +.sampler(),                                                   
+      255 +                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 
+      256 +                    VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+      257 +        .flush(device_->device(), set);                       
+      258 +    return set;                                               
+      259 +}                                                             
+      260 +                                                              
+      261 +rhi::PresentResult Renderer::renderFrame(const FrameSubmission
+          +& submission,                                                 
+      262 +                                         ImDrawData* uiDrawDat
+          +a) {                                                          
+      263      pollScreenshot(false);
+      264  
+      265      FrameContext& frame = frames_[frameSlot_];
+     ...
+      304  
+      305      VK_CHECK(vkResetCommandPool(device_->device(), frame.comma
+           ndPool, 0));
+      306      frame.descriptors.reset();
+      276 -    updateViewUniforms(frame, timeSeconds);                   
+      277 -    recordFrame(frame, imageIndex, uiDrawData, captureThisFram
+          -e);                                                           
+      307  
+      308 +    gpu::FrameData frameData{};                               
+      309 +    std::vector<gpu::PointLightData> lights;                  
+      310 +    const uint32_t shadowedLightCount = buildFrameData(submiss
+          +ion, frameData, lights);                                      
+      311 +    uploadFrameBuffers(frame, frameData, lights);             
+      312 +    VkDescriptorSet frameSet = writeFrameSet(frame, lights);  
+      313 +                                                              
+      314 +    recordFrame(frame, imageIndex, submission, frameSet, shado
+          +wedLightCount,                                                
+      315 +                uiDrawData, captureThisFrame);                
+      316 +                                                              
+      317      VkSemaphoreSubmitInfo waitAcquire{};
+      318      waitAcquire.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INF
+           O;
+      319      waitAcquire.semaphore = frame.acquireSemaphore;
+     ...
+      358      return result;
+      359  }
+      360  
+      323 -void Renderer::recordFrame(FrameContext& frame, uint32_t image
+          -Index, ImDrawData* uiDrawData,                                
+      361 +void Renderer::recordFrame(FrameContext& frame, uint32_t image
+          +Index,                                                        
+      362 +                           const FrameSubmission& submission, 
+          +VkDescriptorSet frameSet,                                     
+      363 +                           uint32_t shadowedLightCount, ImDraw
+          +Data* uiDrawData,                                             
+      364                             bool captureThisFrame) {
+      365      VkCommandBuffer cmd = frame.commandBuffer;
+      366      VkCommandBufferBeginInfo beginInfo{};
+     ...
+      368      beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_
+           BIT;
+      369      VK_CHECK(vkBeginCommandBuffer(cmd, &beginInfo));
+      370  
+      371 +    // ---- Pass 1: shadow casters (owns its targets + transit
+          +ions) ----                                                    
+      372 +    shadowPass_.record(cmd, frameSet, submission, shadowedLigh
+          +tCount);                                                      
+      373 +                                                              
+      374      // Scene target: previous contents are irrelevant (UNDEFIN
+           ED discard).
+      375      {
+      376          VkImageMemoryBarrier2 barriers[2] = {
+     ...
+      392          rhi::cmdBarrier(cmd, barriers, 2);
+      393      }
+      394  
+      352 -    // ---- Scene pass (multiview, all layers in one go) ---- 
+      395 +    // ---- Pass 2+3: forward PBR then skybox, one multiview s
+          +cene pass ----                                                
+      396      {
+      397          VkRenderingAttachmentInfo color{};
+      398          color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_I
+           NFO;
+     ...
+      400          color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_O
+           PTIMAL;
+      401          color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+      402          color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+      360 -        color.clearValue.color.float32[0] = 0.045f;           
+      361 -        color.clearValue.color.float32[1] = 0.05f;            
+      362 -        color.clearValue.color.float32[2] = 0.07f;            
+      403 +        color.clearValue.color.float32[0] = 0.0f;             
+      404 +        color.clearValue.color.float32[1] = 0.0f;             
+      405 +        color.clearValue.color.float32[2] = 0.0f;             
+      406          color.clearValue.color.float32[3] = 1.0f;
+      407  
+      408          VkRenderingAttachmentInfo depth{};
+     ...
+      432          scissor.extent = sceneExtent_;
+      433          vkCmdSetScissor(cmd, 0, 1, &scissor);
+      434  
+      392 -        VkDescriptorSet viewSet = frame.descriptors.allocate(t
+          -rianglePipeline_.setLayout(0));                               
+      393 -        rhi::DescriptorWriter{}                               
+      394 -            .writeBuffer(0, frame.viewUbo.handle(), 0, sizeof(
+          -ViewUniforms),                                                
+      395 -                         VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)   
+      396 -            .flush(device_->device(), viewSet);               
+      397 -        VkDescriptorSet materialSet = frame.descriptors.alloca
+          -te(trianglePipeline_.setLayout(1));                           
+      398 -        rhi::DescriptorWriter{}                               
+      399 -            .writeImage(0, checkerTexture_.view(), materialSam
+          -pler_,                                                        
+      400 -                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIM
+          -AL,                                                           
+      401 -                        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMP
+          -LER)                                                          
+      402 -            .flush(device_->device(), materialSet);           
+      435 +        forwardPass_.record(cmd, frameSet, materials_.set(), s
+          +ubmission);                                                   
+      436 +        skyboxPass_.record(cmd, frameSet, submission.sky);    
+      437  
+      404 -        trianglePipeline_.bind(cmd);                          
+      405 -        VkDescriptorSet sets[2] = { viewSet, materialSet };   
+      406 -        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GR
+          -APHICS,                                                       
+      407 -                                trianglePipeline_.layout(), 0,
+          - 2, sets, 0, nullptr);                                        
+      408 -        VkBuffer vertexBuffer = triangleVertices_.handle();   
+      409 -        VkDeviceSize vertexOffset = 0;                        
+      410 -        vkCmdBindVertexBuffers(cmd, 0, 1, &vertexBuffer, &vert
+          -exOffset);                                                    
+      411 -        vkCmdBindIndexBuffer(cmd, triangleIndices_.handle(), 0
+          -, VK_INDEX_TYPE_UINT32);                                      
+      412 -        vkCmdDrawIndexed(cmd, 3, 1, 0, 0, 0);                 
+      413 -                                                              
+      438          vkCmdEndRendering(cmd);
+      439      }
+      440  
+      417 -    // ---- Tonemap resolve + UI in one backbuffer pass ----  
+      441 +    // ---- Pass 4: tonemap resolve + UI in one backbuffer pas
+          +s ----                                                        
+      442      VkImage backbuffer = swapchain_->image(imageIndex);
+      443      {
+      444          VkImageMemoryBarrier2 barriers[2] = {
+     ...
+      641  
+      642  void Renderer::destroyFrameContexts() {
+      643      for (FrameContext& frame : frames_) {
+      620 -        frame.viewUbo.destroy();                              
+      644 +        frame.frameUbo.destroy();                             
+      645 +        frame.lightsBuffer.destroy();                         
+      646 +        frame.materialsBuffer.destroy();                      
+      647          frame.descriptors.destroy();
+      648          if (frame.acquireSemaphore != VK_NULL_HANDLE)
+      649              vkDestroySemaphore(device_->device(), frame.acquir
+           eSemaphore, nullptr);
+     ...
+      670      screenshot_.state = Screenshot::State::Idle;
+      671  
+      672      tonemapPass_.shutdown();
+      647 -    trianglePipeline_.destroy();                              
+      648 -    triangleVertices_.destroy();                              
+      649 -    triangleIndices_.destroy();                               
+      650 -    checkerTexture_.destroy();                                
+      651 -    if (materialSampler_ != VK_NULL_HANDLE)                   
+      652 -        vkDestroySampler(device_->device(), materialSampler_, 
+          -nullptr);                                                     
+      653 -    materialSampler_ = VK_NULL_HANDLE;                        
+      673 +    skyboxPass_.shutdown();                                   
+      674 +    forwardPass_.shutdown();                                  
+      675 +    shadowPass_.shutdown();                                   
+      676 +    if (frameSetLayout_ != VK_NULL_HANDLE)                    
+      677 +        vkDestroyDescriptorSetLayout(device_->device(), frameS
+          +etLayout_, nullptr);                                          
+      678 +    frameSetLayout_ = VK_NULL_HANDLE;                         
+      679 +    materials_.shutdown();                                    
+      680      sceneColor_.destroy();
+      681      sceneDepth_.destroy();
+      682      destroyFrameContexts();
+
+● Renderer restructure done. Deleting the Phase 2 demo shaders:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Write(headers\Scene\Scene.h)
+  ⎿  Wrote 104 lines to headers\Scene\Scene.h
+       1 #pragma once
+       2 
+       3 #include "Renderer/FrameSubmission.h"
+       4 #include "Renderer/MeshBuffer.h"
+       5 
+       6 #include <glm/glm.hpp>
+       7 
+       8 #include <cfloat>
+       9 #include <string>
+      10 #include <vector>
+     … +112 lines (ctrl+o to expand)
+
+● Write(src\Scene\Primitives.cpp)
+  ⎿  Wrote 243 lines to src\Scene\Primitives.cpp
+       1 #include "Scene/Scene.h"
+       3 #include <glm/glm.hpp>
+       4 
+       5 #include <cmath>
+       7 // Procedural primitive geometry, ported from the GL ModelLoader
+          factories
+         us). Positions,
+       9 // normals, UVs, winding and tangents match the GL reference; th
+         e explicit
+         (N,T) * w).
+     … +283 lines (ctrl+o to expand)
+
+● Now the Assimp model importer:
+
+● Write(src\Scene\ModelImporter.cpp)
+  ⎿  Wrote 335 lines to src\Scene\ModelImporter.cpp
+       1 #include "Scene/Scene.h"
+       2 
+       3 #include "RHI/Device.h"
+       4 #include "RHI/Texture.h"
+       5 #include "Renderer/GpuTypes.h"
+       6 #include "Renderer/MaterialSystem.h"
+       7 
+       8 #include <assimp/Importer.hpp>
+       9 #include <assimp/postprocess.h>
+      10 #include <assimp/scene.h>
+     … +392 lines (ctrl+o to expand)
+  ⎿  You've hit your session limit · resets 8:50pm (Europe/Vienna)
+     /upgrade to increase your usage limit.
+
+✻ Worked for 37m 44s

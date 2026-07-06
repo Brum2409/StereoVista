@@ -34,6 +34,9 @@ const FeatureRequirement kRequiredFeatures[] = {
     // CUBE_ARRAY image views (point-light shadow cubemap array).
     { "imageCubeArray", &VkPhysicalDeviceFeatures::imageCubeArray, nullptr, nullptr, nullptr },
     { "shaderInt64", &VkPhysicalDeviceFeatures::shaderInt64, nullptr, nullptr, nullptr },
+    // HARD requirement since Phase 6: mesh.vert writes the user section
+    // planes to gl_ClipDistance (hardware clipping). Universal on desktop.
+    { "shaderClipDistance", &VkPhysicalDeviceFeatures::shaderClipDistance, nullptr, nullptr, nullptr },
     { "multiview", nullptr, &VkPhysicalDeviceVulkan11Features::multiview, nullptr, nullptr },
     { "shaderBufferInt64Atomics", nullptr, nullptr, &VkPhysicalDeviceVulkan12Features::shaderBufferInt64Atomics, nullptr },
     { "timelineSemaphore", nullptr, nullptr, &VkPhysicalDeviceVulkan12Features::timelineSemaphore, nullptr },
@@ -380,6 +383,7 @@ void Device::createLogicalDevice() {
     enable2.features.samplerAnisotropy = VK_TRUE;
     enable2.features.imageCubeArray = VK_TRUE;
     enable2.features.shaderInt64 = VK_TRUE;
+    enable2.features.shaderClipDistance = VK_TRUE; // mesh.vert gl_ClipDistance
 
     // shaderDrawParameters is enabled above without being in the required
     // table — verify it here so an exotic driver fails soft instead of
@@ -398,6 +402,30 @@ void Device::createLogicalDevice() {
     std::vector<VkExtensionProperties> available = enumerateDeviceExtensions(physicalDevice_);
     if (hasExtension(available, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME))
         extensions.push_back(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
+
+    // XR readiness (Phase 7b): an OpenXR runtime shares THIS device to import
+    // the headset's swapchain images, and it uses the Win32 external
+    // memory/semaphore/fence extensions internally. Enable them up front (only
+    // if the driver advertises them) so a later xrCreateSession succeeds on the
+    // already-created device WITHOUT the app ever calling an xr* function at
+    // startup — that keeps VR a live, zero-startup-cost toggle (no runtime is
+    // contacted, no SteamVR spin-up, no overhead) instead of forcing an
+    // XR-aware boot path. The base memory/semaphore/fence extensions are core
+    // 1.1 (listed only to satisfy the Win32 variants' dependency validation);
+    // the Win32 variants are the ones a runtime actually needs. String literals
+    // avoid coupling to vulkan_win32.h's platform guard — we only enable them by
+    // name; the runtime resolves the entry points itself. Absent on a non-XR
+    // GPU → simply skipped, so device creation can never fail because of this.
+    static const char* const kXrInteropExtensions[] = {
+        "VK_KHR_external_memory",        "VK_KHR_external_memory_win32",
+        "VK_KHR_external_semaphore",     "VK_KHR_external_semaphore_win32",
+        "VK_KHR_external_fence",         "VK_KHR_external_fence_win32",
+        "VK_KHR_get_memory_requirements2", "VK_KHR_dedicated_allocation",
+        "VK_KHR_bind_memory2",
+    };
+    for (const char* name : kXrInteropExtensions)
+        if (hasExtension(available, name))
+            extensions.push_back(name);
 
     const float priority = 1.0f;
     VkDeviceQueueCreateInfo queueInfo{};

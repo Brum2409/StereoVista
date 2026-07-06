@@ -102,4 +102,24 @@ renderer::MeshData buildPrimitive(PrimitiveType type);
 bool importModelFile(const std::string& path, rhi::Device& device,
                      renderer::MaterialSystem& materials, Model& out);
 
+// ---- Picking ----
+
+// Result of identifying the object under a world-space surface point. meshIndex
+// pins the specific sub-mesh (Assimp: a Model is the imported file, its meshes
+// are the file's sub-parts) so callers can select a whole model or drill down.
+struct RayHit {
+    bool      hit        = false;
+    glm::vec3 position   = glm::vec3(0.0f); // the queried world point
+    glm::vec3 normal     = glm::vec3(0.0f, 1.0f, 0.0f);
+    int       modelIndex = -1;
+    int       meshIndex  = -1;
+};
+
+// Identify the model + sub-mesh whose surface passes through a world-space
+// point (from the GPU depth pick). Rotation-correct AABB test in each model's
+// local space — no per-triangle work, no retained CPU geometry. Returns false
+// (out.modelIndex == -1) when the point lies in empty space. Defined in
+// ScenePicking.cpp.
+bool pickModelAtPoint(const Scene& scene, const glm::vec3& worldPoint, RayHit& out);
+
 } // namespace scene

@@ -117,6 +117,11 @@ public:
     GraphicsPipelineBuilder& setDepthBias(float constantFactor, float slopeFactor);
     GraphicsPipelineBuilder& setBlend(BlendMode mode);
     GraphicsPipelineBuilder& addVertexBinding(VertexBinding binding);
+    // Widen dynamic state beyond the always-dynamic viewport/scissor
+    // (playbook A.6) — e.g. depth test/compare/write + cull mode for the
+    // overlay pipeline, all core 1.3. The static value set on this builder
+    // becomes irrelevant for that state; the recorder must set it.
+    GraphicsPipelineBuilder& addDynamicState(VkDynamicState state);
     GraphicsPipelineBuilder& bindingOverride(const BindingOverride& override_);
     GraphicsPipelineBuilder& externalSetLayout(uint32_t set, VkDescriptorSetLayout layout);
     GraphicsPipelineBuilder& setDebugName(std::string name);
@@ -141,6 +146,7 @@ private:
     float depthBiasSlope_ = 0.0f;
     BlendMode blend_ = BlendMode::Opaque;
     std::vector<VertexBinding> vertexBindings_;
+    std::vector<VkDynamicState> extraDynamicStates_;
     std::vector<BindingOverride> overrides_;
     std::vector<std::pair<uint32_t, VkDescriptorSetLayout>> externalLayouts_;
     std::string debugName_ = "graphics pipeline";

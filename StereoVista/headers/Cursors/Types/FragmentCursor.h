@@ -3,19 +3,25 @@
 #include "Cursors/Base/Cursor.h"
 #include "Gui/GuiTypes.h"
 
+namespace renderer {
+struct FragmentCursorState;
+}
+
 namespace Cursor {
+    // Screen/world ring cursor drawn BY THE SCENE SHADER on geometry surfaces
+    // (mesh.frag since Phase 6; the GL uber-shader before). This class only
+    // holds settings and publishes them into the FrameSubmission.
     class FragmentCursor : public BaseCursor {
     public:
         FragmentCursor();
         ~FragmentCursor() override;
 
-        // Implementation of base class virtual methods
         void initialize() override;
-        void render(const glm::mat4& projection, const glm::mat4& view, const glm::vec3& cameraPosition);
-        void cleanup() override;
-        void updateShaderUniforms(Engine::Shader* shader) override;
 
-        // Getters and setters for specific properties
+        // Fills the renderer-side state (colors converted to linear there by
+        // the caller if desired; we pass the authored values through).
+        void fillState(renderer::FragmentCursorState& out) const;
+
         float getBaseOuterRadius() const { return m_settings.baseOuterRadius; }
         void setBaseOuterRadius(float radius) { m_settings.baseOuterRadius = radius; }
         float getBaseOuterBorderThickness() const { return m_settings.baseOuterBorderThickness; }

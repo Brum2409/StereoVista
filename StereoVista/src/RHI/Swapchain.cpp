@@ -88,6 +88,13 @@ void Swapchain::create(uint32_t width, uint32_t height, VkSwapchainKHR old) {
     if (supportsCapture_)
         usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
+    // Quad-buffer stereo present: 2 layers when requested AND the surface can
+    // present them (workstation GPU + stereo display). layer 0 = left eye,
+    // 1 = right; the driver routes them to the display's back buffers.
+    layers_ = (wantStereo_ && maxSurfaceLayers_ >= 2) ? 2u : 1u;
+    if (layers_ == 2)
+        std::cout << "[vulkan] stereo swapchain: imageArrayLayers = 2\n";
+
     VkSwapchainCreateInfoKHR info{};
     info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
     info.surface = surface;
@@ -95,7 +102,7 @@ void Swapchain::create(uint32_t width, uint32_t height, VkSwapchainKHR old) {
     info.imageFormat = format_;
     info.imageColorSpace = colorSpace_;
     info.imageExtent = extent_;
-    info.imageArrayLayers = 1; // Phase 7: 2 when stereoPresentSupported()
+    info.imageArrayLayers = layers_; // 2 = quad-buffer stereo present
     info.imageUsage = usage;
     info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     info.preTransform = caps.currentTransform;
@@ -111,18 +118,24 @@ void Swapchain::create(uint32_t width, uint32_t height, VkSwapchainKHR old) {
     images_.resize(imageCount);
     VK_CHECK(vkGetSwapchainImagesKHR(device_->device(), swapchain_, &imageCount, images_.data()));
 
-    imageViews_.resize(imageCount);
+    // One single-layer 2D view per (image, layer): mono has 1, stereo 2 (the
+    // per-eye backbuffer resolve attaches each layer view separately).
+    imageViews_.resize(imageCount * layers_);
     renderFinished_.resize(imageCount);
     for (uint32_t i = 0; i < imageCount; ++i) {
-        VkImageViewCreateInfo viewInfo{};
-        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        viewInfo.image = images_[i];
-        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        viewInfo.format = format_;
-        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        viewInfo.subresourceRange.levelCount = 1;
-        viewInfo.subresourceRange.layerCount = 1;
-        VK_CHECK(vkCreateImageView(device_->device(), &viewInfo, nullptr, &imageViews_[i]));
+        for (uint32_t layer = 0; layer < layers_; ++layer) {
+            VkImageViewCreateInfo viewInfo{};
+            viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            viewInfo.image = images_[i];
+            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            viewInfo.format = format_;
+            viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            viewInfo.subresourceRange.levelCount = 1;
+            viewInfo.subresourceRange.baseArrayLayer = layer;
+            viewInfo.subresourceRange.layerCount = 1;
+            VK_CHECK(vkCreateImageView(device_->device(), &viewInfo, nullptr,
+                                       &imageViews_[i * layers_ + layer]));
+        }
 
         VkSemaphoreCreateInfo semInfo{};
         semInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;

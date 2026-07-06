@@ -1,0 +1,74 @@
+#version 460
+// Schütz compute rasterizer — standard path (nearest point wins).
+//
+// One workgroup per batch; decode/cull/LOD/splat live in
+// pointcloud_common.glsl. This pass packs (dist24 | cloudID:8 | index:32)
+// into the 64-bit framebuffer with atomicMin, so the smallest entry per pixel
+// is the NEAREST point (dist24 = 1 - reverseZ, i.e. 0 at the near plane —
+// C.2: the GL "ndc.z*0.5+0.5 under GL_LESS" packing is gone). 24 bits match
+// hardware depth-buffer precision; the value is clamped below 0xFFFFFF so a
+// real point can never collide with the ~0 empty sentinel.
+//
+// C.1: core GL_EXT_shader_atomic_int64 only (shaderBufferInt64Atomics is a
+// required device feature) — the NV-only extensions of the GL shader broke
+// AMD and are NOT ported.
+
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_atomic_int64 : require
+#extension GL_EXT_buffer_reference2 : require
+#extension GL_EXT_scalar_block_layout : require
+
+#include "pointcloud_common.glsl"
+
+// `coherent` keeps the non-atomic early-reject pre-read below fresh across
+// the workgroup. The GL implementation measured compute 70% SLOWER without it
+// (stale reads let doomed atomics through) — keep it.
+layout(buffer_reference, scalar, buffer_reference_align = 8) coherent buffer PcFramebuffer {
+    uint64_t px[];
+};
+
+// Early-depth reject (Schütz "cheap early-z before atomicMin"): when the new
+// entry cannot win the pixel, the atomicMin is a guaranteed no-op — skip it
+// and trade one coalesced load for the avoided atomic. On dense/occluded
+// views this culls almost all redundant atomic traffic.
+void pcWritePixel(PcFramebuffer fb, ivec2 p, uint64_t entry) {
+    int idx = p.y * g_d.imageWidth + p.x;
+    if (entry < fb.px[idx])
+        atomicMin(fb.px[idx], entry);
+}
+
+void pcProcessPoint(ivec2 px, float ndcZ, float viewDepth, int radius, uint index) {
+    // Reverse-Z: ndc.z is 1 at near, 0 at far; store the DISTANCE-like
+    // 1 - ndc.z so atomicMin keeps the nearest point.
+    float dist01 = clamp(1.0 - ndcZ, 0.0, 1.0);
+    uint dist24 = min(uint(dist01 * 16777215.0 + 0.5), 16777214u);
+    uint hi = (dist24 << 8) | (g_d.cloudID & 0xFFu);
+    uint64_t entry = (uint64_t(hi) << 32) | uint64_t(index);
+
+    PcFramebuffer fb = PcFramebuffer(g_d.framebuffer);
+
+    if (radius <= 0) {
+        // Single-pixel fast path (splatting off / far points).
+        pcWritePixel(fb, clamp(px, ivec2(0), ivec2(g_d.imageWidth - 1, g_d.imageHeight - 1)), entry);
+        return;
+    }
+
+    // Round splat: same entry into every pixel of the disk; atomicMin still
+    // keeps the nearest point per pixel. Out-of-bounds pixels are skipped
+    // (not clamped) to avoid smearing splats along the border.
+    int r2 = radius * radius;
+    for (int dy = -radius; dy <= radius; ++dy) {
+        for (int dx = -radius; dx <= radius; ++dx) {
+            if (dx * dx + dy * dy > r2)
+                continue;
+            ivec2 p = px + ivec2(dx, dy);
+            if (p.x < 0 || p.y < 0 || p.x >= g_d.imageWidth || p.y >= g_d.imageHeight)
+                continue;
+            pcWritePixel(fb, p, entry);
+        }
+    }
+}
+
+void main() {
+    pcMain();
+}

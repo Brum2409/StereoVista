@@ -1,14 +1,31 @@
 #include "Cursors/Types/SphereCursor.h"
-#include "Engine/Shader.h"
+#include "Renderer/OverlayDrawList.h"
+
+#include <glm/gtc/matrix_transform.hpp>
+
 #include <corecrt_math_defines.h>
+#include <cmath>
 
 namespace Cursor {
+    namespace {
+        // VkCullModeFlagBits values, kept as raw ints so this file stays
+        // Vulkan-header-free (OverlayBatch carries them as uint32_t).
+        constexpr uint32_t kCullFront = 0x00000001; // VK_CULL_MODE_FRONT_BIT
+        constexpr uint32_t kCullBack = 0x00000002;  // VK_CULL_MODE_BACK_BIT
+
+        // Effective "center alpha" of the GL sphere shader: its
+        // distFromCenter/radius term is constant over the sphere surface
+        // (length of the baked mesh vertex), so it collapses to a constant
+        // computed here — see overlay.frag's SPHERE branch.
+        float centerAlpha(float centerTransparency, float meshRadius) {
+            const float t = glm::clamp(meshRadius, 0.0f, 1.0f);
+            const float s = t * t * (3.0f - 2.0f * t); // smoothstep(0,1,t)
+            return centerTransparency + (1.0f - centerTransparency) * s;
+        }
+    }
+
     SphereCursor::SphereCursor() :
         BaseCursor(),
-        m_vao(0),
-        m_vbo(0),
-        m_ebo(0),
-        m_shader(nullptr),
         m_color(1.0f, 0.0f, 0.0f, 0.7f),
         m_transparency(0.7f),
         m_edgeSoftness(0.8f),
@@ -20,140 +37,62 @@ namespace Cursor {
         m_name = "SphereCursor";
     }
 
-    SphereCursor::~SphereCursor() {
-        cleanup();
-    }
+    SphereCursor::~SphereCursor() = default;
 
     void SphereCursor::initialize() {
-        generateMesh(getBaseSize(), 32, 32);
-
-        glGenVertexArrays(1, &m_vao);
-        glGenBuffers(1, &m_vbo);
-        glGenBuffers(1, &m_ebo);
-
-        glBindVertexArray(m_vao);
-
-        glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-        glBufferData(GL_ARRAY_BUFFER, m_vertices.size() * sizeof(float), m_vertices.data(), GL_STATIC_DRAW);
-
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_ebo);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, m_indices.size() * sizeof(unsigned int), m_indices.data(), GL_STATIC_DRAW);
-
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
-
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
-
-        glBindVertexArray(0);
-
-        try {
-            m_shader = Engine::loadShader("cursors/sphereVertexShader.glsl", "cursors/sphereFragmentShader.glsl");
-        }
-        catch (const std::exception& e) {
-            std::cerr << "Fatal error loading sphere cursor shader: " << e.what() << std::endl;
-        }
-
-        // Initialize uniforms
-        if (m_shader) {
-            m_shader->use();
-            m_shader->setMat4("projection", glm::mat4(1.0f));
-            m_shader->setMat4("view", glm::mat4(1.0f));
-            m_shader->setMat4("model", glm::mat4(1.0f));
-            m_shader->setVec3("viewPos", glm::vec3(0.0f));
-        }
+        m_meshRadius = getBaseSize();
+        generateMesh(m_meshRadius, 32, 32);
     }
 
-    void SphereCursor::render(const glm::mat4& projection, const glm::mat4& view, const glm::vec3& cameraPosition) {
-        if (!m_visible || !m_positionValid || !m_shader) return;
+    void SphereCursor::appendTo(renderer::OverlayDrawList& list,
+                                const glm::vec3& cameraPosition) {
+        if (!m_visible || !m_positionValid || m_indices.empty())
+            return;
 
-        // Enable blending and depth testing
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glEnable(GL_DEPTH_TEST);
-
-        m_shader->use();
-        m_shader->setMat4("projection", projection);
-        m_shader->setMat4("view", view);
-        m_shader->setVec3("viewPos", cameraPosition);
-
-        // Calculate current scale using the unified scaling system
-        float currentRadius = getBaseSize() * calculateScale(cameraPosition);
-
+        const float currentRadius = getBaseSize() * calculateScale(cameraPosition);
         glm::mat4 model = glm::translate(glm::mat4(1.0f), m_position);
         model = glm::scale(model, glm::vec3(currentRadius));
+        const glm::mat4 innerModel = glm::scale(model, glm::vec3(m_innerSphereFactor));
 
-        m_shader->setMat4("model", model);
-        m_shader->setFloat("innerSphereFactor", m_innerSphereFactor);
+        const glm::vec4 outerParams(m_transparency, m_edgeSoftness,
+                                    centerAlpha(m_centerTransparency, m_meshRadius),
+                                    0.0f);
+        const glm::vec4 innerParams(1.0f, 0.0f, 0.0f, 1.0f); // isInner: flat alpha
 
-        glBindVertexArray(m_vao);
-
-        // First pass: Render back faces
-        glDepthMask(GL_TRUE);
-        glCullFace(GL_FRONT);
-
-        if (m_showInnerSphere) {
-            m_shader->setBool("isInnerSphere", true);
-            m_shader->setVec4("sphereColor", m_innerSphereColor);
-            m_shader->setFloat("transparency", 1.0);
-            glm::mat4 innerModel = glm::scale(model, glm::vec3(m_innerSphereFactor));
-            m_shader->setMat4("model", innerModel);
-            glDrawElements(GL_TRIANGLES, m_indices.size(), GL_UNSIGNED_INT, 0);
-        }
-
-        m_shader->setBool("isInnerSphere", false);
-        m_shader->setVec4("sphereColor", m_color);
-        m_shader->setFloat("transparency", m_transparency);
-        m_shader->setFloat("edgeSoftness", m_edgeSoftness);
-        m_shader->setFloat("centerTransparencyFactor", m_centerTransparency);
-        m_shader->setMat4("model", model);
-        glDrawElements(GL_TRIANGLES, m_indices.size(), GL_UNSIGNED_INT, 0);
-
-        // Second pass: Render front faces
-        glDepthMask(GL_FALSE);
-        glCullFace(GL_BACK);
-
-        if (m_showInnerSphere) {
-            m_shader->setBool("isInnerSphere", true);
-            m_shader->setVec4("sphereColor", m_innerSphereColor);
-            m_shader->setFloat("transparency", 1.0);
-            glm::mat4 innerModel = glm::scale(model, glm::vec3(m_innerSphereFactor));
-            m_shader->setMat4("model", innerModel);
-            glDrawElements(GL_TRIANGLES, m_indices.size(), GL_UNSIGNED_INT, 0);
-        }
-
-        m_shader->setBool("isInnerSphere", false);
-        m_shader->setVec4("sphereColor", m_color);
-        m_shader->setFloat("transparency", m_transparency);
-        m_shader->setFloat("edgeSoftness", m_edgeSoftness);
-        m_shader->setFloat("centerTransparencyFactor", m_centerTransparency);
-        m_shader->setMat4("model", model);
-        glDrawElements(GL_TRIANGLES, m_indices.size(), GL_UNSIGNED_INT, 0);
-
-        // Reset OpenGL state
-        glEnable(GL_CULL_FACE);
-        glCullFace(GL_BACK);
-        glDepthMask(GL_TRUE);
-        glDisable(GL_BLEND);
-        glBindVertexArray(0);
-        glUseProgram(0);
-    }
-
-    void SphereCursor::cleanup() {
-        if (m_vao) glDeleteVertexArrays(1, &m_vao);
-        if (m_vbo) glDeleteBuffers(1, &m_vbo);
-        if (m_ebo) glDeleteBuffers(1, &m_ebo);
-
-        m_vao = m_vbo = m_ebo = 0;
-
-        if (m_shader) {
-            delete m_shader;
-            m_shader = nullptr;
+        // GL two-pass transparency: back faces (depth write ON) first, then
+        // front faces (depth write OFF), inner sphere leading each pass.
+        struct Pass { uint32_t cull; bool depthWrite; };
+        const Pass passes[2] = { { kCullFront, true }, { kCullBack, false } };
+        for (const Pass& pass : passes) {
+            if (m_showInnerSphere)
+                list.sphereMesh(m_vertices.data(), m_indices.data(), m_indices.size(),
+                                innerModel, m_innerSphereColor, innerParams,
+                                pass.cull, pass.depthWrite,
+                                renderer::OverlayDepth::Occluded);
+            list.sphereMesh(m_vertices.data(), m_indices.data(), m_indices.size(),
+                            model, m_color, outerParams, pass.cull, pass.depthWrite,
+                            renderer::OverlayDepth::Occluded);
         }
     }
 
-    void SphereCursor::updateShaderUniforms(Engine::Shader* shader) {
-        // No need to set any specific uniforms for the main shader
+    void SphereCursor::appendOrbitSphere(renderer::OverlayDrawList& list,
+                                         const glm::vec3& center, float radius,
+                                         const glm::vec4& color) {
+        if (m_indices.empty())
+            return;
+        glm::mat4 model = glm::translate(glm::mat4(1.0f), center);
+        // The mesh bakes m_meshRadius; normalise so `radius` is the true
+        // world radius of the marker.
+        model = glm::scale(model, glm::vec3(radius / std::max(m_meshRadius, 1e-5f)));
+        // Solid-ish marker: edge softness 0, no center fade (GL parity with
+        // renderOrbitCenter's uniforms), same two-pass ordering.
+        const glm::vec4 params(1.0f, 0.0f, 1.0f, 0.0f);
+        list.sphereMesh(m_vertices.data(), m_indices.data(), m_indices.size(), model,
+                        color, params, kCullFront, true,
+                        renderer::OverlayDepth::Occluded);
+        list.sphereMesh(m_vertices.data(), m_indices.data(), m_indices.size(), model,
+                        color, params, kCullBack, false,
+                        renderer::OverlayDepth::Occluded);
     }
 
     float SphereCursor::calculateRadius(const glm::vec3& cameraPosition) {

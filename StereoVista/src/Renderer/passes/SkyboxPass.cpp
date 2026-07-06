@@ -44,12 +44,10 @@ rhi::Texture createDummy(rhi::Device& device, bool cube) {
 
 } // namespace
 
-void SkyboxPass::init(rhi::Device& device, rhi::ShaderCompiler& shaderCompiler,
-                      VkFormat colorFormat, VkFormat depthFormat, uint32_t viewMask,
-                      VkDescriptorSetLayout frameSetLayout) {
-    shutdown();
-    device_ = &device;
-
+void SkyboxPass::buildPipeline(rhi::Device& device, rhi::ShaderCompiler& shaderCompiler,
+                               VkFormat colorFormat, VkFormat depthFormat,
+                               uint32_t viewMask, VkDescriptorSetLayout frameSetLayout) {
+    pipeline_.destroy();
     pipeline_ =
         rhi::GraphicsPipelineBuilder{}
             .setShaders(shaderCompiler.load("assets/shaders_vk/skybox.vert"),
@@ -64,6 +62,21 @@ void SkyboxPass::init(rhi::Device& device, rhi::ShaderCompiler& shaderCompiler,
             .externalSetLayout(0, frameSetLayout)
             .setDebugName("skybox")
             .build(device);
+}
+
+void SkyboxPass::rebuildPipeline(rhi::Device& device, rhi::ShaderCompiler& shaderCompiler,
+                                 VkFormat colorFormat, VkFormat depthFormat,
+                                 uint32_t viewMask, VkDescriptorSetLayout frameSetLayout) {
+    buildPipeline(device, shaderCompiler, colorFormat, depthFormat, viewMask, frameSetLayout);
+}
+
+void SkyboxPass::init(rhi::Device& device, rhi::ShaderCompiler& shaderCompiler,
+                      VkFormat colorFormat, VkFormat depthFormat, uint32_t viewMask,
+                      VkDescriptorSetLayout frameSetLayout) {
+    shutdown();
+    device_ = &device;
+
+    buildPipeline(device, shaderCompiler, colorFormat, depthFormat, viewMask, frameSetLayout);
 
     VkSamplerCreateInfo samplerInfo{};
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;

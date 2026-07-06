@@ -47,6 +47,7 @@ void ForwardPass::record(VkCommandBuffer cmd, VkDescriptorSet frameSet,
         push.normalMatCol1 = glm::vec4(draw.normalMatrix[1], 0.0f);
         push.normalMatCol2 = glm::vec4(draw.normalMatrix[2], 0.0f);
         push.materialIndex = draw.materialIndex;
+        push.tint = draw.tint;
         pipeline_.pushConstants(cmd, &push, sizeof(push));
         draw.mesh->bindAndDraw(cmd);
     }

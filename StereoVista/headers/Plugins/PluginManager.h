@@ -3,15 +3,15 @@
 // ============================================================================
 //  PluginManager  —  owns plugins and drives every host-integration point
 // ----------------------------------------------------------------------------
-//  A single PluginManager instance lives in main.cpp. The host calls into it
-//  at a handful of well-defined points (init, shutdown, per-eye render, ImGui
-//  pass, Tools menu, and the GLFW input callbacks); the manager fans each call
-//  out to the registered plugins.
+//  A single PluginManager instance lives in the Application. The host calls
+//  into it at a handful of well-defined points (load, per-frame update, overlay
+//  build, ImGui pass, Tools menu, and the polled input edges); the manager fans
+//  each call out to the registered plugins.
 //
 //  Two kinds of plugins:
 //    • Registered (owned)  — created from the static REGISTER_PLUGIN registry
 //                            by loadRegisteredPlugins(); owned by the manager.
-//    • External (borrowed) — an existing global tool migrated onto the Plugin
+//    • External (borrowed) — an existing tool adapted onto the Plugin
 //                            interface; added with registerExternal(), still
 //                            owned by whoever declared it.
 //
@@ -21,7 +21,6 @@
 
 #include "Plugin.h"
 #include "PluginContext.h"
-#include <glm/glm.hpp>
 #include <memory>
 #include <string>
 #include <vector>
@@ -34,23 +33,18 @@ public:
 
     // ── Population ──────────────────────────────────────────────────────────
     // Instantiate every statically-registered plugin (REGISTER_PLUGIN) and call
-    // onRegister on each. Call once, after the GL context exists.
+    // onRegister on each. Call once, after the context exists.
     void loadRegisteredPlugins(PluginContext& ctx);
 
-    // Add an externally-owned plugin (e.g. a migrated global tool). The manager
-    // does NOT take ownership; the pointer must outlive the manager. onRegister
-    // is invoked immediately.
+    // Add an externally-owned plugin (e.g. an adapted tool). The manager does
+    // NOT take ownership; the pointer must outlive the manager.
     void registerExternal(Plugin* plugin, PluginContext& ctx);
 
-    // ── Lifecycle dispatch ──────────────────────────────────────────────────
-    void initializeAllGL(PluginContext& ctx);   // onInitializeGL for all
-    void shutdownAllGL();                        // onShutdownGL for all
+    // ── Per-frame dispatch ──────────────────────────────────────────────────
     void update(PluginContext& ctx, float dt);   // onUpdate for all
-
-    void renderViewport(PluginContext& ctx, const glm::mat4& projection,
-                        const glm::mat4& view, const glm::vec3& cameraPos);
-    void renderUI(PluginContext& ctx);           // onRenderUI for all
-    void renderMenu(PluginContext& ctx);         // onRenderMenu for all
+    void buildOverlay(PluginContext& ctx);        // onBuildOverlay for all
+    void renderUI(PluginContext& ctx);            // onRenderUI for all
+    void renderMenu(PluginContext& ctx);          // onRenderMenu for all
 
     // ── Input dispatch (true == consumed by some plugin) ────────────────────
     bool dispatchMouseButton(PluginContext& ctx, int button, int action, int mods);
@@ -71,7 +65,6 @@ public:
 private:
     std::vector<std::unique_ptr<Plugin>> m_owned; // registered plugins
     std::vector<Plugin*>                 m_all;    // owned + external, in order
-    bool m_glInitialized = false;
 };
 
 } // namespace Plugins

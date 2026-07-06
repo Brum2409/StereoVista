@@ -3,37 +3,40 @@
 // ============================================================================
 //  PluginContext  —  the services API handed to every StereoVista plugin
 // ----------------------------------------------------------------------------
-//  A plugin never talks to the application's globals directly. Instead, every
-//  hook on Plugins::Plugin receives a PluginContext& through which it can reach
-//  the common, frequently-needed functionality of the host:
+//  A plugin never talks to the application's internals directly. Every hook on
+//  Plugins::Plugin receives a PluginContext& through which it reaches the
+//  common host services:
 //
 //      • the active scene and camera
-//      • picking (the mouse ray, the 3D-cursor world position, scene raycasts)
-//      • user preferences and the undo system
+//      • the unified RHI overlay draw list (world-space annotations/gizmos)
+//      • picking: the mouse ray, the depth-picked 3D-cursor world position,
+//        and object identification (model + sub-mesh) under the cursor
+//      • model/sub-mesh selection
+//      • the undo system
 //      • input state (mouse position, modifier keys, viewport size)
 //      • user-facing toast notifications
-//      • a helper to compile self-contained overlay shaders
 //
-//  PluginContext is an abstract interface. The concrete implementation lives in
-//  main.cpp and simply forwards to the existing application globals, so the
-//  plugin layer stays decoupled from the 7,000-line main translation unit.
+//  Vulkan rewrite of the GL PluginContext: the GL `compileOverlayProgram`
+//  helper (every tool owned its own shader + VAO) is gone — plugins now append
+//  geometry to a single shared renderer::OverlayDrawList (playbook C.9), so the
+//  per-eye onRenderViewport collapses to one world-space overlay build.
 //
-//  See docs/PLUGINS.md for the full API reference and worked examples.
+//  PluginContext is an abstract interface; the concrete MainPluginContext lives
+//  in App/Application.cpp and forwards to the application state.
 // ============================================================================
 
-#include "Engine/Core.h"   // GL types (GLuint) + GLFW + glm, exactly like Tools/
 #include <glm/glm.hpp>
 #include <string>
 
-// Forward declarations keep this header light: plugins only pull in the heavy
-// types they actually use.
-namespace Engine { struct Scene; class UndoManager; }
+// Forward declarations keep this header light and GL-free.
+namespace scene { struct Scene; struct RayHit; }
+namespace renderer { class OverlayDrawList; }
+namespace core { class UndoManager; }
 class Camera;
-namespace GUI { struct ApplicationPreferences; }
 
 namespace Plugins {
 
-// Severity for PluginContext::toast(); maps onto GUI::ToastType in the host.
+// Severity for PluginContext::toast(); maps onto the host's toast overlay.
 enum class ToastLevel { Success, Info, Warning, Error };
 
 // A picking ray through the current OS-cursor position, in world space.
@@ -42,52 +45,48 @@ struct PickRay {
     glm::vec3 direction = glm::vec3(0.0f, 0.0f, -1.0f);
 };
 
-// Nearest intersection of the mouse ray with model geometry in the scene.
-struct RayHit {
-    bool      hit        = false;
-    float     distance   = 0.0f;
-    glm::vec3 position    = glm::vec3(0.0f);
-    glm::vec3 normal      = glm::vec3(0.0f, 1.0f, 0.0f);
-    int       modelIndex  = -1;   // index into scene().models, or -1
-};
-
 class PluginContext {
 public:
     virtual ~PluginContext() = default;
 
     // ── Scene, camera & core services ───────────────────────────────────────
-    virtual Engine::Scene&               scene()           = 0;
-    virtual const Camera&                camera()    const = 0;
-    virtual glm::vec3                    cameraPosition() const = 0;
-    virtual GUI::ApplicationPreferences& preferences()     = 0;
-    virtual Engine::UndoManager&         undo()            = 0;
+    virtual scene::Scene&      scene()               = 0;
+    virtual const Camera&      camera()        const = 0;
+    virtual glm::vec3          cameraPosition() const = 0;
+    virtual core::UndoManager& undo()                = 0;
+
+    // ── Overlay (replaces the GL compileOverlayProgram) ─────────────────────
+    // Append world-space geometry once per frame; the renderer draws it on the
+    // backbuffer after tonemap, depth-tested against the scene. One build feeds
+    // both stereo eyes — no per-eye matrices.
+    virtual renderer::OverlayDrawList& overlay() = 0;
 
     // ── Picking / 3D cursor ─────────────────────────────────────────────────
-    // mouseRay():        world-space ray under the OS cursor (uses the same
-    //                    projection the renderer used this frame).
-    // cursorWorldPos():  the synchronized 3D-cursor world position; returns
-    //                    false when the cursor is not over valid geometry.
-    // raycastModels():   nearest hit of mouseRay() against scene model meshes.
+    // mouseRay():        world-space ray under the OS cursor (same projection
+    //                    the renderer used this frame).
+    // cursorWorldPos():  the depth-picked 3D-cursor world position; false when
+    //                    the cursor is not over valid geometry.
+    // raycastModels():   the model + sub-mesh whose surface is under the cursor,
+    //                    resolved from the GPU depth point (no per-triangle work).
     virtual PickRay mouseRay()                       const = 0;
     virtual bool    cursorWorldPos(glm::vec3& out)   const = 0;
-    virtual RayHit  raycastModels()                  const = 0;
+    virtual bool    raycastModels(scene::RayHit& out) const = 0;
+
+    // ── Selection (index into scene().models; mesh -1 = whole model) ─────────
+    virtual int  selectedModel() const = 0;
+    virtual int  selectedMesh()  const = 0;
+    virtual void setSelection(int model, int mesh = -1) = 0;
 
     // ── Input / viewport state ──────────────────────────────────────────────
     virtual glm::vec2 mousePos()      const = 0;   // pixels, window space
     virtual int       keyMods()       const = 0;   // current GLFW_MOD_* bitmask
     virtual glm::vec2 viewportSize()  const = 0;   // 3D viewport, pixels
+    // proj*view for this frame's camera (for world->screen label projection).
+    virtual glm::mat4 viewProj()      const = 0;
 
     // ── User feedback ───────────────────────────────────────────────────────
     virtual void toast(const std::string& message,
                        ToastLevel level = ToastLevel::Info) = 0;
-
-    // ── GL convenience (shared implementation, not overridable) ─────────────
-    // Compile + link a tiny vertex/fragment shader program from source strings.
-    // Returns the program name, or 0 on failure (errors are logged to stderr).
-    // Use this for the self-contained overlay shaders an overlay tool needs,
-    // instead of copy-pasting the glCreateShader/link boilerplate.
-    GLuint compileOverlayProgram(const char* vertexSrc, const char* fragmentSrc,
-                                 const char* label = "plugin");
 };
 
 } // namespace Plugins

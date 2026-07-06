@@ -1,0 +1,3108 @@
+ ▐▛███▜▌   Claude Code v2.1.200
+▝▜█████▛▘  Fable 5 · Claude Pro
+  ▘▘ ▝▝    ~\Downloads\Stereo Demo
+
+ ▎ Fable 5 is back.
+ ▎ Until July 7, you can use up to 50% of your plan's weekly usage limit on Fable 5. If you hit your limit, you can continue on Fable 5 with usage credits. Fable 5 draws down usage faster than Opus 4.8. Learn more
+
+❯ We are porting StereoVista from OpenGL to Vulkan (branch StereoVista-vulkan). 
+  Read these two files first, they are the shared memory for this migration:    
+                                                                                
+  - docs/VULKAN_MIGRATION_STATUS.md — living status, golden rules, session log  
+  (READ ME FIRST)                                                               
+  - docs/VULKAN_MIGRATION.md — design rationale + the §6b native-Vulkan         
+  playbook                                                                      
+                                                                                
+  State: Phases 0–5 are DONE. Phase 5 (Schütz compute point-cloud pipeline:     
+  renderer::PointCloudPass + assets/shaders_vk/pointcloud_*, all-BDA            
+  zero-descriptor design, HQS, reverse-Z fixes) landed on 2026-07-04, builds    
+  green Release+Debug x64 and runs correctly on my machine. Note: the Phase 5   
+  work is deliberately uncommitted in the working tree — don't be confused by   
+  git status, and do not commit or push unless I ask.                           
+                                                                                
+  Your task: continue with Phase 6 — camera, cursors, tools, plugins (status    
+  file §2 Phase 6 detail + §3 "Next up"). Key points:                           
+  - Reuse Camera (headers/Core/Camera.h) almost verbatim — abstract its two GL  
+  touch points: the glReadPixels centre-depth read (heads-up: the scene depth   
+  attachment currently has storeOp DONT_CARE in Renderer.cpp and needs a store  
+  + readback/sample path for depth picking) and glfwGetTime.                    
+  - Build ONE RHI overlay renderer (dynamic vertex buffer + line/tri pipelines) 
+  behind the PluginContext seam, unifying the two divergent GL overlay shader   
+  paths (playbook C.9). Then port the cursors                                   
+  (SphereCursor/PlaneCursor/FragmentCursor + CursorPreview3D                    
+  render-to-texture), then TransformGizmo, MeasurementTool, ClipPlaneTool (it   
+  replaces the interim debug-panel clip test — FrameSubmission::clipPlanes      
+  already feeds the point-cloud pipeline; mesh clipping rejoins here),          
+  BrushTool, CrosshairPlugin, MeasurementPlugin.                                
+  - Golden rules apply: this is a rewrite, not a translation — do it better in  
+  native Vulkan, fix GL bugs instead of porting them (§6b has the list), read   
+  the actual source rather than trusting the docs, use the internet when        
+  unsure, and ask me for product decisions.                                     
+  - Build locally with VS2022 MSBuild (the status file's "CI is the only        
+  signal" note does not apply on this machine): "C:\Program Files\Microsoft     
+  Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe" StereoVista.sln 
+  /p:Configuration=Release /p:Platform=x64 /m. Get both Release and Debug x64   
+  green, then hand me concrete run/verify steps — I verify each milestone       
+  visually on my RTX 3050 Ti laptop.                                            
+  - When you finish work, update docs/VULKAN_MIGRATION_STATUS.md (phase board,  
+  §2 detail, session log) so the next session can pick up where you left off.   
+  ⎿  You've hit your session limit · resets 1:50am (Europe/Vienna)
+     /upgrade to increase your usage limit.
+
+✻ Sautéed for 0s
+
+❯ We are porting StereoVista from OpenGL to Vulkan (branch StereoVista-vulkan). 
+  Read these two files first, they are the shared memory for this migration:    
+                                                                                
+    - docs/VULKAN_MIGRATION_STATUS.md — living status, golden rules, session    
+  log (READ ME FIRST)                                                           
+    - docs/VULKAN_MIGRATION.md — design rationale + the §6b native-Vulkan       
+  playbook                                                                      
+                                                                                
+    State: Phases 0–5 are DONE. Phase 5 (Schütz compute point-cloud pipeline:   
+  renderer::PointCloudPass + assets/shaders_vk/pointcloud_*, all-BDA            
+  zero-descriptor design, HQS, reverse-Z fixes) landed on 2026-07-04, builds    
+  green Release+Debug x64 and runs correctly on my machine. Note: the Phase 5   
+  work is deliberately uncommitted in the working tree — don't be confused by   
+  git status, and do not commit or push unless I ask.                           
+                                                                                
+    Your task: continue with Phase 6 — camera, cursors, tools, plugins (status  
+  file §2 Phase 6 detail + §3 "Next up"). Key points:                           
+    - Reuse Camera (headers/Core/Camera.h) almost verbatim — abstract its two   
+  GL touch points: the glReadPixels centre-depth read (heads-up: the scene      
+  depth attachment currently has storeOp DONT_CARE in Renderer.cpp and needs a  
+  store + readback/sample path for depth picki                                  
+    - Build ONE RHI overlay renderer (dynamic vertex buffer + line/tri          
+  pipelines) behind the PluginContext seam, unifying the two divergent GL       
+  overlay shader paths (playbook C.9). Then port the cursors                    
+  (SphereCursor/PlaneCursor/FragmentCursor + CursorPreview3D                    
+  render-to-texture), then TransformGizmo, MeasurementTool, ClipPlaneTool (it   
+  replaces the interim debug-panel clip test — FrameSubmission::clipPlanes      
+  already feeds the point-cloud pipeline; mesh clipping rejoins here),          
+  BrushTool, CrosshairPlugin, MeasurementPlugin.                                
+    - Golden rules apply: this is a rewrite, not a translation — do it better   
+  in native Vulkan, fix GL bugs instead of porting them (§6b has the list),     
+  read the acing the docs, use the internet when unsure,and ask me for product  
+  decisions.                                                                    
+    - Build locally with VS2022 MSBuild (the stagnal" note does not apply on    
+  this machine):"C:\Program Files\Microsoft Visual                              
+  Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe" StereoVista.sln        
+  /p:Configuration=Release /p:Platform=x64 /m. Get both Release and Debug x64   
+  green, then hand me concrete run/verify steps — I verify each milestone       
+  visually on my RTX 3050 Ti laptop.                                            
+    - When you finish work, update docs/VULKAN_MIGRATION_STATUS.md (phase       
+  board, §2 detail, session log) so the next session can pick up where you left 
+  off.                                                                          
+
+● I'll start by reading the two migration docs, then dig into the Phase 6 source
+  files.
+
+  Read 2 files (ctrl+o to expand)
+
+● Let me read the rest of the status file (session log and remaining sections).
+
+  Searched for 6 patterns, read 1 file (ctrl+o to expand)
+
+● This is a large, multi-milestone phase — let me set up task tracking, then
+  read the sources in bulk.
+
+  Read 1 file (ctrl+o to expand)
+
+  Searched for 2 patterns, read 16 files (ctrl+o to expand)
+● Cursors and preview mapped. Now the tools — checking sizes first, then
+  reading:
+
+  Read 2 files (ctrl+o to expand)
+
+● Gizmo mapped — its GL surface is trivially small (one flat-color program + 6
+  static meshes, always-on-top blended draws, CPU-sorted). Now the remaining
+  three tools:
+
+  Read 3 files (ctrl+o to expand)
+
+● BrushTool is more than an overlay — it paints instanced scene models (needs
+  draw-list integration) plus an indicator ring. Let me read the remaining tool
+  sources and the plugin system:
+
+  Read 3 files (ctrl+o to expand)
+
+● Now the plugin system:
+
+  Read 8 files (ctrl+o to expand)
+
+● Task #1 nearly done — last piece is the main.cpp integration points. Let me
+  grep for how these systems are driven:
+
+  Searched for 2 patterns, read 1 file (ctrl+o to expand)
+
+● GL-era reading is done. Now the current Vulkan side (task #2):
+
+  Searched for 5 patterns, read 22 files, ran 3 shell commands (ctrl+o to expand)
+● UndoManager needs light surgery (drop the ModelLoader.h dependency, keep the
+  generic command core). Let me check what its .cpp defines and size up the GUI
+  panels I need to port:
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Recon is nearly complete. Final skims — Device feature table, TonemapPass
+  init, CursorPresets deps, ImGui texture API:
+
+  Read 2 files, ran 1 shell command (ctrl+o to expand)
+
+● Recon done — I have the full picture now. Marking task #2 complete and locking
+  the design before coding.
+
+  Read 2 files (ctrl+o to expand)
+
+● Writing the overlay system now — shared structs first:
+
+● Write(StereoVista\assets\shaders_vk\overlay_types.h)
+  ⎿  Wrote 55 lines to StereoVista\assets\shaders_vk\overlay_types.h
+       1 #ifndef SV_OVERLAY_TYPES_H
+       3 
+       4 // =============================================================
+       5 // GPU structs of the unified overlay renderer (Phase 6, playboo
+       6 // pipeline draws every cursor / tool / gizmo / plugin overlay. 
+         Shared between
+         the rules
+       8 // there. Kept separate so overlay shaders don't pull scene bind
+       9 //
+         een-space
+     … +75 lines (ctrl+o to expand)
+
+● Write(StereoVista\assets\shaders_vk\overlay.vert)
+  ⎿  Wrote 116 lines to StereoVista\assets\shaders_vk\overlay.vert
+       1 #version 460
+       2 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : requi
+       3 #extension GL_EXT_buffer_reference2 : require
+       4 #extension GL_EXT_scalar_block_layout : require
+       5 
+         ansion.
+       7 //
+       8 // Every batch is a triangle list; the push-constant `kind` sele
+       9 // attributes are interpreted:
+      10 //   FLAT / SPHERE      aPos is a world-space triangle vertex.
+     … +125 lines (ctrl+o to expand)
+
+● Write(StereoVista\assets\shaders_vk\overlay.frag)
+  ⎿  Wrote 114 lines to StereoVista\assets\shaders_vk\overlay.frag
+      1 #version 460
+        e
+      3 #extension GL_EXT_buffer_reference2 : require
+      4 #extension GL_EXT_scalar_block_layout : require
+      6 // Unified overlay renderer (Phase 6, playbook C.9) — fragment sh
+        ading.
+         app, where
+      8 // tonemap lived inside the mesh shader so overlays also blended 
+        over
+        pha-blended.
+     … +124 lines (ctrl+o to expand)
+
+● Update(StereoVista\assets\shaders_vk\overlay.frag)
+  ⎿  Added 4 lines, removed 5 lines
+      45          vec3 viewDir = normalize(viewPos - vWorldPos);
+      46          float alpha = vColor.a * pc.paramsA.x;
+      47          if (pc.paramsA.w < 0.5) {
+      48 +            // GL note: the reference shader's distFromCenter/r
+         +adius term is                                                  
+      49 +            // constant across the sphere surface, so the visib
+         +le "center                                                     
+      50 +            // transparency" really comes from the view-angle e
+         +dge factor —                                                   
+      51 +            // this is the same curve the GL cursor produced.  
+      52              float edgeFactor = pow(1.0 - abs(dot(viewDir, norm)
+          ), pc.paramsA.y);
+      49 -            // GL note: length(ModelPos)/radius is constant acr
+         -oss the sphere                                                 
+      50 -            // surface, so the "center" falloff really comes fr
+         -om the view                                                    
+      51 -            // angle; keep the exact formula for parity.       
+      52 -            float centerAlpha = mix(pc.paramsA.z, 1.0, 1.0);   
+      53              alpha *= mix(pc.paramsA.z, 1.0, edgeFactor);
+      54 -            centerAlpha; // silence unused (documented above)  
+      54          }
+      55          float rimFactor = 1.0 - max(0.0, dot(viewDir, norm));
+      56          vec3 rgb = vColor.rgb + vColor.rgb * pow(rimFactor, 3.0
+          ) * 0.3;
+
+● Write(StereoVista\headers\Renderer\OverlayDrawList.h)
+  ⎿  Wrote 109 lines to StereoVista\headers\Renderer\OverlayDrawList.h
+       1 #pragma once
+       2 
+       3 #include <glm/glm.hpp>
+       4 
+       5 #include <cstdint>
+       7 
+       8 namespace renderer {
+       9 
+      10 // =============================================================
+         ===============
+     … +146 lines (ctrl+o to expand)
+
+● Write(StereoVista\src\Renderer\OverlayDrawList.cpp)
+  ⎿  Wrote 221 lines to StereoVista\src\Renderer\OverlayDrawList.cpp
+       1 #include "Renderer/OverlayDrawList.h"
+       2 
+       3 #include <algorithm>
+       4 #include <cstring>
+       5 
+       7 
+       8 namespace {
+       9 
+      10 // Mirror of the SV_OVERLAY_KIND_* defines in assets/shaders_vk/
+         overlay_types.h
+     … +263 lines (ctrl+o to expand)
+
+● The triangles() and disc() implementations came out convoluted — simplifying
+  both now:
+
+● Update(StereoVista\src\Renderer\OverlayDrawList.cpp)
+  ⎿  Added 4 lines, removed 8 lines
+       96                                  const glm::vec4& color, Overla
+           yDepth depth) {
+       97      if (!verts || vertexCount < 3)
+       98          return;
+       99 +    const size_t usable = vertexCount - vertexCount % 3;      
+      100      OverlayBatch& batch = batchFor(kKindFlat, depth, false, 0)
+           ;
+      101      const uint32_t rgba = packColor(color);
+      101 -    vertices_.reserve(vertices_.size() + vertexCount);        
+      102 -    for (size_t i = 0; i + 2 < vertexCount + (vertexCount % 3 
+          -== 0 ? 2 : 0) &&                                              
+      103 -                       i < vertexCount; ++i)                  
+      102 +    vertices_.reserve(vertices_.size() + usable);             
+      103 +    for (size_t i = 0; i < usable; ++i)                       
+      104          vertices_.push_back({ verts[i], glm::vec3(0.0f), glm::
+           vec4(0.0f), rgba });
+      105 -    batch.vertexCount += static_cast<uint32_t>(vertexCount - v
+          -ertexCount % 3);                                              
+      106 -    // Drop any trailing partial triangle from the vertex stre
+          -am too.                                                       
+      107 -    vertices_.resize(batch.firstVertex + batch.vertexCount +  
+      108 -                     (vertices_.size() - batch.firstVertex - b
+          -atch.vertexCount) -                                           
+      109 -                     (vertexCount % 3));                      
+      105 +    batch.vertexCount += static_cast<uint32_t>(usable);       
+      106  }
+      107  
+      108  void OverlayDrawList::marker(const glm::vec3& center, float si
+           zePx,
+
+● Update(StereoVista\src\Renderer\OverlayDrawList.cpp)  ⎿  Added 16 lines, removed 19 lines
+      120  
+      121  void OverlayDrawList::disc(const glm::vec3& center, float worl
+           dRadius,
+      122                             const glm::vec4& color, OverlayDept
+           h depth, bool softEdge) {
+      123 -    OverlayBatch& batch = batchFor(softEdge ? kKindDisc : kKin
+          -dFlat, depth, false, 0);                                      
+      123 +    // One camera-facing billboard quad; the fragment shader c
+          +uts the circle.                                               
+      124 +    // paramsA.x = 1 selects the hard-edged flat look (in-scen
+          +e PlaneCursor);                                               
+      125 +    // 0 the soft/rimmed preview look. Own batch (carries push
+          + params).                                                     
+      126 +    OverlayBatch batch;                                       
+      127 +    batch.kind = kKindDisc;                                   
+      128 +    batch.depth = depth;                                      
+      129 +    batch.paramsA = glm::vec4(softEdge ? 0.0f : 1.0f, 0.0f, 0.
+          +0f, 0.0f);                                                    
+      130 +    batch.firstVertex = static_cast<uint32_t>(vertices_.size()
+          +);                                                            
+      131      const uint32_t rgba = packColor(color);
+      125 -    if (softEdge) {                                           
+      126 -        const glm::vec2 corners[6] = {                        
+      127 -            { -1, -1 }, { 1, -1 }, { 1, 1 }, { -1, -1 }, { 1, 
+          -1 }, { -1, 1 },                                               
+      128 -        };                                                    
+      129 -        for (const glm::vec2& c : corners)                    
+      130 -            vertices_.push_back(                              
+      131 -                { center, glm::vec3(0.0f), { c.x, c.y, worldRa
+          -dius, 0.0f }, rgba });                                        
+      132 -        batch.vertexCount += 6;                               
+      133 -        return;                                               
+      134 -    }                                                         
+      135 -    // Hard-edged disc: the in-scene PlaneCursor look — a came
+          -ra-facing fan of                                              
+      136 -    // flat triangles is wasteful; reuse the DISC billboard pa
+          -th with a hard                                                
+      137 -    // cutoff instead. Simpler: emit it as a DISC too, but fla
+          -t color demands                                               
+      138 -    // kKindFlat... build a billboard quad via the DISC kind i
+          -s not possible                                                
+      139 -    // for FLAT, so approximate with a 32-segment fan facing t
+          -he camera is                                                  
+      140 -    // done by the caller (PlaneCursor) — this branch only exi
+          -sts for the fan                                               
+      141 -    // fallback and should not be reached.                    
+      142 -    (void)worldRadius;                                        
+      132 +    const glm::vec2 corners[6] = {                            
+      133 +        { -1, -1 }, { 1, -1 }, { 1, 1 }, { -1, -1 }, { 1, 1 },
+          + { -1, 1 },                                                   
+      134 +    };                                                        
+      135 +    for (const glm::vec2& c : corners)                        
+      136 +        vertices_.push_back(                                  
+      137 +            { center, glm::vec3(0.0f), { c.x, c.y, worldRadius
+          +, 0.0f }, rgba });                                            
+      138 +    batch.vertexCount = 6;                                    
+      139 +    batches_.push_back(batch);                                
+      140  }
+      141  
+      142  void OverlayDrawList::rings(const glm::vec3& center, float wor
+           ldRadius,
+
+● Update(StereoVista\assets\shaders_vk\overlay.frag)
+  ⎿  Added 6 lines, removed 1 line
+      59      }
+      60  
+      61      if (pc.kind == SV_OVERLAY_KIND_DISC) {
+      62 -        // Soft-edged disc with a brighter rim (CursorPreview3D
+         - plane cursor).                                                
+      62 +        // Camera-facing disc. paramsA.x = 1: hard-edged flat c
+         +olor (in-scene                                                 
+      63 +        // PlaneCursor); 0: soft edge + brighter rim (CursorPre
+         +view3D look).                                                  
+      64          float r = length(vUV);
+      65          float aa = max(fwidth(r), 1e-4);
+      66          float disc = 1.0 - smoothstep(1.0 - aa * 1.5, 1.0, r);
+      67          if (disc <= 0.001)
+      68              discard;
+      69 +        if (pc.paramsA.x > 0.5) {                              
+      70 +            outColor = vec4(vColor.rgb, vColor.a * disc);      
+      71 +            return;                                            
+      72 +        }                                                      
+      73          float rim = smoothstep(0.80, 0.96, r) * (1.0 - smoothst
+          ep(0.985, 1.0, r));
+      74          outColor = vec4(vColor.rgb + rim * 0.55, vColor.a * dis
+          c);
+      75          return;
+
+● Now extending the pipeline builder with extra dynamic states (playbook A.6),
+  then the OverlayPass:
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Update(StereoVista\src\RHI\Pipeline.cpp)
+  ⎿  File must be read first
+
+● Update(StereoVista\headers\RHI\Pipeline.h)
+  ⎿  Added 5 lines
+      117      GraphicsPipelineBuilder& setDepthBias(float constantFactor
+           , float slopeFactor);
+      118      GraphicsPipelineBuilder& setBlend(BlendMode mode);
+      119      GraphicsPipelineBuilder& addVertexBinding(VertexBinding bi
+           nding);
+      120 +    // Widen dynamic state beyond the always-dynamic viewport/
+          +scissor                                                       
+      121 +    // (playbook A.6) — e.g. depth test/compare/write + cull m
+          +ode for the                                                   
+      122 +    // overlay pipeline, all core 1.3. The static value set on
+          + this builder                                                 
+      123 +    // becomes irrelevant for that state; the recorder must se
+          +t it.                                                         
+      124 +    GraphicsPipelineBuilder& addDynamicState(VkDynamicState st
+          +ate);                                                         
+      125      GraphicsPipelineBuilder& bindingOverride(const BindingOver
+           ride& override_);
+      126      GraphicsPipelineBuilder& externalSetLayout(uint32_t set, V
+           kDescriptorSetLayout layout);
+      127      GraphicsPipelineBuilder& setDebugName(std::string name);
+
+● Update(StereoVista\headers\RHI\Pipeline.h)
+  ⎿  Added 1 line
+      146      float depthBiasSlope_ = 0.0f;
+      147      BlendMode blend_ = BlendMode::Opaque;
+      148      std::vector<VertexBinding> vertexBindings_;
+      149 +    std::vector<VkDynamicState> extraDynamicStates_;          
+      150      std::vector<BindingOverride> overrides_;
+      151      std::vector<std::pair<uint32_t, VkDescriptorSetLayout>> ex
+           ternalLayouts_;
+      152      std::string debugName_ = "graphics pipeline";
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(StereoVista\src\RHI\Pipeline.cpp)
+  ⎿  Added 6 lines, removed 3 lines
+      532      blend.attachmentCount = static_cast<uint32_t>(blendAttachm
+           ents.size());
+      533      blend.pAttachments = blendAttachments.data();
+      534  
+      535 -    VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPO
+          -RT, VK_DYNAMIC_STATE_SCISSOR };                               
+      535 +    std::vector<VkDynamicState> dynamicStates = { VK_DYNAMIC_S
+          +TATE_VIEWPORT,                                                
+      536 +                                                  VK_DYNAMIC_S
+          +TATE_SCISSOR };                                               
+      537 +    dynamicStates.insert(dynamicStates.end(), extraDynamicStat
+          +es_.begin(),                                                  
+      538 +                         extraDynamicStates_.end());          
+      539      VkPipelineDynamicStateCreateInfo dynamic{};
+      540      dynamic.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_C
+           REATE_INFO;
+      538 -    dynamic.dynamicStateCount = 2;                            
+      539 -    dynamic.pDynamicStates = dynamicStates;                   
+      541 +    dynamic.dynamicStateCount = static_cast<uint32_t>(dynamicS
+          +tates.size());                                                
+      542 +    dynamic.pDynamicStates = dynamicStates.data();            
+      543  
+      544      VkPipelineRenderingCreateInfo rendering{};
+      545      rendering.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CRE
+           ATE_INFO;
+
+● Update(StereoVista\src\RHI\Pipeline.cpp)
+  ⎿  Added 5 lines
+      387      return *this;
+      388  }
+      389  
+      390 +GraphicsPipelineBuilder& GraphicsPipelineBuilder::addDynamicSt
+          +ate(VkDynamicState state) {                                   
+      391 +    extraDynamicStates_.push_back(state);                     
+      392 +    return *this;                                             
+      393 +}                                                             
+      394 +                                                              
+      395  GraphicsPipelineBuilder& GraphicsPipelineBuilder::setDebugName
+           (std::string name) {
+      396      debugName_ = std::move(name);
+      397      return *this;
+
+● Now the OverlayPass itself:
+
+● Write(StereoVista\headers\Renderer\passes\OverlayPass.h)
+  ⎿  Wrote 88 lines to StereoVista\headers\Renderer\passes\OverlayPass.h
+       1 #pragma once
+       2 
+       3 #include "RHI/Buffer.h"
+       4 #include "RHI/Pipeline.h"
+       5 #include "RHI/VulkanCommon.h"
+       6 #include "Renderer/OverlayDrawList.h"
+       7 
+       8 #include <glm/glm.hpp>
+       9 
+      10 #include <cstdint>
+     … +99 lines (ctrl+o to expand)
+
+● Write(StereoVista\src\Renderer\passes\OverlayPass.cpp)
+  ⎿  Wrote 140 lines to StereoVista\src\Renderer\passes\OverlayPass.cpp
+      1 #include "Renderer/passes/OverlayPass.h"
+      2 
+      3 #include "RHI/Device.h"
+      4 #include "RHI/ShaderCompiler.h"
+      5 #include "Renderer/GpuTypes.h"
+      6 
+      7 #include <cstring>
+      8 
+      9 namespace renderer {
+     … +155 lines (ctrl+o to expand)
+
+● Update(StereoVista\assets\shaders_vk\overlay_types.h)
+  ⎿  Added 1 line, removed 1 line
+      37  
+      38  // Push constants: one per overlay batch (a batch = consecutive
+           primitives
+      39  // sharing kind + depth state + shade params).
+      40 -struct OverlayPush {        // 88 bytes                        
+      40 +struct OverlayPush {        // 72 bytes                        
+      41      uint64_t viewParams;    // OverlayViewParams[viewCount]
+      42      // SPHERE: x transparency, y edgeSoftness, z centerTranspar
+          ency,
+      43      //         w 1 = inner sphere (skips edge/center modulation
+          ).
+
+● Update(StereoVista\assets\shaders_vk\overlay_types.h)
+  ⎿  Removed 2 lines
+      48      vec4 colorB;            // RINGS inner color / BACKGROUND b
+          ottom color
+      49      uint kind;              // SV_OVERLAY_KIND_*
+      50      uint viewIndex;         // which OverlayViewParams to read 
+          (mono: 0)
+      51 -    uint pad0;                                                 
+      52 -    uint pad1;                                                 
+      51  };
+      52  
+      53  #endif // SV_OVERLAY_TYPES_H
+
+● Update(StereoVista\assets\shaders_vk\overlay_types.h)
+  ⎿  Added 1 line, removed 1 line
+      37  
+      38  // Push constants: one per overlay batch (a batch = consecutive
+           primitives
+      39  // sharing kind + depth state + shade params).
+      40 -struct OverlayPush {        // 72 bytes                        
+      40 +struct OverlayPush {        // 64 bytes                        
+      41      uint64_t viewParams;    // OverlayViewParams[viewCount]
+      42      // SPHERE: x transparency, y edgeSoftness, z centerTranspar
+          ency,
+      43      //         w 1 = inner sphere (skips edge/center modulation
+          ).
+
+● Update(StereoVista\assets\shaders_vk\scene_types.h)
+  ⎿  Added 4 lines
+      24  #define SV_POINT_SHADOW_RESOLUTION 1024
+      25  #define SV_SUN_SHADOW_RESOLUTION 4096
+      26  #define SV_INVALID_TEXTURE 0xFFFFFFFFu
+      27 +// User section/clip planes (Phase 6 ClipPlaneTool). Must stay 
+         +in sync with                                                   
+      28 +// Engine::MAX_CLIP_PLANES (Engine/Data.h) and SV_PC_CLIP_PLANE
+         +S                                                              
+      29 +// (pointcloud_types.h) — one budget across meshes and point cl
+         +ouds.                                                          
+      30 +#define SV_MAX_CLIP_PLANES 6                                   
+      31  
+      32  // FrameData.flags bits
+      33  #define SV_FRAME_SHADOWS_ENABLED 1u
+
+● Update(StereoVista\assets\shaders_vk\scene_types.h)
+  ⎿  Added 20 lines, removed 1 line
+      42  };
+      43  
+      44  // Per-frame constants, one UBO bound at set 0 binding 0 for ev
+          ery scene pass.
+      45 -struct FrameData {         // 1968 bytes                       
+      45 +struct FrameData {         // 2144 bytes                       
+      46      ViewData views[SV_MAX_VIEWS];
+      47      mat4 sunViewProj;      // world -> sun shadow clip (reverse
+          -Z ortho)
+      48      // Reverse-Z 90-degree face projections for every shadowed 
+          point light,
+     ...
+      51      vec4 sunDirection;     // xyz: direction the light TRAVELS 
+          (world)
+      52      vec4 sunColor;         // rgb color, w intensity
+      53      vec4 ambientColor;     // rgb flat ambient (albedo multipli
+          er)
+      54 +    // Section/clip planes, world space, packed (n.xyz, d); a p
+         +oint p is kept                                                 
+      55 +    // while dot(n, p) + d >= 0. mesh.vert writes them to gl_Cl
+         +ipDistance                                                     
+      56 +    // (hardware clipping — the Vulkan equivalent of the GL sce
+         +ne shaders'                                                    
+      57 +    // gl_ClipDistance path). Shadow casters deliberately do NO
+         +T clip,                                                        
+      58 +    // matching the GL app (clipped-away geometry still casts i
+         +ts shadow).                                                    
+      59 +    vec4 clipPlanes[SV_MAX_CLIP_PLANES];                       
+      60 +    // Fragment (ring) cursor, drawn by mesh.frag ON scene surf
+         +aces around the                                                
+      61 +    // 3D cursor (port of the GL uber-shader's cursor rings). c
+         +ursorPos.w > 0.5                                               
+      62 +    // = the cursor is on valid geometry this frame.           
+      63 +    vec4 cursorPos;                                            
+      64 +    vec4 cursorOuterColor;                                     
+      65 +    vec4 cursorInnerColor;                                     
+      66 +    // x outerRadius, y outerThickness, z innerRadius, w innerT
+         +hickness — all                                                 
+      67 +    // scaled by camera distance in the shader like the GL orig
+         +inal.                                                          
+      68 +    vec4 cursorRingParams;                                     
+      69 +    uint clipPlaneCount;   // 0..SV_MAX_CLIP_PLANES            
+      70 +    uint showFragmentCursor;                                   
+      71      uint pointLightCount;
+      72      uint flags;            // SV_FRAME_* bits
+      73      float shadowTexelWorldSize; // world footprint of one sun s
+          hadow texel
+     ...
+      77      // tan(sun angular radius): world penumbra width per world 
+          unit of
+      78      // receiver-to-blocker distance (0 disables sun contact har
+          dening).
+      79      float sunPenumbraScale;
+      80 +    uint pad0;                                                 
+      81 +    uint pad1;                                                 
+      82      uint pad2;
+      83  };
+      84  
+
+● Update(StereoVista\assets\shaders_vk\scene_types.h)
+  ⎿  Added 4 lines, removed 1 line
+      111      uint pad2;
+      112  };
+      113  
+      114 -// Per-draw push constants (116 bytes, within the 128-byte cor
+          -e minimum).                                                   
+      114 +// Per-draw push constants (128 bytes — exactly the core minim
+          +um; do not grow).                                             
+      115  struct DrawPush {
+      116      mat4 model;
+      117      vec4 normalMatCol0;    // columns of the world-space norma
+           l matrix
+      118      vec4 normalMatCol1;
+      119      vec4 normalMatCol2;
+      120      uint materialIndex;
+      121 +    // Per-draw albedo multiplier (linear). 1,1,1 for normal d
+          +raws; the                                                     
+      122 +    // BrushTool's per-instance color variation rides here (Ph
+          +ase 6).                                                       
+      123 +    vec3 tint;                                                
+      124  };
+      125  
+      126  struct DepthSunPush {      // sun shadow casters (sunViewProj 
+           is in FrameData)
+
+● Update(StereoVista\headers\Renderer\GpuTypes.h)
+  ⎿  Added 5 lines, removed 2 lines
+      22  
+      23  #include "../../assets/shaders_vk/scene_types.h"
+      24  #include "../../assets/shaders_vk/pointcloud_types.h"
+      25 +#include "../../assets/shaders_vk/overlay_types.h"             
+      26  
+      27  static_assert(sizeof(ViewData) == 144, "ViewData layout drifted
+           from GLSL scalar");
+      27 -static_assert(sizeof(FrameData) == 1968, "FrameData layout drif
+         -ted from GLSL scalar");                                        
+      28 +static_assert(sizeof(FrameData) == 2144, "FrameData layout drif
+         +ted from GLSL scalar");                                        
+      29  static_assert(sizeof(PointLightData) == 48, "PointLightData lay
+          out drifted from GLSL scalar");
+      30  static_assert(sizeof(MaterialData) == 64, "MaterialData layout 
+          drifted from GLSL scalar");
+      30 -static_assert(sizeof(DrawPush) == 116, "DrawPush must stay with
+         -in 128 push-constant bytes");                                  
+      31 +static_assert(sizeof(DrawPush) == 128, "DrawPush must stay with
+         +in 128 push-constant bytes");                                  
+      32 +static_assert(sizeof(OverlayViewParams) == 96, "OverlayViewPara
+         +ms layout drifted from GLSL scalar");                          
+      33 +static_assert(sizeof(OverlayPush) == 64, "OverlayPush layout dr
+         +ifted from GLSL scalar");                                      
+      34  static_assert(sizeof(DepthSunPush) == 64, "DepthSunPush layout 
+          drifted");
+      35  static_assert(sizeof(DepthPointPush) == 68, "DepthPointPush lay
+          out drifted");
+      36  static_assert(sizeof(PointCloudBatch) == 32, "PointCloudBatch l
+          ayout drifted from GLSL scalar");
+● Update(StereoVista\assets\shaders_vk\mesh.vert)
+  ⎿  Added 11 lines
+      21  layout(location = 2) out vec2 vUV;
+      22  layout(location = 3) out vec4 vTangent;
+      23  
+      24 +// User section planes as HARDWARE clip distances (Phase 6 Clip
+         +PlaneTool) —                                                   
+      25 +// the Vulkan equivalent of the GL scene shaders' gl_ClipDistan
+         +ce[1..N] path                                                  
+      26 +// (no fragment-shader discard; requires the shaderClipDistance
+         + device                                                        
+      27 +// feature, enabled in rhi::Device). Unused slots emit +1 (alwa
+         +ys kept).                                                      
+      28 +out float gl_ClipDistance[SV_MAX_CLIP_PLANES];                 
+      29 +                                                               
+      30  void main() {
+      31      vec4 world = uPush.model * vec4(aPosition, 1.0);
+      32      mat3 normalMat = mat3(uPush.normalMatCol0.xyz, uPush.normal
+          MatCol1.xyz,
+     ...
+      35      vNormal = normalMat * aNormal;
+      36      vTangent = vec4(normalMat * aTangent.xyz, aTangent.w);
+      37      vUV = aUV;
+      38 +    for (int i = 0; i < SV_MAX_CLIP_PLANES; ++i)               
+      39 +        gl_ClipDistance[i] = (uint(i) < uFrame.clipPlaneCount) 
+      40 +                                 ? dot(uFrame.clipPlanes[i].xyz
+         +, world.xyz) +                                                 
+      41 +                                       uFrame.clipPlanes[i].w  
+      42 +                                 : 1.0;                        
+      43      gl_Position = uFrame.views[gl_ViewIndex].viewProj * world;
+      44  }
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(StereoVista\assets\shaders_vk\mesh.frag)
+  ⎿  Added 1 line
+      298      vec3 albedo = mat.baseColor.rgb;
+      299      if (mat.albedoTexture != SV_INVALID_TEXTURE)
+      300          albedo = sampleTex(mat.albedoTexture, vUV).rgb; // sRG
+           B view -> linear
+      301 +    albedo *= uPush.tint; // per-draw tint (BrushTool color va
+          +riation)                                                      
+      302  
+      303      float metallic = mat.metallic;
+      304      if (mat.metallicTexture != SV_INVALID_TEXTURE)
+
+● Update(StereoVista\assets\shaders_vk\mesh.frag)
+  ⎿  Added 22 lines
+      362  
+      363      color += albedo * mat.emissive;
+      364  
+      365 +    // Fragment (ring) cursor: two rings painted directly on t
+          +he surface                                                    
+      366 +    // around the 3D cursor position (port of the GL uber-shad
+          +er's cursor                                                   
+      367 +    // rings; same camera-distance scaling). Colors arrive lin
+          +earized, the mix                                              
+      368 +    // happens pre-tonemap — a small tonal delta vs the GL rin
+          +gs (which mixed                                               
+      369 +    // after GL's in-shader tonemap) is expected and accepted.
+      370 +    if (uFrame.showFragmentCursor != 0u && uFrame.cursorPos.w 
+          +> 0.5) {                                                      
+      371 +        float distanceToCursor = length(uFrame.cursorPos.xyz -
+          + vWorldPos);                                                  
+      372 +        float scaleFactor = length(uFrame.cursorPos.xyz - camP
+          +os);                                                          
+      373 +        float outerRadius = uFrame.cursorRingParams.x * scaleF
+          +actor;                                                        
+      374 +        float outerThickness = uFrame.cursorRingParams.y * sca
+          +leFactor;                                                     
+      375 +        float innerRadius = uFrame.cursorRingParams.z * scaleF
+          +actor;                                                        
+      376 +        float innerThickness = uFrame.cursorRingParams.w * sca
+          +leFactor;                                                     
+      377 +        float tOuter = step(outerRadius - outerThickness, dist
+          +anceToCursor) -                                               
+      378 +                       step(outerRadius, distanceToCursor);   
+      379 +        float tInner = step(innerRadius - innerThickness, dist
+          +anceToCursor) -                                               
+      380 +                       step(innerRadius, distanceToCursor);   
+      381 +        color = mix(color, uFrame.cursorInnerColor.rgb,       
+      382 +                    tInner * uFrame.cursorInnerColor.a);      
+      383 +        color = mix(color, uFrame.cursorOuterColor.rgb,       
+      384 +                    tOuter * uFrame.cursorOuterColor.a);      
+      385 +    }                                                         
+      386 +                                                              
+      387      outColor = vec4(color, 1.0);
+      388  }
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(StereoVista\src\RHI\Device.cpp)
+  ⎿  Added 3 lines
+      34      // CUBE_ARRAY image views (point-light shadow cubemap array
+          ).
+      35      { "imageCubeArray", &VkPhysicalDeviceFeatures::imageCubeArr
+          ay, nullptr, nullptr, nullptr },
+      36      { "shaderInt64", &VkPhysicalDeviceFeatures::shaderInt64, nu
+          llptr, nullptr, nullptr },
+      37 +    // HARD requirement since Phase 6: mesh.vert writes the use
+         +r section                                                      
+      38 +    // planes to gl_ClipDistance (hardware clipping). Universal
+         + on desktop.                                                   
+      39 +    { "shaderClipDistance", &VkPhysicalDeviceFeatures::shaderCl
+         +ipDistance, nullptr, nullptr, nullptr },                       
+      40      { "multiview", nullptr, &VkPhysicalDeviceVulkan11Features::
+          multiview, nullptr, nullptr },
+      41      { "shaderBufferInt64Atomics", nullptr, nullptr, &VkPhysical
+          DeviceVulkan12Features::shaderBufferInt64Atomics, nullptr },
+      42      { "timelineSemaphore", nullptr, nullptr, &VkPhysicalDeviceV
+          ulkan12Features::timelineSemaphore, nullptr },
+
+● Update(StereoVista\src\RHI\Device.cpp)
+  ⎿  Added 1 line
+      383      enable2.features.samplerAnisotropy = VK_TRUE;
+      384      enable2.features.imageCubeArray = VK_TRUE;
+      385      enable2.features.shaderInt64 = VK_TRUE;
+      386 +    enable2.features.shaderClipDistance = VK_TRUE; // mesh.ver
+          +t gl_ClipDistance                                             
+      387  
+      388      // shaderDrawParameters is enabled above without being in 
+           the required
+      389      // table — verify it here so an exotic driver fails soft i
+           nstead of
+
+● Now the FrameSubmission extension and Renderer restructure:
+
+● Update(StereoVista\headers\Renderer\FrameSubmission.h)
+  ⎿  Added 3 lines
+       1  #pragma once
+       2  
+       3 +#include "RHI/VulkanCommon.h"                                  
+       4  #include "Renderer/GpuTypes.h"
+       5  #include "Renderer/PointCloudGpu.h"
+       6  
+       7  #include <glm/glm.hpp>
+       8  
+       9  #include <cstdint>
+      10 +#include <functional>                                          
+      11  #include <vector>
+      12  
+      13  namespace renderer {
+      14  
+      15  class MeshBuffer;
+      16 +class OverlayDrawList;                                         
+      17  
+      18  // ============================================================
+          ================
+      19  // The renderer's per-frame SCENE INPUT. The application (scene
+           + camera +
+
+● Update(StereoVista\headers\Renderer\FrameSubmission.h)
+  ⎿  Added 27 lines
+      36      glm::mat3 normalMatrix{ 1.0f };
+      37      uint32_t materialIndex = 0;
+      38      bool castsShadows = true;
+      39 +    // Per-draw linear albedo multiplier (DrawPush.tint). 1,1,1
+         + = neutral;                                                    
+      40 +    // the BrushTool's per-instance color variation rides here.
+      41 +    glm::vec3 tint{ 1.0f };                                    
+      42      // World-space bounding sphere; drives the sun shadow frust
+          um fit (and
+      43      // later CPU culling). Radius 0 = unknown, treated as a poi
+          nt.
+      44      glm::vec3 worldBoundsCenter{ 0.0f };
+      45      float worldBoundsRadius = 0.0f;
+      46  };
+      47  
+      48 +// A rectangle of the view-0 scene depth buffer to copy back to
+         + the CPU this                                                  
+      49 +// frame (pixel coordinates, top-left origin). Results surface 
+         +one frame                                                      
+      50 +// later in Renderer::depthSamples() — the same one-frame stale
+         +ness class as                                                  
+      51 +// the GL glReadPixels picking, but without a pipeline stall.  
+      52 +struct DepthQueryRect {                                        
+      53 +    glm::ivec2 origin{ 0 };                                    
+      54 +    glm::ivec2 size{ 0 };                                      
+      55 +};                                                             
+      56 +                                                               
+      57 +// Fragment (ring) cursor drawn by mesh.frag on scene surfaces 
+         +(Phase 6 port                                                  
+      58 +// of the GL uber-shader cursor). Colors are LINEAR (the app co
+         +nverts the                                                     
+      59 +// authored sRGB values once).                                 
+      60 +struct FragmentCursorState {                                   
+      61 +    bool show = false;                                         
+      62 +    glm::vec3 position{ 0.0f };                                
+      63 +    bool valid = false;                                        
+      64 +    glm::vec4 outerColor{ 1.0f };                              
+      65 +    glm::vec4 innerColor{ 1.0f, 1.0f, 1.0f, 0.5f };            
+      66 +    float outerRadius = 0.04f;                                 
+      67 +    float outerThickness = 0.005f;                             
+      68 +    float innerRadius = 0.004f;                                
+      69 +    float innerThickness = 0.005f;                             
+      70 +};                                                             
+      71 +                                                               
+      72  struct SunState {
+      73      bool enabled = false;
+      74      glm::vec3 direction{ -0.408f, -0.816f, -0.408f }; // travel
+          s this way
+
+● Update(StereoVista\headers\Renderer\FrameSubmission.h)
+  ⎿  Added 15 lines, removed 2 lines
+      135      std::vector<PointCloudDrawItem> pointClouds; // beyond SV_
+           PC_MAX_CLOUDS share the last id
+      136      PointCloudSettings pointCloudSettings;
+      137      // World-space section/clip planes (n.xyz, d), kept side d
+           ot(n,p)+d >= 0.
+      138 -    // Applied to point clouds now; meshes rejoin in Phase 6 w
+          -ith the tool.                                                 
+      139 -    // Beyond SV_PC_CLIP_PLANES ignored.                      
+      138 +    // Applied to point clouds (compute rasterizer) AND meshes
+          + (mesh.vert                                                   
+      139 +    // gl_ClipDistance). Beyond SV_MAX_CLIP_PLANES ignored.   
+      140      std::vector<glm::vec4> clipPlanes;
+      141 +                                                              
+      142 +    // ---- Phase 6: overlays, depth picking, fragment cursor 
+          +----                                                          
+      143 +    // World-space overlay geometry (cursors/tools/gizmo/plugi
+          +ns), drawn on                                                 
+      144 +    // the backbuffer after tonemap, depth-tested against the 
+          +scene depth.                                                  
+      145 +    // The list must stay alive until renderFrame returns.    
+      146 +    const OverlayDrawList* overlay = nullptr;                 
+      147 +    // Scene-depth rectangles to read back for picking (view 0
+          +).                                                            
+      148 +    std::vector<DepthQueryRect> depthQueries;                 
+      149 +    FragmentCursorState fragmentCursor;                       
+      150 +    // Optional extra recording at the top of the frame comman
+          +d buffer, before                                              
+      151 +    // the scene passes — CursorPreview3D renders its offscree
+          +n thumbnail                                                   
+      152 +    // here so ImGui can sample it later in the same frame.   
+      153 +    std::function<void(VkCommandBuffer)> recordAux;           
+      154  };
+      155  
+      156  } // namespace renderer
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(StereoVista\headers\Renderer\passes\TonemapPass.h)
+  ⎿  Added 5 lines, removed 1 line
+      48      TonemapPass(const TonemapPass&) = delete;
+      49      TonemapPass& operator=(const TonemapPass&) = delete;
+      50  
+      51 +    // depthFormat: the backbuffer pass carries the scene depth
+         + attachment                                                    
+      52 +    // since Phase 6 (overlays depth-test against it in the sam
+         +e pass); the                                                   
+      53 +    // tonemap pipeline must declare the format even though it 
+         +ignores depth.                                                 
+      54 +    // UNDEFINED = no depth attachment in the target pass.     
+      55      void init(rhi::Device& device, rhi::ShaderCompiler& shaderC
+          ompiler,
+      52 -              VkFormat targetFormat);                          
+      56 +              VkFormat targetFormat, VkFormat depthFormat = VK_
+         +FORMAT_UNDEFINED);                                             
+      57      void shutdown();
+      58  
+      59      // Layout for the scene-color descriptor set (set 0: sample
+          r2DArray).
+
+● Update(StereoVista\src\Renderer\passes\TonemapPass.cpp)
+  ⎿  Added 2 lines, removed 1 line
+       6  namespace renderer {
+       7  
+       8  void TonemapPass::init(rhi::Device& device, rhi::ShaderCompiler
+          & shaderCompiler,
+       9 -                       VkFormat targetFormat) {                
+       9 +                       VkFormat targetFormat, VkFormat depthFor
+         +mat) {                                                         
+      10      shutdown();
+      11      device_ = &device;
+      12  
+     ...
+      14                      .setShaders(shaderCompiler.load("assets/sha
+          ders_vk/fullscreen.vert"),
+      15                                  shaderCompiler.load("assets/sha
+          ders_vk/tonemap.frag"))
+      16                      .setColorFormats({ targetFormat })
+      17 +                    .setDepthFormat(depthFormat)               
+      18                      .setCullMode(VK_CULL_MODE_NONE)
+      19                      .setDepth(false, false)
+      20                      .setDebugName("tonemap resolve")
+
+● Now the Renderer restructure — header first:
+
+● Update(StereoVista\headers\Renderer\Renderer.h)
+  ⎿  Added 1 line
+      11  #include "Renderer/GpuTypes.h"
+      12  #include "Renderer/MaterialSystem.h"
+      13  #include "Renderer/passes/ForwardPass.h"
+      14 +#include "Renderer/passes/OverlayPass.h"                       
+      15  #include "Renderer/passes/PointCloudPass.h"
+      16  #include "Renderer/passes/ShadowPass.h"
+      17  #include "Renderer/passes/SkyboxPass.h"
+
+● Update(StereoVista\headers\Renderer\Renderer.h)
+  ⎿  Added 5 lines, removed 1 line
+      43  //     -> ForwardPass (single metallic-roughness PBR, linear HD
+          R)
+      44  //     -> PointCloudPass resolve (depth-composited fullscreen d
+          raw)
+      45  //     -> SkyboxPass (background, depth-tested)     [multiview 
+          scene target]
+      46 -//     -> TonemapPass + ImGui in ONE backbuffer pass           
+      46 +//     -> depth-picking rect copies (scene depth -> per-slot re
+         +adback)                                                        
+      47 +//     -> TonemapPass + OverlayPass in one backbuffer pass (sce
+         +ne depth                                                       
+      48 +//        attached: overlays depth-test post-tonemap, matching 
+         +GL where                                                       
+      49 +//        tonemap lived in the mesh shader under the overlays) 
+      50 +//     -> ImGui in its own backbuffer pass (no depth)          
+      51  //     -> optional screenshot copy -> present.
+      52  //
+      53  // recordFrame only sequences the passes and owns the frame-gra
+          ph barriers
+
+● Update(StereoVista\headers\Renderer\Renderer.h)
+  ⎿  Added 18 lines
+      107      uint32_t viewCount() const { return viewCount_; }
+      108      const FrameStats& frameStats() const { return frameStats_;
+            }
+      109  
+      110 +    // ---- Depth picking (Phase 6) ----                      
+      111 +    // Results of the depth rectangles requested via FrameSubm
+          +ission                                                        
+      112 +    // ::depthQueries, published when the frame that copied th
+          +em retires                                                    
+      113 +    // (typically kFramesInFlight frames later). Reconstruct w
+          +orld positions                                                
+      114 +    // with THIS struct's invViewProj — it belongs to the fram
+          +e that rendered                                               
+      115 +    // the depth, not to the current camera.                  
+      116 +    struct DepthReadbackResult {                              
+      117 +        bool valid = false;                                   
+      118 +        glm::mat4 invViewProj{ 1.0f }; // view 0, clip -> worl
+          +d                                                             
+      119 +        glm::vec3 cameraPos{ 0.0f };                          
+      120 +        VkExtent2D extent{};                                  
+      121 +        std::vector<DepthQueryRect> rects;                    
+      122 +        std::vector<float> depths; // rect texels back-to-back
+          +, row-major                                                   
+      123 +        // Reverse-Z depth at an absolute pixel, searching all
+          + rects.                                                       
+      124 +        bool sample(const glm::ivec2& pixel, float& outDepth) 
+          +const;                                                        
+      125 +    };                                                        
+      126 +    const DepthReadbackResult& depthSamples() const { return d
+          +epthResult_; }                                                
+      127 +                                                              
+      128      // Scene-resource registries the loaders feed (valid after
+            init()).
+      129      MaterialSystem& materials() { return materials_; }
+      130      SkyboxPass& skybox() { return skyboxPass_; }
+
+● Update(StereoVista\headers\Renderer\Renderer.h)
+  ⎿  Added 5 lines
+      153          rhi::Buffer lightsBuffer;  // gpu::PointLightData[kMax
+           PointLights]
+      154          rhi::Buffer materialsBuffer; // gpu::MaterialData[], g
+           rown on demand
+      155          uint64_t submittedTimelineValue = 0;
+      156 +        // Depth-picking readback owned by this slot: the copy
+          + is recorded                                                  
+      157 +        // into this slot's frame; the result is parsed when t
+          +he slot's                                                     
+      158 +        // submission retires (the next time the slot is reuse
+          +d).                                                           
+      159 +        rhi::Buffer depthReadback;                            
+      160 +        DepthReadbackResult pendingDepth; // valid=true while 
+          +a copy is in flight                                           
+      161      };
+      162  
+      163      // Deferred readback: the copy is recorded into the frame,
+            completion is
+
+● Update(StereoVista\headers\Renderer\Renderer.h)  ⎿  Added 3 lines
+      229      ForwardPass forwardPass_;
+      230      PointCloudPass pointCloudPass_;
+      231      SkyboxPass skyboxPass_;
+      232 +    OverlayPass overlayPass_;                                 
+      233      TonemapPass tonemapPass_;
+      234      TonemapSettings tonemapSettings_;
+      235      VkFormat tonemapTargetFormat_ = VK_FORMAT_UNDEFINED;
+      236  
+      237 +    DepthReadbackResult depthResult_;                         
+      238 +                                                              
+      239      Screenshot screenshot_;
+      240      std::string screenshotStatus_;
+      241  };
+
+● Now the Renderer.cpp changes — init, depth publish, readback recording, and
+  the backbuffer split:
+
+● Update(StereoVista\src\Renderer\Renderer.cpp)
+  ⎿  Added 23 lines, removed 1 line
+      68                       viewMask, frameSetLayout_);
+      69  
+      70      tonemapTargetFormat_ = swapchain_->format();
+      71 -    tonemapPass_.init(device, shaderCompiler, tonemapTargetForm
+         -at_);                                                          
+      71 +    // Tonemap + overlays share one backbuffer pass carrying th
+         +e scene depth                                                  
+      72 +    // (overlays depth-test post-tonemap); both pipelines decla
+         +re it.                                                         
+      73 +    tonemapPass_.init(device, shaderCompiler, tonemapTargetForm
+         +at_, kSceneDepthFormat);                                       
+      74 +    overlayPass_.init(device, shaderCompiler, tonemapTargetForm
+         +at_, kSceneDepthFormat,                                        
+      75 +                      0 /* no multiview on the mono backbuffer 
+         +*/, kFramesInFlight);                                          
+      76  }
+      77  
+      78 +bool Renderer::DepthReadbackResult::sample(const glm::ivec2& pi
+         +xel,                                                           
+      79 +                                           float& outDepth) con
+         +st {                                                           
+      80 +    if (!valid)                                                
+      81 +        return false;                                          
+      82 +    size_t offset = 0;                                         
+      83 +    for (const DepthQueryRect& rect : rects) {                 
+      84 +        const size_t texels = size_t(rect.size.x) * rect.size.y
+         +;                                                              
+      85 +        const glm::ivec2 local = pixel - rect.origin;          
+      86 +        if (local.x >= 0 && local.y >= 0 && local.x < rect.size
+         +.x &&                                                          
+      87 +            local.y < rect.size.y) {                           
+      88 +            outDepth = depths[offset + size_t(local.y) * rect.s
+         +ize.x + local.x];                                              
+      89 +            return true;                                       
+      90 +        }                                                      
+      91 +        offset += texels;                                      
+      92 +    }                                                          
+      93 +    return false;                                              
+      94 +}                                                              
+      95 +                                                               
+      96  void Renderer::createFrameContexts() {
+      97      for (FrameContext& frame : frames_) {
+      98          VkCommandPoolCreateInfo poolInfo{};
+
+● Update(StereoVista\src\Renderer\Renderer.cpp)
+  ⎿  Added 13 lines
+      318      const StatsClock::time_point afterSlotWait = StatsClock::n
+           ow();
+      319      smooth(frameStats_.slotWaitMs, msBetween(frameStart, after
+           SlotWait));
+      320  
+      321 +    // The slot's previous submission has retired — its depth-
+          +picking copy is                                               
+      322 +    // complete, so publish the result before anything overwri
+          +tes the buffer.                                               
+      323 +    if (frame.pendingDepth.valid) {                           
+      324 +        frame.depthReadback.invalidate();                     
+      325 +        const float* src = static_cast<const float*>(frame.dep
+          +thReadback.mapped());                                         
+      326 +        size_t texels = 0;                                    
+      327 +        for (const DepthQueryRect& rect : frame.pendingDepth.r
+          +ects)                                                         
+      328 +            texels += size_t(rect.size.x) * rect.size.y;      
+      329 +        frame.pendingDepth.depths.assign(src, src + texels);  
+      330 +        depthResult_ = std::move(frame.pendingDepth);         
+      331 +        frame.pendingDepth = DepthReadbackResult{};           
+      332 +    }                                                         
+      333 +                                                              
+      334      // Retire upload-ring space owned by frames the GPU has fi
+           nished.
+      335      {
+      336          uint64_t completed = 0;
+
+● Update(StereoVista\src\Renderer\Renderer.cpp)
+  ⎿  Added 53 lines
+      376      // slot's previous submission has retired).
+      377      pointCloudPass_.prepare(submission, frameSlot_, sceneExten
+           t_, viewCount_);
+      378  
+      379 +    // Overlay geometry for this frame (same slot-safety argum
+          +ent).                                                         
+      380 +    if (submission.overlay && !submission.overlay->empty()) { 
+      381 +        OverlayViewInfo views[kMaxViews];                     
+      382 +        for (uint32_t v = 0; v < kMaxViews; ++v) {            
+      383 +            const ViewCamera& cam =                           
+      384 +                submission.views[std::min(v, uint32_t(viewCoun
+          +t_ - 1))];                                                    
+      385 +            views[v].viewProj = cam.proj * cam.view;          
+      386 +            views[v].viewportPx = glm::vec2(float(sceneExtent_
+          +.width),                                                      
+      387 +                                            float(sceneExtent_
+          +.height));                                                    
+      388 +            views[v].cameraPos = cam.position;                
+      389 +        }                                                     
+      390 +        overlayPass_.prepare(frameSlot_, *submission.overlay, 
+          +views, kMaxViews);                                            
+      391 +    } else {                                                  
+      392 +        overlayPass_.prepare(frameSlot_, OverlayDrawList{}, nu
+          +llptr, 0);                                                    
+      393 +    }                                                         
+      394 +                                                              
+      395 +    // Arm this frame's depth-picking copy: clamp the requeste
+          +d rects to the                                                
+      396 +    // scene extent and size the slot's readback buffer.      
+      397 +    std::vector<DepthQueryRect> depthRects;                   
+      398 +    depthRects.reserve(submission.depthQueries.size());       
+      399 +    {                                                         
+      400 +        size_t texels = 0;                                    
+      401 +        for (const DepthQueryRect& req : submission.depthQueri
+          +es) {                                                         
+      402 +            DepthQueryRect rect = req;                        
+      403 +            rect.origin = glm::max(rect.origin, glm::ivec2(0))
+          +;                                                             
+      404 +            rect.size.x = std::min(rect.size.x,               
+      405 +                                   int(sceneExtent_.width) - r
+          +ect.origin.x);                                                
+      406 +            rect.size.y = std::min(rect.size.y,               
+      407 +                                   int(sceneExtent_.height) - 
+          +rect.origin.y);                                               
+      408 +            if (rect.size.x <= 0 || rect.size.y <= 0)         
+      409 +                continue;                                     
+      410 +            texels += size_t(rect.size.x) * rect.size.y;      
+      411 +            depthRects.push_back(rect);                       
+      412 +        }                                                     
+      413 +        if (texels > 0) {                                     
+      414 +            const VkDeviceSize bytes = texels * sizeof(float);
+      415 +            if (!frame.depthReadback.valid() || frame.depthRea
+          +dback.size() < bytes) {                                       
+      416 +                rhi::BufferDesc desc{};                       
+      417 +                desc.size = std::max<VkDeviceSize>(bytes * 2, 
+          +4 * 1024);                                                    
+      418 +                desc.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+      419 +                desc.memory = rhi::MemoryUsage::HostReadback; 
+      420 +                desc.debugName = "depth picking readback";    
+      421 +                frame.depthReadback.create(*device_, desc);   
+      422 +            }                                                 
+      423 +            frame.pendingDepth.valid = true;                  
+      424 +            frame.pendingDepth.rects = depthRects;            
+      425 +            frame.pendingDepth.extent = sceneExtent_;         
+      426 +            const ViewCamera& cam0 = submission.views[0];     
+      427 +            frame.pendingDepth.invViewProj = glm::inverse(cam0
+          +.proj * cam0.view);                                           
+      428 +            frame.pendingDepth.cameraPos = cam0.position;     
+      429 +        }                                                     
+      430 +    }                                                         
+      431 +                                                              
+      432      recordFrame(frame, imageIndex, submission, frameSet, shado
+           wedLightCount,
+      433                  uiDrawData, captureThisFrame);
+      434  
+
+● Now the recordFrame surgery:
+
+● Update(StereoVista\src\Renderer\Renderer.cpp)
+  ⎿  Added 4 lines
+      490      // ---- Pass 0: streaming uploads staged since the last fr
+           ame ----
+      491      uploadRing_.flush(cmd);
+      492  
+      493 +    // ---- Pass 0b: caller-recorded aux work (CursorPreview3D
+          + thumbnail) ----                                              
+      494 +    if (submission.recordAux)                                 
+      495 +        submission.recordAux(cmd);                            
+      496 +                                                              
+      497      // ---- Pass 1: shadow casters (owns its targets + transit
+           ions) ----
+      498      shadowPass_.record(cmd, frameSet, submission, shadowedLigh
+           tCount);
+      499  
+
+● Update(StereoVista\src\Renderer\Renderer.cpp)
+  ⎿  Added 3 lines, removed 1 line
+      541          depth.imageView = sceneDepth_.view();
+      542          depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_O
+           PTIMAL;
+      543          depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+      544 -        depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;     
+      544 +        // STORE since Phase 6: the depth-picking copies and t
+          +he backbuffer                                                 
+      545 +        // overlay pass both consume the scene depth after thi
+          +s pass.                                                       
+      546 +        depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;         
+      547          depth.clearValue.depthStencil.depth = 0.0f; // reverse
+           -Z far
+      548  
+      549          VkRenderingInfo rendering{};
+
+● Now the depth copy + backbuffer split (the largest recordFrame edit):
+
+● Update(StereoVista\src\Renderer\Renderer.cpp)
+  ⎿  Added 101 lines, removed 6 lines
+      574          vkCmdEndRendering(cmd);
+      575      }
+      576  
+      577 -    // ---- Pass 4: tonemap resolve + UI in one backbuffer pas
+          -s ----                                                        
+      577 +    // ---- Pass 3b: depth-picking rect copies (scene depth ->
+          + readback) ----                                               
+      578 +    if (frame.pendingDepth.valid) {                           
+      579 +        rhi::cmdImageBarrier(cmd, rhi::imageBarrier(          
+      580 +            sceneDepth_.image(), VK_IMAGE_ASPECT_DEPTH_BIT,   
+      581 +            VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,      
+      582 +            VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,   
+      583 +            VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER
+          +_READ_BIT,                                                    
+      584 +            VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,         
+      585 +            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL));           
+      586 +                                                              
+      587 +        std::vector<VkBufferImageCopy2> regions;              
+      588 +        regions.reserve(frame.pendingDepth.rects.size());     
+      589 +        VkDeviceSize offset = 0;                              
+      590 +        for (const DepthQueryRect& rect : frame.pendingDepth.r
+          +ects) {                                                       
+      591 +            VkBufferImageCopy2 region{};                      
+      592 +            region.sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY
+          +_2;                                                           
+      593 +            region.bufferOffset = offset;                     
+      594 +            region.imageSubresource.aspectMask = VK_IMAGE_ASPE
+          +CT_DEPTH_BIT;                                                 
+      595 +            region.imageSubresource.baseArrayLayer = 0; // vie
+          +w 0                                                           
+      596 +            region.imageSubresource.layerCount = 1;           
+      597 +            region.imageOffset = { rect.origin.x, rect.origin.
+          +y, 0 };                                                       
+      598 +            region.imageExtent = { uint32_t(rect.size.x), uint
+          +32_t(rect.size.y), 1 };                                       
+      599 +            regions.push_back(region);                        
+      600 +            offset += VkDeviceSize(rect.size.x) * rect.size.y 
+          +* sizeof(float);                                              
+      601 +        }                                                     
+      602 +        VkCopyImageToBufferInfo2 copy{};                      
+      603 +        copy.sType = VK_STRUCTURE_TYPE_COPY_IMAGE_TO_BUFFER_IN
+          +FO_2;                                                         
+      604 +        copy.srcImage = sceneDepth_.image();                  
+      605 +        copy.srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPT
+          +IMAL;                                                         
+      606 +        copy.dstBuffer = frame.depthReadback.handle();        
+      607 +        copy.regionCount = static_cast<uint32_t>(regions.size(
+          +));                                                           
+      608 +        copy.pRegions = regions.data();                       
+      609 +        vkCmdCopyImageToBuffer2(cmd, &copy);                  
+      610 +                                                              
+      611 +        VkBufferMemoryBarrier2 hostRead = rhi::bufferBarrier( 
+      612 +            frame.depthReadback.handle(),                     
+      613 +            VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER
+          +_WRITE_BIT,                                                   
+      614 +            VK_PIPELINE_STAGE_2_HOST_BIT, VK_ACCESS_2_HOST_REA
+          +D_BIT);                                                       
+      615 +        VkImageMemoryBarrier2 backToDepth = rhi::imageBarrier(
+      616 +            sceneDepth_.image(), VK_IMAGE_ASPECT_DEPTH_BIT,   
+      617 +            VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER
+          +_READ_BIT,                                                    
+      618 +            VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |    
+      619 +                VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,  
+      620 +            VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT |   
+      621 +                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+          +,                                                             
+      622 +            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,             
+      623 +            VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);        
+      624 +        rhi::cmdBarrier(cmd, &backToDepth, 1, &hostRead, 1);  
+      625 +    } else {                                                  
+      626 +        // No copy this frame — still order the scene pass's d
+          +epth writes                                                   
+      627 +        // against the overlay pass's depth tests below.      
+      628 +        rhi::cmdImageBarrier(cmd, rhi::imageBarrier(          
+      629 +            sceneDepth_.image(), VK_IMAGE_ASPECT_DEPTH_BIT,   
+      630 +            VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,      
+      631 +            VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,   
+      632 +            VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |    
+      633 +                VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,  
+      634 +            VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT |   
+      635 +                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+          +,                                                             
+      636 +            VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,         
+      637 +            VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL));       
+      638 +    }                                                         
+      639 +                                                              
+      640 +    // ---- Pass 4: tonemap + overlays in one backbuffer pass 
+          +(scene depth                                                  
+      641 +    //      attached so overlays depth-test post-tonemap), the
+          +n ImGui in its                                                
+      642 +    //      own pass (no depth — keeps the backend's pipeline 
+          +config). ----                                                 
+      643      VkImage backbuffer = swapchain_->image(imageIndex);
+      644      {
+      645          VkImageMemoryBarrier2 barriers[2] = {
+     ...
+      666          color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_I
+           NFO;
+      667          color.imageView = swapchain_->imageView(imageIndex);
+      668          color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_O
+           PTIMAL;
+      604 -        // The fullscreen tonemap overwrites every pixel; ImGu
+          -i blends on top                                               
+      605 -        // within the same pass (primitive order guarantees th
+          -e blend sees the                                              
+      606 -        // tonemapped scene).                                 
+      669 +        // The fullscreen tonemap overwrites every pixel; over
+          +lays blend on                                                 
+      670 +        // top within the same pass (primitive order guarantee
+          +s the blend                                                   
+      671 +        // sees the tonemapped scene).                        
+      672          color.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+      673          color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+      674  
+      675 +        // Scene depth rides along read/write: overlays depth-
+          +test against                                                  
+      676 +        // the scene (reverse-Z) and the sphere cursor's back-
+          +face pass may                                                 
+      677 +        // write. Nothing reads it afterwards (cleared next fr
+          +ame).                                                         
+      678 +        VkRenderingAttachmentInfo depth{};                    
+      679 +        depth.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_I
+          +NFO;                                                          
+      680 +        depth.imageView = sceneDepth_.view();                 
+      681 +        depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_O
+          +PTIMAL;                                                       
+      682 +        depth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;            
+      683 +        depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;     
+      684 +                                                              
+      685          VkRenderingInfo rendering{};
+      686          rendering.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+      687          rendering.renderArea.extent = swapchain_->extent();
+      688          rendering.layerCount = 1;
+      689          rendering.colorAttachmentCount = 1;
+      690          rendering.pColorAttachments = &color;
+      691 +        rendering.pDepthAttachment = &depth;                  
+      692          vkCmdBeginRendering(cmd, &rendering);
+      693  
+      694          VkViewport viewport{};
+     ...
+      708              .flush(device_->device(), sceneSet);
+      709          tonemapPass_.record(cmd, sceneSet, tonemapSettings_, 0
+           );
+      710  
+      635 -        if (uiDrawData)                                       
+      636 -            ImGui_ImplVulkan_RenderDrawData(uiDrawData, cmd); 
+      711 +        overlayPass_.record(cmd, 0);                          
+      712  
+      713          vkCmdEndRendering(cmd);
+      714      }
+      715  
+      716 +    // ---- Pass 5: ImGui on the backbuffer (no depth attachme
+          +nt) ----                                                      
+      717 +    if (uiDrawData) {                                         
+      718 +        VkRenderingAttachmentInfo color{};                    
+      719 +        color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_I
+          +NFO;                                                          
+      720 +        color.imageView = swapchain_->imageView(imageIndex);  
+      721 +        color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_O
+          +PTIMAL;                                                       
+      722 +        color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;            
+      723 +        color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;         
+      724 +                                                              
+      725 +        VkRenderingInfo rendering{};                          
+      726 +        rendering.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;   
+      727 +        rendering.renderArea.extent = swapchain_->extent();   
+      728 +        rendering.layerCount = 1;                             
+      729 +        rendering.colorAttachmentCount = 1;                   
+      730 +        rendering.pColorAttachments = &color;                 
+      731 +        vkCmdBeginRendering(cmd, &rendering);                 
+      732 +        ImGui_ImplVulkan_RenderDrawData(uiDrawData, cmd);     
+      733 +        vkCmdEndRendering(cmd);                               
+      734 +    }                                                         
+      735 +                                                              
+      736      // ---- Optional screenshot copy, then hand the image to t
+           he presenter ----
+      737      if (captureThisFrame) {
+      738          rhi::cmdImageBarrier(cmd, rhi::imageBarrier(
+
+● Update(StereoVista\src\Renderer\Renderer.cpp)
+  ⎿  Added 12 lines
+      715  
+      716      // ---- Pass 5: ImGui on the backbuffer (no depth attachme
+           nt) ----
+      717      if (uiDrawData) {
+      718 +        // Dynamic rendering has no implicit pass-to-pass depe
+          +ndency: order                                                 
+      719 +        // the tonemap/overlay writes against ImGui's blended 
+          +writes.                                                       
+      720 +        rhi::cmdImageBarrier(cmd, rhi::imageBarrier(          
+      721 +            backbuffer, VK_IMAGE_ASPECT_COLOR_BIT,            
+      722 +            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,  
+      723 +            VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,           
+      724 +            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,  
+      725 +            VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT |           
+      726 +                VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,       
+      727 +            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,         
+      728 +            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL));       
+      729 +                                                              
+      730          VkRenderingAttachmentInfo color{};
+      731          color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_I
+           NFO;
+      732          color.imageView = swapchain_->imageView(imageIndex);
+
+● Update(StereoVista\src\Renderer\Renderer.cpp)
+  ⎿  Added 1 line
+      916      screenshot_.state = Screenshot::State::Idle;
+      917  
+      918      tonemapPass_.shutdown();
+      919 +    overlayPass_.shutdown();                                  
+      920      skyboxPass_.shutdown();
+      921      pointCloudPass_.shutdown();
+      922      forwardPass_.shutdown();
+
+● Update(StereoVista\src\Renderer\Renderer.cpp)
+  ⎿  Added 2 lines
+      890          frame.frameUbo.destroy();
+      891          frame.lightsBuffer.destroy();
+      892          frame.materialsBuffer.destroy();
+      893 +        frame.depthReadback.destroy();                        
+      894 +        frame.pendingDepth = DepthReadbackResult{};           
+      895          frame.descriptors.destroy();
+      896          if (frame.acquireSemaphore != VK_NULL_HANDLE)
+      897              vkDestroySemaphore(device_->device(), frame.acquir
+           eSemaphore, nullptr);
+
+● Update(StereoVista\src\Renderer\Renderer.cpp)
+  ⎿  Added 10 lines, removed 2 lines
+      878      // idle here; the next prepare() recreates them at the new
+            extent).
+      879      pointCloudPass_.onSwapchainRecreated();
+      880      // Deterministic surface-format selection keeps this stabl
+           e; guard anyway
+      881 -    // so a format flip rebuilds the tonemap pipeline instead 
+          -of misrendering.                                              
+      881 +    // so a format flip rebuilds the affected pipelines instea
+          +d of misrendering.                                            
+      882      if (swapchain_->format() != tonemapTargetFormat_) {
+      883          tonemapTargetFormat_ = swapchain_->format();
+      884 -        tonemapPass_.init(*device_, *shaderCompiler_, tonemapT
+          -argetFormat_);                                                
+      884 +        tonemapPass_.init(*device_, *shaderCompiler_, tonemapT
+          +argetFormat_,                                                 
+      885 +                          kSceneDepthFormat);                 
+      886 +        overlayPass_.init(*device_, *shaderCompiler_, tonemapT
+          +argetFormat_,                                                 
+      887 +                          kSceneDepthFormat, 0, kFramesInFligh
+          +t);                                                           
+      888      }
+      889 +    // The published depth samples referenced the old extent; 
+          +drop them so                                                  
+      890 +    // picking never reconstructs from a stale rectangle set. 
+      891 +    depthResult_ = DepthReadbackResult{};                     
+      892 +    for (FrameContext& frame : frames_)                       
+      893 +        frame.pendingDepth = DepthReadbackResult{};           
+      894  }
+      895  
+      896  void Renderer::destroyFrameContexts() {
+
+● Update(StereoVista\src\Renderer\Renderer.cpp)
+  ⎿  Added 17 lines
+      204      frame.sunDirection = glm::vec4(glm::normalize(submission.s
+           un.direction), 0.0f);
+      205      frame.sunColor = glm::vec4(submission.sun.color, submissio
+           n.sun.intensity);
+      206      frame.ambientColor = glm::vec4(glm::vec3(submission.ambien
+           t), 0.0f);
+      207 +                                                              
+      208 +    // Section/clip planes (mesh.vert gl_ClipDistance; the poi
+          +nt-cloud pass                                                 
+      209 +    // consumes the same submission list separately, in cloud-
+          +local space).                                                 
+      210 +    frame.clipPlaneCount = static_cast<uint32_t>(             
+      211 +        std::min<size_t>(submission.clipPlanes.size(), SV_MAX_
+          +CLIP_PLANES));                                                
+      212 +    for (uint32_t i = 0; i < frame.clipPlaneCount; ++i)       
+      213 +        frame.clipPlanes[i] = submission.clipPlanes[i];       
+      214 +                                                              
+      215 +    // Fragment (ring) cursor.                                
+      216 +    const FragmentCursorState& cursor = submission.fragmentCur
+          +sor;                                                          
+      217 +    frame.showFragmentCursor = cursor.show ? 1u : 0u;         
+      218 +    frame.cursorPos = glm::vec4(cursor.position, cursor.valid 
+          +? 1.0f : 0.0f);                                               
+      219 +    frame.cursorOuterColor = cursor.outerColor;               
+      220 +    frame.cursorInnerColor = cursor.innerColor;               
+      221 +    frame.cursorRingParams = glm::vec4(cursor.outerRadius, cur
+          +sor.outerThickness,                                           
+      222 +                                       cursor.innerRadius, cur
+          +sor.innerThickness);                                          
+      223 +                                                              
+      224      frame.flags = 0;
+      225      if (submission.shadowsEnabled)
+      226          frame.flags |= SV_FRAME_SHADOWS_ENABLED;
+
+● Update(StereoVista\src\Renderer\Renderer.cpp)
+  ⎿  Added 3 lines, removed 1 line
+      156  
+      157      rhi::TextureDesc depthDesc = colorDesc;
+      158      depthDesc.format = kSceneDepthFormat;
+      159 -    depthDesc.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_
+          -BIT;                                                          
+      159 +    // TRANSFER_SRC: depth-picking rect copies (Phase 6).     
+      160 +    depthDesc.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_
+          +BIT |                                                         
+      161 +                      VK_IMAGE_USAGE_TRANSFER_SRC_BIT;        
+      162      depthDesc.debugName = "scene depth";
+      163      sceneDepth_.create(*device_, depthDesc);
+      164  }
+
+● Stage A code is complete. Wiring the new files into the vcxproj + filters,
+  then a build checkpoint:
+
+● Update(StereoVista\StereoVista.vcxproj)
+  ⎿  Added 30 lines
+      296        <AdditionalInputs>$(ProjectDir)assets\shaders_vk\pointcl
+           oud_types.h</AdditionalInputs>
+      297        <Message>glslc %(Filename)%(Extension)</Message>
+      298      </CustomBuild>
+      299 +    <CustomBuild Include="assets\shaders_vk\overlay.vert">    
+      300 +      <FileType>Document</FileType>                           
+      301 +      <Command>if not exist "$(OutDir)assets\shaders_vk" mkdir
+          + "$(OutDir)assets\shaders_vk"                                 
+      302 +"$(SolutionDir)dependencies\tools\glslc.exe" --target-env=vulk
+          +an1.3 -O -o "$(OutDir)assets\shaders_vk\%(Filename)%(Extension
+          +).spv" "%(FullPath)"</Command>                                
+      303 +      <Outputs>$(OutDir)assets\shaders_vk\%(Filename)%(Extensi
+          +on).spv</Outputs>                                             
+      304 +      <AdditionalInputs>$(ProjectDir)assets\shaders_vk\overlay
+          +_types.h</AdditionalInputs>                                   
+      305 +      <Message>glslc %(Filename)%(Extension)</Message>        
+      306 +    </CustomBuild>                                            
+      307 +    <CustomBuild Include="assets\shaders_vk\overlay.frag">    
+      308 +      <FileType>Document</FileType>                           
+      309 +      <Command>if not exist "$(OutDir)assets\shaders_vk" mkdir
+          + "$(OutDir)assets\shaders_vk"                                 
+      310 +"$(SolutionDir)dependencies\tools\glslc.exe" --target-env=vulk
+          +an1.3 -O -o "$(OutDir)assets\shaders_vk\%(Filename)%(Extension
+          +).spv" "%(FullPath)"</Command>                                
+      311 +      <Outputs>$(OutDir)assets\shaders_vk\%(Filename)%(Extensi
+          +on).spv</Outputs>                                             
+      312 +      <AdditionalInputs>$(ProjectDir)assets\shaders_vk\overlay
+          +_types.h</AdditionalInputs>                                   
+      313 +      <Message>glslc %(Filename)%(Extension)</Message>        
+      314 +    </CustomBuild>                                            
+      315 +    <CustomBuild Include="assets\shaders_vk\preview_lit.vert">
+      316 +      <FileType>Document</FileType>                           
+      317 +      <Command>if not exist "$(OutDir)assets\shaders_vk" mkdir
+          + "$(OutDir)assets\shaders_vk"                                 
+      318 +"$(SolutionDir)dependencies\tools\glslc.exe" --target-env=vulk
+          +an1.3 -O -o "$(OutDir)assets\shaders_vk\%(Filename)%(Extension
+          +).spv" "%(FullPath)"</Command>                                
+      319 +      <Outputs>$(OutDir)assets\shaders_vk\%(Filename)%(Extensi
+          +on).spv</Outputs>                                             
+      320 +      <Message>glslc %(Filename)%(Extension)</Message>        
+      321 +    </CustomBuild>                                            
+      322 +    <CustomBuild Include="assets\shaders_vk\preview_lit.frag">
+      323 +      <FileType>Document</FileType>                           
+      324 +      <Command>if not exist "$(OutDir)assets\shaders_vk" mkdir
+          + "$(OutDir)assets\shaders_vk"                                 
+      325 +"$(SolutionDir)dependencies\tools\glslc.exe" --target-env=vulk
+          +an1.3 -O -o "$(OutDir)assets\shaders_vk\%(Filename)%(Extension
+          +).spv" "%(FullPath)"</Command>                                
+      326 +      <Outputs>$(OutDir)assets\shaders_vk\%(Filename)%(Extensi
+          +on).spv</Outputs>                                             
+      327 +      <Message>glslc %(Filename)%(Extension)</Message>        
+      328 +    </CustomBuild>                                            
+      329    </ItemGroup>
+      330    <ItemGroup>
+      331      <!-- Shared C++/GLSL struct headers + GLSL includes (no bu
+           ild step of
+
+● Update(StereoVista\StereoVista.vcxproj)
+  ⎿  Added 1 line
+      334      <None Include="assets\shaders_vk\scene_types.h" />
+      335      <None Include="assets\shaders_vk\pointcloud_types.h" />
+      336      <None Include="assets\shaders_vk\pointcloud_common.glsl" /
+           >
+      337 +    <None Include="assets\shaders_vk\overlay_types.h" />      
+      338    </ItemGroup>
+      339    <ItemGroup>
+      340      <!-- Vulkan application (active) -->
+
+● Update(StereoVista\StereoVista.vcxproj)  ⎿  Added 2 lines
+      355      <ClCompile Include="src\Renderer\MaterialSystem.cpp" />
+      356      <ClCompile Include="src\Renderer\MeshBuffer.cpp" />
+      357      <ClCompile Include="src\Renderer\PointCloudGpu.cpp" />
+      358 +    <ClCompile Include="src\Renderer\OverlayDrawList.cpp" />  
+      359      <ClCompile Include="src\Renderer\passes\TonemapPass.cpp" /
+           >
+      360      <ClCompile Include="src\Renderer\passes\ShadowPass.cpp" />
+      361      <ClCompile Include="src\Renderer\passes\ForwardPass.cpp" /
+           >
+      362      <ClCompile Include="src\Renderer\passes\PointCloudPass.cpp
+           " />
+      363      <ClCompile Include="src\Renderer\passes\SkyboxPass.cpp" />
+      364 +    <ClCompile Include="src\Renderer\passes\OverlayPass.cpp" /
+          +>                                                             
+      365      <ClCompile Include="src\Scene\Primitives.cpp" />
+      366      <ClCompile Include="src\Scene\ModelImporter.cpp" />
+      367      <ClCompile Include="src\Scene\SceneLoader.cpp" />
+
+● Update(StereoVista\StereoVista.vcxproj)
+  ⎿  Added 2 lines
+      495      <ClInclude Include="headers\Renderer\MaterialSystem.h" />
+      496      <ClInclude Include="headers\Renderer\MeshBuffer.h" />
+      497      <ClInclude Include="headers\Renderer\PointCloudGpu.h" />
+      498 +    <ClInclude Include="headers\Renderer\OverlayDrawList.h" />
+      499      <ClInclude Include="headers\Renderer\passes\TonemapPass.h"
+            />
+      500      <ClInclude Include="headers\Renderer\passes\ShadowPass.h" 
+           />
+      501      <ClInclude Include="headers\Renderer\passes\ForwardPass.h"
+            />
+      502      <ClInclude Include="headers\Renderer\passes\PointCloudPass
+           .h" />
+      503      <ClInclude Include="headers\Renderer\passes\SkyboxPass.h" 
+           />
+      504 +    <ClInclude Include="headers\Renderer\passes\OverlayPass.h"
+          + />                                                           
+      505      <ClInclude Include="headers\Scene\Scene.h" />
+      506      <ClInclude Include="headers\libs\spirv_reflect\spirv_refle
+           ct.h" />
+      507      <ClInclude Include="headers\libs\volk\volk.h" />
+
+● Write(StereoVista\assets\shaders_vk\preview_lit.vert)
+  ⎿  Wrote 28 lines to StereoVista\assets\shaders_vk\preview_lit.vert
+       1 #version 460
+       3 
+       4 // CursorPreview3D reference cube (Phase 6): tiny self-contained
+          lit pass for
+         ptors.
+       6 // rotCols carry the rotation-only model columns in xyz; their w
+       7 // smuggle the camera position (fits the 128-byte push budget ex
+         actly).
+       8 
+      10     mat4 mvp;
+     … +22 lines (ctrl+o to expand)
+
+● Write(StereoVista\assets\shaders_vk\preview_lit.frag)
+  ⎿  Wrote 35 lines to StereoVista\assets\shaders_vk\preview_lit.frag
+       1 #version 460
+       2 #extension GL_EXT_scalar_block_layout : require
+       4 // CursorPreview3D reference cube — two-light Phong with a fresn
+         el rim,
+       5 // ported from the GL preview's embedded kLitFS so the thumbnail
+       6 // unchanged. Output is display-ready color (the preview target 
+         is sampled
+       7 // by ImGui directly, no tonemap).
+       9 layout(push_constant, scalar) uniform Push {
+      10     mat4 mvp;
+     … +29 lines (ctrl+o to expand)
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Update(StereoVista\src\Renderer\passes\ForwardPass.cpp)
+  ⎿  File must be read first
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(StereoVista\src\Renderer\passes\ForwardPass.cpp)
+  ⎿  Added 1 line
+      47          push.normalMatCol1 = glm::vec4(draw.normalMatrix[1], 0.
+          0f);
+      48          push.normalMatCol2 = glm::vec4(draw.normalMatrix[2], 0.
+          0f);
+      49          push.materialIndex = draw.materialIndex;
+      50 +        push.tint = draw.tint;                                 
+      51          pipeline_.pushConstants(cmd, &push, sizeof(push));
+      52          draw.mesh->bindAndDraw(cmd);
+      53      }
+
+● Stage-A build checkpoint:
+
+  Listed 1 directory, ran 1 shell command (ctrl+o to expand)
+
+● Release x64 green with all new SPIR-V fresh. Marking the overlay task done and
+  moving to Stage B (camera + cursors + input):
+
+● Update(StereoVista\headers\Core\Camera.h)
+  ⎿  Added 8 lines, removed 1 line
+       1  #ifndef CAMERA_H
+       2  #define CAMERA_H
+       3  
+       4 -#include "Engine/Core.h"                                       
+       4 +// GPU-API-free since Phase 6 of the Vulkan migration: the GL e
+         +ra's two touch                                                 
+       5 +// points are gone — the glReadPixels centre-depth sampler move
+         +d to the                                                       
+       6 +// application (app::Application::updateCameraDepth, fed by the
+         + renderer's                                                    
+       7 +// depth-picking readback) and the glfwGetTime scroll timestamp
+         +s were dead                                                    
+       8 +// code (the computed delta was never used).                   
+       9 +                                                               
+      10 +#include <algorithm>                                           
+      11  #include <array>
+      12 +#include <cmath>                                               
+      13  #include <functional>
+      14  
+      15  #include <glm/glm.hpp>
+
+● Update(StereoVista\headers\Core\Camera.h)
+  ⎿  Removed 4 lines
+      511      }
+      512  
+      513      // Setup for smooth scrolling with momentum
+      514 -    float currentTime = glfwGetTime();                        
+      515 -    float deltaTime = currentTime - lastScrollTime;           
+      516 -    lastScrollTime = currentTime;                             
+      517 -                                                              
+      514      scrollVelocity += scaledYOffset * scrollMomentum;
+      515      scrollVelocity =
+      516          glm::clamp(scrollVelocity, -maxScrollVelocity, maxScro
+           llVelocity);
+
+● Update(StereoVista\headers\Core\Camera.h)
+  ⎿  Removed 61 lines
+      680    void StartPanning() { IsPanning = true; }
+      681    void StopPanning() { IsPanning = false; }
+      682  
+      683 -  // Calculates distance to the nearest visible object using d
+          -epth buffer                                                   
+      684 -  // sampling                                                 
+      685 -  float getDistanceToNearestObject(const Camera &camera,      
+      686 -                                   const glm::mat4 &projection
+          -,                                                             
+      687 -                                   const glm::mat4 &view, cons
+          -t float farPlane,                                             
+      688 -                                   const int windowWidth,     
+      689 -                                   const int windowHeight) con
+          -st {                                                          
+      690 -    // Validate OpenGL context and window dimensions          
+      691 -    if (windowWidth <= 0 || windowHeight <= 0) {              
+      692 -      return farPlane;                                        
+      693 -    }                                                         
+      694 -                                                              
+      695 -    // Drain any pending OpenGL errors from previous operation
+          -s so they don't                                               
+      696 -    // prematurely abort the depth sampling (e.g. errors from 
+          -the cursor                                                    
+      697 -    // subsystem calling glReadBuffer on a custom FBO).       
+      698 -    while (glGetError() != GL_NO_ERROR) {}                    
+      699 -    GLenum error;                                             
+      700 -                                                              
+      701 -    const int numSamples = 9;     // 3x3 sampling grid        
+      702 -    const int sampleOffset = 100; // Pixel offset from center 
+      703 -    float minDepth = 1.0f;                                    
+      704 -                                                              
+      705 -    // Sample depth buffer at multiple points around screen ce
+          -nter                                                          
+      706 -    for (int i = -1; i <= 1; i++) {                           
+      707 -      for (int j = -1; j <= 1; j++) {                         
+      708 -        int x = windowWidth / 2 + i * sampleOffset;           
+      709 -        int y = windowHeight / 2 + j * sampleOffset;          
+      710 -                                                              
+      711 -        // Bounds checking for pixel coordinates              
+      712 -        if (x < 0 || x >= windowWidth || y < 0 || y >= windowH
+          -eight) {                                                      
+      713 -          continue; // Skip out-of-bounds pixels              
+      714 -        }                                                     
+      715 -                                                              
+      716 -        float depth = 1.0f; // Default to far plane           
+      717 -        glReadPixels(x, y, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT,
+          - &depth);                                                     
+      718 -                                                              
+      719 -        // Check for OpenGL errors after glReadPixels         
+      720 -        error = glGetError();                                 
+      721 -        if (error != GL_NO_ERROR) {                           
+      722 -          continue; // Skip this sample on error              
+      723 -        }                                                     
+      724 -                                                              
+      725 -        minDepth = std::min(minDepth, depth);                 
+      726 -      }                                                       
+      727 -    }                                                         
+      728 -                                                              
+      729 -    if (minDepth == 1.0f) {                                   
+      730 -      return farPlane; // No object detected                  
+      731 -    }                                                         
+      732 -                                                              
+      733 -    // Convert depth to world space distance                  
+      734 -    glm::vec4 ndc = glm::vec4(0.0f, 0.0f, minDepth * 2.0f - 1.
+          -0f, 1.0f);                                                    
+      735 -    glm::mat4 invPV = glm::inverse(projection * view);        
+      736 -    glm::vec4 worldPos = invPV * ndc;                         
+      737 -    worldPos /= worldPos.w;                                   
+      738 -                                                              
+      739 -    float distance = glm::distance(camera.Position, glm::vec3(
+          -worldPos));                                                   
+      740 -                                                              
+      741 -    return distance;                                          
+      742 -  }                                                           
+      743 -                                                              
+      683    // Calculates the Front, Right and Up vectors from the Yaw a
+           nd Pitch angles
+      684    // Legacy function - now uses quaternion-based approach
+      685    // Deprecated: Use updateCameraVectorsFromQuaternion() inste
+           ad
+
+● Update(StereoVista\headers\Core\Camera.h)
+  ⎿  Removed 2 lines
+      691    }
+      692  
+      693  private:
+      694 -  float lastScrollTime = 0.0f;                                
+      695 -                                                              
+      694    // Cubic easing function for smooth animation
+      695    float easeOutCubic(float t) { return 1 - pow(1 - t, 3); }
+      696  
+
+● Now GuiTypes.h de-GL:
+
+● Update(StereoVista\headers\Gui\GuiTypes.h)
+  ⎿  Added 4 lines, removed 2 lines
+       1  #pragma once
+       2  
+       3 -#include <glad/glad.h>                                         
+       3 +// GPU-API-free since Phase 6 of the Vulkan migration (the glad
+         + include and                                                   
+       4 +// the GL-era GUI::PlaneCursor handle bundle are gone; the real
+         + PlaneCursor                                                   
+       5 +// lives in Cursors/Types and owns no GPU objects anymore).    
+       6 +                                                               
+       7  #include <glm/glm.hpp>
+       8  #include <string>
+       9  #include <vector>
+      10  
+      11  namespace Engine {
+       9 -class Shader;                                                  
+      12  class CursorPreset;
+      13  } // namespace Engine
+      14  
+
+● Update(StereoVista\headers\Gui\GuiTypes.h)  ⎿  Removed 8 lines
+      114    glm::vec4 innerColor = glm::vec4(1.0f, 1.0f, 1.0f, 0.5f);
+      115  };
+      116  
+      117 -struct PlaneCursor {                                          
+      118 -  GLuint VAO, VBO, EBO;                                       
+      119 -  glm::vec4 color = glm::vec4(0.0f, 1.0f, 0.0f, 0.7f);        
+      120 -  float diameter = 0.5f;                                      
+      121 -  bool show = false;                                          
+      122 -  Engine::Shader *shader = nullptr;                           
+      123 -};                                                            
+      124 -                                                              
+      117  struct ApplicationPreferences {
+      118    bool isDarkTheme = true;
+      119    // Index into the GuiTheme enum (imgui_sytle.h). Authoritati
+           ve theme selection;
+
+● Write(StereoVista\headers\Cursors\Base\Cursor.h)
+  ⎿  Added 6 lines, removed 9 lines
+       1  #pragma once
+       2  
+       3 -#include "Engine/Core.h"                                       
+       3 +// 3D cursor base class. GPU-API-free since Phase 6 of the Vulk
+         +an migration:                                                  
+       4 +// cursors no longer own shaders/VAOs — they append world-space
+         + geometry to                                                   
+       5 +// the unified renderer::OverlayDrawList (playbook C.9), and th
+         +e fragment                                                     
+       6 +// (ring) cursor publishes its state into the FrameSubmission f
+         +or mesh.frag.                                                  
+       7 +                                                               
+       8  #include "Gui/GuiTypes.h"
+       9  #include <glm/glm.hpp>
+      10  #include <string>
+      11  
+       8 -namespace Engine {                                             
+       9 -    class Shader;                                              
+      10 -}                                                              
+      11 -                                                               
+      12  namespace Cursor {
+      13      // Base cursor class that all cursor types will inherit fro
+          m
+      14      class BaseCursor {
+     ...
+      18  
+      19          // Common cursor methods
+      20          virtual void initialize() = 0;
+      21 -        virtual void render(const glm::mat4& projection, const 
+         -glm::mat4& view, const glm::vec3& cameraPosition) = 0;         
+      22 -        virtual void cleanup() = 0;                            
+      23 -        virtual void updateShaderUniforms(Engine::Shader* shade
+         -r) = 0;                                                        
+      21  
+      22          // Common cursor properties
+      23          bool isVisible() const { return m_visible; }
+     ...
+      54          float m_minDiff;
+      55          float m_maxDiff;
+      56      };
+      60 -}                                                              
+      57   No newline at end of file
+      58 +}                                                              
+
+● Write(StereoVista\headers\Cursors\Types\SphereCursor.h)
+  ⎿  Added 24 lines, removed 15 lines
+       2  
+       3  #include "Cursors/Base/Cursor.h"
+       4  #include "Gui/GuiTypes.h"
+       5 +#include <cstdint>                                             
+       6  #include <vector>
+       7  
+       8 +namespace renderer {                                           
+       9 +class OverlayDrawList;                                         
+      10 +}                                                              
+      11 +                                                               
+      12  namespace Cursor {
+      13 +    // Glassy sphere cursor. Owns only its CPU mesh (unit-ish s
+         +phere generated                                                
+      14 +    // once); rendering appends two culling passes (back faces 
+         +with depth                                                     
+      15 +    // write, then front faces) to the overlay draw list — the 
+         +exact GL                                                       
+      16 +    // two-pass transparency trick, expressed as dynamic cull s
+         +tate.                                                          
+      17      class SphereCursor : public BaseCursor {
+      18      public:
+      19          SphereCursor();
+      20          ~SphereCursor() override;
+      21  
+      13 -        // Implementation of base class virtual methods        
+      22          void initialize() override;
+      15 -        void render(const glm::mat4& projection, const glm::mat
+         -4& view, const glm::vec3& cameraPosition);                     
+      16 -        void cleanup() override;                               
+      17 -        void updateShaderUniforms(Engine::Shader* shader) overr
+         -ide;                                                           
+      23  
+      24 +        // Appends this cursor's geometry (and optionally the i
+         +nner sphere).                                                  
+      25 +        void appendTo(renderer::OverlayDrawList& list, const gl
+         +m::vec3& cameraPosition);                                      
+      26 +        // Same mesh reused for the orbit-center marker (single
+         + color/size).                                                  
+      27 +        void appendOrbitSphere(renderer::OverlayDrawList& list,
+         + const glm::vec3& center,                                      
+      28 +                               float radius, const glm::vec4& c
+         +olor);                                                         
+      29 +                                                               
+      30          // Sphere cursor specific methods
+      31          float calculateRadius(const glm::vec3& cameraPosition);
+      32          void generateMesh(float radius, unsigned int rings, uns
+          igned int sectors);
+      33  
+      23 -        // Getters and setters for specific properties         
+      24 -        // Note: Scaling properties now inherited from BaseCurs
+         -or                                                             
+      34          float getFixedRadius() const { return getBaseSize(); }
+      35          void setFixedRadius(float radius) { setBaseSize(radius)
+          ; }
+      36          const glm::vec4& getColor() const { return m_color; }
+     ...
+      47          void setInnerSphereColor(const glm::vec4& color) { m_in
+          nerSphereColor = color; }
+      48          float getInnerSphereFactor() const { return m_innerSphe
+          reFactor; }
+      49          void setInnerSphereFactor(float factor) { m_innerSphere
+          Factor = factor; }
+      41 -        // Note: MinDiff, MaxDiff, and CurrentRadius now inheri
+         -ted from BaseCursor                                            
+      50          float getCurrentRadius() const { return getBaseSize() *
+           getCurrentScale(); }
+      51  
+      44 -        Engine::Shader* getShader() const { return m_shader; } 
+      45 -        GLuint getVAO() const { return m_vao; }                
+      46 -        const std::vector<unsigned int>& getIndices() const { r
+         -eturn m_indices; }                                             
+      52 +        // CPU mesh access (CursorPreview3D renders the same ge
+         +ometry).                                                       
+      53 +        const std::vector<float>& getVertices() const { return 
+         +m_vertices; }                                                  
+      54 +        const std::vector<uint32_t>& getIndices() const { retur
+         +n m_indices; }                                                 
+      55  
+      56      private:
+      57          friend class CursorManager;
+      58  
+      51 -        GLuint m_vao, m_vbo, m_ebo;                            
+      59 +        // Interleaved [pos.xyz, normal.xyz]; positions baked a
+         +t the initialize-                                              
+      60 +        // time base radius, exactly like the GL VBO (later siz
+         +e changes only                                                 
+      61 +        // affect the model scale — GL behaviour preserved).   
+      62          std::vector<float> m_vertices;
+      53 -        std::vector<unsigned int> m_indices;                   
+      54 -        Engine::Shader* m_shader;                              
+      63 +        std::vector<uint32_t> m_indices;                       
+      64 +        float m_meshRadius = 0.05f;                            
+      65  
+      56 -        // Specific properties (scaling properties moved to Bas
+         -eCursor)                                                       
+      66          glm::vec4 m_color;
+      67          float m_transparency;
+      68          float m_edgeSoftness;
+     ...
+      71          glm::vec4 m_innerSphereColor;
+      72          float m_innerSphereFactor;
+      73      };
+      65 -}                                                              
+      74   No newline at end of file
+      75 +}                                                              
+
+● Write(StereoVista\src\Cursors\Types\SphereCursor.cpp)
+  ⎿  Added 67 lines, removed 128 lines
+       1  #include "Cursors/Types/SphereCursor.h"
+       2 -#include "Engine/Shader.h"                                     
+       2 +#include "Renderer/OverlayDrawList.h"                          
+       3 +                                                               
+       4 +#include <glm/gtc/matrix_transform.hpp>                        
+       5 +                                                               
+       6  #include <corecrt_math_defines.h>
+       7 +#include <cmath>                                               
+       8  
+       9  namespace Cursor {
+      10 +    namespace {                                                
+      11 +        // VkCullModeFlagBits values, kept as raw ints so this 
+         +file stays                                                     
+      12 +        // Vulkan-header-free (OverlayBatch carries them as uin
+         +t32_t).                                                        
+      13 +        constexpr uint32_t kCullFront = 0x00000001; // VK_CULL_
+         +MODE_FRONT_BIT                                                 
+      14 +        constexpr uint32_t kCullBack = 0x00000002;  // VK_CULL_
+         +MODE_BACK_BIT                                                  
+      15 +                                                               
+      16 +        // Effective "center alpha" of the GL sphere shader: it
+         +s                                                              
+      17 +        // distFromCenter/radius term is constant over the sphe
+         +re surface                                                     
+      18 +        // (length of the baked mesh vertex), so it collapses t
+         +o a constant                                                   
+      19 +        // computed here — see overlay.frag's SPHERE branch.   
+      20 +        float centerAlpha(float centerTransparency, float meshR
+         +adius) {                                                       
+      21 +            const float t = glm::clamp(meshRadius, 0.0f, 1.0f);
+      22 +            const float s = t * t * (3.0f - 2.0f * t); // smoot
+         +hstep(0,1,t)                                                   
+      23 +            return centerTransparency + (1.0f - centerTranspare
+         +ncy) * s;                                                      
+      24 +        }                                                      
+      25 +    }                                                          
+      26 +                                                               
+      27      SphereCursor::SphereCursor() :
+      28          BaseCursor(),
+       8 -        m_vao(0),                                              
+       9 -        m_vbo(0),                                              
+      10 -        m_ebo(0),                                              
+      11 -        m_shader(nullptr),                                     
+      29          m_color(1.0f, 0.0f, 0.0f, 0.7f),
+      30          m_transparency(0.7f),
+      31          m_edgeSoftness(0.8f),
+     ...
+       37          m_name = "SphereCursor";
+       38      }
+       39  
+       23 -    SphereCursor::~SphereCursor() {                           
+       24 -        cleanup();                                            
+       25 -    }                                                         
+       40 +    SphereCursor::~SphereCursor() = default;                  
+       41  
+       42      void SphereCursor::initialize() {
+       28 -        generateMesh(getBaseSize(), 32, 32);                  
+       29 -                                                              
+       30 -        glGenVertexArrays(1, &m_vao);                         
+       31 -        glGenBuffers(1, &m_vbo);                              
+       32 -        glGenBuffers(1, &m_ebo);                              
+       33 -                                                              
+       34 -        glBindVertexArray(m_vao);                             
+       35 -                                                              
+       36 -        glBindBuffer(GL_ARRAY_BUFFER, m_vbo);                 
+       37 -        glBufferData(GL_ARRAY_BUFFER, m_vertices.size() * size
+          -of(float), m_vertices.data(), GL_STATIC_DRAW);                
+       38 -                                                              
+       39 -        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_ebo);         
+       40 -        glBufferData(GL_ELEMENT_ARRAY_BUFFER, m_indices.size()
+          - * sizeof(unsigned int), m_indices.data(), GL_STATIC_DRAW);   
+       41 -                                                              
+       42 -        glEnableVertexAttribArray(0);                         
+       43 -        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * si
+          -zeof(float), (void*)0);                                       
+       44 -                                                              
+       45 -        glEnableVertexAttribArray(1);                         
+       46 -        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * si
+          -zeof(float), (void*)(3 * sizeof(float)));                     
+       47 -                                                              
+       48 -        glBindVertexArray(0);                                 
+       49 -                                                              
+       50 -        try {                                                 
+       51 -            m_shader = Engine::loadShader("cursors/sphereVerte
+          -xShader.glsl", "cursors/sphereFragmentShader.glsl");          
+       52 -        }                                                     
+       53 -        catch (const std::exception& e) {                     
+       54 -            std::cerr << "Fatal error loading sphere cursor sh
+          -ader: " << e.what() << std::endl;                             
+       55 -        }                                                     
+       56 -                                                              
+       57 -        // Initialize uniforms                                
+       58 -        if (m_shader) {                                       
+       59 -            m_shader->use();                                  
+       60 -            m_shader->setMat4("projection", glm::mat4(1.0f)); 
+       61 -            m_shader->setMat4("view", glm::mat4(1.0f));       
+       62 -            m_shader->setMat4("model", glm::mat4(1.0f));      
+       63 -            m_shader->setVec3("viewPos", glm::vec3(0.0f));    
+       64 -        }                                                     
+       43 +        m_meshRadius = getBaseSize();                         
+       44 +        generateMesh(m_meshRadius, 32, 32);                   
+       45      }
+       46  
+       67 -    void SphereCursor::render(const glm::mat4& projection, con
+          -st glm::mat4& view, const glm::vec3& cameraPosition) {        
+       68 -        if (!m_visible || !m_positionValid || !m_shader) retur
+          -n;                                                            
+       47 +    void SphereCursor::appendTo(renderer::OverlayDrawList& lis
+          +t,                                                            
+       48 +                                const glm::vec3& cameraPositio
+          +n) {                                                          
+       49 +        if (!m_visible || !m_positionValid || m_indices.empty(
+          +))                                                            
+       50 +            return;                                           
+       51  
+       70 -        // Enable blending and depth testing                  
+       71 -        glEnable(GL_BLEND);                                   
+       72 -        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);    
+       73 -        glEnable(GL_DEPTH_TEST);                              
+       74 -                                                              
+       75 -        m_shader->use();                                      
+       76 -        m_shader->setMat4("projection", projection);          
+       77 -        m_shader->setMat4("view", view);                      
+       78 -        m_shader->setVec3("viewPos", cameraPosition);         
+       79 -                                                              
+       80 -        // Calculate current scale using the unified scaling s
+          -ystem                                                         
+       81 -        float currentRadius = getBaseSize() * calculateScale(c
+          -ameraPosition);                                               
+       82 -                                                              
+       52 +        const float currentRadius = getBaseSize() * calculateS
+          +cale(cameraPosition);                                         
+       53          glm::mat4 model = glm::translate(glm::mat4(1.0f), m_po
+           sition);
+       54          model = glm::scale(model, glm::vec3(currentRadius));
+       55 +        const glm::mat4 innerModel = glm::scale(model, glm::ve
+          +c3(m_innerSphereFactor));                                     
+       56  
+       86 -        m_shader->setMat4("model", model);                    
+       87 -        m_shader->setFloat("innerSphereFactor", m_innerSphereF
+          -actor);                                                       
+       57 +        const glm::vec4 outerParams(m_transparency, m_edgeSoft
+          +ness,                                                         
+       58 +                                    centerAlpha(m_centerTransp
+          +arency, m_meshRadius),                                        
+       59 +                                    0.0f);                    
+       60 +        const glm::vec4 innerParams(1.0f, 0.0f, 0.0f, 1.0f); /
+          +/ isInner: flat alpha                                         
+       61  
+       89 -        glBindVertexArray(m_vao);                             
+       90 -                                                              
+       91 -        // First pass: Render back faces                      
+       92 -        glDepthMask(GL_TRUE);                                 
+       93 -        glCullFace(GL_FRONT);                                 
+       94 -                                                              
+       95 -        if (m_showInnerSphere) {                              
+       96 -            m_shader->setBool("isInnerSphere", true);         
+       97 -            m_shader->setVec4("sphereColor", m_innerSphereColo
+          -r);                                                           
+       98 -            m_shader->setFloat("transparency", 1.0);          
+       99 -            glm::mat4 innerModel = glm::scale(model, glm::vec3
+          -(m_innerSphereFactor));                                       
+      100 -            m_shader->setMat4("model", innerModel);           
+      101 -            glDrawElements(GL_TRIANGLES, m_indices.size(), GL_
+          -UNSIGNED_INT, 0);                                             
+       62 +        // GL two-pass transparency: back faces (depth write O
+          +N) first, then                                                
+       63 +        // front faces (depth write OFF), inner sphere leading
+          + each pass.                                                   
+       64 +        struct Pass { uint32_t cull; bool depthWrite; };      
+       65 +        const Pass passes[2] = { { kCullFront, true }, { kCull
+          +Back, false } };                                              
+       66 +        for (const Pass& pass : passes) {                     
+       67 +            if (m_showInnerSphere)                            
+       68 +                list.sphereMesh(m_vertices.data(), m_indices.d
+          +ata(), m_indices.size(),                                      
+       69 +                                innerModel, m_innerSphereColor
+          +, innerParams,                                                
+       70 +                                pass.cull, pass.depthWrite,   
+       71 +                                renderer::OverlayDepth::Occlud
+          +ed);                                                          
+       72 +            list.sphereMesh(m_vertices.data(), m_indices.data(
+          +), m_indices.size(),                                          
+       73 +                            model, m_color, outerParams, pass.
+          +cull, pass.depthWrite,                                        
+       74 +                            renderer::OverlayDepth::Occluded);
+       75          }
+      103 -                                                              
+      104 -        m_shader->setBool("isInnerSphere", false);            
+      105 -        m_shader->setVec4("sphereColor", m_color);            
+      106 -        m_shader->setFloat("transparency", m_transparency);   
+      107 -        m_shader->setFloat("edgeSoftness", m_edgeSoftness);   
+      108 -        m_shader->setFloat("centerTransparencyFactor", m_cente
+          -rTransparency);                                               
+      109 -        m_shader->setMat4("model", model);                    
+      110 -        glDrawElements(GL_TRIANGLES, m_indices.size(), GL_UNSI
+          -GNED_INT, 0);                                                 
+      111 -                                                              
+      112 -        // Second pass: Render front faces                    
+      113 -        glDepthMask(GL_FALSE);                                
+      114 -        glCullFace(GL_BACK);                                  
+      115 -                                                              
+      116 -        if (m_showInnerSphere) {                              
+      117 -            m_shader->setBool("isInnerSphere", true);         
+      118 -            m_shader->setVec4("sphereColor", m_innerSphereColo
+          -r);                                                           
+      119 -            m_shader->setFloat("transparency", 1.0);          
+      120 -            glm::mat4 innerModel = glm::scale(model, glm::vec3
+          -(m_innerSphereFactor));                                       
+      121 -            m_shader->setMat4("model", innerModel);           
+      122 -            glDrawElements(GL_TRIANGLES, m_indices.size(), GL_
+          -UNSIGNED_INT, 0);                                             
+      123 -        }                                                     
+      124 -                                                              
+      125 -        m_shader->setBool("isInnerSphere", false);            
+      126 -        m_shader->setVec4("sphereColor", m_color);            
+      127 -        m_shader->setFloat("transparency", m_transparency);   
+      128 -        m_shader->setFloat("edgeSoftness", m_edgeSoftness);   
+      129 -        m_shader->setFloat("centerTransparencyFactor", m_cente
+          -rTransparency);                                               
+      130 -        m_shader->setMat4("model", model);                    
+      131 -        glDrawElements(GL_TRIANGLES, m_indices.size(), GL_UNSI
+          -GNED_INT, 0);                                                 
+      132 -                                                              
+      133 -        // Reset OpenGL state                                 
+      134 -        glEnable(GL_CULL_FACE);                               
+      135 -        glCullFace(GL_BACK);                                  
+      136 -        glDepthMask(GL_TRUE);                                 
+      137 -        glDisable(GL_BLEND);                                  
+      138 -        glBindVertexArray(0);                                 
+      139 -        glUseProgram(0);                                      
+       76      }
+       77  
+      142 -    void SphereCursor::cleanup() {                            
+      143 -        if (m_vao) glDeleteVertexArrays(1, &m_vao);           
+      144 -        if (m_vbo) glDeleteBuffers(1, &m_vbo);                
+      145 -        if (m_ebo) glDeleteBuffers(1, &m_ebo);                
+      146 -                                                              
+      147 -        m_vao = m_vbo = m_ebo = 0;                            
+      148 -                                                              
+      149 -        if (m_shader) {                                       
+      150 -            delete m_shader;                                  
+      151 -            m_shader = nullptr;                               
+      152 -        }                                                     
+       78 +    void SphereCursor::appendOrbitSphere(renderer::OverlayDraw
+          +List& list,                                                   
+       79 +                                         const glm::vec3& cent
+          +er, float radius,                                             
+       80 +                                         const glm::vec4& colo
+          +r) {                                                          
+       81 +        if (m_indices.empty())                                
+       82 +            return;                                           
+       83 +        glm::mat4 model = glm::translate(glm::mat4(1.0f), cent
+          +er);                                                          
+       84 +        // The mesh bakes m_meshRadius; normalise so `radius` 
+          +is the true                                                   
+       85 +        // world radius of the marker.                        
+       86 +        model = glm::scale(model, glm::vec3(radius / std::max(
+          +m_meshRadius, 1e-5f)));                                       
+       87 +        // Solid-ish marker: edge softness 0, no center fade (
+          +GL parity with                                                
+       88 +        // renderOrbitCenter's uniforms), same two-pass orderi
+          +ng.                                                           
+       89 +        const glm::vec4 params(1.0f, 0.0f, 1.0f, 0.0f);       
+       90 +        list.sphereMesh(m_vertices.data(), m_indices.data(), m
+          +_indices.size(), model,                                       
+       91 +                        color, params, kCullFront, true,      
+       92 +                        renderer::OverlayDepth::Occluded);    
+       93 +        list.sphereMesh(m_vertices.data(), m_indices.data(), m
+          +_indices.size(), model,                                       
+       94 +                        color, params, kCullBack, false,      
+       95 +                        renderer::OverlayDepth::Occluded);    
+       96      }
+       97  
+      155 -    void SphereCursor::updateShaderUniforms(Engine::Shader* sh
+          -ader) {                                                       
+      156 -        // No need to set any specific uniforms for the main s
+          -hader                                                         
+      157 -    }                                                         
+      158 -                                                              
+       98      float SphereCursor::calculateRadius(const glm::vec3& camer
+           aPosition) {
+       99          // Use the unified scaling system from BaseCursor
+      100          return getBaseSize() * calculateScale(cameraPosition);
+     ...
+      135              }
+      136          }
+      137      }
+      199 -}                                                             
+      138   No newline at end of file
+      139 +}                                                             
+
+● Write(StereoVista\headers\Cursors\Types\PlaneCursor.h)
+  ⎿  Added 8 lines, removed 9 lines
+       3  #include "Cursors/Base/Cursor.h"
+       4  #include <glm/glm.hpp>
+       5  
+       6 +namespace renderer {                                           
+       7 +class OverlayDrawList;                                         
+       8 +}                                                              
+       9 +                                                               
+      10  namespace Cursor {
+      11 +    // Flat camera-facing disc cursor. GPU-free: one billboard 
+         +on the overlay                                                 
+      12 +    // draw list (the GL triangle-fan VBO + planeCursor shaders
+         + are gone).                                                    
+      13      class PlaneCursor : public BaseCursor {
+      14      public:
+      15          PlaneCursor();
+      16          ~PlaneCursor() override;
+      17  
+      12 -        // Implementation of base class virtual methods        
+      18          void initialize() override;
+      14 -        void render(const glm::mat4& projection, const glm::mat
+         -4& view, const glm::vec3& cameraPosition);                     
+      15 -        void cleanup() override;                               
+      16 -        void updateShaderUniforms(Engine::Shader* shader) overr
+         -ide;                                                           
+      19 +        void appendTo(renderer::OverlayDrawList& list, const gl
+         +m::vec3& cameraPosition);                                      
+      20  
+      18 -        // Getters and setters for specific properties         
+      19 -        // Note: Diameter now uses unified scaling system      
+      21          float getDiameter() const { return getBaseSize(); }
+      22          void setDiameter(float diameter) { setBaseSize(diameter
+          ); }
+      23          float getCurrentDiameter() const { return getBaseSize()
+           * getCurrentScale(); }
+     ...
+      25          void setColor(const glm::vec4& color) { m_color = color
+          ; }
+      26  
+      27      private:
+      27 -        GLuint m_vao, m_vbo, m_ebo;                            
+      28 -        Engine::Shader* m_shader;                              
+      28          glm::vec4 m_color;
+      29      };
+      31 -}                                                              
+      30   No newline at end of file
+      31 +}                                                              
+
+● Write(StereoVista\src\Cursors\Types\PlaneCursor.cpp)
+  ⎿  Added 13 lines, removed 115 lines
+        1  #include "Cursors/Types/PlaneCursor.h"
+        2 -#include "Engine/Shader.h"                                    
+        3 -#include <corecrt_math_defines.h>                             
+        4 -#include <vector>                                             
+        2 +#include "Renderer/OverlayDrawList.h"                         
+        3  
+        4  namespace Cursor {
+        5      PlaneCursor::PlaneCursor() :
+        6          BaseCursor(),
+        9 -        m_vao(0),                                             
+       10 -        m_vbo(0),                                             
+       11 -        m_ebo(0),                                             
+       12 -        m_shader(nullptr),                                    
+        7          m_color(0.0f, 1.0f, 0.0f, 0.7f)
+        8      {
+        9          m_name = "PlaneCursor";
+       10          setBaseSize(0.5f);  // Set default diameter
+       11      }
+       12  
+       19 -    PlaneCursor::~PlaneCursor() {                             
+       20 -        cleanup();                                            
+       21 -    }                                                         
+       13 +    PlaneCursor::~PlaneCursor() = default;                    
+       14  
+       15      void PlaneCursor::initialize() {
+       24 -        // Create a circular plane using triangles            
+       25 -        std::vector<float> vertices;                          
+       26 -        std::vector<unsigned int> indices;                    
+       27 -                                                              
+       28 -        const int segments = 32;                              
+       29 -        const float radius = 0.5f; // Unit radius, will be sca
+          -led by diameter                                               
+       30 -                                                              
+       31 -        // Center vertex                                      
+       32 -        vertices.push_back(0.0f); // x                        
+       33 -        vertices.push_back(0.0f); // y                        
+       34 -        vertices.push_back(0.0f); // z                        
+       35 -                                                              
+       36 -        // Circle vertices                                    
+       37 -        for (int i = 0; i <= segments; i++) {                 
+       38 -            float angle = (2.0f * M_PI * i) / segments;       
+       39 -            vertices.push_back(radius * cos(angle));          
+       40 -            vertices.push_back(radius * sin(angle));          
+       41 -            vertices.push_back(0.0f);                         
+       42 -        }                                                     
+       43 -                                                              
+       44 -        // Indices for triangle fan                           
+       45 -        for (int i = 0; i < segments; i++) {                  
+       46 -            indices.push_back(0);                             
+       47 -            indices.push_back(i + 1);                         
+       48 -            indices.push_back(i + 2);                         
+       49 -        }                                                     
+       50 -                                                              
+       51 -        glGenVertexArrays(1, &m_vao);                         
+       52 -        glGenBuffers(1, &m_vbo);                              
+       53 -        glGenBuffers(1, &m_ebo);                              
+       54 -                                                              
+       55 -        glBindVertexArray(m_vao);                             
+       56 -                                                              
+       57 -        glBindBuffer(GL_ARRAY_BUFFER, m_vbo);                 
+       58 -        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof
+          -(float), vertices.data(), GL_STATIC_DRAW);                    
+       59 -                                                              
+       60 -        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_ebo);         
+       61 -        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() *
+          - sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);       
+       62 -                                                              
+       63 -        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * si
+          -zeof(float), (void*)0);                                       
+       64 -        glEnableVertexAttribArray(0);                         
+       65 -                                                              
+       66 -        try {                                                 
+       67 -            m_shader = Engine::loadShader("cursors/planeCursor
+          -VertexShader.glsl", "cursors/planeCursorFragmentShader.glsl");
+       68 -        }                                                     
+       69 -        catch (const std::exception& e) {                     
+       70 -            std::cerr << "Failed to load plane cursor shaders:
+          - " << e.what() << std::endl;                                  
+       71 -        }                                                     
+       16 +        // No GPU resources anymore; the overlay renderer draw
+          +s the disc.                                                   
+       17      }
+       18  
+       74 -    void PlaneCursor::render(const glm::mat4& projection, cons
+          -t glm::mat4& view, const glm::vec3& cameraPosition) {         
+       75 -        if (!m_visible || !m_positionValid || !m_shader) retur
+          -n;                                                            
+       76 -                                                              
+       77 -        m_shader->use();                                      
+       78 -        m_shader->setMat4("projection", projection);          
+       79 -        m_shader->setMat4("view", view);                      
+       80 -                                                              
+       81 -        glm::mat4 model = glm::translate(glm::mat4(1.0f), m_po
+          -sition);                                                      
+       82 -                                                              
+       83 -        // Orient plane to face camera                        
+       84 -        glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);           
+       85 -        glm::vec3 forward = glm::normalize(cameraPosition - m_
+          -position);                                                    
+       86 -        glm::vec3 right = glm::normalize(glm::cross(up, forwar
+          -d));                                                          
+       87 -        up = glm::cross(forward, right);                      
+       88 -                                                              
+       89 -        glm::mat4 rotation = glm::mat4(                       
+       90 -            glm::vec4(right, 0.0f),                           
+       91 -            glm::vec4(up, 0.0f),                              
+       92 -            glm::vec4(forward, 0.0f),                         
+       93 -            glm::vec4(0.0f, 0.0f, 0.0f, 1.0f)                 
+       94 -        );                                                    
+       95 -                                                              
+       96 -        // Calculate current diameter using the unified scalin
+          -g system                                                      
+       97 -        float currentDiameter = getBaseSize() * calculateScale
+          -(cameraPosition);                                             
+       98 -                                                              
+       99 -        model = model * rotation;                             
+      100 -        model = glm::scale(model, glm::vec3(currentDiameter));
+      101 -                                                              
+      102 -        m_shader->setMat4("model", model);                    
+      103 -        m_shader->setVec4("color", m_color);                  
+      104 -                                                              
+      105 -        glEnable(GL_BLEND);                                   
+      106 -        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);    
+      107 -                                                              
+      108 -        glBindVertexArray(m_vao);                             
+      109 -        glDrawElements(GL_TRIANGLES, 96, GL_UNSIGNED_INT, 0); 
+      110 -                                                              
+      111 -        glDisable(GL_BLEND);                                  
+      112 -        glBindVertexArray(0);                                 
+       19 +    void PlaneCursor::appendTo(renderer::OverlayDrawList& list
+          +,                                                             
+       20 +                               const glm::vec3& cameraPosition
+          +) {                                                           
+       21 +        if (!m_visible || !m_positionValid)                   
+       22 +            return;                                           
+       23 +        // GL parity: unit-radius 0.5 fan scaled by the curren
+          +t diameter =                                                  
+       24 +        // world radius diameter/2, camera-facing, blended, de
+          +pth-tested.                                                   
+       25 +        const float currentDiameter = getBaseSize() * calculat
+          +eScale(cameraPosition);                                       
+       26 +        list.disc(m_position, currentDiameter * 0.5f, m_color,
+       27 +                  renderer::OverlayDepth::Occluded, /*softEdge
+          +=*/false);                                                    
+       28      }
+      114 -                                                              
+      115 -    void PlaneCursor::cleanup() {                             
+      116 -        if (m_vao) glDeleteVertexArrays(1, &m_vao);           
+      117 -        if (m_vbo) glDeleteBuffers(1, &m_vbo);                
+      118 -        if (m_ebo) glDeleteBuffers(1, &m_ebo);                
+      119 -                                                              
+      120 -        m_vao = m_vbo = m_ebo = 0;                            
+      121 -                                                              
+      122 -        if (m_shader) {                                       
+      123 -            delete m_shader;                                  
+      124 -            m_shader = nullptr;                               
+      125 -        }                                                     
+      126 -    }                                                         
+      127 -                                                              
+      128 -    void PlaneCursor::updateShaderUniforms(Engine::Shader* sha
+          -der) {                                                        
+      129 -        // No specific uniforms to update for the main shader 
+      130 -    }                                                         
+      131 -}                                                             
+       29   No newline at end of file
+       30 +}                                                             
+
+● Write(StereoVista\headers\Cursors\Types\FragmentCursor.h)
+  ⎿  Added 12 lines, removed 6 lines
+       3  #include "Cursors/Base/Cursor.h"
+       4  #include "Gui/GuiTypes.h"
+       5  
+       6 +namespace renderer {                                           
+       7 +struct FragmentCursorState;                                    
+       8 +}                                                              
+       9 +                                                               
+      10  namespace Cursor {
+      11 +    // Screen/world ring cursor drawn BY THE SCENE SHADER on ge
+         +ometry surfaces                                                
+      12 +    // (mesh.frag since Phase 6; the GL uber-shader before). Th
+         +is class only                                                  
+      13 +    // holds settings and publishes them into the FrameSubmissi
+         +on.                                                            
+      14      class FragmentCursor : public BaseCursor {
+      15      public:
+      16          FragmentCursor();
+      17          ~FragmentCursor() override;
+      18  
+      12 -        // Implementation of base class virtual methods        
+      19          void initialize() override;
+      14 -        void render(const glm::mat4& projection, const glm::mat
+         -4& view, const glm::vec3& cameraPosition);                     
+      15 -        void cleanup() override;                               
+      16 -        void updateShaderUniforms(Engine::Shader* shader) overr
+         -ide;                                                           
+      20  
+      18 -        // Getters and setters for specific properties         
+      21 +        // Fills the renderer-side state (colors converted to l
+         +inear there by                                                 
+      22 +        // the caller if desired; we pass the authored values t
+         +hrough).                                                       
+      23 +        void fillState(renderer::FragmentCursorState& out) cons
+         +t;                                                             
+      24 +                                                               
+      25          float getBaseOuterRadius() const { return m_settings.ba
+          seOuterRadius; }
+      26          void setBaseOuterRadius(float radius) { m_settings.base
+          OuterRadius = radius; }
+      27          float getBaseOuterBorderThickness() const { return m_se
+          ttings.baseOuterBorderThickness; }
+     ...
+      41      private:
+      42          GUI::FragmentShaderCursorSettings m_settings;
+      43      };
+      38 -}                                                              
+      44   No newline at end of file
+      45 +}                                                              
+
+● Write(StereoVista\src\Cursors\Types\FragmentCursor.cpp)
+  ⎿  Added 14 lines, removed 54 lines
+      1  #include "Cursors/Types/FragmentCursor.h"
+      2 -#include "Engine/Shader.h"                                      
+      2 +#include "Renderer/FrameSubmission.h"                           
+      3  
+      4  namespace Cursor {
+      5      FragmentCursor::FragmentCursor() : BaseCursor() {
+     ...
+      14          m_settings.innerColor = glm::vec4(1.0f, 1.0f, 1.0f, 0.5
+          f);
+      15      }
+      16  
+      17 -    FragmentCursor::~FragmentCursor() {                        
+      18 -        cleanup();                                             
+      19 -    }                                                          
+      17 +    FragmentCursor::~FragmentCursor() = default;               
+      18  
+      19      void FragmentCursor::initialize() {
+      22 -        // This cursor is implemented entirely in fragment shad
+         -er                                                             
+      20 +        // Implemented entirely in the scene fragment shader.  
+      21      }
+      22  
+      25 -    void FragmentCursor::render(const glm::mat4& projection, co
+         -nst glm::mat4& view, const glm::vec3& cameraPosition) {        
+      26 -        // This cursor is rendered via the main shader         
+      23 +    void FragmentCursor::fillState(renderer::FragmentCursorStat
+         +e& out) const {                                                
+      24 +        out.show = m_visible;                                  
+      25 +        out.position = m_position;                             
+      26 +        out.valid = m_positionValid;                           
+      27 +        out.outerColor = m_settings.outerColor;                
+      28 +        out.innerColor = m_settings.innerColor;                
+      29 +        out.outerRadius = m_settings.baseOuterRadius;          
+      30 +        out.outerThickness = m_settings.baseOuterBorderThicknes
+         +s;                                                             
+      31 +        out.innerRadius = m_settings.baseInnerRadius;          
+      32 +        out.innerThickness = m_settings.baseInnerBorderThicknes
+         +s;                                                             
+      33      }
+      28 -                                                               
+      29 -    void FragmentCursor::cleanup() {                           
+      30 -                                                               
+      31 -    }                                                          
+      32 -                                                               
+      33 -    void FragmentCursor::updateShaderUniforms(Engine::Shader* s
+         -hader) {                                                       
+      34 -        if (!shader || !m_visible) return;                     
+      35 -                                                               
+      36 -        // Calculate unified scaling - we need to use the curre
+         -nt cursor position                                             
+      37 -        // The fragment shader will use viewPos and cursorPos t
+         -o calculate distance                                           
+      38 -        // We'll modify the base radius values to incorporate o
+         -ur unified scaling                                             
+      39 -                                                               
+      40 -        // For now, we'll approximate the scaling by using a ba
+         -se scale factor                                                
+      41 -        // The fragment shader's internal scaling will be on to
+         -p of this                                                      
+      42 -        float unifiedScaleFactor = 1.0f;                       
+      43 -                                                               
+      44 -        switch (m_scalingMode) {                               
+      45 -        case GUI::CURSOR_NORMAL:                               
+      46 -            unifiedScaleFactor = 1.0f;  // No scaling          
+      47 -            break;                                             
+      48 -        case GUI::CURSOR_FIXED:                                
+      49 -            unifiedScaleFactor = 1.0f;  // Let fragment shader 
+         -handle distance scaling                                        
+      50 -            break;                                             
+      51 -        case GUI::CURSOR_CONSTRAINED_DYNAMIC:                  
+      52 -            unifiedScaleFactor = 1.0f;  // Let fragment shader 
+         -handle distance scaling (default)                              
+      53 -            break;                                             
+      54 -        case GUI::CURSOR_LOGARITHMIC:                          
+      55 -            unifiedScaleFactor = 1.0f;  // Let fragment shader 
+         -handle distance scaling                                        
+      56 -            break;                                             
+      57 -        }                                                      
+      58 -                                                               
+      59 -        // Set fragment shader uniforms with unified scaling ap
+         -plied                                                          
+      60 -        shader->setFloat("baseOuterRadius", m_settings.baseOute
+         -rRadius * unifiedScaleFactor);                                 
+      61 -        shader->setFloat("baseOuterBorderThickness", m_settings
+         -.baseOuterBorderThickness * unifiedScaleFactor);               
+      62 -        shader->setFloat("baseInnerRadius", m_settings.baseInne
+         -rRadius * unifiedScaleFactor);                                 
+      63 -        shader->setFloat("baseInnerBorderThickness", m_settings
+         -.baseInnerBorderThickness * unifiedScaleFactor);               
+      64 -        shader->setVec4("outerCursorColor", m_settings.outerCol
+         -or);                                                           
+      65 -        shader->setVec4("innerCursorColor", m_settings.innerCol
+         -or);                                                           
+      66 -        shader->setBool("showFragmentCursor", true);           
+      67 -                                                               
+      68 -        // Pass scaling mode to fragment shader for custom scal
+         -ing behavior                                                   
+      69 -        shader->setInt("fragmentCursorScalingMode", static_cast
+         -<int>(m_scalingMode));                                         
+      70 -        shader->setFloat("fragmentCursorBaseSize", m_baseSize);
+      71 -        shader->setFloat("fragmentCursorMinDiff", m_minDiff);  
+      72 -        shader->setFloat("fragmentCursorMaxDiff", m_maxDiff);  
+      73 -    }                                                          
+      74 -}                                                              
+      34   No newline at end of file
+      35 +}                                                              
+
+● Base Cursor.cpp is already GL-free. Now the CursorManager rewrite:
+
+● Write(StereoVista\headers\Cursors\Base\CursorManager.h)
+  ⎿  Added 47 lines, removed 63 lines
+       5  #include "Cursors/Types/FragmentCursor.h"
+       6  #include "Cursors/Types/PlaneCursor.h"
+       7  #include "Cursors/Types/SphereCursor.h"
+       8 +#include <glm/glm.hpp>                                         
+       9  #include <memory>
+      10  
+      11 +struct GLFWwindow;                                             
+      12 +                                                               
+      13 +namespace renderer {                                           
+      14 +class OverlayDrawList;                                         
+      15 +struct FragmentCursorState;                                    
+      16 +class Renderer;                                                
+      17 +}                                                              
+      18 +                                                               
+      19  namespace Cursor {
+      11 -// Central manager for all cursor types                        
+      20 +// Central manager for all cursor types. Vulkan-era picking: in
+         +stead of a                                                     
+      21 +// synchronous glReadPixels, the manager samples the renderer's
+         + depth-picking                                                 
+      22 +// readback (a small rect under the mouse, copied every frame a
+         +nd published                                                   
+      23 +// one frame later — the GL read was equally one frame stale) a
+         +nd                                                             
+      24 +// reconstructs the world position with the invViewProj THAT RE
+         +NDERED the                                                     
+      25 +// depth, so camera motion can't smear the picked point.       
+      26  class CursorManager {
+      27  public:
+      28    CursorManager();
+     ...
+      31    // Initialize all cursor types
+      32    void initialize();
+      33  
+      20 -  // Update cursor position based on ray casting               
+      34 +  // Update the shared 3D cursor from the latest depth readback
+         +. `depth` is                                                   
+      35 +  // Renderer::depthSamples(); proj/view are the CURRENT camera
+         + matrices                                                      
+      36 +  // (used only for the background-plane fallback, like the GL 
+         +version).                                                      
+      37    void updateCursorPosition(GLFWwindow *window, const glm::mat4
+           &projection,
+      22 -                            const glm::mat4 &view, Engine::Shad
+         -er *shader);                                                   
+      23 -                                                               
+      24 -  // Update cursor position with control over when to actually 
+         -calculate                                                      
+      25 -  void updateCursorPosition(GLFWwindow *window, const glm::mat4
+         - &projection,                                                  
+      26 -                            const glm::mat4 &view, Engine::Shad
+         -er *shader,                                                    
+      38 +                            const glm::mat4 &view, const Camera
+         + &camera,                                                      
+      39 +                            const class renderer::Renderer &ren
+         +dererDepthSource,                                              
+      40                              bool forceRecalculate);
+      41  
+      29 -  // Update cursor position with stereo support (checks both ey
+         -e buffers)                                                     
+      30 -  void updateCursorPosition(GLFWwindow *window, const glm::mat4
+         - &projection,                                                  
+      31 -                            const glm::mat4 &view, Engine::Shad
+         -er *shader,                                                    
+      32 -                            bool forceRecalculate, bool isStere
+         -o,                                                             
+      33 -                            const glm::mat4 *leftProjection = n
+         -ullptr,                                                        
+      34 -                            const glm::mat4 *leftView = nullptr
+         -,                                                              
+      35 -                            const glm::mat4 *rightProjection = 
+         -nullptr,                                                       
+      36 -                            const glm::mat4 *rightView = nullpt
+         -r);                                                            
+      37 -                                                               
+      42    // Reset frame calculation flag (call at start of each frame)
+      43    void resetFrameCalculationFlag();
+      44  
+      45    // Define the sub-rectangle of the render target the scene is
+           drawn into, so
+      46    // mouse picking maps correctly when the 3D viewport doesn't 
+          fill the window.
+      43 -  //  originX/originYGL : bottom-left of the scene region in th
+         -e currently bound                                              
+      44 -  //                      framebuffer's pixel space (GL origin,
+         - bottom-left).                                                 
+      45 -  //  width/height      : size of the scene region in pixels.  
+      46 -  //  leftInset/topInset: window-space gap to the left of / abo
+         -ve the region,                                                 
+      47 -  //                      used to convert the OS cursor positio
+         -n into the region.                                             
+      48 -  // Defaults (all zero / unset) reproduce full-window behavior
+         -.                                                              
+      49 -  void setViewport(int originX, int originYGL, int width, int h
+         -eight,                                                         
+      47 +  // Vulkan-era coordinates are top-left origin (originY = top)
+         +. Defaults (all                                                
+      48 +  // zero / unset) reproduce full-window behavior.             
+      49 +  void setViewport(int originX, int originYTop, int width, int 
+         +height,                                                        
+      50                     int leftInset, int topInset);
+      51  
+      52 -  // Render all visible cursors                                
+      53 -  void renderCursors(const glm::mat4 &projection, const glm::ma
+         -t4 &view);                                                     
+      52 +  // Append all visible cursors to the overlay draw list.      
+      53 +  void renderCursors(renderer::OverlayDrawList &list, const Cam
+         +era &camera);                                                  
+      54  
+      55 -  // Update fragment shader uniforms for cursors               
+      56 -  void updateShaderUniforms(Engine::Shader *shader);           
+      55 +  // Fill the fragment-cursor state consumed by mesh.frag via F
+         +rameSubmission.                                                
+      56 +  void fillFragmentCursorState(renderer::FragmentCursorState &o
+         +ut,                                                            
+      57 +                               const Camera &camera) const;    
+      58  
+      58 -  // Clean up all cursors                                      
+      59 -  void cleanup();                                              
+      60 -                                                               
+      59    // Getters for cursor instances
+      60    SphereCursor *getSphereCursor() { return m_sphereCursor.get()
+          ; }
+      61    FragmentCursor *getFragmentCursor() { return m_fragmentCursor
+          .get(); }
+      62    PlaneCursor *getPlaneCursor() { return m_planeCursor.get(); }
+      63  
+      66 -  // Orbit center rendering                                    
+      67 -  void renderOrbitCenter(const glm::mat4 &projection, const glm
+         -::mat4 &view,                                                  
+      64 +  // Orbit center rendering (appends to the overlay list).     
+      65 +  void renderOrbitCenter(renderer::OverlayDrawList &list,      
+      66                           const glm::vec3 &orbitPoint);
+      67  
+      68    // Orbit center properties
+     ...
+       91  
+       92    // Force the shared 3D cursor onto an explicit world point (
+           e.g. a transform
+       93    // gizmo handle), updating every cursor type so the visible 
+           cursor sits
+       96 -  // exactly there at that depth. Lets tools that draw their o
+          -wn always-on-top                                              
+       97 -  // overlay keep the 3D cursor glued to them instead of punch
+          -ing through to the                                            
+       98 -  // geometry behind. Call after updateCursorPosition() for th
+          -e frame.                                                      
+       99 -  void setForcedCursorPosition(const glm::vec3 &position);    
+       94 +  // exactly there at that depth. Call after updateCursorPosit
+          +ion() for the                                                 
+       95 +  // frame.                                                   
+       96 +  void setForcedCursorPosition(const glm::vec3 &position,     
+       97 +                               const glm::vec3 &cameraPosition
+          +);                                                            
+       98  
+       99    // Enhanced cursor position setter that integrates with sync
+           hronization system
+      100    void setCapturedCursorPositionWithSync(const glm::vec3 &posi
+           tion,
+      101                                           bool enableSync = tru
+           e) {
+      102      setCapturedCursorPosition(position);
+      105 -                                                              
+      106 -    // If synchronization is enabled, this position will be us
+          -ed for cursor sync                                            
+      107 -    // The actual synchronization happens in mouse button rele
+          -ase handlers                                                  
+      103    }
+      104  
+      105    // Background cursor position getters (for when cursor is ov
+           er empty space)
+     ...
+      115    void SetCursorInsideWindow(bool inside) { m_cursorInsideWind
+           ow = inside; }
+      116  
+      117    // Set cursor position lock (prevents updates while true)
+      123 -  // Used when adjusting parameters that affect projection mat
+          -rices (like                                                   
+      124 -  // convergence) to keep visual cursor stable                
+      118    void setPositionLocked(bool locked) { m_positionLocked = loc
+           ked; }
+      119    bool isPositionLocked() const { return m_positionLocked; }
+      120  
+      121    // When enabled, the 3D cursor does not fall back to the Win
+           dows cursor over
+      129 -  // the background. Instead it stays at the last valid depth 
+          -and follows the                                               
+      130 -  // mouse at that depth until geometry is hit again. Useful f
+          -or sparse point                                               
+      131 -  // clouds where the cursor would otherwise flicker between 2
+          -D and 3D.                                                     
+      122 +  // the background; it stays at the last valid depth (see GL-
+          +era comments).                                                
+      123    void setKeepLastDepthOnBackground(bool keep) {
+      124      m_keepLastDepthOnBackground = keep;
+      125      if (!keep) {
+     ...
+      130      return m_keepLastDepthOnBackground;
+      131    }
+      132  
+      142 -  // How the cached depth expires while the mouse is over the 
+          -background.                                                   
+      143 -  // Mode values mirror GUI::CursorBackgroundCacheMode (0 = in
+          -definite,                                                     
+      144 -  // 1 = timed, 2 = distance); kept as an int so this class st
+          -ays free of the                                               
+      145 -  // GUI headers. Time is in seconds off geometry, distance in
+          - screen pixels of                                             
+      146 -  // mouse travel from the last geometry hit.                 
+      133 +  // Cache-expiry policy for the last-depth behaviour (values 
+          +mirror                                                        
+      134 +  // GUI::CursorBackgroundCacheMode).                         
+      135    void setBackgroundCacheMode(int mode) { m_backgroundCacheMod
+           e = mode; }
+      136    int getBackgroundCacheMode() const { return m_backgroundCach
+           eMode; }
+      137    void setBackgroundCacheTime(float seconds) {
+     ...
+      163    glm::vec4 m_orbitCenterColor;
+      164    float m_orbitCenterSphereRadius;
+      165  
+      178 -  // Window dimensions                                        
+      166 +  // Window dimensions (framebuffer pixels, refreshed every up
+          +date)                                                         
+      167    int m_windowWidth;
+      168    int m_windowHeight;
+      169  
+      170    // Scene-region sub-rectangle within the render target (see 
+           setViewport).
+      183 -  // Zero width/height means "unset" -> fall back to the full 
+          -window.                                                       
+      171    int m_vpOriginX = 0;
+      185 -  int m_vpOriginYGL = 0;                                      
+      172 +  int m_vpOriginYTop = 0;                                     
+      173    int m_vpWidth = 0;
+      174    int m_vpHeight = 0;
+      175    int m_vpLeftInset = 0;
+     ...
+      185    // Position locking
+      186    bool m_positionLocked;
+      187  
+      201 -  // Last-known-depth caching (see setKeepLastDepthOnBackgroun
+          -d)                                                            
+      188 +  // Last-known-depth caching (reverse-Z [0,1] depth values no
+          +w)                                                            
+      189    bool m_keepLastDepthOnBackground = false;
+      203 -  float m_lastValidDepth = 0.5f; // depth buffer value of the 
+          -last geometry hit                                             
+      190 +  float m_lastValidDepth = 0.5f;                              
+      191    bool m_hasLastValidDepth = false;
+      205 -  // Cache-expiry policy + the reference state captured at the
+          - last geometry hit                                            
+      206 -  // so the timed / distance modes can decide when to give up 
+          -the cached depth.                                             
+      207 -  int m_backgroundCacheMode = 0;          // GUI::CursorBackgr
+          -oundCacheMode                                                 
+      208 -  float m_backgroundCacheTime = 1.0f;     // seconds (timed mo
+          -de)                                                           
+      192 +  int m_backgroundCacheMode = 0;            // GUI::CursorBack
+          +groundCacheMode                                               
+      193 +  float m_backgroundCacheTime = 1.0f;       // seconds (timed 
+          +mode)                                                         
+      194    float m_backgroundCacheDistance = 250.0f; // screen pixels (
+           distance mode)
+      210 -  double m_lastHitTime = 0.0;             // glfwGetTime() at 
+          -the last hit                                                  
+      211 -  float m_lastHitScreenX = 0.0f;          // window-space mous
+          -e pos at last hit                                             
+      195 +  double m_lastHitTime = 0.0;               // glfwGetTime() a
+          +t the last hit                                                
+      196 +  float m_lastHitScreenX = 0.0f;                              
+      197    float m_lastHitScreenY = 0.0f;
+      198  
+      199    // Helper function to calculate background cursor position
+      215 -  glm::vec3 calculateBackgroundCursorPosition(GLFWwindow *wind
+          -ow,                                                           
+      216 -                                              const glm::mat4 
+          -&projection,                                                  
+      200 +  glm::vec3 calculateBackgroundCursorPosition(const glm::mat4 
+          +&projection,                                                  
+      201                                                const glm::mat4 
+           &view);
+      202  };
+      219 -} // namespace Cursor                                         
+      203   No newline at end of file
+      204 +} // namespace Cursor                                         
+
+● Fixing the design: the readback result type moves into FrameSubmission.h so
+  cursor code doesn't need Renderer.h:
+
+● Update(StereoVista\headers\Renderer\FrameSubmission.h)
+  ⎿  Added 29 lines
+      54      glm::ivec2 size{ 0 };
+      55  };
+      56  
+      57 +// Published depth-picking readback (see Renderer::depthSamples
+         +()).                                                           
+      58 +// Reconstruct world positions with THIS invViewProj — it belon
+         +gs to the                                                      
+      59 +// frame that rendered the depth, not to the current camera.   
+      60 +struct DepthReadback {                                         
+      61 +    bool valid = false;                                        
+      62 +    glm::mat4 invViewProj{ 1.0f }; // view 0, clip -> world    
+      63 +    glm::vec3 cameraPos{ 0.0f };                               
+      64 +    VkExtent2D extent{};                                       
+      65 +    std::vector<DepthQueryRect> rects;                         
+      66 +    std::vector<float> depths; // rect texels back-to-back, row
+         +-major                                                         
+      67 +                                                               
+      68 +    // Reverse-Z depth at an absolute pixel, searching all rect
+         +s.                                                             
+      69 +    bool sample(const glm::ivec2& pixel, float& outDepth) const
+         + {                                                             
+      70 +        if (!valid)                                            
+      71 +            return false;                                      
+      72 +        size_t offset = 0;                                     
+      73 +        for (const DepthQueryRect& rect : rects) {             
+      74 +            const glm::ivec2 local = pixel - rect.origin;      
+      75 +            if (local.x >= 0 && local.y >= 0 && local.x < rect.
+         +size.x &&                                                      
+      76 +                local.y < rect.size.y) {                       
+      77 +                outDepth = depths[offset + size_t(local.y) * re
+         +ct.size.x + local.x];                                          
+      78 +                return true;                                   
+      79 +            }                                                  
+      80 +            offset += size_t(rect.size.x) * rect.size.y;       
+      81 +        }                                                      
+      82 +        return false;                                          
+      83 +    }                                                          
+      84 +};                                                             
+      85 +                                                               
+      86  // Fragment (ring) cursor drawn by mesh.frag on scene surfaces 
+          (Phase 6 port
+      87  // of the GL uber-shader cursor). Colors are LINEAR (the app co
+          nverts the
+      88  // authored sRGB values once).
+
+❯ /compact The next agent will continue from the last point make sure he knows  
+  exactly where we left off and whtas next to do and what the goal is           
+  ⎿  You're out of usage credits. Run /usage-credits to keep using Fable 5 or 
+     /model to switch models.
+     /upgrade to increase your usage limit.
+
+✻ Baked for 55m 13s
+
+❯ /model                                                                        
+  ⎿  Set model to Opus 4.8 and saved as your default for new sessions
+
+❯ /effort max                                                                   
+  ⎿  Set effort level to max (this session only): Maximum capability with
+     deepest reasoning. May use excessive tokens resulting in long response
+     times or overthinking. Use sparingly for the hardest tasks.
+
+❯ /compact The next agent will continue from the last point make sure he knows  
+exactly where we left off and whtas next to do and what the goal is             
+  ⎿  Compacted (ctrl+o to see full summary)
+     Tip: You have access to Opus 1M with 5x more context
+  ⎿  Read StereoVista\headers\Renderer\FrameSubmission.h (186 lines)
+  ⎿  Read StereoVista\headers\Cursors\Base\CursorManager.h (204 lines)
+  ⎿  Read StereoVista\src\Cursors\Types\FragmentCursor.cpp (35 lines)
+  ⎿  Read StereoVista\headers\Cursors\Types\FragmentCursor.h (45 lines)
+  ⎿  Read StereoVista\src\Cursors\Types\PlaneCursor.cpp (30 lines)
+❯ Please continue                                                               
+  ⎿  You've hit your session limit · resets 4:30pm (Europe/Vienna)
+     /upgrade to increase your usage limit.
+
+✻ Worked for 1s

@@ -3,6 +3,8 @@
 #include "RHI/Pipeline.h"
 #include "RHI/VulkanCommon.h"
 
+#include <glm/glm.hpp>
+
 namespace rhi {
 class Device;
 class ShaderCompiler;
@@ -48,8 +50,12 @@ public:
     TonemapPass(const TonemapPass&) = delete;
     TonemapPass& operator=(const TonemapPass&) = delete;
 
+    // depthFormat: the backbuffer pass carries the scene depth attachment
+    // since Phase 6 (overlays depth-test against it in the same pass); the
+    // tonemap pipeline must declare the format even though it ignores depth.
+    // UNDEFINED = no depth attachment in the target pass.
     void init(rhi::Device& device, rhi::ShaderCompiler& shaderCompiler,
-              VkFormat targetFormat);
+              VkFormat targetFormat, VkFormat depthFormat = VK_FORMAT_UNDEFINED);
     void shutdown();
 
     // Layout for the scene-color descriptor set (set 0: sampler2DArray).
@@ -57,13 +63,31 @@ public:
     VkSampler sampler() const { return sampler_; }
 
     // Records the fullscreen draw inside the caller's active render pass.
-    // Viewport/scissor are expected to be set already.
+    // Viewport/scissor are expected to be set already. layerIndex selects the
+    // scene-target array layer (eye); viewportOrigin/Size is this eye's
+    // on-screen rect in framebuffer pixels (full extent for mono / quad-buffer,
+    // a half for side-by-side) — it maps gl_FragCoord to a [0,1] UV over the
+    // full scene layer. encodeSrgb: apply the sRGB OETF in-shader (true for
+    // UNORM targets like the window backbuffer); pass false for an sRGB-format
+    // target (OpenXR eye swapchain) so the hardware encodes on write instead.
     void record(VkCommandBuffer cmd, VkDescriptorSet sceneSet,
-                const TonemapSettings& settings, uint32_t layerIndex) const;
+                const TonemapSettings& settings, uint32_t layerIndex,
+                glm::vec2 viewportOrigin, glm::vec2 viewportSize,
+                bool encodeSrgb = true) const;
+
+    // Same resolve, but through a DEPTH-LESS pipeline for the Phase 7b XR
+    // desktop mirror: the mirror draws sceneColor layer 0 into the window
+    // backbuffer (a different size than the HMD eye-res scene depth, so no depth
+    // attachment can be shared) with no overlays. Bind with no depth attachment.
+    void recordMirror(VkCommandBuffer cmd, VkDescriptorSet sceneSet,
+                      const TonemapSettings& settings, uint32_t layerIndex,
+                      glm::vec2 viewportOrigin, glm::vec2 viewportSize,
+                      bool encodeSrgb = true) const;
 
 private:
     rhi::Device* device_ = nullptr;
     rhi::Pipeline pipeline_;
+    rhi::Pipeline mirrorPipeline_; // depth-less variant (XR window mirror)
     VkSampler sampler_ = VK_NULL_HANDLE;
 };
 

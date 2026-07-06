@@ -1,13 +1,13 @@
 #pragma once
 
-#include "Engine/Core.h"
+// 3D cursor base class. GPU-API-free since Phase 6 of the Vulkan migration:
+// cursors no longer own shaders/VAOs — they append world-space geometry to
+// the unified renderer::OverlayDrawList (playbook C.9), and the fragment
+// (ring) cursor publishes its state into the FrameSubmission for mesh.frag.
+
 #include "Gui/GuiTypes.h"
 #include <glm/glm.hpp>
 #include <string>
-
-namespace Engine {
-    class Shader;
-}
 
 namespace Cursor {
     // Base cursor class that all cursor types will inherit from
@@ -18,9 +18,6 @@ namespace Cursor {
 
         // Common cursor methods
         virtual void initialize() = 0;
-        virtual void render(const glm::mat4& projection, const glm::mat4& view, const glm::vec3& cameraPosition) = 0;
-        virtual void cleanup() = 0;
-        virtual void updateShaderUniforms(Engine::Shader* shader) = 0;
 
         // Common cursor properties
         bool isVisible() const { return m_visible; }

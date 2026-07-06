@@ -1,8 +1,15 @@
 #ifndef CAMERA_H
 #define CAMERA_H
 
-#include "Engine/Core.h"
+// GPU-API-free since Phase 6 of the Vulkan migration: the GL era's two touch
+// points are gone — the glReadPixels centre-depth sampler moved to the
+// application (app::Application::updateCameraDepth, fed by the renderer's
+// depth-picking readback) and the glfwGetTime scroll timestamps were dead
+// code (the computed delta was never used).
+
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <functional>
 
 #include <glm/glm.hpp>
@@ -504,10 +511,6 @@ public:
     }
 
     // Setup for smooth scrolling with momentum
-    float currentTime = glfwGetTime();
-    float deltaTime = currentTime - lastScrollTime;
-    lastScrollTime = currentTime;
-
     scrollVelocity += scaledYOffset * scrollMomentum;
     scrollVelocity =
         glm::clamp(scrollVelocity, -maxScrollVelocity, maxScrollVelocity);
@@ -677,67 +680,6 @@ public:
   void StartPanning() { IsPanning = true; }
   void StopPanning() { IsPanning = false; }
 
-  // Calculates distance to the nearest visible object using depth buffer
-  // sampling
-  float getDistanceToNearestObject(const Camera &camera,
-                                   const glm::mat4 &projection,
-                                   const glm::mat4 &view, const float farPlane,
-                                   const int windowWidth,
-                                   const int windowHeight) const {
-    // Validate OpenGL context and window dimensions
-    if (windowWidth <= 0 || windowHeight <= 0) {
-      return farPlane;
-    }
-
-    // Drain any pending OpenGL errors from previous operations so they don't
-    // prematurely abort the depth sampling (e.g. errors from the cursor
-    // subsystem calling glReadBuffer on a custom FBO).
-    while (glGetError() != GL_NO_ERROR) {}
-    GLenum error;
-
-    const int numSamples = 9;     // 3x3 sampling grid
-    const int sampleOffset = 100; // Pixel offset from center
-    float minDepth = 1.0f;
-
-    // Sample depth buffer at multiple points around screen center
-    for (int i = -1; i <= 1; i++) {
-      for (int j = -1; j <= 1; j++) {
-        int x = windowWidth / 2 + i * sampleOffset;
-        int y = windowHeight / 2 + j * sampleOffset;
-
-        // Bounds checking for pixel coordinates
-        if (x < 0 || x >= windowWidth || y < 0 || y >= windowHeight) {
-          continue; // Skip out-of-bounds pixels
-        }
-
-        float depth = 1.0f; // Default to far plane
-        glReadPixels(x, y, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &depth);
-
-        // Check for OpenGL errors after glReadPixels
-        error = glGetError();
-        if (error != GL_NO_ERROR) {
-          continue; // Skip this sample on error
-        }
-
-        minDepth = std::min(minDepth, depth);
-      }
-    }
-
-    if (minDepth == 1.0f) {
-      return farPlane; // No object detected
-    }
-
-    // Convert depth to world space distance
-    glm::vec4 ndc = glm::vec4(0.0f, 0.0f, minDepth * 2.0f - 1.0f, 1.0f);
-    glm::mat4 invPV = glm::inverse(projection * view);
-    glm::vec4 worldPos = invPV * ndc;
-    worldPos /= worldPos.w;
-
-    float distance = glm::distance(camera.Position, glm::vec3(worldPos));
-
-    return distance;
-  }
-
   // Calculates the Front, Right and Up vectors from the Yaw and Pitch angles
   // Legacy function - now uses quaternion-based approach
   // Deprecated: Use updateCameraVectorsFromQuaternion() instead
@@ -749,8 +691,6 @@ public:
   }
 
 private:
-  float lastScrollTime = 0.0f;
-
   // Cubic easing function for smooth animation
   float easeOutCubic(float t) { return 1 - pow(1 - t, 3); }
 

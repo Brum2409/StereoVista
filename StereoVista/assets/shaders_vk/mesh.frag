@@ -298,6 +298,7 @@ void main() {
     vec3 albedo = mat.baseColor.rgb;
     if (mat.albedoTexture != SV_INVALID_TEXTURE)
         albedo = sampleTex(mat.albedoTexture, vUV).rgb; // sRGB view -> linear
+    albedo *= uPush.tint; // per-draw tint (BrushTool color variation)
 
     float metallic = mat.metallic;
     if (mat.metallicTexture != SV_INVALID_TEXTURE)
@@ -360,6 +361,28 @@ void main() {
     }
 
     color += albedo * mat.emissive;
+
+    // Fragment (ring) cursor: two rings painted directly on the surface
+    // around the 3D cursor position (port of the GL uber-shader's cursor
+    // rings; same camera-distance scaling). Colors arrive linearized, the mix
+    // happens pre-tonemap — a small tonal delta vs the GL rings (which mixed
+    // after GL's in-shader tonemap) is expected and accepted.
+    if (uFrame.showFragmentCursor != 0u && uFrame.cursorPos.w > 0.5) {
+        float distanceToCursor = length(uFrame.cursorPos.xyz - vWorldPos);
+        float scaleFactor = length(uFrame.cursorPos.xyz - camPos);
+        float outerRadius = uFrame.cursorRingParams.x * scaleFactor;
+        float outerThickness = uFrame.cursorRingParams.y * scaleFactor;
+        float innerRadius = uFrame.cursorRingParams.z * scaleFactor;
+        float innerThickness = uFrame.cursorRingParams.w * scaleFactor;
+        float tOuter = step(outerRadius - outerThickness, distanceToCursor) -
+                       step(outerRadius, distanceToCursor);
+        float tInner = step(innerRadius - innerThickness, distanceToCursor) -
+                       step(innerRadius, distanceToCursor);
+        color = mix(color, uFrame.cursorInnerColor.rgb,
+                    tInner * uFrame.cursorInnerColor.a);
+        color = mix(color, uFrame.cursorOuterColor.rgb,
+                    tOuter * uFrame.cursorOuterColor.a);
+    }
 
     outColor = vec4(color, 1.0);
 }

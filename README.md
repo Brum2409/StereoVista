@@ -2,220 +2,155 @@
 
 ![Hero – Mesh Rendering](screenshots/mesh_2.png)
 
-StereoVista is an OpenGL 4.6 application designed for interactive visualization and manipulation of 3D models and point clouds with native stereo support and demonstartion of different stereo features and navigation methods. The application combines advanced rendering techniques with an intuitive interface and a lot of customization options.
+StereoVista is a **Vulkan 1.3** application for interactive visualization and
+manipulation of 3D models and point clouds, with native stereo output and a range
+of stereo-display and navigation features. It combines a modern GPU renderer with
+an ImGui interface and extensive customization.
+
+> ### ⚙️ Status: Vulkan rewrite in progress (`StereoVista-vulkan`)
+> This branch is a ground-up **OpenGL → Vulkan** port. What ships today: the
+> multiview stereo renderer (quad-buffer / side-by-side / mono + OpenXR), forward
+> **PBR + shadow mapping**, the compute point-cloud pipeline, the 3D cursors,
+> transform gizmo, measurement & clip-plane tools, and the plugin system.
+> **Deferred and being re-added natively:** the advanced global-illumination modes
+> (Voxel Cone Tracing, DDGI, BVH Radiance), Bloom/SSAO post-FX, the full settings
+> GUI, scene save/load, preferences persistence, and 3DConnexion SpaceMouse — these
+> currently live only on the OpenGL `main` branch. See
+> `docs/TODO.md` for the roadmap.
 
 ---
 
 ## Table of Contents
 1. [Key Features](#key-features)
-   - [Stereo Rendering](#-native-stereo-rendering)
-   - [Camera System](#-advanced-camera-system)
-   - [Cursor Technology](#-3d-cursor-technology)
-   - [Mesh Rendering](#-mesh-rendering)
-   - [Point Cloud Visualization](#-point-cloud-visualization)
-   - [Lighting & Shadows](#-advanced-lighting-and-shadows)
-   - [Additional Features](#-additional-features)
-2. [GUI & Settings](#gui--settings)
-3. [Controls & Interaction](#controls--interaction)
-4. [Getting Started](#getting-started)
-5. [Project Structure](#project-structure)
-6. [Developer Guide](#developer-guide)
+2. [Controls & Interaction](#controls--interaction)
+3. [Getting Started](#getting-started)
+4. [Project Structure](#project-structure)
+5. [Developer Guide](#developer-guide)
 
 ---
 
 ## Key Features
 
 ### 👓 Native Stereo Rendering
-* Quad-buffer stereo via GLFW – compatible with any GPU supporting the `GLFW_STEREO` hint
-* Configurable **Separation** & **Convergence** parameters with real-time visual feedback
-* Independent left/right eye rendering passes for accurate stereo effect using asymetric-frustrum matrix calculation
+* **Single-pass multiview** stereo (`VK_KHR_multiview`) — both eyes drawn together,
+  not twice per frame:
+  * **Quad-buffer 3D** — native stereo present to a 3D display via a 2-layer
+    swapchain (workstation GPUs); auto-falls back to side-by-side elsewhere
+  * **Side-by-side** — two half-width eye images on any display (preview)
+  * **Mono** — single view
+* **OpenXR HMD** output (bound to the app's Vulkan device via `XR_KHR_vulkan_enable2`)
+  as a live toggle — a desktop run never contacts a VR runtime until you enable it
+* Off-axis (parallel-axis) eye matrices with configurable **Separation** &
+  **Convergence**, **Flip eyes**, and depth-driven **auto-convergence**
 
 ### 🎥 Advanced Camera System
-* Multiple camera control modes:
-  * **Orbit** - Rotate around a focal point
-  * **Pan** - Move the camera parallel to the view plane
-  * **Free-fly** - Unrestricted 6-DOF navigation
-* Physics-based smooth scrolling with adjustable momentum and deceleration
-* Intelligent focus features:
-  * *Zoom-to-cursor* - Zoom toward the 3D position under your mouse
-  * *Orbit-around-cursor* - Use the 3D cursor position as the rotation center
-  * *Orbit-follows-cursor* - Automatically center on points of interest
-* Dynamic speed adjustment based on scene scale and distance to objects
+* Quaternion camera: **orbit** (LMB), **pan** (MMB), **free-look** (RMB), **fly**
+  (WASD + Q/E), Shift for fast
+* *Zoom-to-cursor* and *orbit-around-cursor* using the depth-picked 3D cursor position
+* Smooth motion; speed scales with scene/scale distance
 
 ### 🖱️ 3D Cursor Technology
 | Type | Screenshot | Features |
 |------|------------|----------|
-| **Sphere Cursor** | ![Sphere Cursor](screenshots/sphere_cursor.png) | Full 3D lit sphere with four scaling modes (normal, fixed, constrained dynamic, logarithmic), optional inner sphere for depth perception and lots of customization |
-| **Fragment Cursor** | ![Fragment Cursor](screenshots/frag_cursor.png) | Circular cursor which draws on geometry with fully customizable color, inner/outer radius, and border thickness |
-| **Plane Cursor** | ![Plane Cursor](screenshots/plane_cursor.png) | Flat plane that follows the surface geometry, useful for visualizing the tangent plane at cursor position |
+| **Sphere Cursor** | ![Sphere Cursor](screenshots/sphere_cursor.png) | Lit 3D sphere that sits on the surface under the mouse, distance-scaled, depth-occluded |
+| **Fragment Cursor** | ![Fragment Cursor](screenshots/frag_cursor.png) | Ring drawn *onto* the surface by the mesh shader, with customizable radii/border |
+| **Plane Cursor** | ![Plane Cursor](screenshots/plane_cursor.png) | Flat disc that follows the surface — visualizes the tangent plane at the cursor |
 
-All cursor types are managed by a unified **Cursor Manager** that:
-* Maintains cursor position using depth buffer sampling
-* Provides JSON-based preset system for saving/loading cursor configurations
-* Offers seamless interaction with scene objects
+The cursor position is reconstructed from an **asynchronous scene-depth readback**
+(no pipeline stall), and all cursors + tools draw through one unified overlay renderer.
 
 ### 🏗️ Mesh Rendering
 ![Mesh with PBR Materials](screenshots/mesh_1.png)
-* Support for numerous 3D model formats via Assimp (OBJ, FBX, GLTF, 3DS, etc.)
-* Comprehensive material control:
-  * PBR workflow with albedo, metallic, roughness parameters
-  * Texture mapping for all PBR channels
-  * Ambient occlusion map support
-* Per-mesh visibility toggling and transformation controls
-* Hierarchical scene organization with transform gizmos
+* Numerous formats via Assimp (OBJ, FBX, GLTF, 3DS, …)
+* One **metallic-roughness PBR** path (Cook-Torrance) with **bindless** textures
+  (albedo / metallic-roughness / normal / AO)
+* **Transform gizmo** (translate / rotate / scale, world or local, snapping) with
+  full undo/redo; model + sub-mesh selection
 
 ### 🌳 Point Cloud Visualization
 ![Point Cloud Rendering](screenshots/point_cloud_1.png)
 ![Point Cloud Detail](screenshots/point_cloud_2.png)
-* Efficient point cloud handling with support for XYZ/TXT, ASCII and binary PLY, LAS/LAZ, HDF5, and PCB formats
-* GPU-accelerated instanced rendering for millions of points
-* Chunked loading and visualization with optional chunk boundary outlines
-* World-space transformation and export capabilities
+* Formats: XYZ/TXT, ASCII & binary PLY, LAS/LAZ, HDF5, and native PCB
+* **Compute software rasterizer** (Schütz `atomicMin` depth) — fast for dense,
+  pixel-sized points — with optional **High-Quality Shading (HQS)** and adaptive splats
+* **Progressive streaming** of large LAS/LAZ via a persistently-mapped upload ring;
+  depth-correct compositing against meshes; real section/clip planes; renders in stereo
 
-### 💡 Advanced Lighting and Shadows
-| Technique | Screenshot | Description |
-|-----------|------------|-------------|
-| **Global Illumination** | ![Voxel Cone Tracing GI](screenshots/voxel_gi.png) | Real-time global illumination with indirect bounces |
-| **Transparency** | ![Voxel Transparency](screenshots/voxel_transparency.png) | Support for transparency and reflections |
+### 💡 Lighting & Shadows
+* **Shadow Mapping** (shipping): directional sun (4K texel-snapped map) + point-light
+  **depth cube maps** (rendered via multiview), normal-offset + slope-scaled bias,
+  PCF/PCSS soft shadows
+* **Skybox & environment**: cubemap, equirect HDR, solid, gradient
+* **Planned (deferred in the Vulkan port — screenshots from the OpenGL build):**
+  Voxel Cone Tracing, DDGI, and BVH ray-traced Radiance, plus Bloom/SSAO — to be
+  re-implemented natively via `VK_KHR_ray_query` / compute (see the migration status doc)
 
-* **Voxel Cone Tracing (VCT)**:
-  * Dynamic voxelization of part of the scene into a 3D texture grid each frame
-  * Adjustable voxel resolution and grid size for performance tuning
-  * Single-pass cone tracing for diffuse global illumination and soft shadows
-  * Support for transparency, reflections and light bleeding effects
-
-* **Shadow Mapping**:
-  * High-resolution shadow maps
-  * Directional light (sun) and point-light (cubemap) shadow casting
-  * Real-time shadow updates with model manipulation
-  * Optional DDGI indirect bounce via the *Enable Indirect Lighting* toggle
-
-* **Radiance (BVH Ray Tracing)**:
-  * BVH-accelerated ray-traced lighting with configurable bounce count, samples per pixel, and ray distance
-  * Emissive surfaces act as area light sources
-  * Optional DDGI diffuse global illumination
-
-* **DDGI – Dynamic Diffuse Global Illumination**:
-  * World-space light probes traced against the scene BVH into octahedral irradiance/visibility atlases with temporal accumulation
-  * Adjustable probe grid resolution and rays-per-probe
-  * Shared by both the Radiance and Shadow Mapping modes
-
-* Cycle between the three lighting modes with the **L** key
-
-### 🔧 Additional Features
-* **Undo/Redo System** - Universal edit history (Ctrl+Z / Ctrl+Y) covering object add/delete, transforms, material edits, and light changes
-* **Complete Scene Management** - Save and load entire scenes including models and point clouds
-* **Flexible Lighting** - Add and configure point lights manually (or load them from scenes); in Radiance and VCT modes, emissive materials additionally act as area light sources for global illumination
-* **Skybox & Environment Mapping** - Multiple skybox modes (cubemap, solid color, gradient)
-* **Radar Overlay** - Miniature camera frustum visualization for improved spatial awareness
-* **Model Manipulation** - Select and transform 3D models with intuitive mouse controls
-
----
-
-## GUI & Settings
-
-StereoVista features a comprehensive ImGui-based interface with multiple windows and panels:
-
-* **Main Menu Bar**
-  * File operations (open/save scene, import models/point clouds)
-  * View options (wireframe toggle, theme switching)
-  * Help and information
-
-* **Settings Panel**
-  * Camera parameters (FOV, near/far planes, movement speed)
-  * Stereo settings (separation, convergence, rendering method)
-  * Mouse and scroll behavior (sensitivity, smoothing, momentum)
-  * Radar configuration (position, size, zoom, visibility)
-  * Lighting mode selection (Shadow Mapping, Voxel Cone Tracing, Radiance) and DDGI controls
-
-* **3D Cursor Settings**
-  * Cursor type selection (Sphere, Fragment, Plane)
-  * Sphere cursor properties (size, color, scaling mode)
-  * Fragment cursor properties (inner/outer radius, border thickness, colors)
-  * Save/load cursor presets from JSON
-
-* **Object Manipulation Panels**
-  * Per-model transformation controls
-  * Per-mesh material editing
-  * Point cloud visualization options
-  * Object deletion and visibility toggling
-
-* **Sun Direction Control**
-  * Directional light angle adjustment
-  * Color and intensity settings
-  * Shadow casting toggles
-
-All user preferences are automatically saved to `preferences.json` and restored on application startup.
+### 🔧 Tools & Additional Features
+* **Measurement tool** — distance / angle / area / point, x-ray ghosting, world-space
+  labels, CSV export
+* **Clip / section planes** — slice meshes *and* point clouds, edited with the gizmo
+* **Undo/Redo** (Ctrl+Z / Ctrl+Y) via a generic command stack
+* **Plugin system** — add tools as compile-time plugins (see `docs/PLUGINS.md`);
+  Crosshair (example) + Measurement ship
+* **HDR + tonemap** (Reinhard / ACES / Uncharted2 / AgX / Khronos PBR Neutral),
+  **PNG screenshots**
 
 ---
 
 ## Controls & Interaction
 
+> The Vulkan build currently exposes settings through an in-app **debug panel**
+> (the full settings GUI is part of the migration roadmap).
+
 ### Camera Navigation
 | Input | Action |
 |-------|--------|
-| **Left Mouse Button** drag | Orbit camera around focal point |
-| **Middle Mouse Button** drag | Pan camera parallel to view plane |
-| **Right Mouse Button** drag | Free rotation (first-person style) |
-| **Mouse Wheel** | Zoom in/out (with optional physics-based smooth scrolling) |
-| **W / A / S / D** | Move camera forward / left / backward / right |
-| **Space / Left Shift** | Move camera up / down |
-| **C** | Center camera on cursor position or scene midpoint |
-| **Home** | Reset camera to scene default position |
+| **Left Mouse** drag | Orbit (around the 3D cursor when *orbit-around-cursor* is on) |
+| **Middle Mouse** drag | Pan parallel to the view plane |
+| **Right Mouse** drag | Free-look (first-person) |
+| **Mouse Wheel** | Zoom (toward the 3D cursor when *zoom-to-cursor* is on) |
+| **W / A / S / D** | Fly forward / left / back / right |
+| **Q / E** | Fly down / up |
+| **Left Shift** | Move faster |
 
-### Standard Views
-Frame the entire scene from a fixed angle (CAD-style numpad layout). Also available as buttons under *Settings → Camera → Standard Views*.
-
+### Selection & Manipulation
 | Input | Action |
 |-------|--------|
-| **Numpad 1** / **Ctrl + Numpad 1** | Front / Back view |
-| **Numpad 3** / **Ctrl + Numpad 3** | Right / Left view |
-| **Numpad 7** / **Ctrl + Numpad 7** | Top / Bottom view |
-| **Numpad 5** | Isometric view |
+| **Left click** (no drag) | Select the model under the cursor; click again → drill into the sub-mesh |
+| **Esc** | Clear selection |
+| **1 / 2 / 3** | Gizmo mode: translate / rotate / scale |
+| **Shift** (while dragging a handle) | Snap to increments |
+| **Ctrl + Z** | Undo · **Ctrl + Y / Ctrl + Shift + Z** — Redo |
 
-### Model & Object Interaction
+### Tools
 | Input | Action |
 |-------|--------|
-| **Ctrl + Left Mouse** | Select model or point cloud under cursor |
-| **Ctrl + Left Mouse** drag | Move selected model in the view plane |
-| **Delete** | Remove selected model or point cloud from scene |
-| **Ctrl + Z** | Undo last action (edits, moves, add/delete) |
-| **Ctrl + Y / Ctrl + Shift + Z** | Redo last undone action |
-
-> **Note:** When releasing the Ctrl key after moving a model, the cursor remains at its current position rather than resetting to the center of the window, allowing for more intuitive model manipulation.
-
-### View & Rendering Options
-| Input | Action |
-|-------|--------|
-| **G** | Toggle GUI visibility |
-| **L** | Cycle lighting modes (Shadow Mapping → Voxel Cone Tracing → Radiance) |
-| **F** | Frame selected object (center view on it) |
-
-### Selection System
-* Hold **Ctrl** to activate selection mode
-* Click on a model to select it - selected objects show manipulation controls
-* Models can be moved by holding **Ctrl** and dragging with the left mouse button
+| **Left click** | Place a measurement point (when the Measure plugin is enabled) |
+| **Enter** / **Right click** | Finish the current measurement |
+| **Backspace** / **Delete** | Remove the last point / cancel |
 
 ---
 
 ## Getting Started
 
-1. **System Requirements**
-   * Windows 10/11 with OpenGL 4.6 capable GPU
-   * Visual Studio 2019 or newer with C++17 support
-   * 4GB+ RAM recommended for large point clouds
+1. **Requirements**
+   * Windows 10/11 with a **Vulkan 1.3-capable** GPU driver (modern NVIDIA or AMD)
+   * Visual Studio 2022 (v143, C++17)
+   * 4 GB+ RAM (more for large point clouds)
+   * *(Optional)* Vulkan SDK for validation layers; an OpenXR runtime for VR
 
-2. **Installation**
-   * Clone the repository or download as ZIP
-   * Open `StereoVista.sln` in Visual Studio
-   * Build and run the project (F5)
-   * All dependencies are pre-built and included in the `dependencies` folder
+2. **Build**
+   * Clone the repository (the Vulkan toolchain is vendored — no SDK install needed)
+   * Open `StereoVista.sln` in Visual Studio, or build from the command line:
+     ```
+     MSBuild StereoVista.sln /p:Configuration=Release /p:Platform=x64 /m
+     ```
+   * Run `bin/x64/Release/StereoVista.exe` (an example `office.scene` loads by default)
 
 3. **First Launch**
-   * Use the File menu to load example models or point clouds
-   * Explore the GUI panels to adjust visualization settings
-   * Experiment with camera controls to navigate the scene
-
+   * Use the debug panel to load models / point clouds, adjust lighting and stereo,
+     and enable tools/plugins
+   * Try the stereo modes and, with an HMD connected, the **Enable VR** toggle
 
 ---
 
@@ -223,55 +158,53 @@ Frame the entire scene from a fixed angle (CAD-style numpad layout). Also availa
 
 ```
 Stereo-Viewer-Project/
-├── StereoVista/                # Main project folder
-│   ├── src/                    # Source files
-│   │   ├── Core/               # Core functionality
-│   │   │   ├── Camera.cpp      # Camera implementation
-│   │   │   ├── SceneManager.cpp # Scene management
-│   │   │   └── Voxalizer.cpp   # Voxelization for GI
-│   │   ├── Cursors/            # 3D cursor system
-│   │   │   ├── Base/           # Base cursor classes
-│   │   │   └── Types/          # Specific cursor implementations
-│   │   ├── Engine/             # Rendering engine
-│   │   ├── Gui/                # ImGui interface components
-│   │   ├── Loaders/            # Asset loading (models, point clouds)
-│   │   └── main.cpp            # Application entry point
-│   ├── headers/                # Header files
-│   ├── assets/                 # Resources and assets
-│   │   ├── shaders/            # GLSL shader programs
-│   │   └── textures/           # Default textures
-│   ├── cursor_presets.json     # Saved cursor configurations
-│   └── preferences.json        # User preferences
-├── dependencies/               # Third-party libraries
-├── skybox/                     # Cubemaps
-├── screenshots/                # Images for documentation
-└── README.md                   # This documentation
+├── StereoVista/
+│   ├── src/
+│   │   ├── App/            # main.cpp (thin entry) + Application (loop, wiring, debug UI)
+│   │   ├── Platform/       # Window (GLFW no-API + VkSurface), asset paths
+│   │   ├── RHI/            # Vulkan RHI (Device, Swapchain, Buffer, Texture, Pipeline, …)
+│   │   ├── Renderer/       # Renderer + passes/ (shadow, forward, skybox, pointcloud, overlay, tonemap)
+│   │   ├── Scene/          # scene host, primitives, Assimp import, picking
+│   │   ├── Cursors/ Tools/ Plugins/   # 3D cursors, gizmo/measure/clip tools, plugin system
+│   │   ├── Core/           # Camera, UndoManager
+│   │   ├── Loaders/        # point-cloud parsers + RHI upload
+│   │   └── Engine/         # XRSession, Screenshot (+ excluded OpenGL reference)
+│   ├── headers/            # Header files (mirrors src/), headers/libs/ = vendored deps
+│   ├── assets/shaders_vk/  # Vulkan GLSL → SPIR-V
+│   └── office.scene        # Example scene
+├── dependencies/           # Pre-built third-party libraries + glslc
+├── docs/                   # TODO.md, PLUGINS.md
+├── skybox/  fonts/  screenshots/
+└── README.md
 ```
 
 ---
 
 ## Developer Guide
 
-### Architecture Overview
-StereoVista follows a modular design with clear separation of concerns:
-* **Engine** - Core rendering functionality, shaders, and OpenGL abstraction
-* **Core** - Scene management, camera system, and voxelization
-* **Cursors** - 3D cursor implementation and management
-* **GUI** - User interface components and interaction logic
-* **Loaders** - Asset importing and processing
+### Architecture
+StereoVista is layered so that **only the RHI touches Vulkan**; everything above
+speaks in RHI handles:
+
+* **Platform** – GLFW window (no GL context) + `VkSurfaceKHR`
+* **RHI** – Device, Swapchain, Buffer/Texture, Pipeline (with SPIR-V reflection),
+  descriptors, barriers, upload ring, shader compiler
+* **Renderer** – a pass-based frame graph (shadow → forward → point cloud → skybox →
+  tonemap → overlay → ImGui), multiview-native for stereo/XR
+* **Systems** – Scene, Cursors, Tools, Plugins, Loaders, XRSession
+* **App** – `Application` owns the main loop and wires everything together
+
+See **`CLAUDE.md`** for conventions and **`docs/TODO.md`** for the roadmap
+(remaining ports, known bugs, optimization). The migration's design rationale
+and session history live in git.
 
 ### Extending the Application
+* **New tool / overlay:** add a compile-time plugin — one header + one `.cpp` +
+  `REGISTER_PLUGIN`, then list both in the `.vcxproj`(+`.filters`). Full guide:
+  **`docs/PLUGINS.md`**.
+* **New rendering feature:** add a pass object under `Renderer/passes/` and sequence
+  it in `Renderer::recordFrame`; author shaders in `assets/shaders_vk/` (they compile
+  to SPIR-V via the project's custom build step). Keep Vulkan out of the layers above
+  the RHI.
 
-#### Adding New Cursor Types
-1. Create a new class deriving from `Cursor::BaseCursor`
-2. Implement required virtual methods (initialize, render, update)
-3. Register your cursor in `CursorManager`
-4. Add corresponding GUI controls in the cursor settings panel
-
-#### Implementing New Rendering Features
-1. Examine the rendering pipeline in `renderEye()` function in `main.cpp`
-2. Add your new rendering pass in the appropriate location (before/after existing passes)
-3. Create necessary shader programs and uniforms
-4. Update GUI to expose any configurable parameters
-
-
+There is no automated test suite — verification is manual/visual (Windows/MSVC).

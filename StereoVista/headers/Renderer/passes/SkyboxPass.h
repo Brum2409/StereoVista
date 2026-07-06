@@ -33,6 +33,13 @@ public:
               VkDescriptorSetLayout frameSetLayout);
     void shutdown();
 
+    // Rebuilds ONLY the pipeline for a new multiview viewMask (mono<->stereo
+    // toggle), preserving the loaded sky textures + sampler that init()/shutdown()
+    // would otherwise destroy.
+    void rebuildPipeline(rhi::Device& device, rhi::ShaderCompiler& shaderCompiler,
+                         VkFormat colorFormat, VkFormat depthFormat, uint32_t viewMask,
+                         VkDescriptorSetLayout frameSetLayout);
+
     // Loaders (call any time after init; loading-time blocking uploads).
     // Both return false and keep the previous/dummy texture on failure.
     bool loadEquirectHdr(const std::string& path);
@@ -56,6 +63,11 @@ public:
                 const SkyState& sky) const;
 
 private:
+    // Shared pipeline recipe for init() + rebuildPipeline().
+    void buildPipeline(rhi::Device& device, rhi::ShaderCompiler& shaderCompiler,
+                       VkFormat colorFormat, VkFormat depthFormat, uint32_t viewMask,
+                       VkDescriptorSetLayout frameSetLayout);
+
     rhi::Device* device_ = nullptr;
     rhi::Pipeline pipeline_;
     VkSampler sampler_ = VK_NULL_HANDLE;

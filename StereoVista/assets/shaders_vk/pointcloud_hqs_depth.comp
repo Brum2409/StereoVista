@@ -1,0 +1,52 @@
+#version 460
+// Schütz High-Quality Shading — PASS 1 of 3: nearest surface depth per pixel.
+//
+// Identical geometry handling to pointcloud_rasterize.comp (shared via
+// pointcloud_common.glsl); the only difference is the write: atomicMin of the
+// LINEAR eye depth (clip.w, positive → its IEEE-754 bit pattern is monotonic
+// as uint) into a plain 32-bit depth buffer. Sentinel 0xFFFFFFFF (larger than
+// any finite positive-float pattern) = no point. The colour pass then
+// averages every point within a small relative window of this depth, which
+// removes the single-point aliasing / motion flicker of the standard path.
+
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference2 : require
+#extension GL_EXT_scalar_block_layout : require
+
+#include "pointcloud_common.glsl"
+
+// coherent for the same early-reject freshness reason as the standard pass.
+layout(buffer_reference, scalar, buffer_reference_align = 4) coherent buffer PcHqsDepth {
+    uint v[];
+};
+
+void pcWriteDepth(PcHqsDepth depthBuf, ivec2 p, uint dz) {
+    int idx = p.y * g_d.imageWidth + p.x;
+    if (dz < depthBuf.v[idx]) // early-z reject before the atomic
+        atomicMin(depthBuf.v[idx], dz);
+}
+
+void pcProcessPoint(ivec2 px, float ndcZ, float viewDepth, int radius, uint index) {
+    uint dz = floatBitsToUint(viewDepth);
+    PcHqsDepth depthBuf = PcHqsDepth(g_d.hqsDepth);
+
+    if (radius <= 0) {
+        pcWriteDepth(depthBuf, clamp(px, ivec2(0), ivec2(g_d.imageWidth - 1, g_d.imageHeight - 1)), dz);
+        return;
+    }
+    int r2 = radius * radius;
+    for (int dy = -radius; dy <= radius; ++dy) {
+        for (int dx = -radius; dx <= radius; ++dx) {
+            if (dx * dx + dy * dy > r2)
+                continue;
+            ivec2 p = px + ivec2(dx, dy);
+            if (p.x < 0 || p.y < 0 || p.x >= g_d.imageWidth || p.y >= g_d.imageHeight)
+                continue;
+            pcWriteDepth(depthBuf, p, dz);
+        }
+    }
+}
+
+void main() {
+    pcMain();
+}

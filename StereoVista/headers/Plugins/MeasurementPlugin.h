@@ -1,30 +1,22 @@
 #pragma once
 
 // ============================================================================
-//  MeasurementPlugin  —  adapter that drives the legacy MeasurementTool
-//                        through the plugin system
+//  MeasurementPlugin  —  migrates Tools::MeasurementTool onto the plugin system
 // ----------------------------------------------------------------------------
-//  This is the worked migration example referenced by docs/PLUGINS.md. Rather
-//  than rewrite Tools::MeasurementTool, this thin adapter wraps the existing
-//  global instance (declared in main.cpp) and exposes it through the Plugin
-//  hooks, so all of its render / UI / menu / input now flow through the unified
-//  PluginManager pipeline:
+//  The worked "tool as a plugin" example. Unlike the GL adapter (which wrapped a
+//  global tool + a GUI window function), this plugin OWNS the MeasurementTool and
+//  drives all of its overlay / UI / menu / input through the plugin hooks, so the
+//  measurement tool needs no special-casing in the Application:
 //
-//    onInitializeGL  → MeasurementTool::initialize()
-//    onRenderViewport→ MeasurementTool::render() (with the 3D-cursor preview)
-//    onRenderMenu    → the "Measure" Tools-menu entry
-//    onRenderUI      → the existing renderMeasurementToolWindow()
-//    onMouseButton   → left-click places a point, right-click finishes
-//    onKey           → Enter finishes, Delete cancels, Backspace undoes a point
-//
-//  The tool's editable data still lives in Engine::Scene::measurements, so
-//  scene save/load and SnapshotManager are completely unaffected.
-//
-//  This "adapter wrapping a legacy global" is the recommended low-risk pattern
-//  for migrating the remaining tools (BrushTool, ClipPlaneTool, ...).
+//    onBuildOverlay → tool.appendTo() with the live 3D-cursor preview
+//    onRenderUI     → the settings window + world-space value labels
+//    onRenderMenu   → the "Measure" Tools-menu entry
+//    onMouseButton  → LMB places a point, RMB finishes the polyline
+//    onKey          → Enter finishes, Delete cancels, Backspace undoes a point
 // ============================================================================
 
 #include "Plugins/Plugin.h"
+#include "Tools/MeasurementTool.h"
 
 namespace Plugins {
 
@@ -32,15 +24,14 @@ class MeasurementPlugin : public Plugin {
 public:
     PluginInfo info() const override;
 
-    void onInitializeGL(PluginContext& ctx) override;
-
-    void onRenderViewport(PluginContext& ctx, const glm::mat4& projection,
-                          const glm::mat4& view, const glm::vec3& cameraPos) override;
+    void onBuildOverlay(PluginContext& ctx) override;
     void onRenderUI(PluginContext& ctx) override;
     void onRenderMenu(PluginContext& ctx) override;
-
     bool onMouseButton(PluginContext& ctx, int button, int action, int mods) override;
     bool onKey(PluginContext& ctx, int key, int scancode, int action, int mods) override;
+
+private:
+    Tools::MeasurementTool m_tool;
 };
 
 } // namespace Plugins
