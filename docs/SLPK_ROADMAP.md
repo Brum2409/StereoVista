@@ -6,7 +6,10 @@
 > plan: the format facts, what the best existing products do (and what we
 > copy), what **nobody** does (and where we lead), the Vulkan-native
 > architecture, and a phased build order with acceptance gates.
-> Companion docs: `docs/TODO.md` (general work list), `docs/PLUGINS.md`.
+> Companion docs: `docs/TODO.md` (general work list), `docs/PLUGINS.md`, and
+> **`docs/SLPK_IMPLEMENTATION_PLAN.md`** — the grounded, file-level agent
+> handbook for building phases S0–S3 (integration map into the existing code,
+> library vendoring, milestone checklists, acceptance gates).
 > Spec: [Esri i3s-spec](https://github.com/Esri/i3s-spec) ·
 > [OGC I3S 1.3 Community Standard](https://docs.ogc.org/cs/17-014r9/17-014r9.html).
 
