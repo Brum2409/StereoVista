@@ -159,7 +159,18 @@ reference. This is the single biggest gap.
 - ✳️ **Out-of-core LOD:** the GL `OctreePointCloudManager` (octree LOD + disk cache
   for clouds that exceed VRAM) is excluded/unported — the compute rasterizer handles
   clouds that fit. Re-implement LOD selection feeding the compute path.
+  **Note:** the SLPK/I3S plan delivers this via the I3S node-tree streamer —
+  see `docs/SLPK_ROADMAP.md` (Phase S3) before building a standalone octree.
 - ⚡ See G for the deferred compute-path perf items.
+
+---
+
+## F2. SLPK / I3S support (flagship feature — separate roadmap)
+
+Full professional support for Esri Scene Layer Packages / OGC I3S (loading,
+streaming LOD rendering, tools, editing, export) is planned as its own phased
+roadmap: **`docs/SLPK_ROADMAP.md`** (market research, format primer, Vulkan
+streaming architecture, phases S0–S6 with acceptance gates).
 
 ---
 
