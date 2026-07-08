@@ -49,6 +49,7 @@ private:
     bool showPointClouds_ = true;
     bool showClipPlanes_  = false;
     bool showDiagnostics_ = false;
+    bool showSlpk_        = true;
 
     bool showAbout_ = false;
 

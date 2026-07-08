@@ -2,10 +2,12 @@
 
 #include "Renderer/FrameSubmission.h"
 #include "Renderer/MeshBuffer.h"
+#include "Scene/I3SSceneLayer.h"
 
 #include <glm/glm.hpp>
 
 #include <cfloat>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -71,6 +73,9 @@ struct Scene {
     std::string sourcePath;
     std::vector<Model> models;
     std::vector<PointLight> pointLights;
+    // Opened SLPK/I3S layers (M0: parsed + inspectable; M1 renders them).
+    // unique_ptr keeps layers pointer-stable — they will own GPU residency.
+    std::vector<std::unique_ptr<I3SSceneLayer>> i3sLayers;
     CameraPose camera;
     glm::vec3 worldBoundsMin{ -5.0f };
     glm::vec3 worldBoundsMax{ 5.0f };

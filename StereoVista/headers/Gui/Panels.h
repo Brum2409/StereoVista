@@ -24,6 +24,7 @@ inline constexpr const char* Cursor      = "3D Cursor";
 inline constexpr const char* PointClouds = "Point Clouds";
 inline constexpr const char* ClipPlanes  = "Clip Planes";
 inline constexpr const char* Diagnostics = "Performance";
+inline constexpr const char* Slpk        = "Scene Layers";
 } // namespace Windows
 
 void drawScenePanel(Services& services, bool* open);
@@ -33,5 +34,7 @@ void drawCursorPanel(Services& services, bool* open);
 void drawPointCloudPanel(Services& services, bool* open);
 void drawClipPlanePanel(Services& services, bool* open);
 void drawDiagnosticsPanel(Services& services, bool* open);
+// SLPK / I3S scene layers (open + inspector; docs/SLPK_IMPLEMENTATION_PLAN.md).
+void drawSlpkPanel(Services& services, bool* open);
 
 } // namespace Gui

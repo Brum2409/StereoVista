@@ -2,6 +2,9 @@
 
 #include "RHI/VulkanCommon.h"
 
+#include <string>
+#include <vector>
+
 struct GLFWwindow;
 
 namespace Platform {
@@ -33,12 +36,19 @@ public:
     // recreate size-dependent resources.
     bool consumeResizeFlag();
 
+    // Files dropped onto the window since the last call (GLFW drop callback;
+    // paths are UTF-8). The application drains this once per frame and routes
+    // by extension (.slpk / models / point clouds).
+    std::vector<std::string> consumeDroppedFiles();
+
 private:
     static void framebufferSizeCallback(GLFWwindow* window, int width, int height);
+    static void dropCallback(GLFWwindow* window, int count, const char** paths);
 
     GLFWwindow* window_ = nullptr;
     bool resized_ = false;
     bool ownsGlfw_ = false;
+    std::vector<std::string> droppedFiles_;
 };
 
 } // namespace Platform

@@ -156,6 +156,15 @@ public:
     virtual void deleteModel(int model) = 0;
     virtual void focusCameraOn(int model) = 0; // centre the camera on a model
 
+    // ── SLPK / I3S scene layers ─────────────────────────────────────────────
+    // The layers themselves are reachable via scene().i3sLayers (plain data +
+    // inspector state); only the operations that touch app internals (worker
+    // threads, camera, dialogs) go through the facade.
+    virtual void   openSlpkDialog() = 0;             // file dialog -> worker parse
+    virtual size_t slpkLoadsInFlight() const = 0;    // parses still running
+    virtual void   frameI3SLayer(size_t index) = 0;  // fly camera to the layer
+    virtual void   unloadI3SLayer(size_t index) = 0;
+
     // ── Materials (edit the bindless table entry backing a mesh) ────────────
     // Returns nullptr when the (model, mesh) pair is invalid.
     virtual renderer::gpu::MaterialData* materialForMesh(int model, int mesh) = 0;

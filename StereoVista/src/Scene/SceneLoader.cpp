@@ -120,6 +120,12 @@ void Scene::computeWorldBounds() {
             }
         }
     }
+    for (const std::unique_ptr<I3SSceneLayer>& layer : i3sLayers) {
+        if (!layer || !layer->visible || layer->nodeBoxes.empty())
+            continue;
+        minB = glm::min(minB, layer->boundsMin);
+        maxB = glm::max(maxB, layer->boundsMax);
+    }
     if (minB.x <= maxB.x) {
         worldBoundsMin = minB;
         worldBoundsMax = maxB;

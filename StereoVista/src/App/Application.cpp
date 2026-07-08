@@ -291,6 +291,17 @@ public:
         app_.scene_.models.erase(app_.scene_.models.begin() + model);
         app_.scene_.computeWorldBounds();
     }
+    void openSlpkDialog() override { app_.openSlpkDialog(); }
+    size_t slpkLoadsInFlight() const override { return app_.slpkJobs_.size(); }
+    void frameI3SLayer(size_t index) override { app_.frameI3SLayer(index); }
+    void unloadI3SLayer(size_t index) override {
+        if (index >= app_.scene_.i3sLayers.size())
+            return;
+        app_.scene_.i3sLayers.erase(app_.scene_.i3sLayers.begin() +
+                                    static_cast<std::ptrdiff_t>(index));
+        app_.scene_.computeWorldBounds();
+    }
+
     void focusCameraOn(int model) override {
         if (model < 0 || model >= static_cast<int>(app_.scene_.models.size()))
             return;
@@ -954,6 +965,7 @@ rhi::PresentResult Application::renderXRFrame(renderer::FrameSubmission& submiss
     overlay_.clear();
     appendSelectionOverlay();
     clipPlaneTool_.appendTo(overlay_);
+    appendI3SOverlays(); // SLPK inspector bounding volumes (visible in VR too)
     if (pluginContext_)
         pluginManager_.buildOverlay(*pluginContext_);
     submission.overlay = &overlay_;
@@ -1090,6 +1102,7 @@ void Application::updateCursorAndOverlay(renderer::FrameSubmission& submission,
     if (gizmo_.hasTarget())
         gizmo_.appendTo(overlay_, proj, camera_.Position);
     clipPlaneTool_.appendTo(overlay_); // section-plane quads + normal arrows
+    appendI3SOverlays();               // SLPK inspector bounding volumes
     if (pluginContext_)
         pluginManager_.buildOverlay(*pluginContext_);
 
@@ -1248,6 +1261,11 @@ void Application::run() {
     while (!window_.shouldClose()) {
         window_.pollEvents();
 
+        // Drag-dropped files + finished SLPK worker parses (both main-thread,
+        // CPU-only; new layers are adopted into the scene here).
+        handleDroppedFiles();
+        pumpSlpkLoads();
+
         const double now = glfwGetTime();
         const float dt = std::min(float(now - lastFrameTime_), 0.1f);
         lastFrameTime_ = now;
@@ -1367,11 +1385,15 @@ void Application::openModelDialog() {
                          "All files", "*" },
                        pfd::opt::multiselect)
             .result();
-    if (modelFiles.empty())
+    importModelFiles(modelFiles);
+}
+
+void Application::importModelFiles(const std::vector<std::string>& files) {
+    if (files.empty())
         return;
 
     int added = 0;
-    for (const std::string& path : modelFiles) {
+    for (const std::string& path : files) {
         scene::Model model;
         if (scene::importModelFile(path, device_, renderer_.materials(), model)) {
             scene_.models.push_back(std::move(model));
@@ -1397,6 +1419,10 @@ void Application::openPointCloudDialog() {
                          "All files", "*" },
                        pfd::opt::multiselect)
             .result();
+    loadPointCloudFiles(files);
+}
+
+void Application::loadPointCloudFiles(const std::vector<std::string>& files) {
     if (files.empty())
         return;
 
@@ -1436,6 +1462,132 @@ void Application::openPointCloudDialog() {
     }
 }
 
+// ---- SLPK / I3S scene layers (M0: open + inspect) ----
+
+void Application::openSlpkDialog() {
+    const std::vector<std::string> files =
+        pfd::open_file("Open scene layer package", "",
+                       { "Scene layer packages (*.slpk)", "*.slpk",
+                         "All files", "*" },
+                       pfd::opt::multiselect)
+            .result();
+    for (const std::string& path : files)
+        openSlpk(path);
+}
+
+void Application::openSlpk(const std::string& path) {
+    auto job = std::make_unique<SlpkLoadJob>();
+    job->layer = std::make_unique<scene::I3SSceneLayer>();
+    scene::I3SSceneLayer* layer = job->layer.get();
+    std::atomic<bool>* done = &job->done;
+    // Pure CPU work (mmap + gunzip + JSON + geodetic math) — no Vulkan on the
+    // worker, mirroring the PointCloudLoader progressive pattern.
+    job->thread = std::thread([layer, done, path]() {
+        layer->load(path);
+        done->store(true, std::memory_order_release);
+    });
+    slpkJobs_.push_back(std::move(job));
+    pushToast("Opening " + std::filesystem::path(path).filename().string() + "...",
+              Plugins::ToastLevel::Info);
+}
+
+void Application::pumpSlpkLoads() {
+    for (size_t i = 0; i < slpkJobs_.size();) {
+        SlpkLoadJob& job = *slpkJobs_[i];
+        if (!job.done.load(std::memory_order_acquire)) {
+            ++i;
+            continue;
+        }
+        job.thread.join();
+        std::unique_ptr<scene::I3SSceneLayer> layer = std::move(job.layer);
+        slpkJobs_.erase(slpkJobs_.begin() + static_cast<std::ptrdiff_t>(i));
+
+        if (!layer->error().empty()) {
+            pushToast("SLPK open failed: " + layer->error(),
+                      Plugins::ToastLevel::Error);
+            continue;
+        }
+        if (!layer->info.sr.isGeographic() && layer->info.sr.wkid == 0)
+            pushToast("Unknown CRS — layer loads in its own local space",
+                      Plugins::ToastLevel::Warning);
+        pushToast(layer->name + ": " + std::to_string(layer->tree.nodes.size()) +
+                      " nodes, " + std::to_string(layer->tree.levelCount) +
+                      " levels (v" + layer->info.version + ")",
+                  Plugins::ToastLevel::Success);
+        scene_.i3sLayers.push_back(std::move(layer));
+        scene_.computeWorldBounds();
+        frameI3SLayer(scene_.i3sLayers.size() - 1);
+    }
+}
+
+void Application::appendI3SOverlays() {
+    for (const std::unique_ptr<scene::I3SSceneLayer>& layer : scene_.i3sLayers)
+        if (layer && layer->visible && layer->showObbs)
+            layer->appendObbOverlay(overlay_);
+}
+
+void Application::frameI3SLayer(size_t index) {
+    if (index >= scene_.i3sLayers.size() || !scene_.i3sLayers[index])
+        return;
+    const scene::I3SSceneLayer& layer = *scene_.i3sLayers[index];
+    if (layer.nodeBoxes.empty())
+        return;
+
+    const glm::vec3 center = (layer.boundsMin + layer.boundsMax) * 0.5f;
+    const float radius =
+        std::max(glm::length(layer.boundsMax - layer.boundsMin) * 0.5f, 1.0f);
+
+    // Fit the bounding sphere into the vertical FOV from a pleasant 3/4 view.
+    const float fovRad = glm::radians(std::max(settings_.camera.fovDeg, 10.0f));
+    const float distance = radius / std::tan(fovRad * 0.5f) * 1.15f;
+    const glm::vec3 viewDir = glm::normalize(glm::vec3(0.55f, 0.45f, 0.9f));
+
+    Camera::CameraState state = camera_.GetState();
+    state.position = center + viewDir * distance;
+    const glm::vec3 f = glm::normalize(center - state.position);
+    const glm::vec3 r = glm::normalize(glm::cross(f, glm::vec3(0.0f, 1.0f, 0.0f)));
+    const glm::vec3 u = glm::normalize(glm::cross(r, f));
+    state.orientation = glm::normalize(glm::quat_cast(glm::mat3(r, u, -f)));
+    camera_.SetState(state);
+    camera_.SetOrbitPointDirectly(center);
+
+    // City-scale layers outgrow the default clip range and fly speed; widen
+    // them (never shrink a user's larger setting).
+    settings_.camera.farPlane =
+        std::max(settings_.camera.farPlane, distance + radius * 4.0f);
+    settings_.camera.speed = std::max(settings_.camera.speed, radius * 0.05f);
+}
+
+void Application::handleDroppedFiles() {
+    const std::vector<std::string> dropped = window_.consumeDroppedFiles();
+    if (dropped.empty())
+        return;
+
+    std::vector<std::string> models;
+    std::vector<std::string> pointClouds;
+    for (const std::string& path : dropped) {
+        std::string ext = std::filesystem::path(path).extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        if (ext == ".slpk") {
+            openSlpk(path);
+        } else if (ext == ".obj" || ext == ".fbx" || ext == ".gltf" ||
+                   ext == ".glb" || ext == ".dae" || ext == ".stl" ||
+                   ext == ".3ds" || ext == ".blend") {
+            models.push_back(path);
+        } else if (ext == ".las" || ext == ".laz" || ext == ".xyz" ||
+                   ext == ".txt" || ext == ".ply" || ext == ".pcb" ||
+                   ext == ".h5" || ext == ".hdf5" || ext == ".f5") {
+            pointClouds.push_back(path);
+        } else {
+            pushToast("Unsupported file type: " +
+                          std::filesystem::path(path).filename().string(),
+                      Plugins::ToastLevel::Warning);
+        }
+    }
+    importModelFiles(models);
+    loadPointCloudFiles(pointClouds);
+}
+
 void Application::handleResize() {
     int width = 0, height = 0;
     window_.framebufferSize(width, height);
@@ -1473,6 +1625,11 @@ void Application::shutdown() {
         xrSession_.reset();
     }
     shutdownImGui();
+    // Join in-flight SLPK parses (CPU-only workers; their layers are dropped).
+    for (std::unique_ptr<SlpkLoadJob>& job : slpkJobs_)
+        if (job && job->thread.joinable())
+            job->thread.join();
+    slpkJobs_.clear();
     // Scene + point-cloud GPU buffers must go before the renderer/device they
     // live on (cloud destruction also joins any still-streaming worker).
     pointClouds_.clear();

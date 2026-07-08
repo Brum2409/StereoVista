@@ -55,6 +55,7 @@ void GuiSystem::draw(Services& services) {
         if (showPointClouds_) drawPointCloudPanel(services, &showPointClouds_);
         if (showClipPlanes_)  drawClipPlanePanel(services, &showClipPlanes_);
         if (showDiagnostics_) drawDiagnosticsPanel(services, &showDiagnostics_);
+        if (showSlpk_)        drawSlpkPanel(services, &showSlpk_);
         if (showAbout_)       drawAboutWindow(services);
 
         // Plugin (tool) windows render inside the same ImGui frame.
@@ -71,6 +72,8 @@ void GuiSystem::drawMenuBar(Services& services) {
             services.importModelDialog();
         if (ImGui::MenuItem("Import Point Cloud..."))
             services.openPointCloudDialog();
+        if (ImGui::MenuItem("Open Scene Layer (.slpk)..."))
+            services.openSlpkDialog();
 
         ImGui::Separator();
         // Scene load/save/merge is gated on the not-yet-ported SceneManager.
@@ -104,6 +107,7 @@ void GuiSystem::drawMenuBar(Services& services) {
         ImGui::MenuItem(Windows::PointClouds, nullptr, &showPointClouds_);
         ImGui::MenuItem(Windows::ClipPlanes, nullptr, &showClipPlanes_);
         ImGui::MenuItem(Windows::Diagnostics, nullptr, &showDiagnostics_);
+        ImGui::MenuItem(Windows::Slpk, nullptr, &showSlpk_);
 
         ImGui::Separator();
         if (ImGui::BeginMenu("Theme")) {
@@ -189,6 +193,7 @@ void GuiSystem::buildDefaultLayout(unsigned int dockspaceId, float sizeX,
     ImGui::DockBuilderDockWindow(Windows::Cursor, right);
     ImGui::DockBuilderDockWindow(Windows::PointClouds, right);
     ImGui::DockBuilderDockWindow(Windows::ClipPlanes, right);
+    ImGui::DockBuilderDockWindow(Windows::Slpk, right);
     ImGui::DockBuilderDockWindow(Windows::Diagnostics, rightBottom);
 
     ImGui::DockBuilderFinish(dockId);

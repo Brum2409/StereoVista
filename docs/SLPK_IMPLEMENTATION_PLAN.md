@@ -93,15 +93,18 @@ the vcxproj) **for both Debug and Release x64 configs**.
 
 | Lib | Repo | Pin (verify latest online, then record here) | Subset to vendor | Notes / defines |
 |---|---|---|---|---|
-| **libdeflate** | github.com/ebiggers/libdeflate | v1.2x → `____` | `lib/*.c`, `lib/*/*.c` (x86 dir), `libdeflate.h` | C code; gzip + raw deflate decompress. Compile as C (vcxproj does per-file `CompileAs` automatically by extension). Prefer it over zlib: ~2–3× faster inflate |
+| **libdeflate** | github.com/ebiggers/libdeflate | v1.2x → **v1.25** (2025-11-01) ✅ vendored | **Decompress-only** subset (improved on the plan): `lib/{adler32,crc32,utils,deflate_decompress,gzip_decompress,zlib_decompress}.c` + `lib/x86/cpu_features.c` + headers, `libdeflate.h`, `common_defs.h`, `COPYING` | C code; gzip + raw deflate decompress. Compile as C (vcxproj does per-file `CompileAs` automatically by extension). Prefer it over zlib: ~2–3× faster inflate. NOTE: no new include dirs needed — internal includes are file-relative and app code uses `<libdeflate/libdeflate.h>` via the existing `headers/libs` dir |
 | **draco** | github.com/google/draco | v1.5.x → `____` | **Decoder only**: `src/draco/` minus `compression/encode*`, `io/`, `maya/`, `unity/`, tools, tests | Needs a hand-written `draco/draco_features.h`: define `DRACO_MESH_COMPRESSION_SUPPORTED`, `DRACO_STANDARD_EDGEBREAKER_SUPPORTED`, `DRACO_ATTRIBUTE_VALUES_DEDUPLICATION_SUPPORTED`, `DRACO_ATTRIBUTE_INDICES_DEDUPLICATION_SUPPORTED`. ~140 files; wrap includes in `#pragma warning(push/disable)` at OUR call sites, not by editing vendored files |
 | **basis_universal transcoder** | github.com/BinomialLLC/basis_universal | v1.x/v2.x → `____` | `transcoder/basisu_transcoder.{cpp,h}` + its headers + `zstd/zstddeclib.c` (single-file zstd decode — KTX2 payloads are often zstd-supercompressed) | Define `BASISD_SUPPORT_KTX2=1`, `BASISD_SUPPORT_KTX2_ZSTD=1`. Transcode targets used: BC7 (`cTFBC7_RGBA`), BC5 (normals, optional), RGBA32 fallback |
 | **lepcc** (M3, defer vendoring until then) | github.com/Esri/lepcc | master @ `____` | `src/*.cpp,h` (it is small) | Apache-2.0. Decoder entry points: `lepcc_getBlobInfo`, `lepcc_decodeXYZ`, `lepcc_decodeRGB`, `lepcc_decodeIntensity` |
-| **MD5 (tiny)** | any public-domain single-file (e.g. the RFC 1321 reference or `md5-c`) | — | one `.c/.h` pair under `headers/libs/md5/` | Only used to hash resource paths for the SLPK `@specialIndexFileHASH128@` index (§4.1). Keep optional: central-directory lookup is the always-works path |
+| **MD5 (tiny)** | any public-domain single-file (e.g. the RFC 1321 reference or `md5-c`) | github.com/Zunawe/md5-c @ **f3529b6** (Unlicense) ✅ vendored | `md5.{c,h}` + `UNLICENSE` under `headers/libs/md5/` | Only used to hash resource paths for the SLPK `@specialIndexFileHASH128@` index (§4.1). Keep optional: central-directory lookup is the always-works path. NOTE: `md5.h` has no `extern "C"` guard — wrap the include at C++ call sites |
 
 - [ ] All libs fetched at pinned tags, subset-vendored under `headers/libs/<name>/`,
       licenses kept, wired into vcxproj + filters + include dirs (both configs),
       pins recorded in the table above.
+      *(M0 status: libdeflate + md5 done ✅ — vendored, wired into vcxproj +
+      filters, gcc-compile-checked; no include-dir edits were needed, see table
+      notes. draco / basisu / lepcc remain for M1 / M2 / M3.)*
 
 *(draco encode, basis encode, and i3s-lib come only with the future
 export/edit milestone — do not vendor them now.)*
@@ -189,21 +192,60 @@ and the SLPK tab in `buildUi` (M0 inspector grows here).
 
 ### M0 — Read the package + inspector (no geometry rendering)
 
-- [ ] §3 vendoring for libdeflate + md5 (draco/basisu can land here or with M1).
-- [ ] `Platform::FileMapping`, `SlpkArchive` (EOCD→EOCD64→central directory;
+- [x] §3 vendoring for libdeflate + md5 (draco/basisu can land here or with M1).
+- [x] `Platform::FileMapping`, `SlpkArchive` (EOCD→EOCD64→central directory;
       STORE zero-copy spans; gzip-transparent `read()`; hash-index fast path
       optional), `I3SLayer` + node normalization (1.6 tree docs AND 1.7+ node
       pages → one flat `NodeInfo` array), `GeoAnchor`.
-- [ ] Wire "Open SLPK…" into the debug panel + drag-drop; parse on a worker
-      thread (`std::thread` + atomic done flag — UI never blocks).
-- [ ] Inspector v0 in the SLPK tab: layer summary (type, version, CRS, node
-      count/levels, texture/geometry defs, attribute fields), node-level
-      slider, and **OBBs drawn via `OverlayDrawList`** (color by tree level)
-      in anchor space; camera auto-frames the root OBB on open.
+- [x] Wire "Open SLPK…" into the ~~debug panel~~ **production GUI** (File menu
+      + dockable "Scene Layers" panel — the debug panel was already replaced
+      by `Gui::GuiSystem`/panels when M0 started) + window **drag-drop**
+      (new GLFW drop callback on `Platform::Window`, routes .slpk / models /
+      point clouds); parse on a worker thread (`std::thread` + atomic done
+      flag, adopted by a main-thread pump — UI never blocks).
+- [x] Inspector v0 in the **Scene Layers panel**: layer summary (type, version,
+      CRS, node count/levels, texture/geometry defs, attribute fields),
+      node-level slider (+ cumulative toggle + box cap), and **OBBs drawn via
+      `OverlayDrawList`** (color by tree level) in anchor space; camera
+      auto-frames the layer bounds on open (and widens far-plane/fly-speed
+      for city-scale layers).
 - [ ] 🧪 Gate: owner opens (a) an Esri sample 1.6 SLPK, (b) a 1.7/1.8 one
       (see §9): OBB cloud appears < 1 s even for multi-GB files, shape matches
       the real dataset, level slider walks the hierarchy. Commit: `M0: SLPK
       archive reader + node tree + inspector`.
+      *(Code complete & pushed — awaiting the owner's Windows run; exact
+      steps are in the M0 commit message. A later session should NOT
+      re-implement M0; start M1 and fold in any gate feedback.)*
+
+#### M0 field notes (reality vs. plan — read before M1)
+
+- **Production GUI already exists.** `Gui::Services` facade + panel files
+  (`src/Gui/panels/*`) replaced the interim debug panel; the SLPK UI is a
+  proper panel (`SlpkPanel.cpp`, window title `Gui::Windows::Slpk`). New
+  app-touching operations go through `Gui::Services` (`openSlpkDialog`,
+  `slpkLoadsInFlight`, `frameI3SLayer`, `unloadI3SLayer`); the layer objects
+  themselves are reached via `services.scene().i3sLayers`.
+- **Hash index facts (validated against an ArcGIS-cooked package):** the
+  md5 keys hash the resource path **exactly as stored in the zip**
+  (mixed case — do NOT lowercase before hashing); the record table is *not*
+  reliably memcmp-sorted (verify + sort on load); the speculative locate
+  (last entry before the central directory, probe extra-field lengths)
+  works — `SlpkArchive` opens O(1) without touching the central directory
+  and falls back to a full CD parse when anything mismatches.
+- **PCSL node pages already parse in M0** (cheap win): `store.index`
+  paging with both `nodesPerPage` (2.0) and `nodePerIndexBlock` (1.x)
+  keys, `density-threshold` LOD metric, implicit `firstChild`/`childCount`
+  ranges. M3 starts from a working PCSL tree.
+- **OBB conventions:** quaternion is `[x, y, z, w]` and orients the box in
+  **ECEF** for geographic layers (Cesium/loaders.gl interpretation —
+  validated: DA12's node cloud coheres around its anchor); projected-CRS
+  layers use the CRS frame directly. ENU → app-world axis map is
+  `app = (east, up, -north)` (`kEnuToApp` in `I3SSceneLayer.cpp`).
+- **Test coverage:** a scratch harness (gcc + ASan/UBSan, POSIX branch of
+  `FileMapping`) exercises archive/layer/tree/anchor/scene-layer/overlay on
+  the §9 packages — real v1.7 + generated v1.6 + PCSL 2.0
+  (`StereoVista/testdata/README.md`, `make_synthetic_slpk.py`). No public
+  small v1.6 or PCSL download was found; synthetics follow the spec shapes.
 
 ### M1 — Render mesh layers correctly (blocking loads, bounded budget)
 
@@ -417,12 +459,14 @@ the owner reports C1128).
 
 ## 9. Test data & verification playbook
 
-- Esri publishes sample SLPKs in/linked from
-  [Esri/i3s-spec](https://github.com/Esri/i3s-spec) (small 3D-object and IM
-  samples) — download 2–3 covering v1.6 AND v1.7/1.8, plus a PCSL for M3.
-  Keep them OUT of the repo: `StereoVista/testdata/` + `.gitignore` entry;
-  put the URLs in a `testdata/README.md` (committed) so the owner fetches
-  the same files.
+- ~~Esri publishes sample SLPKs in/linked from i3s-spec~~ **Reality (M0):**
+  the i3s-spec repo carries no sample packages. What we use instead —
+  all documented in the committed **`StereoVista/testdata/README.md`**:
+  a real v1.7 3D-object package (DA12_subset.slpk from the loaders.gl test
+  suite), plus spec-faithful **generated** v1.6 mesh + PCSL 2.0 packages
+  (`testdata/make_synthetic_slpk.py`, committed). Packages themselves are
+  gitignored. For multi-GB visual gates the owner supplies an
+  ArcGIS-cooked or ArcGIS-Online-downloaded package (see the README).
 - Cross-check rendering against ArcGIS Scene Viewer (free, browser) with the
   same package published, or the I3S Explorer (i3s.loaders.gl) screenshots.
 - Every milestone's commit message body: bullet list of exactly what the

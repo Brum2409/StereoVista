@@ -30,6 +30,9 @@ void Window::init(int width, int height, const char* title) {
 
     glfwSetWindowUserPointer(window_, this);
     glfwSetFramebufferSizeCallback(window_, framebufferSizeCallback);
+    // Installed before ImGui's backend init; the ImGui GLFW backend does not
+    // hook the drop callback, so this stays ours.
+    glfwSetDropCallback(window_, dropCallback);
 
     if (glfwRawMouseMotionSupported())
         glfwSetInputMode(window_, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
@@ -68,6 +71,21 @@ bool Window::consumeResizeFlag() {
     bool value = resized_;
     resized_ = false;
     return value;
+}
+
+void Window::dropCallback(GLFWwindow* window, int count, const char** paths) {
+    Window* self = static_cast<Window*>(glfwGetWindowUserPointer(window));
+    if (!self)
+        return;
+    for (int i = 0; i < count; ++i)
+        if (paths[i])
+            self->droppedFiles_.push_back(paths[i]);
+}
+
+std::vector<std::string> Window::consumeDroppedFiles() {
+    std::vector<std::string> out;
+    out.swap(droppedFiles_);
+    return out;
 }
 
 void Window::shutdown() {

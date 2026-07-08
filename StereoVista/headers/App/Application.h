@@ -20,8 +20,10 @@
 
 #include <glm/glm.hpp>
 
+#include <atomic>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 // OpenXR session (Phase 7b). Held by unique_ptr + forward-declared so the
@@ -75,6 +77,20 @@ private:
     void buildUi();
     void openModelDialog();      // File -> Import Model (Assimp import into scene_)
     void openPointCloudDialog();
+    // Shared open paths (dialogs + window drag-drop route through these).
+    void importModelFiles(const std::vector<std::string>& files);
+    void loadPointCloudFiles(const std::vector<std::string>& files);
+
+    // ---- SLPK / I3S scene layers (M0: open + inspect) ----
+    // Parsing runs on a worker thread per package (pure CPU — archive mmap,
+    // JSON, node tree, anchor math); pumpSlpkLoads() adopts finished layers
+    // into scene_ on the main thread. No Vulkan anywhere in the M0 path.
+    void openSlpkDialog();
+    void openSlpk(const std::string& path);
+    void pumpSlpkLoads();
+    void appendI3SOverlays();          // inspector OBBs -> overlay_
+    void frameI3SLayer(size_t index);  // fly the camera to a layer's bounds
+    void handleDroppedFiles();         // route window drag-drop by extension
     void handleResize();
     void loadScene();
     void updateCamera(float dt);
@@ -172,6 +188,15 @@ private:
     // full SceneManager returns; streaming clouds are pumped every frame before
     // renderFrame. Render/load options live in settings_.pointCloud.
     std::vector<Engine::PointCloud> pointClouds_;
+
+    // In-flight SLPK opens: one worker thread each, joined + adopted by
+    // pumpSlpkLoads() (or shutdown()). unique_ptr keeps the atomic in place.
+    struct SlpkLoadJob {
+        std::thread thread;
+        std::atomic<bool> done{ false };
+        std::unique_ptr<scene::I3SSceneLayer> layer;
+    };
+    std::vector<std::unique_ptr<SlpkLoadJob>> slpkJobs_;
 
     // Phase 6: the real quaternion Camera (headers/Core/Camera.h), reused
     // almost verbatim from the GL app. LMB orbit / MMB pan / RMB free-look /
