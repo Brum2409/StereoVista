@@ -243,8 +243,10 @@ void I3SSceneLayer::startStreaming() {
     if (streaming_ || !rendersGeometry() || tree.nodes.empty() || !archive_)
         return;
     stopWorkers_ = false;
+    // plan §5 M2: hw/2 - 1 workers, floor 2. hardware_concurrency() may
+    // return 0 — guard the unsigned underflow.
     const unsigned hw = std::thread::hardware_concurrency();
-    const unsigned count = std::max(2u, hw / 2 - 1); // plan §5 M2
+    const unsigned count = hw > 6 ? hw / 2 - 1 : 2u;
     workers_.reserve(count);
     for (unsigned i = 0; i < count; ++i)
         workers_.emplace_back([this]() { workerLoop(); });
@@ -485,6 +487,7 @@ bool I3SSceneLayer::stagePendingUpload(PendingUpload& upload, rhi::UploadRing& r
         if (!upload.mesh.stagePayload(ring, g.vertices.data(), g.vertices.size(),
                                       g.indices.data(), g.indices.size()))
             return false; // ring full — retry next frame
+        upload.meshStaged = true;
         const int64_t bytes =
             int64_t(g.vertices.size() * sizeof(renderer::Vertex) +
                     g.indices.size() * sizeof(uint32_t));
@@ -772,7 +775,7 @@ void I3SSceneLayer::releaseGpu(renderer::MaterialSystem& materials,
 
 // ---- traversal + submission --------------------------------------------------
 
-bool I3SSceneLayer::coverable(uint32_t nodeIndex) const {
+bool I3SSceneLayer::coverable(uint32_t nodeIndex, const glm::vec4 frustum[6]) const {
     const NodeState state =
         static_cast<NodeState>(states_[nodeIndex].load(std::memory_order_relaxed));
     if (state == NodeState::Resident)
@@ -782,14 +785,25 @@ bool I3SSceneLayer::coverable(uint32_t nodeIndex) const {
         return false; // content exists but is not on the GPU yet
     // Group node: coverable when every child subtree is (vacuously true for
     // an empty group — there is nothing to show there at all).
-    return childrenCoverable(nodeIndex);
+    return childrenCoverable(nodeIndex, frustum);
 }
 
-bool I3SSceneLayer::childrenCoverable(uint32_t nodeIndex) const {
+bool I3SSceneLayer::childrenCoverable(uint32_t nodeIndex,
+                                      const glm::vec4 frustum[6]) const {
     const i3s::NodeInfo& node = tree.nodes[nodeIndex];
-    for (uint32_t c = 0; c < node.childCount; ++c)
-        if (!coverable(tree.childIndices[node.firstChild + c]))
+    for (uint32_t c = 0; c < node.childCount; ++c) {
+        const uint32_t child = tree.childIndices[node.firstChild + c];
+        // An out-of-frustum child is vacuously covered: it contributes no
+        // pixels, is never requested (the want loop skips it), and would
+        // otherwise stall the split forever — the cut could never refine
+        // while ANY sibling is off-screen. It loads when it turns into view
+        // (the parent covers the transient gap per the traversal rules).
+        const NodeBox& box = nodeBoxes[child];
+        if (!sphereInFrustum(frustum, box.center, glm::length(box.halfSize) * 1.15f))
+            continue;
+        if (!coverable(child, frustum))
             return false;
+    }
     return true;
 }
 
@@ -961,7 +975,7 @@ void I3SSceneLayer::traverse(uint32_t nodeIndex,
     const float metric = nodeMetric(nodeIndex, cameraPos, screenFactor);
 
     if (wantSplit(nodeIndex, metric)) {
-        if (childrenCoverable(nodeIndex)) {
+        if (childrenCoverable(nodeIndex, frustum)) {
             for (uint32_t c = 0; c < node.childCount; ++c)
                 traverse(tree.childIndices[node.firstChild + c], submission,
                          cameraPos, predictedPos, screenFactor, frustum);
@@ -985,7 +999,7 @@ void I3SSceneLayer::traverse(uint32_t nodeIndex,
             // subtrees exist so partial content appears ASAP.
             for (uint32_t c = 0; c < node.childCount; ++c) {
                 const uint32_t child = tree.childIndices[node.firstChild + c];
-                if (coverable(child))
+                if (coverable(child, frustum))
                     traverse(child, submission, cameraPos, predictedPos,
                              screenFactor, frustum);
             }

@@ -45,6 +45,32 @@ writes
   (4 nodes/page → multi-page), implicit `firstChild`/`childCount` ranges,
   hash index written the ArcGIS way (md5 of stored path, last entry).
 
+## KTX2 / Basis texture test data (M2)
+
+The M2 texture paths (`I3STexture::decodeBasis` KTX2/basis → BC7, and the
+ktx2-preferred-over-jpg selection in `loadNodeTexture`) are exercised
+against encoder-produced files. Build the pinned basis_universal encoder
+(the SAME tag the vendored transcoder is pinned to, plan §3):
+
+```
+git clone --depth 1 --branch v2_1_0r https://github.com/BinomialLLC/basis_universal
+cd basis_universal && cmake -B build -DSSE=OFF -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j        # encoder lands at bin/basisu
+```
+
+then generate the test files (PNGs with known mip-downsample expectations,
+ETC1S+BasisLZ / UASTC+zstd KTX2, a legacy `.basis`, and
+**synthetic_17_ktx2.slpk** — `synthetic_17_textured.slpk` rewritten to carry
+BOTH png and ktx2 texture entries with png listed first in
+`textureSetDefinitions`, so only a loader that correctly prefers compressed
+formats lands on BC7):
+
+```
+python3 make_ktx2_testdata.py ../path/to/basis_universal/bin/basisu .
+```
+
+Everything it writes is gitignored, like the packages.
+
 ## Larger real packages (for the visual gates)
 
 For the M0/M1 acceptance gates on Windows, additionally use any

@@ -108,7 +108,8 @@ StereoVista/imgui.ini
 !dependencies/tools/**
 
 # SLPK sample packages stay out of the repo — fetch/regenerate them per
-# StereoVista/testdata/README.md (only the README + generator are tracked).
+# StereoVista/testdata/README.md (only the README + generators are tracked).
 /StereoVista/testdata/*
 !/StereoVista/testdata/README.md
 !/StereoVista/testdata/make_synthetic_slpk.py
+!/StereoVista/testdata/make_ktx2_testdata.py

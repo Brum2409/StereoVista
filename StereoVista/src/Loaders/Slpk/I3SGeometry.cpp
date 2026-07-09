@@ -409,6 +409,13 @@ bool I3SGeometry::decodeRaw(const uint8_t* data, size_t size,
         error = "raw geometry: no position stream";
         return false;
     }
+    if (position.stream->components < 3) {
+        error = "raw geometry: position stream needs 3 components";
+        return false;
+    }
+
+    if (normal.data && normal.stream->components < 3)
+        normal = Located{}; // 2-component normals would read past their stride
 
     const glm::mat3 normalXf = normalToApp(frame);
     const size_t posElem = scalarSize(position.stream->type);

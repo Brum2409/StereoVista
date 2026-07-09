@@ -95,9 +95,10 @@ the vcxproj) **for both Debug and Release x64 configs**.
 |---|---|---|---|---|
 | **libdeflate** | github.com/ebiggers/libdeflate | v1.2x → **v1.25** (2025-11-01) ✅ vendored | **Decompress-only** subset (improved on the plan): `lib/{adler32,crc32,utils,deflate_decompress,gzip_decompress,zlib_decompress}.c` + `lib/x86/cpu_features.c` + headers, `libdeflate.h`, `common_defs.h`, `COPYING` | C code; gzip + raw deflate decompress. Compile as C (vcxproj does per-file `CompileAs` automatically by extension). Prefer it over zlib: ~2–3× faster inflate. NOTE: no new include dirs needed — internal includes are file-relative and app code uses `<libdeflate/libdeflate.h>` via the existing `headers/libs` dir |
 | **draco** | github.com/google/draco | **v1.5.7** (2025-01-17, `8786740`) ✅ vendored | **Decoder only** (improved on the plan: taken from upstream's own decoder-target source groups in `CMakeLists.txt` instead of hand-pruning) minus the JS glue and `mesh_are_equivalent.*` (test utility that drags in `texture/`), plus 3 headers upstream's decoder lists forget (`linear_sequencer.h`, `points_sequencer.h`, `mesh_prediction_scheme_parallelogram_decoder.h`). 64 `.cc` + 141 `.h` under `headers/libs/draco/` | Hand-written `draco/draco_features.h` mirrors the upstream desktop-default decoder feature set (mesh + point-cloud decode, standard+predictive edgebreaker, normal octahedron, backwards compat, attribute dedup; NO `DRACO_TRANSCODER_SUPPORTED`). Includes resolve via the existing `headers/libs` include dir (`#include "draco/..."`), no new include dirs. Warnings silenced with `#pragma warning(push/disable)` at OUR include site (`I3SGeometry.cpp`). `/bigobj` set per-file on the 7 template-heavy TUs (C1128 insurance, plan §8). gcc-compiled + link-checked + decode-validated against DA12 |
-| **basis_universal transcoder** | github.com/BinomialLLC/basis_universal | v1.x/v2.x → `____` | `transcoder/basisu_transcoder.{cpp,h}` + its headers + `zstd/zstddeclib.c` (single-file zstd decode — KTX2 payloads are often zstd-supercompressed) | Define `BASISD_SUPPORT_KTX2=1`, `BASISD_SUPPORT_KTX2_ZSTD=1`. Transcode targets used: BC7 (`cTFBC7_RGBA`), BC5 (normals, optional), RGBA32 fallback |
+| **basis_universal transcoder** | github.com/BinomialLLC/basis_universal | v2.10 (tag **v2_1_0r**, `e4f439f`) ✅ vendored | `transcoder/` subset (basisu_transcoder.{cpp,h} + its headers) + `zstd/zstddeclib.c` (single-file zstd decode — UASTC KTX2 payloads are zstd-supercompressed) under `headers/libs/basisu/` | Config defines live in the ONE implementation TU `src/Loaders/Slpk/BasisTranscoderImpl.cpp` (StbImageImpl pattern): `BASISD_SUPPORT_KTX2=1`, `BASISD_SUPPORT_KTX2_ZSTD=1`, PVRTC1/ATC/FXT1/PVRTC2 compiled out. Consumers (I3STexture.cpp) repeat the two KTX2 defines before the header (they gate declarations). Transcode target: BC7 (`cTFBC7_RGBA`). Harness-verified: ETC1S(BasisLZ) + UASTC(zstd) KTX2 **and** legacy `.basis` → BC7, per-mip block sizes exact. NOTE: v2.10 renamed enums vs older docs (e.g. `cUASTC_LDR_4x4`); XUASTC→BC7 does not transcode (not an I3S encoding — fails loudly) |
 | **lepcc** (M3, defer vendoring until then) | github.com/Esri/lepcc | master @ `____` | `src/*.cpp,h` (it is small) | Apache-2.0. Decoder entry points: `lepcc_getBlobInfo`, `lepcc_decodeXYZ`, `lepcc_decodeRGB`, `lepcc_decodeIntensity` |
 | **MD5 (tiny)** | any public-domain single-file (e.g. the RFC 1321 reference or `md5-c`) | github.com/Zunawe/md5-c @ **f3529b6** (Unlicense) ✅ vendored | `md5.{c,h}` + `UNLICENSE` under `headers/libs/md5/` | Only used to hash resource paths for the SLPK `@specialIndexFileHASH128@` index (§4.1). Keep optional: central-directory lookup is the always-works path. NOTE: `md5.h` has no `extern "C"` guard — wrap the include at C++ call sites |
+| **tracy** (profiler client) | github.com/wolfpld/tracy | **v0.13.1** (`05cceee`) ✅ vendored | `public/` subset (client/ common/ libbacktrace/ tracy/ + TracyClient.cpp) under `headers/libs/tracy/` | `TRACY_ENABLE` + `TRACY_ON_DEMAND` defined in BOTH x64 configs (dormant until a profiler connects); `ws2_32.lib` + `dbghelp.lib` on the linker. App code never includes Tracy directly — use the `SV_ZONE*`/`SV_FRAME_MARK`/`SV_THREAD_NAME`/`SV_PLOT` macros in `headers/Core/Profiling.h`. Include-path quirk: the vendored layout resolves as `<tracy/tracy/Tracy.hpp>` via the existing `headers/libs` dir |
 
 - [ ] All libs fetched at pinned tags, subset-vendored under `headers/libs/<name>/`,
       licenses kept, wired into vcxproj + filters + include dirs (both configs),
@@ -105,7 +106,9 @@ the vcxproj) **for both Debug and Release x64 configs**.
       *(M0 status: libdeflate + md5 done ✅ — vendored, wired into vcxproj +
       filters, gcc-compile-checked; no include-dir edits were needed, see table
       notes. M1 status: draco v1.5.7 done ✅ — LICENSE kept, all 205 files wired
-      into vcxproj + a `libs\draco` filter. basisu / lepcc remain for M2 / M3.)*
+      into vcxproj + a `libs\draco` filter. M2 status: basisu v2_1_0r + tracy
+      v0.13.1 done ✅ — LICENSE/NOTICE kept, wired, harness-verified.
+      lepcc remains for M3.)*
 
 *(draco encode, basis encode, and i3s-lib come only with the future
 export/edit milestone — do not vendor them now.)*
@@ -346,27 +349,102 @@ and the SLPK tab in `buildUi` (M0 inspector grows here).
 
 Everything in §6 (design details below). Task list:
 
-- [ ] Vendor basisu transcoder (+zstddeclib). `I3STexture` KTX2→BC7 path.
-- [ ] RHI: `Texture::uploadMips(spans…)` (blocking variant, BC-safe — no
+- [x] Vendor basisu transcoder (+zstddeclib). `I3STexture` KTX2→BC7 path.
+- [x] RHI: `Texture::uploadMips(spans…)` (blocking variant, BC-safe — no
       blit; used at load time) **and** `UploadRing::stageImage` + flush
       support for image copies (§6.4) for the streaming path.
-- [ ] `MaterialSystem`: freeTexture(index)/slot-reuse free-list + LRU hooks
-      (§6.5). Same for materials (or accept material-table growth — 64 B each,
-      measure first).
-- [ ] `I3SStreamer`: N worker threads (`max(2, hw/2 - 1)`), request states
-      `Wanted→Reading→Decoding→Ready→Resident→Evictable`, per-frame
+- [x] `MaterialSystem`: freeTexture(index)/slot-reuse free-list + LRU hooks
+      (§6.5). Same for materials (freeMaterial recycles immediately —
+      per-frame SSBO copies make that safe).
+- [x] ~~`I3SStreamer`~~ the M1 worker pool inside `I3SSceneLayer` grew the M2
+      pipeline instead (no separate class — see field notes): request states
+      `Unloaded→Queued→Decoding→Ready→Staging→Resident`, per-frame
       re-prioritization by SSE contribution, cancellation (camera moved),
       prefetch ring (+1 LOD beyond the cut along camera velocity), CPU + GPU
       byte budgets with LRU eviction, per-frame GPU-create budget (ms + MB).
-- [ ] Traversal hysteresis (split at T, merge at T×1.15) + "draw finest
+- [x] Traversal hysteresis (split at T, merge at T×1.15) + "draw finest
       resident ancestor while children stream" (never show holes).
-- [ ] Vendor + wire **Tracy** (TODO §G says do it first — this milestone is
+- [x] Vendor + wire **Tracy** (TODO §G says do it first — this milestone is
       where it pays): zone the pipeline stages + a streaming HUD in the SLPK
       tab (queued/decoding/ready/resident, MB/s, ring occupancy, eviction).
 - [ ] 🧪 Gate (the flagship demo): cold-open a ≥ 10 GB city SLPK → first
       pixels < 1 s; fly-through 60 FPS mono / 90 stereo on the owner's GPU;
       no loader-caused frame > ~20 ms (Tracy proof); roaming an hour leaks
       nothing (HUD counters flat). Commit: `M2: streaming LOD`.
+      *(Code complete + harness/compile-checked — awaiting the owner's
+      Windows run; exact steps are in the M2 commit message.)*
+
+#### M2 field notes (reality vs. plan — read before M3)
+
+- **No separate `I3SStreamer` class.** The M1 shape (worker pool + ready
+  queue + main-thread pump living in `scene::I3SSceneLayer`) already WAS the
+  §6.1 pipeline; M2 grew it in place. State machine per node:
+  `Unloaded→Queued→Decoding→Ready→Staging→Resident` (+`Failed`/`NoContent`),
+  stored in one atomic byte array. Queued↔Unloaded flips happen under the
+  work-queue mutex; workers flip `Ready` **before** publishing the payload
+  (mutex ordering then guarantees the pump never sees a payload whose state
+  a late store could clobber).
+- **`UploadRing::stageImage` contract:** the destination is a single-layer
+  color texture NOT yet in use, and its **full mip chain is staged between
+  the same two flushes** (one mark/rollback transaction — all-or-nothing).
+  The next `flush()` then owns the image's whole lifecycle: one
+  UNDEFINED→TRANSFER_DST barrier (all mips), batched per-image copies, one
+  →SHADER_READ_ONLY release. No per-mip layout tracking, no blit anywhere in
+  the streaming path (BC7-safe); jpg/png mips are built sRGB-correct on the
+  worker (gamma-correct box filter, harness-verified against a known 4×4).
+- **Deferred-destroy timeline:** `Renderer::frameRetireValue()` =
+  `timelineValue_ + 1` — the value the NEXT submission signals — because the
+  frame being recorded may still bind the resource AND unflushed ring copies
+  flush into that same frame. `completedFrameValue()` reads the timeline
+  counter. Evicted meshes ride a per-layer graveyard; evicted texture slots
+  ride the MaterialSystem graveyard, where **slot reuse (descriptor rewrite)
+  and VkImage destroy gate on the same retire value** — rewriting a slot an
+  in-flight frame samples is illegal even under UPDATE_AFTER_BIND.
+- **Budgets:** the per-frame stage-byte budget is **post-paid** (checked
+  `<= 0` before staging, decremented after), so one oversized node can
+  overshoot once — otherwise a node bigger than the per-frame budget could
+  never load. Payloads larger than **ring/2** skip the ring entirely and
+  take the blocking `MeshBuffer::create`/`Texture::uploadMips` path (rare —
+  giant roots; the ring would starve otherwise). GPU eviction targets 90% of
+  the user budget when over it (no thrash at the line) and additionally
+  sheds 10%/frame while VMA device-local usage exceeds **85% of the VMA
+  budget**; a node drawn this frame is never evicted. Cancelled-after-decode
+  payloads stay in a byte-capped CPU cache keyed on want-freshness.
+- **Tracy** is wired through `headers/Core/Profiling.h` (`SV_ZONE_N`,
+  `SV_FRAME_MARK`, `SV_THREAD_NAME`, `SV_PLOT`) — app code never includes
+  Tracy directly. `TRACY_ON_DEMAND` keeps the client dormant until a
+  profiler connects. Include-path quirk: `<tracy/tracy/Tracy.hpp>` (the
+  vendored `public/` layout under `headers/libs/tracy/`).
+- **Bugs found by this milestone's harness/review pass (all fixed):**
+  `stagePendingUpload` never set `meshStaged` (ring-path nodes re-staged
+  forever, never went Resident — the whole streaming path was dead);
+  `childrenCoverable` required out-of-frustum children resident, stalling
+  LOD refinement whenever any sibling was off-screen (they are vacuously
+  covered now); `I3SSceneLayer.h` held an `rhi::Texture` by value without
+  including `RHI/Texture.h`; worker-count underflow when
+  `hardware_concurrency()` < 2. Hardening beyond M2 scope, same pass:
+  overflow-safe ZIP bounds checks + hash-index record cap in `SlpkArchive`
+  (corrupt/hostile files could read wild pointers), OBB quaternion
+  normalization, node-page child-index sanitize (out-of-range + cycle
+  protection: children must point forward), a visited-set in the 1.6 BFS
+  (href cycles hung the loader), and component-count guards on raw
+  position/normal streams.
+- **Per-vertex colors are still dropped** (M1 note stands — the shared
+  48-byte `Vertex` is untouched); non-white colors keep raising the one-shot
+  toast. Decide the real fix (second vertex stream vs per-feature tint) in
+  M4 with the attribute work.
+- **Test coverage:** the gcc+ASan/UBSan scratch harness (rebuilt this
+  session — it is NOT committed; see `StereoVista/testdata/README.md` for
+  how to regenerate its inputs) decodes every DA12 + synthetic node
+  (M1 bar: OBB containment, unit normals, index/feature ranges, draco-vs-raw
+  < 0.5 m — worst observed 0.4 mm) plus the M2 texture bar: RGBA8 mip-chain
+  completeness/halving/sRGB-correctness, ETC1S + UASTC+zstd KTX2 → BC7 and
+  legacy `.basis` → BC7 with exact per-mip block sizes, and end-to-end
+  `loadNodeTexture` preferring ktx2 over png on a rewritten
+  `synthetic_17_ktx2.slpk`. The Vulkan-side TUs (UploadRing, Texture,
+  Device, MaterialSystem, MeshBuffer, Renderer, I3SSceneLayer, SlpkPanel)
+  are gcc `-Wall -Wextra` object/syntax-checked (MSVC can't run in the dev
+  environment) and line-reviewed.
 
 ### M3 — Point cloud scene layers (PCSL)
 

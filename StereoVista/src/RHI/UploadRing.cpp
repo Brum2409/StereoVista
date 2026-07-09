@@ -47,9 +47,10 @@ bool UploadRing::allocSpan(VkDeviceSize size, VkDeviceSize align,
     if (!valid() || size == 0 || size > capacity_)
         return false;
 
-    // Align the virtual offset (capacity is a power of two, so the physical
-    // offset aligns with it), then never straddle the physical wrap: pad the
-    // tail run away.
+    // Align the virtual offset (capacity is a multiple of every alignment
+    // handed out — create() rounds to 256 — so the physical offset stays
+    // aligned across the modulo), then never straddle the physical wrap: pad
+    // the tail run away.
     uint64_t alloc = (headV_ + align - 1) & ~(uint64_t(align) - 1);
     const VkDeviceSize phys = static_cast<VkDeviceSize>(alloc % capacity_);
     if (phys + size > capacity_)

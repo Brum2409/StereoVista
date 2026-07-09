@@ -192,7 +192,9 @@ bool SlpkArchive::parseEndOfCentralDirectory() {
         }
     }
 
-    if (centralDirOffset_ + centralDirSize_ > size) {
+    // Subtraction form: the sum can wrap uint64 on a corrupt/hostile file and
+    // sail past a naive `offset + size > fileSize` check.
+    if (centralDirOffset_ > size || centralDirSize_ > size - centralDirOffset_) {
         error_ = "central directory extends past end of file (corrupt archive)";
         return false;
     }
@@ -211,6 +213,10 @@ bool SlpkArchive::tryAttachArchiveHashIndex() {
     if (entryCount_ < 2)
         return false;
     const uint64_t recordCount = entryCount_ - 1;
+    // A forged entry count could overflow the record math or demand a
+    // multi-GB index allocation; the whole index must fit inside the file.
+    if (recordCount > mapping_.size() / kHashRecordSize)
+        return false;
     const uint64_t dataSize = recordCount * kHashRecordSize;
     const uint64_t headerAndName = kLocalHeaderSize + kHashIndexNameLen;
     if (dataSize + headerAndName > centralDirOffset_)
@@ -397,7 +403,9 @@ bool SlpkArchive::parseCentralDirectory() {
 bool SlpkArchive::entryFromLocalHeader(uint64_t localHeaderOffset, Entry& out) const {
     const uint8_t* base = mapping_.data();
     const size_t size = mapping_.size();
-    if (localHeaderOffset + kLocalHeaderSize > size)
+    // Subtraction form: the offset comes from the archive's own hash index
+    // and may be hostile; the addition can wrap.
+    if (localHeaderOffset > size || size - localHeaderOffset < kLocalHeaderSize)
         return false;
     const uint8_t* h = base + localHeaderOffset;
     if (readU32(h) != kLocalHeaderSignature)
@@ -481,15 +489,17 @@ bool SlpkArchive::dataSpan(const Entry& entry, const uint8_t*& outData,
                            size_t& outSize) const {
     const uint8_t* base = mapping_.data();
     const size_t size = mapping_.size();
+    if (entry.localHeaderOffset > size ||
+        size - entry.localHeaderOffset < kLocalHeaderSize)
+        return false;
     const uint8_t* h = base + entry.localHeaderOffset;
-    if (entry.localHeaderOffset + kLocalHeaderSize > size ||
-        readU32(h) != kLocalHeaderSignature)
+    if (readU32(h) != kLocalHeaderSignature)
         return false;
     const uint16_t nameLen = readU16(h + 26);
     const uint16_t extraLen = readU16(h + 28);
     const uint64_t dataStart =
         entry.localHeaderOffset + kLocalHeaderSize + nameLen + extraLen;
-    if (dataStart + entry.compressedSize > size)
+    if (dataStart > size || entry.compressedSize > size - dataStart)
         return false;
     outData = base + dataStart;
     outSize = static_cast<size_t>(entry.compressedSize);

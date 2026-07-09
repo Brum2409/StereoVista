@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <deque>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace i3s {
@@ -70,14 +71,18 @@ bool parseObb(const json& obb, NodeInfo& node) {
         return false;
     node.obbCenter = center;
     node.obbHalfSize = glm::vec3(halfSize);
+    node.obbQuat = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
     const auto q = obb.find("quaternion");
     if (q != obb.end() && q->is_array() && q->size() >= 4 && (*q)[0].is_number()) {
-        node.obbQuat = glm::quat(static_cast<float>((*q)[3].get<double>()),  // w
-                                 static_cast<float>((*q)[0].get<double>()),  // x
-                                 static_cast<float>((*q)[1].get<double>()),  // y
-                                 static_cast<float>((*q)[2].get<double>())); // z
-    } else {
-        node.obbQuat = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+        const glm::quat raw(static_cast<float>((*q)[3].get<double>()),  // w
+                            static_cast<float>((*q)[0].get<double>()),  // x
+                            static_cast<float>((*q)[1].get<double>()),  // y
+                            static_cast<float>((*q)[2].get<double>())); // z
+        // Normalize defensively: mat3_cast of a non-unit quaternion scales
+        // the box axes (and a zero quaternion would NaN the whole tree).
+        const float len2 = glm::dot(raw, raw);
+        if (len2 > 1e-6f)
+            node.obbQuat = raw * glm::inversesqrt(len2);
     }
     return true;
 }
@@ -549,6 +554,12 @@ bool loadNodeDocuments16(const SlpkArchive& archive, const LayerInfo& info,
     out.nodes.emplace_back();
     queue.push_back(Pending{ rootDir, -1, 0 });
 
+    // A node directory may be referenced once only — an href cycle (or a
+    // shared child) in a malformed package would otherwise spin this BFS
+    // forever, minting fresh node slots each lap.
+    std::unordered_set<std::string> visitedDirs;
+    visitedDirs.insert(rootDir);
+
     std::vector<uint8_t> bytes;
     while (!queue.empty()) {
         const Pending item = queue.front();
@@ -641,6 +652,8 @@ bool loadNodeDocuments16(const SlpkArchive& archive, const LayerInfo& info,
                     childDir = "nodes/" + childId;
                 else
                     continue;
+                if (!visitedDirs.insert(childDir).second)
+                    continue; // cycle / duplicate reference — drop it
                 const uint32_t childIndex = static_cast<uint32_t>(out.nodes.size());
                 out.nodes.emplace_back();
                 out.childIndices.push_back(childIndex);
@@ -901,6 +914,30 @@ bool I3SLayer::loadNodeTree(const SlpkArchive& archive, const LayerInfo& info,
     if (out.nodes.empty()) {
         error = "node tree is empty";
         return false;
+    }
+
+    // Sanitize child references: traversal (and the scene layer's box array)
+    // index these unchecked, so out-of-range indices from a corrupt page set
+    // must not survive. Requiring child > parent index also breaks any cycle
+    // a hostile file could encode (every real writer lays pages out
+    // BFS-ordered — root first, children strictly after their parent — and
+    // the 1.6 walk below builds indices that way by construction), which
+    // guarantees traversal termination.
+    for (size_t i = 0; i < out.nodes.size(); ++i) {
+        NodeInfo& n = out.nodes[i];
+        if (n.firstChild > out.childIndices.size() ||
+            n.childCount > out.childIndices.size() - n.firstChild) {
+            n.firstChild = 0;
+            n.childCount = 0;
+            continue;
+        }
+        uint32_t kept = 0;
+        for (uint32_t c = 0; c < n.childCount; ++c) {
+            const uint32_t child = out.childIndices[n.firstChild + c];
+            if (child > i && child < out.nodes.size())
+                out.childIndices[n.firstChild + kept++] = child;
+        }
+        n.childCount = kept;
     }
 
     const size_t reached = computeLevels(out);

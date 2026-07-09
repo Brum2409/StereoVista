@@ -52,6 +52,7 @@
 #include "Loaders/Slpk/I3SGeometry.h"
 #include "Loaders/Slpk/I3STexture.h"
 #include "Loaders/Slpk/SlpkTypes.h"
+#include "RHI/Texture.h" // PendingUpload holds an rhi::Texture by value
 #include "Renderer/MeshBuffer.h"
 
 #include <glm/glm.hpp>
@@ -289,8 +290,11 @@ private:
     float nodeMetric(uint32_t nodeIndex, const glm::vec3& cameraPos,
                      float screenFactor) const;
     bool wantSplit(uint32_t nodeIndex, float metric);
-    bool coverable(uint32_t nodeIndex) const;
-    bool childrenCoverable(uint32_t nodeIndex) const;
+    // Out-of-frustum children count as covered (they contribute no pixels and
+    // are never requested — without this the cut could never refine while any
+    // sibling is off-screen).
+    bool coverable(uint32_t nodeIndex, const glm::vec4 frustum[6]) const;
+    bool childrenCoverable(uint32_t nodeIndex, const glm::vec4 frustum[6]) const;
     void traverse(uint32_t nodeIndex, renderer::FrameSubmission& submission,
                   const glm::vec3& cameraPos, const glm::vec3& predictedPos,
                   float screenFactor, const glm::vec4 frustum[6]);
