@@ -1,19 +1,28 @@
 #!/usr/bin/env python3
-"""Generates spec-faithful synthetic SLPKs to exercise the parser paths a
-public sample was not found for:
+"""Generates spec-faithful synthetic SLPKs to exercise the parser + decoder
+paths a public sample was not found for:
   * synthetic_16_object.slpk — v1.6 3DObject, per-node 3dNodeIndexDocument
-    tree (root without obb -> MBS synthesis), NO hash index (CD fallback).
+    tree (root without obb -> MBS synthesis), NO hash index (CD fallback),
+    REAL raw geometry (header + PerAttributeArray streams, degree deltas),
+    per-node sharedResource.json materials and PNG textures.
+  * synthetic_17_textured.slpk — v1.7 3DObject with a RAW-ONLY geometry
+    buffer (offset-8 header) + glTF-style materialDefinitions + PNG texture
+    sets: covers the 1.7 legacy-buffer decode + texture + material path
+    (DA12 covers the draco path but has no textures).
   * synthetic_pcsl20.slpk — PCSL 2.0 point cloud, store.index paging,
     implicit firstChild/childCount ranges, WITH a hash index written the way
-    ArcGIS writes it (md5-of-stored-path, sorted, last entry before the CD).
-Structures follow the Esri i3s-spec 1.6 / PCSL 2.0 docs.
+    ArcGIS writes it (md5-of-stored-path, sorted, last entry).
+Structures follow the Esri i3s-spec 1.6 / 1.7 / PCSL 2.0 docs. Geometry is
+validated by the gcc test harness (see testdata/README.md).
 """
-import gzip, hashlib, json, os, struct, sys, zipfile
+import gzip, hashlib, json, math, os, struct, sys, zipfile, zlib
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "."
 
 # A city block near Zurich (lon, lat), heights in meters.
 LON, LAT = 8.5417, 47.3769
+MLAT = 111132.95
+MLON = 111319.49 * math.cos(math.radians(LAT))
 
 
 def gz(data: bytes) -> bytes:
@@ -44,23 +53,143 @@ def store_zip(path, entries, with_hash_index=False):
     zf.close()
 
 
-def obb(dx_m, dy_m, dz_m, half, quat=(0, 0, 0, 1)):
+def enu_quat(lon=LON, lat=LAT):
+    """Quaternion [x,y,z,w] of the rotation whose columns are the local
+    East/North/Up unit vectors in ECEF — an OBB with this quaternion is
+    ENU-axis-aligned at (lon, lat). Real cookers (ArcGIS) write ECEF-frame
+    quaternions exactly like this; identity would mean ECEF-axis-aligned."""
+    lo, la = math.radians(lon), math.radians(lat)
+    sl, cl = math.sin(lo), math.cos(lo)
+    sp, cp = math.sin(la), math.cos(la)
+    # column-major rows m[r][c]: columns = east, north, up (in ECEF)
+    m = [[-sl, -sp * cl, cp * cl],
+         [cl, -sp * sl, cp * sl],
+         [0.0, cp, sp]]
+    t = m[0][0] + m[1][1] + m[2][2]
+    if t > 0:
+        s = math.sqrt(t + 1.0) * 2
+        w = 0.25 * s
+        x = (m[2][1] - m[1][2]) / s
+        y = (m[0][2] - m[2][0]) / s
+        z = (m[1][0] - m[0][1]) / s
+    elif m[0][0] > m[1][1] and m[0][0] > m[2][2]:
+        s = math.sqrt(1.0 + m[0][0] - m[1][1] - m[2][2]) * 2
+        w = (m[2][1] - m[1][2]) / s
+        x = 0.25 * s
+        y = (m[0][1] + m[1][0]) / s
+        z = (m[0][2] + m[2][0]) / s
+    elif m[1][1] > m[2][2]:
+        s = math.sqrt(1.0 + m[1][1] - m[0][0] - m[2][2]) * 2
+        w = (m[0][2] - m[2][0]) / s
+        x = (m[0][1] + m[1][0]) / s
+        y = 0.25 * s
+        z = (m[1][2] + m[2][1]) / s
+    else:
+        s = math.sqrt(1.0 + m[2][2] - m[0][0] - m[1][1]) * 2
+        w = (m[1][0] - m[0][1]) / s
+        x = (m[0][2] + m[2][0]) / s
+        y = (m[1][2] + m[2][1]) / s
+        z = 0.25 * s
+    return (x, y, z, w)
+
+
+def obb(dx_m, dy_m, dz_m, half, quat=None):
     # meters -> degrees around the anchor (approx; fine for synthetic data)
-    import math
-    mlat = 111132.95
-    mlon = 111319.49 * math.cos(math.radians(LAT))
     return {
-        "center": [LON + dx_m / mlon, LAT + dy_m / mlat, dz_m],
+        "center": [LON + dx_m / MLON, LAT + dy_m / MLAT, dz_m],
         "halfSize": list(half),
-        "quaternion": list(quat),
+        # geographic-layer quaternions live in the ECEF frame; default to
+        # "ENU-axis-aligned here" like real cookers do
+        "quaternion": list(quat if quat is not None else enu_quat()),
     }
 
 
 def mbs(dx_m, dy_m, dz_m, r):
-    import math
-    mlat = 111132.95
-    mlon = 111319.49 * math.cos(math.radians(LAT))
-    return [LON + dx_m / mlon, LAT + dy_m / mlat, dz_m, r]
+    return [LON + dx_m / MLON, LAT + dy_m / MLAT, dz_m, r]
+
+
+# ---------------- tiny PNG writer (RGBA8, no deps) ----------------
+
+def make_png(width, height, pixel_fn):
+    def chunk(tag, payload):
+        data = tag + payload
+        return struct.pack(">I", len(payload)) + data + struct.pack(
+            ">I", zlib.crc32(data) & 0xFFFFFFFF)
+
+    raw = b""
+    for y in range(height):
+        raw += b"\x00"  # filter: none
+        for x in range(width):
+            raw += bytes(pixel_fn(x, y))
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) +
+            chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))
+
+
+def checker_png(size=64, a=(230, 60, 40, 255), b=(240, 235, 220, 255)):
+    return make_png(size, size,
+                    lambda x, y: a if ((x // 8 + y // 8) % 2) == 0 else b)
+
+
+# ---------------- raw geometry builder ----------------
+# A box as triangle soup: positions = (dLon deg, dLat deg, dz m) deltas from
+# the node center, normals in node-local ENU, CCW winding seen from outside.
+
+AXES = [(1, 0, 0), (0, 1, 0), (0, 0, 1)]
+
+
+def box_soup(size_m=20.0, height_offset=0.0):
+    """returns (positions_deg, normals, uvs) lists of 36 vertices each."""
+    h = size_m * 0.5
+    positions, normals, uvs = [], [], []
+    for axis in range(3):
+        for sign in (1.0, -1.0):
+            n = [0.0, 0.0, 0.0]
+            n[axis] = sign
+            t = [0.0, 0.0, 0.0]
+            b = [0.0, 0.0, 0.0]
+            ta, ba = (axis + 1) % 3, (axis + 2) % 3
+            if sign > 0:
+                t[ta], b[ba] = 1.0, 1.0
+            else:  # mirrored so cross(t, b) == n stays outward
+                t[ba], b[ta] = 1.0, 1.0
+            corners = []
+            for (du, dv) in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+                p = [n[i] * h + t[i] * h * du + b[i] * h * dv for i in range(3)]
+                corners.append(p)
+            uvq = [(0, 0), (1, 0), (1, 1), (0, 1)]
+            for tri in ((0, 1, 2), (0, 2, 3)):
+                for ci in tri:
+                    p = corners[ci]
+                    positions.append((p[0] / MLON, p[1] / MLAT,
+                                      p[2] + height_offset))
+                    normals.append(tuple(n))
+                    uvs.append(uvq[ci])
+    return positions, normals, uvs
+
+
+def raw_geometry_16(feature_id=1):
+    """1.6 buffer: header(vertexCount, featureCount) + position + normal +
+    uv0 + color streams + per-feature id/faceRange."""
+    positions, normals, uvs = box_soup()
+    vc = len(positions)
+    buf = struct.pack("<II", vc, 1)
+    for p in positions:
+        buf += struct.pack("<3f", *p)
+    for n in normals:
+        buf += struct.pack("<3f", *n)
+    for uv in uvs:
+        buf += struct.pack("<2f", *uv)
+    buf += bytes((200, 200, 210, 255)) * vc  # non-white: tests the detector
+    buf += struct.pack("<Q", feature_id)
+    buf += struct.pack("<II", 0, vc // 3 - 1)
+    return buf
+
+
+def raw_geometry_17(feature_id=77):
+    """1.7 legacy buffer: offset-8 header + position/normal/uv0/color +
+    featureId/faceRange (same shape DA12 uses)."""
+    return raw_geometry_16(feature_id)
 
 
 # ---------------- v1.6 3DObject ----------------
@@ -79,17 +208,26 @@ def make16():
             "rootNode": "./nodes/root",
             "extent": [LON - 0.01, LAT - 0.01, LON + 0.01, LAT + 0.01],
             "normalReferenceFrame": "east-north-up",
-            "textureEncoding": ["image/jpeg"],
+            "textureEncoding": ["image/png"],
             "lodType": "MeshPyramid",
             "defaultGeometrySchema": {
                 "geometryType": "triangles",
                 "topology": "PerAttributeArray",
+                "header": [
+                    {"property": "vertexCount", "type": "UInt32"},
+                    {"property": "featureCount", "type": "UInt32"},
+                ],
                 "ordering": ["position", "normal", "uv0", "color"],
                 "vertexAttributes": {
                     "position": {"valueType": "Float32", "valuesPerElement": 3},
                     "normal": {"valueType": "Float32", "valuesPerElement": 3},
                     "uv0": {"valueType": "Float32", "valuesPerElement": 2},
                     "color": {"valueType": "UInt8", "valuesPerElement": 4},
+                },
+                "featureAttributeOrder": ["id", "faceRange"],
+                "featureAttributes": {
+                    "id": {"valueType": "UInt64", "valuesPerElement": 1},
+                    "faceRange": {"valueType": "UInt32", "valuesPerElement": 2},
                 },
             },
         },
@@ -99,6 +237,30 @@ def make16():
              "ordering": ["attributeValues"],
              "attributeValues": {"valueType": "Oid32", "valuesPerElement": 1}},
         ],
+    }
+
+    shared = {
+        "materialDefinitions": {
+            "Mat0": {
+                "type": "standard",
+                "params": {
+                    "vertexColors": True,
+                    "diffuse": [0.9, 0.9, 0.9],
+                    "transparency": 0,
+                    "cullFace": "none",
+                },
+            }
+        },
+        "textureDefinitions": {
+            "tex0": {
+                "encoding": ["image/png"],
+                "wrap": ["none", "none"],
+                "atlas": False,
+                "uvSet": "uv0",
+                "channels": ["rgba"],
+                "images": [{"id": "i0", "size": 64, "href": ["../textures/0_0"]}],
+            }
+        },
     }
 
     def nodedoc(nid, level, parent, children, with_obb=True, quat=(0, 0, 0, 1)):
@@ -125,10 +287,11 @@ def make16():
             d["geometryData"] = [{"href": "./geometries/0"}]
             d["textureData"] = [{"href": "./textures/0_0"}]
             d["featureData"] = [{"href": "./features/0"}]
-            d["vertexCount"] = 1234
-            d["featureCount"] = 7
+            d["vertexCount"] = 36
+            d["featureCount"] = 1
         return d
 
+    png = checker_png()
     entries = [
         ("3dSceneLayer.json.gz", jgz(layer)),
         ("metadata.json", json.dumps({"folderPattern": "BASIC",
@@ -144,11 +307,116 @@ def make16():
          jgz(nodedoc("1", 1, "root", None, quat=(0, 0, 0.3826834, 0.9238795)))),
         ("nodes/0-0/3dNodeIndexDocument.json.gz",
          jgz(nodedoc("0-0", 2, "0", None))),
-        ("nodes/0-0/geometries/0.bin.gz", gz(b"\x00" * 64)),
-        ("nodes/1/geometries/0.bin.gz", gz(b"\x00" * 64)),
+        ("nodes/0-0/geometries/0.bin.gz", gz(raw_geometry_16(1))),
+        ("nodes/1/geometries/0.bin.gz", gz(raw_geometry_16(2))),
+        ("nodes/0-0/shared/sharedResource.json.gz", jgz(shared)),
+        ("nodes/1/shared/sharedResource.json.gz", jgz(shared)),
+        ("nodes/0-0/textures/0_0", png),  # 1.6 texture: raw, no extension
+        ("nodes/1/textures/0_0", png),
     ]
     store_zip(os.path.join(OUT, "synthetic_16_object.slpk"), entries,
               with_hash_index=False)
+
+
+# ---------------- v1.7 textured (raw-only buffer) ----------------
+
+def make17_textured():
+    layer = {
+        "id": 0,
+        "name": "Synthetic17Tex",
+        "layerType": "3DObject",
+        "spatialReference": {"wkid": 4326, "latestWkid": 4326},
+        "store": {
+            "id": "s0",
+            "profile": "meshSceneLayer",
+            "version": "1.7",
+            "extent": [LON - 0.01, LAT - 0.01, LON + 0.01, LAT + 0.01],
+            "normalReferenceFrame": "east-north-up",
+        },
+        "nodePages": {
+            "nodesPerPage": 64,
+            "lodSelectionMetricType": "maxScreenThresholdSQ",
+        },
+        "materialDefinitions": [
+            {
+                "doubleSided": True,
+                "pbrMetallicRoughness": {
+                    "baseColorFactor": [1, 1, 1, 1],
+                    "baseColorTexture": {"textureSetDefinitionId": 0},
+                    "metallicFactor": 0.0,
+                    "roughnessFactor": 0.9,
+                },
+            }
+        ],
+        "textureSetDefinitions": [
+            {"formats": [{"name": "0", "format": "png"}], "atlas": False}
+        ],
+        "geometryDefinitions": [
+            {
+                "geometryBuffers": [
+                    {
+                        "offset": 8,
+                        "position": {"type": "Float32", "component": 3},
+                        "normal": {"type": "Float32", "component": 3},
+                        "uv0": {"type": "Float32", "component": 2},
+                        "color": {"type": "UInt8", "component": 4},
+                        "featureId": {"type": "UInt64", "component": 1,
+                                      "binding": "per-feature"},
+                        "faceRange": {"type": "UInt32", "component": 2,
+                                      "binding": "per-feature"},
+                    }
+                ]
+            }
+        ],
+    }
+
+    # 3 nodes: root(coarse box) -> two children (smaller boxes, offset).
+    nodes = [
+        {
+            "index": 0, "parentIndex": -1, "lodThreshold": 80000.0,
+            "obb": obb(0, 0, 10, (40, 40, 12)),
+            "children": [1, 2],
+            "mesh": {
+                "material": {"definition": 0, "resource": 0},
+                "geometry": {"definition": 0, "resource": 0,
+                             "vertexCount": 36, "featureCount": 1},
+            },
+        },
+        {
+            "index": 1, "parentIndex": 0, "lodThreshold": 0.0,
+            "obb": obb(-15, 0, 10, (12, 12, 12)),
+            "children": [],
+            "mesh": {
+                "material": {"definition": 0, "resource": 1},
+                "geometry": {"definition": 0, "resource": 1,
+                             "vertexCount": 36, "featureCount": 1},
+            },
+        },
+        {
+            "index": 2, "parentIndex": 0, "lodThreshold": 0.0,
+            "obb": obb(15, 0, 10, (12, 12, 12)),
+            "children": [],
+            "mesh": {
+                "material": {"definition": 0, "resource": 2},
+                "geometry": {"definition": 0, "resource": 2,
+                             "vertexCount": 36, "featureCount": 1},
+            },
+        },
+    ]
+
+    png = checker_png()
+    entries = [
+        ("3dSceneLayer.json.gz", jgz(layer)),
+        ("nodepages/0.json.gz", jgz({"nodes": nodes})),
+        ("nodes/0/geometries/0.bin.gz", gz(raw_geometry_17(10))),
+        ("nodes/1/geometries/0.bin.gz", gz(raw_geometry_17(11))),
+        ("nodes/2/geometries/0.bin.gz", gz(raw_geometry_17(12))),
+        ("nodes/0/textures/0.png", png),  # jpg/png stored raw (spec)
+        ("nodes/1/textures/0.png", png),
+        ("nodes/2/textures/0.png", png),
+    ]
+    store_zip(os.path.join(OUT, "synthetic_17_textured.slpk"), entries,
+              with_hash_index=True)
 
 
 # ---------------- PCSL 2.0 ----------------
@@ -214,5 +482,7 @@ def make_pcsl():
 
 
 make16()
+make17_textured()
 make_pcsl()
-print("wrote synthetic_16_object.slpk + synthetic_pcsl20.slpk to", OUT)
+print("wrote synthetic_16_object.slpk + synthetic_17_textured.slpk + "
+      "synthetic_pcsl20.slpk to", OUT)

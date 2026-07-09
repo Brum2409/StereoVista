@@ -88,6 +88,9 @@ private:
     void openSlpkDialog();
     void openSlpk(const std::string& path);
     void pumpSlpkLoads();
+    // M1: per-frame GPU-create pump for every layer's decoded payloads
+    // (MeshBuffer/Texture creation under a time budget) + warning toasts.
+    void pumpI3SLayers();
     void appendI3SOverlays();          // inspector OBBs -> overlay_
     void frameI3SLayer(size_t index);  // fly the camera to a layer's bounds
     void handleDroppedFiles();         // route window drag-drop by extension

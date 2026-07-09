@@ -94,7 +94,7 @@ the vcxproj) **for both Debug and Release x64 configs**.
 | Lib | Repo | Pin (verify latest online, then record here) | Subset to vendor | Notes / defines |
 |---|---|---|---|---|
 | **libdeflate** | github.com/ebiggers/libdeflate | v1.2x → **v1.25** (2025-11-01) ✅ vendored | **Decompress-only** subset (improved on the plan): `lib/{adler32,crc32,utils,deflate_decompress,gzip_decompress,zlib_decompress}.c` + `lib/x86/cpu_features.c` + headers, `libdeflate.h`, `common_defs.h`, `COPYING` | C code; gzip + raw deflate decompress. Compile as C (vcxproj does per-file `CompileAs` automatically by extension). Prefer it over zlib: ~2–3× faster inflate. NOTE: no new include dirs needed — internal includes are file-relative and app code uses `<libdeflate/libdeflate.h>` via the existing `headers/libs` dir |
-| **draco** | github.com/google/draco | v1.5.x → `____` | **Decoder only**: `src/draco/` minus `compression/encode*`, `io/`, `maya/`, `unity/`, tools, tests | Needs a hand-written `draco/draco_features.h`: define `DRACO_MESH_COMPRESSION_SUPPORTED`, `DRACO_STANDARD_EDGEBREAKER_SUPPORTED`, `DRACO_ATTRIBUTE_VALUES_DEDUPLICATION_SUPPORTED`, `DRACO_ATTRIBUTE_INDICES_DEDUPLICATION_SUPPORTED`. ~140 files; wrap includes in `#pragma warning(push/disable)` at OUR call sites, not by editing vendored files |
+| **draco** | github.com/google/draco | **v1.5.7** (2025-01-17, `8786740`) ✅ vendored | **Decoder only** (improved on the plan: taken from upstream's own decoder-target source groups in `CMakeLists.txt` instead of hand-pruning) minus the JS glue and `mesh_are_equivalent.*` (test utility that drags in `texture/`), plus 3 headers upstream's decoder lists forget (`linear_sequencer.h`, `points_sequencer.h`, `mesh_prediction_scheme_parallelogram_decoder.h`). 64 `.cc` + 141 `.h` under `headers/libs/draco/` | Hand-written `draco/draco_features.h` mirrors the upstream desktop-default decoder feature set (mesh + point-cloud decode, standard+predictive edgebreaker, normal octahedron, backwards compat, attribute dedup; NO `DRACO_TRANSCODER_SUPPORTED`). Includes resolve via the existing `headers/libs` include dir (`#include "draco/..."`), no new include dirs. Warnings silenced with `#pragma warning(push/disable)` at OUR include site (`I3SGeometry.cpp`). `/bigobj` set per-file on the 7 template-heavy TUs (C1128 insurance, plan §8). gcc-compiled + link-checked + decode-validated against DA12 |
 | **basis_universal transcoder** | github.com/BinomialLLC/basis_universal | v1.x/v2.x → `____` | `transcoder/basisu_transcoder.{cpp,h}` + its headers + `zstd/zstddeclib.c` (single-file zstd decode — KTX2 payloads are often zstd-supercompressed) | Define `BASISD_SUPPORT_KTX2=1`, `BASISD_SUPPORT_KTX2_ZSTD=1`. Transcode targets used: BC7 (`cTFBC7_RGBA`), BC5 (normals, optional), RGBA32 fallback |
 | **lepcc** (M3, defer vendoring until then) | github.com/Esri/lepcc | master @ `____` | `src/*.cpp,h` (it is small) | Apache-2.0. Decoder entry points: `lepcc_getBlobInfo`, `lepcc_decodeXYZ`, `lepcc_decodeRGB`, `lepcc_decodeIntensity` |
 | **MD5 (tiny)** | any public-domain single-file (e.g. the RFC 1321 reference or `md5-c`) | github.com/Zunawe/md5-c @ **f3529b6** (Unlicense) ✅ vendored | `md5.{c,h}` + `UNLICENSE` under `headers/libs/md5/` | Only used to hash resource paths for the SLPK `@specialIndexFileHASH128@` index (§4.1). Keep optional: central-directory lookup is the always-works path. NOTE: `md5.h` has no `extern "C"` guard — wrap the include at C++ call sites |
@@ -104,7 +104,8 @@ the vcxproj) **for both Debug and Release x64 configs**.
       pins recorded in the table above.
       *(M0 status: libdeflate + md5 done ✅ — vendored, wired into vcxproj +
       filters, gcc-compile-checked; no include-dir edits were needed, see table
-      notes. draco / basisu / lepcc remain for M1 / M2 / M3.)*
+      notes. M1 status: draco v1.5.7 done ✅ — LICENSE kept, all 205 files wired
+      into vcxproj + a `libs\draco` filter. basisu / lepcc remain for M2 / M3.)*
 
 *(draco encode, basis encode, and i3s-lib come only with the future
 export/edit milestone — do not vendor them now.)*
@@ -249,37 +250,97 @@ and the SLPK tab in `buildUi` (M0 inspector grows here).
 
 ### M1 — Render mesh layers correctly (blocking loads, bounded budget)
 
-- [ ] Vendor draco (decoder subset, §3). `I3SGeometry` (draco + 1.6 raw) →
+- [x] Vendor draco (decoder subset, §3). `I3SGeometry` (draco + 1.6/1.7 raw) →
       `renderer::MeshData`-shaped output + featureIds + uv-regions.
-- [ ] `I3STexture` jpg/png path (atlas → RGBA8 + full mip chain computed
-      CPU-side or via existing blit path — blit is fine for RGBA8 in M1).
-- [ ] uv-region support: extend `Vertex`… **no** — do NOT touch the shared
-      48-byte `Vertex`. Instead: per-node second vertex stream is overkill for
-      M1; **fold the uv-region remap into the UVs at decode time** (positions
-      of atlas sub-rects are static — remap uv into the rect once on the CPU).
-      Only if a package uses `uv-region` with wrap semantics does the shader
-      path matter — detect and toast "wrap uv-regions unsupported yet" (§8 risk).
-- [ ] Materials: I3S material defs → `gpu::MaterialData` (baseColor, factors,
-      albedo/normal/metallicRoughness/AO indices via `MaterialSystem`).
-- [ ] `I3SSceneLayer` M1 loading policy: walk tree from root, load nodes
-      breadth-first **on a loader thread** (blocking `MeshBuffer::create` +
-      `Texture::upload` are called from… they touch Vulkan → **hand off to
-      main thread**: loader thread decodes into CPU structs, main thread
-      per-frame drains a ready-queue and creates GPU objects under a
-      time/byte budget — this IS the §6.1 pipeline minus eviction/priority,
-      build it in that shape from day one) until a node/VRAM budget is hit
-      (default ~2 GB or N nodes, debug-panel sliders).
-- [ ] SSE selection (§6.2) picking the best loaded cut each frame →
-      `submit()` emits `DrawItem`s (model = anchorSpace * nodeLocal, bounds
-      from OBB → `worldBoundsCenter/Radius`).
-- [ ] Picking hook: extend `pickModelAtPoint`-style resolution with I3S:
-      depth-pick world point → layer → deepest resident node whose OBB
-      contains it → show node + (if featureIds decoded) feature id + M1-level
-      attribute readout in the inspector.
+- [x] `I3STexture` jpg/png path (RGBA8; mips via the existing blit path —
+      fine for RGBA8 in M1; KTX2/Basis→BC7 is M2).
+- [x] uv-region support: **folded into the UVs at decode time** (the shared
+      48-byte `Vertex` untouched); wrap semantics (uv outside [0,1]) detected
+      → clamped + one-shot warning toast (§8 risk, shader path deferred).
+- [x] Materials: I3S material defs → `gpu::MaterialData` (baseColor, factors,
+      per-node baseColor texture via `MaterialSystem`; 1.7+ glTF-style layer
+      definitions AND 1.6 sharedResource both normalized to `i3s::MaterialDesc`).
+- [x] `I3SSceneLayer` M1 loading policy in the §6.1 pipeline shape: decode
+      workers (archive read + draco/raw + stb + geodetic transform, NO Vulkan)
+      → ready queue → main-thread `pumpGpuCreates` creating MeshBuffer/
+      Texture/material under a per-frame time budget; node-count + GPU-byte
+      budgets with panel sliders. *(Improved on the plan: nodes are requested
+      on demand by the traversal instead of BFS-prefilled — only what the
+      camera looks at loads, which is also M2's shape.)*
+- [x] SSE selection (§6.2, incl. split/merge hysteresis + frustum culling +
+      "never a hole" resident-ancestor rule) picking the best loaded cut each
+      frame → `submitDraws()` emits `DrawItem`s (model = translation to the
+      node's geometry center in anchor space, bounds from OBB →
+      `worldBoundsCenter/Radius`).
+- [x] Picking hook: depth-pick world point → deepest node drawn this frame
+      whose OBB contains it → node-level readout (level, vertex/feature
+      counts) in the Scene Layers panel. (Per-feature id + attribute readout
+      is M4 — needs the attribute columns.)
 - [ ] 🧪 Gate: Esri sample 3D-object AND integrated-mesh SLPKs render with
       correct textures/lighting vs Scene Viewer screenshots; no cracks at
       rest; sun shadows fall on I3S geometry; stereo SBS sanity check; VRAM
       stays under the budget slider. Commit: `M1: I3S mesh layers render`.
+      *(Code complete — awaiting the owner's Windows visual run; exact steps
+      are in the M1 commit message. The gcc+ASan harness validates decode +
+      transforms against DA12 (real v1.7 draco) and the synthetic 1.6/1.7
+      packages on every node — see M1 field notes.)*
+
+#### M1 field notes (reality vs. plan — read before M2)
+
+- **Position encodings, validated empirically against DA12:** raw buffers
+  (1.6 + 1.7 legacy) store **(dLon°, dLat°, dz m)** deltas from the node
+  center. Draco buffers store **scaled degree deltas**: the position
+  attribute carries `i3s-scale_x`/`i3s-scale_y` metadata (DA12:
+  1/111319.49 — the equatorial meters-per-degree, so the values only LOOK
+  like meters; a naive "meters" read is ~30% off in x at NYC latitudes —
+  caught by the harness's draco-vs-raw agreement test). Both paths convert
+  per vertex exactly through ECEF in double (§7 — no scale-factor
+  approximation, no cracks). Missing scale metadata defaults to 1.0 (plain
+  degrees, loaders.gl-compatible); projected-CRS draco positions are metric
+  deltas (one rotation). The draco feature-id LIST rides the feature-index
+  attribute metadata (`i3s-feature-ids`, int32 array).
+- **1.6 geometry references the MBS center**, which can differ from the OBB
+  center → `NodeInfo::geomCenter` carries the reference (=`obbCenter` for
+  1.7+); the draw model matrix translates to it.
+- **Draco buffers may lack normals** (DA12 does: only position/uv0/color/
+  feature-index). Buffer choice prefers a buffer with real normals (DA12 →
+  raw) over draco + computed smooth normals; draco wins any tie. Computed
+  normals are area-weighted per point (draco's UV/feature-seam splits keep
+  hard edges); raw soup gets per-face flat normals naturally.
+- **Per-vertex colors do not fit the shared 48-byte `Vertex`** (house
+  invariant: do not touch it). Colors are decoded, checked, and DROPPED;
+  non-white colors trigger a one-shot toast. DA12's colors are all white so
+  nothing is lost there. Real fix (second vertex stream or a per-feature
+  tint) is future work — decide in M2/M4.
+- **`doubleSided` materials are ignored** — the forward pipeline culls back
+  faces (CCW). Fine for closed photogrammetry/building shells; revisit if a
+  package shows missing faces (needs a cull-mode pipeline variant).
+- Only the **baseColor texture** is loaded in M1; normal/metallicRoughness/
+  occlusion/emissive texture refs are parsed into `MaterialDesc` but not
+  fetched (no tangents in I3S; KTX2 lands in M2).
+- **1.6 materials**: the first geometry node's `shared/sharedResource.json`
+  is adopted layer-wide (one definition per package in practice). Texture
+  images stay per-node (`NodeMesh::v16TexturePath`, extensionless hrefs —
+  probe .jpg/.png/none).
+- **Threading:** min(4, hw/2) decode workers per layer; work-queue cap 96
+  (backpressure); GPU-create pump budget 5 ms/frame shared across layers.
+  `stb_image` flip flag is pinned per worker thread
+  (`stbi_set_flip_vertically_on_load_thread(0)`) — I3S UVs are top-left
+  origin, no flip; the Assimp importer's global flip can't race us.
+- **No eviction in M1** (M2): when the node/VRAM budget is hit the cut just
+  stops refining. Unloading a layer `waitIdle()`s the device (rare, safe).
+- **Test coverage:** the gcc+ASan/UBSan harness decodes EVERY geometry node
+  of DA12 + synthetics and asserts vertices land inside the node's
+  app-frame OBB, unit normals, index/feature-index ranges, and (DA12) that
+  draco and raw decodes of the same node agree to <0.5 m. Synthetics were
+  upgraded to carry real geometry: `synthetic_16_object.slpk` (raw streams +
+  header + sharedResource materials + PNG textures) and NEW
+  `synthetic_17_textured.slpk` (1.7 raw-only buffer + glTF materials + PNG
+  texture sets) — DA12 covers draco but has no textures.
+- **Scene Layers panel** gained the M1 controls: render toggle, quality
+  (lodScale), node/VRAM budget sliders, streaming HUD (drawn/resident/
+  decoding/failed, GPU MB, CPU queue MB), picked-node readout. OBB overlay
+  now defaults OFF (geometry renders instead).
 
 ### M2 — Streaming at scale (the performance milestone)
 

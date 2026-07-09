@@ -75,14 +75,15 @@ StereoVista/
 │   ├── Core/               # Camera (glm), UndoManager (generic command stack)
 │   ├── Loaders/            # PointCloudLoader (LAS/LAZ/PLY/HDF5/XYZ/PCB parsers + RHI upload)
 │   │   └── Slpk/           #   SLPK/I3S (namespace i3s::): SlpkArchive (mmap ZIP64 + hash
-│   │                       #   index), I3SLayer (1.6 / 1.7+ / PCSL node trees), GeoAnchor
-│   │                       #   (WGS84↔ECEF↔ENU) — see docs/SLPK_IMPLEMENTATION_PLAN.md
+│   │                       #   index), I3SLayer (1.6 / 1.7+ / PCSL node trees + materials),
+│   │                       #   I3SGeometry (draco + raw decode), I3STexture (jpg/png),
+│   │                       #   GeoAnchor (WGS84↔ECEF↔ENU) — see docs/SLPK_IMPLEMENTATION_PLAN.md
 │   └── Engine/             # XRSession (OpenXR/Vulkan), Screenshot, StbImageImpl,
 │                           #   + EXCLUDED GL-era reference (see Migration state)
 ├── headers/                # Header files (mirrors src/ structure)
 │   └── libs/               # Vendored: imgui (docking + backends), volk, vma, spirv_reflect,
 │                           #   json, stb_image, 3dconnexion, portable-file-dialogs,
-│                           #   libdeflate (decompress subset), md5
+│                           #   libdeflate (decompress subset), md5, draco (decoder subset)
 ├── assets/
 │   ├── shaders_vk/         # Vulkan GLSL (→ SPIR-V): mesh, depth_sun/point, skybox,
 │   │                       #   pointcloud_*, overlay, tonemap, fullscreen, preview_lit
@@ -125,6 +126,7 @@ Wire every source add/remove into `StereoVista.vcxproj` **and** `.vcxproj.filter
 | portable-file-dialogs | Native file dialogs | `headers/libs/` |
 | **libdeflate** v1.25 (decompress-only subset) | SLPK gzip/deflate inflate | `headers/libs/libdeflate/` |
 | **md5-c** (public domain) | SLPK `@specialIndexFileHASH128@` path hashing | `headers/libs/md5/` |
+| **draco** v1.5.7 (decoder-only subset) | SLPK/I3S compressed geometry decode | `headers/libs/draco/` |
 
 Added libraries are vendored under `headers/libs/` + `dependencies/` and wired into the `.vcxproj` (include/lib dirs + post-build DLL copy).
 

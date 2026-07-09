@@ -33,6 +33,17 @@ public:
     // Loads and flattens the full node hierarchy (shape chosen by `info`).
     static bool loadNodeTree(const SlpkArchive& archive, const LayerInfo& info,
                              I3SNodeTree& out, std::string& error);
+
+    // 1.6 only: materials live in per-node shared/sharedResource.json, not in
+    // the layer document. Reads the shared resource of the given node and
+    // fills info.materials (+ texture flags) — in practice one definition is
+    // shared across the package, so the first geometry node's version is
+    // adopted layer-wide (M1 simplification, recorded in the plan). No-op
+    // when info.materials is already populated. Returns false only on a
+    // malformed document; a missing one falls back to the default material.
+    static bool parse16SharedResource(const SlpkArchive& archive,
+                                      const I3SNodeTree& tree, LayerInfo& info,
+                                      std::string& error);
 };
 
 } // namespace i3s

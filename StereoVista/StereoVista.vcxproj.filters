@@ -13,6 +13,12 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="libs">
+      <UniqueIdentifier>{9604a5d6-4a7e-4f9b-9209-3bde739755d1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="libs\draco">
+      <UniqueIdentifier>{197be9b4-c483-4f72-89ba-0253bb0a2abe}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Shaders">
       <UniqueIdentifier>{B2E1A5C4-7D3F-4E86-9A0B-52C6D1F0A9E3}</UniqueIdentifier>
       <Extensions>vert;frag;comp;geom;glsl;spv</Extensions>
@@ -117,6 +123,204 @@
     </ClCompile>
     <ClCompile Include="src\Loaders\Slpk\I3SLayer.cpp">
       <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Loaders\Slpk\I3SGeometry.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Loaders\Slpk\I3STexture.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\attributes\attribute_octahedron_transform.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\attributes\attribute_quantization_transform.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\attributes\attribute_transform.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\attributes\geometry_attribute.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\attributes\point_attribute.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\attributes\attributes_decoder.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\attributes\kd_tree_attributes_decoder.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\attributes\sequential_attribute_decoder.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\attributes\sequential_attribute_decoders_controller.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\attributes\sequential_integer_attribute_decoder.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\attributes\sequential_normal_attribute_decoder.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\attributes\sequential_quantization_attribute_decoder.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\bit_coders\adaptive_rans_bit_decoder.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\bit_coders\adaptive_rans_bit_encoder.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\bit_coders\direct_bit_decoder.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\bit_coders\direct_bit_encoder.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\bit_coders\rans_bit_decoder.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\bit_coders\rans_bit_encoder.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\bit_coders\symbol_bit_decoder.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\bit_coders\symbol_bit_encoder.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\decode.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\draco_compression_options.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\entropy\shannon_entropy.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\entropy\symbol_decoding.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\entropy\symbol_encoding.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\mesh\mesh_decoder.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\mesh\mesh_edgebreaker_decoder.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\mesh\mesh_edgebreaker_decoder_impl.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\mesh\mesh_sequential_decoder.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\point_cloud\algorithms\dynamic_integer_points_kd_tree_decoder.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\point_cloud\algorithms\float_points_tree_decoder.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\point_cloud\point_cloud_decoder.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\point_cloud\point_cloud_kd_tree_decoder.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\compression\point_cloud\point_cloud_sequential_decoder.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\core\bit_utils.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\core\bounding_box.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\core\cycle_timer.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\core\data_buffer.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\core\decoder_buffer.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\core\divide.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\core\draco_types.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\core\encoder_buffer.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\core\hash_utils.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\core\options.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\core\quantization_utils.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\mesh\corner_table.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\mesh\mesh.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\mesh\mesh_attribute_corner_table.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\mesh\mesh_cleanup.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\mesh\mesh_features.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\mesh\mesh_misc_functions.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\mesh\mesh_splitter.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\mesh\mesh_stripifier.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\mesh\mesh_utils.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\mesh\triangle_soup_mesh_builder.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\metadata\geometry_metadata.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\metadata\metadata.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\metadata\metadata_decoder.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\metadata\property_attribute.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\metadata\property_table.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\metadata\structural_metadata.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\metadata\structural_metadata_schema.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\point_cloud\point_cloud.cc">
+      <Filter>libs\draco</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\draco\point_cloud\point_cloud_builder.cc">
+      <Filter>libs\draco</Filter>
     </ClCompile>
     <ClCompile Include="headers\libs\libdeflate\lib\adler32.c">
       <Filter>Source Files</Filter>
@@ -377,6 +581,435 @@
     </ClInclude>
     <ClInclude Include="headers\Loaders\Slpk\I3SLayer.h">
       <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Loaders\Slpk\I3SGeometry.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Loaders\Slpk\I3STexture.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\attributes\attribute_octahedron_transform.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\attributes\attribute_quantization_transform.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\attributes\attribute_transform.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\attributes\attribute_transform_data.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\attributes\attribute_transform_type.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\attributes\geometry_attribute.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\attributes\geometry_indices.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\attributes\point_attribute.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\attributes_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\attributes_decoder_interface.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\kd_tree_attributes_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\kd_tree_attributes_shared.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\linear_sequencer.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\mesh_attribute_indices_encoding_data.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\normal_compression_utils.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\point_d_vector.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\points_sequencer.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\prediction_schemes\mesh_prediction_scheme_constrained_multi_parallelogram_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\prediction_schemes\mesh_prediction_scheme_constrained_multi_parallelogram_shared.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\prediction_schemes\mesh_prediction_scheme_data.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\prediction_schemes\mesh_prediction_scheme_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\prediction_schemes\mesh_prediction_scheme_geometric_normal_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\prediction_schemes\mesh_prediction_scheme_geometric_normal_predictor_area.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\prediction_schemes\mesh_prediction_scheme_geometric_normal_predictor_base.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\prediction_schemes\mesh_prediction_scheme_multi_parallelogram_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\prediction_schemes\mesh_prediction_scheme_parallelogram_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\prediction_schemes\mesh_prediction_scheme_parallelogram_encoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\prediction_schemes\mesh_prediction_scheme_parallelogram_shared.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\prediction_schemes\mesh_prediction_scheme_tex_coords_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\prediction_schemes\mesh_prediction_scheme_tex_coords_portable_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\prediction_schemes\mesh_prediction_scheme_tex_coords_portable_predictor.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\prediction_schemes\prediction_scheme_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\prediction_schemes\prediction_scheme_decoder_factory.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\prediction_schemes\prediction_scheme_decoder_interface.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\prediction_schemes\prediction_scheme_decoding_transform.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\prediction_schemes\prediction_scheme_delta_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\prediction_schemes\prediction_scheme_factory.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\prediction_schemes\prediction_scheme_interface.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\prediction_schemes\prediction_scheme_normal_octahedron_canonicalized_decoding_transform.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\prediction_schemes\prediction_scheme_normal_octahedron_canonicalized_transform_base.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\prediction_schemes\prediction_scheme_normal_octahedron_decoding_transform.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\prediction_schemes\prediction_scheme_normal_octahedron_transform_base.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\prediction_schemes\prediction_scheme_wrap_decoding_transform.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\prediction_schemes\prediction_scheme_wrap_transform_base.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\sequential_attribute_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\sequential_attribute_decoders_controller.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\sequential_integer_attribute_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\sequential_normal_attribute_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\attributes\sequential_quantization_attribute_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\bit_coders\adaptive_rans_bit_coding_shared.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\bit_coders\adaptive_rans_bit_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\bit_coders\adaptive_rans_bit_encoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\bit_coders\direct_bit_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\bit_coders\direct_bit_encoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\bit_coders\folded_integer_bit_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\bit_coders\folded_integer_bit_encoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\bit_coders\rans_bit_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\bit_coders\rans_bit_encoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\bit_coders\symbol_bit_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\bit_coders\symbol_bit_encoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\config\compression_shared.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\config\decoder_options.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\config\draco_options.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\decode.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\draco_compression_options.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\entropy\ans.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\entropy\rans_symbol_coding.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\entropy\rans_symbol_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\entropy\rans_symbol_encoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\entropy\shannon_entropy.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\entropy\symbol_decoding.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\entropy\symbol_encoding.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\mesh\mesh_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\mesh\mesh_edgebreaker_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\mesh\mesh_edgebreaker_decoder_impl.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\mesh\mesh_edgebreaker_decoder_impl_interface.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\mesh\mesh_edgebreaker_shared.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\mesh\mesh_edgebreaker_traversal_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\mesh\mesh_edgebreaker_traversal_predictive_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\mesh\mesh_edgebreaker_traversal_valence_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\mesh\mesh_sequential_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\mesh\traverser\depth_first_traverser.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\mesh\traverser\max_prediction_degree_traverser.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\mesh\traverser\mesh_attribute_indices_encoding_observer.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\mesh\traverser\mesh_traversal_sequencer.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\mesh\traverser\traverser_base.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\point_cloud\algorithms\dynamic_integer_points_kd_tree_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\point_cloud\algorithms\float_points_tree_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\point_cloud\algorithms\point_cloud_compression_method.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\point_cloud\algorithms\point_cloud_types.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\point_cloud\algorithms\quantize_points_3.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\point_cloud\algorithms\queuing_policy.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\point_cloud\point_cloud_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\point_cloud\point_cloud_kd_tree_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\compression\point_cloud\point_cloud_sequential_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\core\bit_utils.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\core\bounding_box.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\core\constants.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\core\cycle_timer.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\core\data_buffer.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\core\decoder_buffer.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\core\divide.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\core\draco_index_type.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\core\draco_index_type_vector.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\core\draco_types.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\core\draco_version.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\core\encoder_buffer.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\core\hash_utils.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\core\macros.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\core\math_utils.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\core\options.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\core\quantization_utils.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\core\status.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\core\status_or.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\core\varint_decoding.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\core\varint_encoding.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\core\vector_d.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\draco_features.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\mesh\corner_table.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\mesh\corner_table_iterators.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\mesh\mesh.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\mesh\mesh_attribute_corner_table.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\mesh\mesh_cleanup.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\mesh\mesh_connected_components.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\mesh\mesh_features.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\mesh\mesh_indices.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\mesh\mesh_misc_functions.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\mesh\mesh_splitter.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\mesh\mesh_stripifier.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\mesh\mesh_utils.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\mesh\triangle_soup_mesh_builder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\mesh\valence_cache.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\metadata\geometry_metadata.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\metadata\metadata.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\metadata\metadata_decoder.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\metadata\property_attribute.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\metadata\property_table.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\metadata\structural_metadata.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\metadata\structural_metadata_schema.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\point_cloud\point_cloud.h">
+      <Filter>libs\draco</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\draco\point_cloud\point_cloud_builder.h">
+      <Filter>libs\draco</Filter>
     </ClInclude>
     <ClInclude Include="headers\Scene\I3SSceneLayer.h">
       <Filter>Header Files</Filter>

@@ -18,10 +18,11 @@ them onto the window.
 
   (From the loaders.gl test suite, github.com/visgl/loaders.gl.)
 
-## Synthetic packages (v1.6 mesh + PCSL 2.0)
+## Synthetic packages (v1.6 mesh, v1.7 textured mesh, PCSL 2.0)
 
-No small public v1.6 or point-cloud `.slpk` could be found for download, so
-those parser paths are covered by spec-faithful generated packages:
+No small public v1.6 / textured / point-cloud `.slpk` could be found for
+download, so those parser + decoder paths are covered by spec-faithful
+generated packages:
 
 ```
 python3 make_synthetic_slpk.py .
@@ -31,7 +32,15 @@ writes
 
 - **synthetic_16_object.slpk** — v1.6 3DObject: `store.rootNode` +
   per-node `3dNodeIndexDocument.json.gz` tree, root bounds from MBS (no
-  OBB), no hash index → exercises the central-directory fallback.
+  OBB), no hash index → exercises the central-directory fallback. Since M1
+  it carries REAL raw geometry (header + PerAttributeArray streams with
+  degree deltas, per-feature id/faceRange), per-node
+  `shared/sharedResource.json` materials, and PNG textures (extensionless
+  1.6 hrefs).
+- **synthetic_17_textured.slpk** — v1.7 3DObject with a RAW-ONLY geometry
+  buffer (offset-8 header) + glTF-style `materialDefinitions` + PNG
+  `textureSetDefinitions`: covers the 1.7 legacy-buffer decode + texture +
+  material path (DA12 covers draco but has no textures).
 - **synthetic_pcsl20.slpk** — PCSL 2.0 point cloud: `store.index` paging
   (4 nodes/page → multi-page), implicit `firstChild`/`childCount` ranges,
   hash index written the ArcGIS way (md5 of stored path, last entry).

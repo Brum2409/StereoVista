@@ -68,6 +68,45 @@ void drawLayerInspector(Services& services, scene::I3SSceneLayer& layer,
         return; // layer reference is dead
     }
 
+    // ---- geometry rendering (M1) ----
+    if (layer.rendersGeometry()) {
+        ImGui::SeparatorText("Geometry");
+        ImGui::Checkbox("Render geometry", &layer.showGeometry);
+        if (layer.showGeometry) {
+            ImGui::SetNextItemWidth(160.0f);
+            ImGui::SliderFloat("Quality", &layer.lodScale, 0.1f, 4.0f, "%.2fx",
+                               ImGuiSliderFlags_Logarithmic);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Screen-space-error scale: higher = finer LOD "
+                                  "cut, more nodes resident.");
+            ImGui::SetNextItemWidth(160.0f);
+            ImGui::SliderInt("Node budget", &layer.budgetMaxNodes, 64, 32768, "%d",
+                             ImGuiSliderFlags_Logarithmic);
+            ImGui::SetNextItemWidth(160.0f);
+            ImGui::SliderInt("VRAM budget (MB)", &layer.budgetGpuMB, 128, 8192,
+                             "%d", ImGuiSliderFlags_Logarithmic);
+
+            const scene::I3SSceneLayer::Stats stats = layer.stats();
+            ImGui::Text("%u drawn | %u resident | %u decoding | %u failed",
+                        stats.drawnLastFrame, stats.resident, stats.decoding,
+                        stats.failed);
+            ImGui::Text("GPU %.1f MB | CPU queue %.1f MB",
+                        double(stats.gpuBytes) / (1024.0 * 1024.0),
+                        double(stats.cpuPendingBytes) / (1024.0 * 1024.0));
+        }
+        if (layer.pickedNode >= 0 &&
+            layer.pickedNode < int(layer.tree.nodes.size())) {
+            const i3s::NodeInfo& picked = layer.tree.nodes[layer.pickedNode];
+            ImGui::SeparatorText("Picked node");
+            ImGui::Text("node %d, level %u", layer.pickedNode, unsigned(picked.level));
+            ImGui::Text("%llu vertices, %llu features",
+                        static_cast<unsigned long long>(picked.mesh.vertexCount),
+                        static_cast<unsigned long long>(picked.mesh.featureCount));
+            if (!picked.v16Id.empty())
+                ImGui::Text("id: %s", picked.v16Id.c_str());
+        }
+    }
+
     // ---- bounding-volume display (the M0 inspector view) ----
     ImGui::SeparatorText("Bounding volumes");
     ImGui::Checkbox("Show OBBs", &layer.showObbs);
@@ -114,41 +153,63 @@ void drawLayerInspector(Services& services, scene::I3SSceneLayer& layer,
         ImGui::TreePop();
     }
     if (ImGui::TreeNode("Resources")) {
-        if (!info.geometryDefs.empty()) {
-            for (size_t g = 0; g < info.geometryDefs.size(); ++g) {
-                const i3s::GeometryDefinition& def = info.geometryDefs[g];
-                ImGui::Text("geometry %zu:%s%s%s%s%s%s%s", g,
-                            def.hasCompressed ? " draco" : "",
-                            def.hasRaw ? " raw" : "",
-                            def.hasNormal ? " normal" : "",
-                            def.hasUv0 ? " uv0" : "",
-                            def.hasColor ? " color" : "",
-                            def.hasUvRegion ? " uvRegion" : "",
-                            def.hasFeatureId ? " featureId" : "");
+        for (size_t g = 0; g < info.geometryDefs.size(); ++g) {
+            const i3s::GeometryDefinition& def = info.geometryDefs[g];
+            std::string buffers;
+            for (const i3s::GeometryBufferDesc& b : def.buffers) {
+                if (!buffers.empty())
+                    buffers += " | ";
+                if (b.compressed) {
+                    buffers += "draco(";
+                    for (size_t a = 0; a < b.compressedAttributes.size(); ++a) {
+                        if (a)
+                            buffers += ",";
+                        buffers += b.compressedAttributes[a];
+                    }
+                    buffers += ")";
+                } else {
+                    buffers += "raw(";
+                    bool first = true;
+                    for (const i3s::GeometryStream& s : b.streams) {
+                        if (!first)
+                            buffers += ",";
+                        first = false;
+                        switch (s.semantic) {
+                        case i3s::VertexSemantic::Position: buffers += "pos"; break;
+                        case i3s::VertexSemantic::Normal: buffers += "normal"; break;
+                        case i3s::VertexSemantic::Uv0: buffers += "uv0"; break;
+                        case i3s::VertexSemantic::Color: buffers += "color"; break;
+                        case i3s::VertexSemantic::UvRegion: buffers += "uvRegion"; break;
+                        case i3s::VertexSemantic::FeatureId: buffers += "featureId"; break;
+                        case i3s::VertexSemantic::FaceRange: buffers += "faceRange"; break;
+                        default: buffers += "?"; break;
+                        }
+                    }
+                    buffers += ")";
+                }
             }
-        } else if (!info.version.empty() && info.versionMajor == 1 &&
-                   info.versionMinor <= 6) {
-            ImGui::TextUnformatted("geometry: 1.6 defaultGeometrySchema");
+            ImGui::Text("geometry %zu: %s", g, buffers.c_str());
         }
         for (size_t t = 0; t < info.textureSets.size(); ++t) {
             const i3s::TextureSetDefinition& set = info.textureSets[t];
             std::string formats;
-            for (const std::string& f : set.formats) {
+            for (const i3s::TextureFormat& f : set.formats) {
                 if (!formats.empty())
                     formats += ", ";
-                formats += f;
+                formats += f.name.empty() ? f.format : (f.name + "." + f.format);
             }
             ImGui::Text("textureSet %zu: %s%s", t, formats.c_str(),
                         set.atlas ? " (atlas)" : "");
         }
         if (!info.textureEncodingSummary.empty())
             ImGui::Text("textures (1.6): %s", info.textureEncodingSummary.c_str());
-        ImGui::Text("%zu material definition(s)%s", info.materialCount,
+        ImGui::Text("%zu material definition(s)%s", info.materials.size(),
                     info.hasStatistics ? ", statistics present" : "");
         ImGui::TreePop();
     }
 
-    ImGui::TextDisabled("Geometry rendering lands with milestone M1.");
+    if (info.type == i3s::LayerType::PointCloud)
+        ImGui::TextDisabled("Point-cloud rendering lands with milestone M3.");
 }
 
 } // namespace

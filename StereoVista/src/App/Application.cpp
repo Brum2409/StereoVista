@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cfloat>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -295,6 +296,10 @@ public:
     size_t slpkLoadsInFlight() const override { return app_.slpkJobs_.size(); }
     void frameI3SLayer(size_t index) override { app_.frameI3SLayer(index); }
     void unloadI3SLayer(size_t index) override {
+        // The layer owns live MeshBuffers/textures an in-flight frame may
+        // still reference; unload is rare, so a full device wait is the
+        // simple safe answer (same class of hitch as a swapchain rebuild).
+        app_.device_.waitIdle();
         if (index >= app_.scene_.i3sLayers.size())
             return;
         app_.scene_.i3sLayers.erase(app_.scene_.i3sLayers.begin() +
@@ -1151,6 +1156,14 @@ void Application::buildFrameSubmission(renderer::FrameSubmission& submission) co
         }
     }
 
+    // ---- SLPK/I3S layers (M1): SSE traversal -> DrawItems ----
+    // The traversal mutates per-layer selection state (hysteresis, load
+    // requests) — reached through the unique_ptr, which is why this stays
+    // legal in a const method. XR reuses the desktop camera for selection.
+    for (const std::unique_ptr<scene::I3SSceneLayer>& layer : scene_.i3sLayers)
+        if (layer)
+            layer->submitDraws(submission, swapchain_.extent().height);
+
     submission.pointLights.clear();
     submission.pointLights.reserve(scene_.pointLights.size());
     for (const scene::PointLight& light : scene_.pointLights) {
@@ -1262,9 +1275,11 @@ void Application::run() {
         window_.pollEvents();
 
         // Drag-dropped files + finished SLPK worker parses (both main-thread,
-        // CPU-only; new layers are adopted into the scene here).
+        // CPU-only; new layers are adopted into the scene here). The I3S pump
+        // then turns decoded node payloads into GPU residency under a budget.
         handleDroppedFiles();
         pumpSlpkLoads();
+        pumpI3SLayers();
 
         const double now = glfwGetTime();
         const float dt = std::min(float(now - lastFrameTime_), 0.1f);
@@ -1515,8 +1530,29 @@ void Application::pumpSlpkLoads() {
                       " levels (v" + layer->info.version + ")",
                   Plugins::ToastLevel::Success);
         scene_.i3sLayers.push_back(std::move(layer));
+        scene_.i3sLayers.back()->startStreaming(); // M1: spawn decode workers
         scene_.computeWorldBounds();
         frameI3SLayer(scene_.i3sLayers.size() - 1);
+    }
+}
+
+void Application::pumpI3SLayers() {
+    // ONE frame budget for GPU creates across all layers (MeshBuffer::create
+    // and Texture::upload block on immediateSubmit — bounded per frame so
+    // loading never owns the frame).
+    constexpr double kBudgetMs = 5.0;
+    const auto start = std::chrono::steady_clock::now();
+    for (const std::unique_ptr<scene::I3SSceneLayer>& layer : scene_.i3sLayers) {
+        if (!layer)
+            continue;
+        const double elapsed =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                      start)
+                .count();
+        if (elapsed < kBudgetMs)
+            layer->pumpGpuCreates(device_, renderer_.materials(), kBudgetMs - elapsed);
+        for (const std::string& warning : layer->drainWarnings())
+            pushToast(warning, Plugins::ToastLevel::Warning);
     }
 }
 
@@ -1645,12 +1681,28 @@ void Application::shutdown() {
 void Application::performSelectionClick() {
     // clickCursorWorld_ is the exact surface point the GPU depth pick reported
     // under the press (empty space -> clear the selection).
+    for (const std::unique_ptr<scene::I3SSceneLayer>& layer : scene_.i3sLayers)
+        if (layer)
+            layer->pickedNode = -1;
     if (!clickCursorValid_) {
         selection_ = Selection{};
         return;
     }
     scene::RayHit hit;
     if (!scene::pickModelAtPoint(scene_, clickCursorWorld_, hit)) {
+        // M1 I3S picking: the depth-picked surface point resolves to the
+        // deepest node drawn this frame whose OBB contains it. Node-level
+        // info shows in the Scene Layers panel (exact per-feature picking is
+        // the M4 attribute work).
+        for (const std::unique_ptr<scene::I3SSceneLayer>& layer : scene_.i3sLayers) {
+            if (!layer || !layer->visible || !layer->showGeometry)
+                continue;
+            const int node = layer->pickNodeAt(clickCursorWorld_);
+            if (node >= 0) {
+                layer->pickedNode = node;
+                break;
+            }
+        }
         selection_ = Selection{};
         return;
     }
