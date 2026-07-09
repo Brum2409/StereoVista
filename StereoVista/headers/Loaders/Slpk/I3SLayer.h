@@ -44,6 +44,13 @@ public:
     static bool parse16SharedResource(const SlpkArchive& archive,
                                       const I3SNodeTree& tree, LayerInfo& info,
                                       std::string& error);
+
+    // Reads statistics/<key>.json(.gz) — layer-wide min/max plus, for
+    // classification attributes, labels and the values actually present
+    // (M3: ramp bounds + palette defaults). Missing statistics are not an
+    // error: returns false with error empty; out.valid stays false.
+    static bool loadStatistics(const SlpkArchive& archive, const std::string& key,
+                               AttributeStatistics& out, std::string& error);
 };
 
 } // namespace i3s

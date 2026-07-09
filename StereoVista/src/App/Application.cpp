@@ -1163,14 +1163,6 @@ void Application::buildFrameSubmission(renderer::FrameSubmission& submission) co
         }
     }
 
-    // ---- SLPK/I3S layers (M1): SSE traversal -> DrawItems ----
-    // The traversal mutates per-layer selection state (hysteresis, load
-    // requests) — reached through the unique_ptr, which is why this stays
-    // legal in a const method. XR reuses the desktop camera for selection.
-    for (const std::unique_ptr<scene::I3SSceneLayer>& layer : scene_.i3sLayers)
-        if (layer)
-            layer->submitDraws(submission, swapchain_.extent().height);
-
     submission.pointLights.clear();
     submission.pointLights.reserve(scene_.pointLights.size());
     for (const scene::PointLight& light : scene_.pointLights) {
@@ -1214,6 +1206,16 @@ void Application::buildFrameSubmission(renderer::FrameSubmission& submission) co
     submission.pointCloudSettings.hqsThreshold = settings_.pointCloud.hqsThreshold;
     submission.pointCloudSettings.splatMaxRadius =
         settings_.pointCloud.splatEnabled ? settings_.pointCloud.splatMaxRadius : 0;
+
+    // ---- SLPK/I3S layers: SSE traversal -> DrawItems (M1) and pool-backed
+    // PointCloudDrawItems (M3). Runs AFTER the draws/pointClouds vectors are
+    // (re)built above — the layers append to both. The traversal mutates
+    // per-layer selection state (hysteresis, load requests) — reached through
+    // the unique_ptr, which is why this stays legal in a const method. XR
+    // reuses the desktop camera for selection.
+    for (const std::unique_ptr<scene::I3SSceneLayer>& layer : scene_.i3sLayers)
+        if (layer)
+            layer->submitDraws(submission, swapchain_.extent().height);
 
     // Section/clip planes from the tool (applied whenever enabled planes exist,
     // regardless of the tool's editing mode). Kept side: dot(n,p)+d >= 0.

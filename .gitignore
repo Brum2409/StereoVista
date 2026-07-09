@@ -113,3 +113,4 @@ StereoVista/imgui.ini
 !/StereoVista/testdata/README.md
 !/StereoVista/testdata/make_synthetic_slpk.py
 !/StereoVista/testdata/make_ktx2_testdata.py
+!/StereoVista/testdata/make_lepcc_blobs.cpp

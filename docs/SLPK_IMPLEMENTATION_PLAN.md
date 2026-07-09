@@ -460,26 +460,100 @@ Everything in §6 (design details below). Task list:
       `encoding` field ("lepcc-rgb"/"lepcc-intensity"/"embedded-elevation").
       gcc compile-checked + line-reviewed; runtime-validate together with the
       pool work below (sample package in testdata/README.md).)*
-- [ ] Pool residency: ONE `PointCloudGpu` per PCSL layer sized from layer
-      metadata (or a few pools of fixed capacity); each resident node owns a
-      segment of points + its `ComputeBatch` entries. Node quantization: reuse
-      the existing 30-bit relative encoding — encode against the node OBB,
-      batch carries the node→anchor transform (check
-      `Engine::ComputeBatch`/`pointcloud_types.h` for the exact fields — the
-      LAS path already does per-batch bounds).
-- [ ] Traversal (same SSE machinery, `pointsPerMeter`-style density metric per
-      spec) flips node visibility by **rebuilding the compacted ComputeBatch
-      array** and ring-uploading it (32 B × batches — trivial) + updating
-      `PointCloudDrawItem::numBatches`.
-- [ ] Colorization: RGB / intensity ramp / classification palette /
-      elevation ramp; bounds from the layer statistics JSON; palette editable
-      in the SLPK tab. (RGBA channel already carries intensity in A — class
-      code needs a per-point byte: add a 6th section to the pool buffer,
-      shader change gated on a flag — mirror how HQS flags work in
-      `pointcloud_common.glsl`.)
+- [x] Pool residency: ONE `PointCloudGpu` per PCSL layer (panel-sized, default
+      8 M points ≈ 130 MB), allocated in fixed **2048-point pages** — one
+      `ComputeBatch` per page, so allocation is an O(1) free-list with zero
+      fragmentation (a node = ceil(points/2048) pages, its last page partial
+      via `numPoints`). Quantization (the LAS 30-bit three-tier encoding,
+      against each page's own AABB in **layer anchor space**, model =
+      identity) happens on the DECODE WORKER; the pump only copies bytes
+      through the ring. Evicted pages retire on the frame timeline before
+      reuse (a still-in-flight batch array may reference them).
+- [x] Traversal: the M2 machinery as-is + the real `density-threshold` metric
+      (spec: lodThreshold = effective 2D area; split when screen density
+      `pointCount / (area·(px/m)²)` drops under a panel-set target, default
+      0.25 pt/px²; metric normalized so wantSplit compares against 1).
+      Visibility flips rebuild the compacted batch array — **ring-uploaded
+      into a ping-ponged half** of a double-sized batches section, because
+      the ring flush has no barrier against the previous frame's reads (see
+      M3 field notes).
+- [x] Colorization: RGB / intensity ramp / classification palette / elevation
+      ramp, bounds seeded from `statistics/<key>.json.gz`
+      (`I3SLayer::loadStatistics`, incl. class labels), palette editable in
+      the Scene Layers panel. **Improved on the plan: baked CPU-side** into
+      the existing rgba section at upload (workers keep compact per-point
+      columns resident, ~8 B/pt CPU); mode/palette edits re-bake + re-upload
+      progressively. No 6th buffer section, no shader/dispatch-struct changes
+      — deliberate: the freshly perf-tuned lookup pass never sees positions,
+      so an elevation mode could not be shader-side anyway (field notes).
 - [ ] 🧪 Gate: a large PCSL (≥ 100 M points) roams out-of-core at full frame
       rate with HQS on; classification palette matches ArcGIS defaults;
       VRAM flat while roaming. Commit: `M3: I3S point cloud layers`.
+      *(Code complete + harness/compile-checked — awaiting the owner's
+      Windows run; exact steps are in the M3 commit message. SMALL_AUTZEN +
+      a 7-node synthetic with REAL lepcc blobs decode-validate under
+      ASan/UBSan; the Vulkan-side TUs are gcc object-checked.)*
+
+#### M3 field notes (reality vs. plan — read before M4)
+
+- **PCSL LOD semantics are REPLACEMENT, like meshes.** Every node — interior
+  included — carries a subsampled point set ("threshold to split a parent
+  node into its children", i3s-spec `index.pcsl.md`), so the M2 frontier-cut
+  traversal (hysteresis, coverable/never-a-hole, prefetch) applies untouched;
+  only `nodeMetric` gained the density case. The metric is self-normalized
+  (`densityTarget · lodThreshold · (screenFactor/dist)² / pointCount`, > 1 ⇒
+  split) because the comparison target is the CLIENT's density, not the
+  node's threshold; nodes without `vertexCount` fall back to a
+  512-px-projected-diameter split.
+- **Pool = fixed 2048-point pages, one ComputeBatch each.** Beats the plan's
+  "segment per node": allocation/eviction is a page free-list (no
+  fragmentation, no compaction), page bounds stay tight per 2048 points
+  (better GPU frustum culling than node-sized batches), and
+  `pointsPerThread` is 16 instead of 80. Cost: ≤ 2047 points of internal
+  fragmentation per node (~4% at ArcGIS-typical ~8 k-point nodes).
+- **Colorization is CPU-baked, not shader-side.** The plan's "6th section +
+  shader flag" was dropped after reading the pipeline: the standard path's
+  colour-lookup pass resolves `rgba[index]` per PIXEL and never decodes
+  positions, so the elevation ramp cannot be computed there at all — and the
+  six point shaders were just perf-tuned (restrict/alignment, commit
+  44a2e6a); adding fields to the 400-byte dispatch struct repads all of
+  them. Instead resident nodes keep compact columns (rgb 3 B + intensity
+  2 B + class 1 B + quantized app-Y 2 B per point) and a
+  `recolorEpoch_`-gated pump stage re-bakes + ring-uploads rgba pages
+  (budgeted; HUD shows the backlog). Alpha still carries normalized
+  intensity like the LAS path.
+- **Two cross-frame GPU-write hazards, one fixed structurally, one accepted:**
+  the ring flush barriers transfers only against LATER same-frame work, and
+  queue submissions may overlap, so (a) the compacted batch array writes
+  into a **ping-ponged half** of a 2× batches section — the rewritten half
+  was last read two submissions ago, which `Renderer::beginFrameSlot`'s
+  frame-slot wait has retired (a torn batch read could produce out-of-range
+  `firstPoint` BDA reads — not acceptable); (b) rgba recolors of live pages
+  can tear for ONE frame (colors only, self-correcting — accepted and
+  commented). Page reuse after eviction was timeline-gated from the start
+  (`pageGraveyard_`).
+- **`stats.max` in real ArcGIS statistics can be a rounded bin bound**: 
+  SMALL_AUTZEN declares intensity max 240 while the true decoded max is 238
+  — the histogram, not min/max, is the exact ground truth (the harness now
+  checks the decoded intensity histogram bin-for-bin against the package's
+  statistics). Treat statistics-seeded ramp bounds as display defaults, not
+  invariants.
+- **SMALL_AUTZEN is PCSL 2.0 with 1.x-style naming** (`.bin.pccxyz` /
+  `.pccint` LEPCC tags, gzipped raw columns) — both naming schemes stay
+  probed. Its layer JSON also ships a `drawingInfo` renderer (elevation
+  stretch stops, class labels in statistics) — parsed labels feed the
+  palette UI; the renderer document itself is still ignored (M4 candidate).
+- **Test coverage:** `synthetic_pcsl20.slpk` now carries REAL LEPCC blobs
+  for all 7 nodes (xyz/rgb/intensity via the vendored encoders — a committed
+  scratch tool `testdata/make_lepcc_blobs.cpp` drives them from
+  `make_synthetic_slpk.py`) plus raw class columns, per-attribute statistics
+  with labels, and a storage-order sidecar
+  (`synthetic_pcsl20.expected.bin`); the harness decodes every node against
+  it (positions < 1 cm through the full app-frame transform, intensity/class
+  bit-exact, RGB within lepcc's clustering tolerance) alongside the M0–M2
+  bar (684 checks green under ASan/UBSan). LEPCC RGB is lossless only up to
+  256 distinct colors per node — the 400-point root exercises the lossy
+  clustering path deliberately.
 
 ### M4 — Tool wins that fall out (each is small; do after M2)
 

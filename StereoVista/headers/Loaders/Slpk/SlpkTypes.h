@@ -71,6 +71,18 @@ struct AttributeField {
     std::string encoding;
 };
 
+// Parsed layer-wide attribute statistics (statistics/<key>.json.gz) — ramp
+// bounds and classification labels for the symbology defaults (M3).
+struct AttributeStatistics {
+    bool valid = false;
+    double min = 0.0;
+    double max = 0.0;
+    // Classification helpers: label strings by value ("2" -> "Ground") and
+    // the values that actually occur (labels + mostFrequentValues, merged).
+    std::vector<std::pair<int, std::string>> classLabels;
+    std::vector<int> presentValues;
+};
+
 // One format alternative of a texture set: file stem + encoding, addressed as
 // "nodes/<resource>/textures/<name>.<format>" in 1.7+ packages.
 struct TextureFormat {

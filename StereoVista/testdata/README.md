@@ -18,12 +18,13 @@ them onto the window.
 
   (From the loaders.gl test suite, github.com/visgl/loaders.gl.)
 
-## Real package (PCSL 1.x, Point Cloud)
+## Real package (PCSL, Point Cloud)
 
 - **SMALL_AUTZEN_LAS_All.slpk** (~10 KB, 106 points, WGS84, single leaf
-  node, LEPCC-encoded xyz + intensity + raw class-code/flag columns —
-  exercises the `.bin.pccxyz`/`.pccint` naming and the lepcc decode path
-  for milestone M3):
+  node, LEPCC-encoded xyz + intensity + raw class-code/flag columns +
+  per-attribute statistics with class labels — a PCSL 2.0 store that uses
+  the 1.x-style `.bin.pccxyz`/`.pccint` blob naming, so it exercises that
+  probe and the lepcc decode path for milestone M3):
 
   ```
   curl -L -o SMALL_AUTZEN_LAS_All.slpk https://raw.githubusercontent.com/Esri/lepcc/master/testData/SMALL_AUTZEN_LAS_All.slpk
@@ -38,7 +39,7 @@ download, so those parser + decoder paths are covered by spec-faithful
 generated packages:
 
 ```
-python3 make_synthetic_slpk.py .
+python3 make_synthetic_slpk.py . [path-to-make_lepcc_blobs]
 ```
 
 writes
@@ -57,6 +58,21 @@ writes
 - **synthetic_pcsl20.slpk** — PCSL 2.0 point cloud: `store.index` paging
   (4 nodes/page → multi-page), implicit `firstChild`/`childCount` ranges,
   hash index written the ArcGIS way (md5 of stored path, last entry).
+  With the optional second argument (M3) every one of the 7 nodes carries
+  **REAL LEPCC xyz/rgb/intensity blobs** + a raw CLASS_CODE column +
+  per-attribute `statistics/<key>.json.gz` (with class labels), and a
+  `synthetic_pcsl20.expected.bin` sidecar records the storage-order point
+  data the harness compares decodes against. Without the tool the package
+  keeps a placeholder blob (parse tests only).
+
+The lepcc encoder tool is the committed `make_lepcc_blobs.cpp`, built ad hoc
+against the vendored lepcc sources (any C++17 compiler; it is a test utility,
+NOT part of the app build / vcxproj):
+
+```
+g++ -O2 -std=c++17 -I ../headers/libs \
+    make_lepcc_blobs.cpp ../headers/libs/lepcc/*.cpp -o make_lepcc_blobs
+```
 
 ## KTX2 / Basis texture test data (M2)
 

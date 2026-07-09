@@ -11,13 +11,23 @@ paths a public sample was not found for:
     (DA12 covers the draco path but has no textures).
   * synthetic_pcsl20.slpk — PCSL 2.0 point cloud, store.index paging,
     implicit firstChild/childCount ranges, WITH a hash index written the way
-    ArcGIS writes it (md5-of-stored-path, sorted, last entry).
+    ArcGIS writes it (md5-of-stored-path, sorted, last entry). With the
+    optional make_lepcc_blobs tool (second argument; see the .cpp next to
+    this script) every node carries REAL LEPCC xyz/rgb/intensity blobs plus
+    a raw CLASS_CODE column and per-attribute statistics, and a
+    synthetic_pcsl20.expected.bin sidecar records the storage-order point
+    data for the harness to compare decodes against. Without the tool the
+    package keeps a placeholder geometry blob (parse tests only).
 Structures follow the Esri i3s-spec 1.6 / 1.7 / PCSL 2.0 docs. Geometry is
 validated by the gcc test harness (see testdata/README.md).
+
+    python3 make_synthetic_slpk.py [outdir] [path-to-make_lepcc_blobs]
 """
-import gzip, hashlib, json, math, os, struct, sys, zipfile, zlib
+import gzip, hashlib, json, math, os, random, struct, subprocess, sys
+import tempfile, zipfile, zlib
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "."
+LEPCC_TOOL = os.path.abspath(sys.argv[2]) if len(sys.argv) > 2 else None
 
 # A city block near Zurich (lon, lat), heights in meters.
 LON, LAT = 8.5417, 47.3769
@@ -421,6 +431,47 @@ def make17_textured():
 
 # ---------------- PCSL 2.0 ----------------
 
+def lepcc_encode(xyz, rgb, intensity, class_codes):
+    """Runs the make_lepcc_blobs tool: returns (xyzBlob, rgbBlob, intBlob,
+    sortedXyz, sortedRgb, sortedIntensity, sortedClass) — the encoder resorts
+    points, so every column and the expected sidecar follow storage order."""
+    n = len(xyz) // 3
+    with tempfile.TemporaryDirectory() as tmp:
+        req = os.path.join(tmp, "in.bin")
+        rsp = os.path.join(tmp, "out.bin")
+        with open(req, "wb") as f:
+            f.write(struct.pack("<I", n))
+            f.write(struct.pack("<%dd" % len(xyz), *xyz))
+            f.write(bytes(rgb))
+            f.write(struct.pack("<%dH" % n, *intensity))
+            f.write(bytes(class_codes))
+        subprocess.run([LEPCC_TOOL, req, rsp], check=True)
+        with open(rsp, "rb") as f:
+            data = f.read()
+    off = 4
+    blobs = []
+    for _ in range(3):
+        size = struct.unpack_from("<I", data, off)[0]
+        off += 4
+        blobs.append(data[off:off + size])
+        off += size
+    sxyz = struct.unpack_from("<%dd" % (n * 3), data, off); off += n * 24
+    srgb = data[off:off + n * 3]; off += n * 3
+    sint = struct.unpack_from("<%dH" % n, data, off); off += n * 2
+    scls = data[off:off + n]
+    return blobs[0], blobs[1], blobs[2], sxyz, srgb, sint, scls
+
+
+def stats_doc(name, values, labels=None):
+    doc = {"attribute": name,
+           "stats": {"min": float(min(values)), "max": float(max(values)),
+                     "count": float(len(values))}}
+    if labels:
+        doc["labels"] = {"labels": [{"value": float(v), "label": s}
+                                    for v, s in labels]}
+    return doc
+
+
 def make_pcsl():
     layer = {
         "id": 0,
@@ -447,9 +498,19 @@ def make_pcsl():
             },
         },
         "attributeStorageInfo": [
-            {"key": "1", "name": "ELEVATION"},
-            {"key": "2", "name": "RGB",
+            {"key": "1", "name": "ELEVATION", "encoding": "embedded-elevation"},
+            {"key": "2", "name": "RGB", "encoding": "lepcc-rgb",
              "attributeValues": {"valueType": "UInt8", "valuesPerElement": 3}},
+            {"key": "4", "name": "INTENSITY", "encoding": "lepcc-intensity",
+             "attributeValues": {"valueType": "UInt16", "valuesPerElement": 1}},
+            {"key": "8", "name": "CLASS_CODE",
+             "attributeValues": {"valueType": "UInt8", "valuesPerElement": 1}},
+        ],
+        "statisticsInfo": [
+            {"key": "1", "name": "ELEVATION", "href": "./statistics/1"},
+            {"key": "2", "name": "RGB", "href": "./statistics/2"},
+            {"key": "4", "name": "INTENSITY", "href": "./statistics/4"},
+            {"key": "8", "name": "CLASS_CODE", "href": "./statistics/8"},
         ],
     }
     # 7 nodes: root(0) -> 1,2,3 ; 1 -> 4,5 ; 2 -> 6   (firstChild/childCount)
@@ -461,24 +522,83 @@ def make_pcsl():
             "childCount": count,
             "obb": obb(res * 15.0, 0, 50, half),
             "vertexCount": vtx,
-            "lodThreshold": 10000.0 / (res + 1),
+            # spec note: effective 2D area; a top-down footprint is plausible
+            "lodThreshold": 4.0 * half[0] * half[1],
         })
-    pnode(0, 1, 3, (400, 400, 100), 100000)
-    pnode(1, 4, 2, (200, 200, 50), 60000)
-    pnode(2, 6, 1, (200, 200, 50), 60000)
-    pnode(3, 0, 0, (200, 200, 50), 50000)
-    pnode(4, 0, 0, (100, 100, 25), 30000)
-    pnode(5, 0, 0, (100, 100, 25), 30000)
-    pnode(6, 0, 0, (100, 100, 25), 30000)
+    # Real (small) point counts when encoding; the old inflated counts stay
+    # for the placeholder package so parse expectations don't depend on the
+    # tool being present.
+    counts = [400, 300, 300, 250, 200, 200, 200] if LEPCC_TOOL else \
+             [100000, 60000, 60000, 50000, 30000, 30000, 30000]
+    pnode(0, 1, 3, (400, 400, 100), counts[0])
+    pnode(1, 4, 2, (200, 200, 50), counts[1])
+    pnode(2, 6, 1, (200, 200, 50), counts[2])
+    pnode(3, 0, 0, (200, 200, 50), counts[3])
+    pnode(4, 0, 0, (100, 100, 25), counts[4])
+    pnode(5, 0, 0, (100, 100, 25), counts[5])
+    pnode(6, 0, 0, (100, 100, 25), counts[6])
 
     entries = [
         ("3dSceneLayer.json.gz", jgz(layer)),
         ("nodepages/0.json.gz", jgz({"nodes": nodes[0:4]})),
         ("nodepages/1.json.gz", jgz({"nodes": nodes[4:7]})),
-        ("nodes/0/geometries/0.bin.gz", gz(b"\x00" * 32)),
     ]
+
+    if not LEPCC_TOOL:
+        entries.append(("nodes/0/geometries/0.bin.gz", gz(b"\x00" * 32)))
+        store_zip(os.path.join(OUT, "synthetic_pcsl20.slpk"), entries,
+                  with_hash_index=True)
+        return
+
+    # Real LEPCC blobs per node (deterministic points inside 0.9x the OBB;
+    # the OBBs are ENU-axis-aligned at the anchor, so the linear deg<->m
+    # approximation keeps everything comfortably inside). Storage naming
+    # covers the 2.0 style: gzip-transparent .bin.gz for EVERY column (the
+    # real SMALL_AUTZEN package covers the 1.x .pccxyz/.pccint tagging).
+    rng = random.Random(0x5EED)
+    sidecar = [struct.pack("<I", len(nodes))]
+    all_int, all_cls = [], []
+    class_values = (1, 2, 3, 6)
+    for node in nodes:
+        n = node["vertexCount"]
+        cx, cy, cz = node["obb"]["center"]
+        hx, hy, hz = node["obb"]["halfSize"]
+        xyz, rgb, intensity, cls = [], [], [], []
+        for i in range(n):
+            xyz += [cx + rng.uniform(-0.9, 0.9) * hx / MLON,
+                    cy + rng.uniform(-0.9, 0.9) * hy / MLAT,
+                    cz + rng.uniform(-0.9, 0.9) * hz]
+            rgb += [(i * 7) % 256, (i * 13) % 256, (i * 29) % 256]
+            intensity.append((i * 37) % 4096)
+            cls.append(class_values[i % len(class_values)])
+        xyzB, rgbB, intB, sxyz, srgb, sint, scls = \
+            lepcc_encode(xyz, rgb, intensity, cls)
+        res = node["resourceId"]
+        entries.append((f"nodes/{res}/geometries/0.bin.gz", gz(xyzB)))
+        entries.append((f"nodes/{res}/attributes/2.bin.gz", gz(rgbB)))
+        entries.append((f"nodes/{res}/attributes/4.bin.gz", gz(intB)))
+        entries.append((f"nodes/{res}/attributes/8.bin.gz", gz(bytes(scls))))
+        all_int += sint
+        all_cls += scls
+        sidecar.append(struct.pack("<II", res, n))
+        sidecar.append(struct.pack("<%dd" % (n * 3), *sxyz))
+        sidecar.append(bytes(srgb))
+        sidecar.append(struct.pack("<%dH" % n, *sint))
+        sidecar.append(bytes(scls))
+
+    entries.append(("statistics/1.json.gz", jgz(stats_doc("ELEVATION",
+                    [0.0, 150.0]))))
+    entries.append(("statistics/2.json.gz", jgz(stats_doc("RGB", [0, 255]))))
+    entries.append(("statistics/4.json.gz", jgz(stats_doc("INTENSITY",
+                    all_int))))
+    entries.append(("statistics/8.json.gz", jgz(stats_doc("CLASS_CODE",
+                    all_cls, labels=[(1, "Unclassified"), (2, "Ground"),
+                                     (3, "Low Vegetation"), (6, "Building")]))))
+
     store_zip(os.path.join(OUT, "synthetic_pcsl20.slpk"), entries,
               with_hash_index=True)
+    with open(os.path.join(OUT, "synthetic_pcsl20.expected.bin"), "wb") as f:
+        f.write(b"".join(sidecar))
 
 
 make16()

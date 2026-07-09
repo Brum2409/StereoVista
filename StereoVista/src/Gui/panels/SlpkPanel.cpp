@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdio>
+#include <cstring>
+#include <vector>
 
 namespace Gui {
 
@@ -66,6 +68,134 @@ void drawLayerInspector(Services& services, scene::I3SSceneLayer& layer,
     if (ImGui::SmallButton("Unload")) {
         services.unloadI3SLayer(index);
         return; // layer reference is dead
+    }
+
+    // ---- point-cloud rendering (M3) ----
+    if (layer.rendersPoints()) {
+        ImGui::SeparatorText("Point cloud");
+        ImGui::Checkbox("Render points", &layer.showGeometry);
+        if (layer.showGeometry) {
+            ImGui::SetNextItemWidth(160.0f);
+            ImGui::SliderFloat("Quality", &layer.lodScale, 0.1f, 4.0f, "%.2fx",
+                               ImGuiSliderFlags_Logarithmic);
+            ImGui::SetNextItemWidth(160.0f);
+            ImGui::SliderFloat("Density (pt/px^2)", &layer.densityTarget, 0.02f,
+                               2.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Screen density the LOD traversal refines "
+                                  "toward (spec suggests ~0.1).");
+            int poolM = layer.budgetPoolPoints / 1000000;
+            ImGui::SetNextItemWidth(160.0f);
+            if (ImGui::SliderInt("Pool (M points)", &poolM, 1, 64, "%d",
+                                 ImGuiSliderFlags_Logarithmic))
+                layer.budgetPoolPoints = poolM * 1000000;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("GPU pool capacity (~16 B/point). Changing "
+                                  "it drops residency and re-streams.");
+
+            // Colorization: modes without data are disabled.
+            static const char* kModeNames[] = { "RGB", "Intensity ramp",
+                                                "Classification", "Elevation" };
+            const bool modeAvailable[4] = { layer.hasRgbColumn,
+                                            layer.hasIntensityColumn,
+                                            layer.hasClassColumn, true };
+            int mode = static_cast<int>(layer.pointColorMode);
+            ImGui::SetNextItemWidth(160.0f);
+            if (ImGui::BeginCombo("Color by", kModeNames[mode])) {
+                for (int m = 0; m < 4; ++m) {
+                    if (!modeAvailable[m])
+                        continue;
+                    if (ImGui::Selectable(kModeNames[m], m == mode) && m != mode) {
+                        layer.pointColorMode =
+                            static_cast<scene::I3SSceneLayer::PointColorMode>(m);
+                        layer.markPointColorsDirty();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            using Mode = scene::I3SSceneLayer::PointColorMode;
+            if (layer.pointColorMode == Mode::Intensity) {
+                float bounds[2] = { layer.intensityRampMin,
+                                    layer.intensityRampMax };
+                ImGui::SetNextItemWidth(160.0f);
+                if (ImGui::DragFloat2("Intensity range", bounds, 1.0f)) {
+                    layer.intensityRampMin = bounds[0];
+                    layer.intensityRampMax = std::max(bounds[1], bounds[0] + 1.0f);
+                    layer.markPointColorsDirty();
+                }
+            }
+            if (layer.pointColorMode == Mode::Elevation) {
+                float bounds[2] = { layer.elevationRampMin,
+                                    layer.elevationRampMax };
+                ImGui::SetNextItemWidth(160.0f);
+                if (ImGui::DragFloat2("Elevation range (m)", bounds, 0.5f)) {
+                    layer.elevationRampMin = bounds[0];
+                    layer.elevationRampMax = std::max(bounds[1], bounds[0] + 0.1f);
+                    layer.markPointColorsDirty();
+                }
+            }
+            if (layer.pointColorMode == Mode::Classification &&
+                ImGui::TreeNode("Palette")) {
+                // Classes actually present (statistics) first; fall back to
+                // the common 0..18 LAS range when no statistics shipped.
+                std::vector<int> values = layer.classStats.presentValues;
+                if (values.empty())
+                    for (int v = 0; v <= 18; ++v)
+                        values.push_back(v);
+                for (int value : values) {
+                    if (value < 0 || value > 255)
+                        continue;
+                    ImGui::PushID(value);
+                    if (ImGui::ColorEdit3("##class",
+                                          &layer.classPalette[value].x,
+                                          ImGuiColorEditFlags_NoInputs))
+                        layer.markPointColorsDirty();
+                    ImGui::SameLine();
+                    const char* label = nullptr;
+                    for (const auto& entry : layer.classStats.classLabels)
+                        if (entry.first == value)
+                            label = entry.second.c_str();
+                    ImGui::Text("%d%s%s", value, label ? " - " : "",
+                                label ? label : "");
+                    ImGui::PopID();
+                }
+                if (ImGui::SmallButton("Reset to defaults")) {
+                    std::memcpy(layer.classPalette,
+                                scene::I3SSceneLayer::defaultClassPalette(),
+                                sizeof(layer.classPalette));
+                    layer.markPointColorsDirty();
+                }
+                ImGui::TreePop();
+            }
+
+            const scene::I3SSceneLayer::Stats stats = layer.stats();
+            ImGui::Text("%u drawn | %u resident | %u staging | %u ready",
+                        stats.drawnLastFrame, stats.resident, stats.staging,
+                        stats.ready);
+            ImGui::Text("%u queued | %u decoding | %u failed", stats.queued,
+                        stats.decoding, stats.failed);
+            ImGui::Text("pool %.1f / %.0f M pts | %.1f M resident | %u batches",
+                        double(stats.poolPointsUsed) / 1e6,
+                        double(stats.poolPointsCapacity) / 1e6,
+                        double(stats.residentPoints) / 1e6, stats.drawnBatches);
+            ImGui::Text("decode %.1f MB/s | upload %.1f MB/s | CPU cache %.1f MB",
+                        double(stats.decodeRateMBs), double(stats.uploadRateMBs),
+                        double(stats.cpuCacheBytes) / (1024.0 * 1024.0));
+            ImGui::Text("evicted %u | cancelled %u | recolor pending %u",
+                        stats.evicted, stats.cancelled, stats.recolorPending);
+            ImGui::Text("ring %.1f / %.0f MB | VRAM %llu / %llu MB",
+                        services.uploadRingUsedMB(), services.uploadRingCapacityMB(),
+                        static_cast<unsigned long long>(stats.deviceUsageMB),
+                        static_cast<unsigned long long>(stats.deviceBudgetMB));
+        }
+        if (layer.pickedNode >= 0 &&
+            layer.pickedNode < int(layer.tree.nodes.size())) {
+            const i3s::NodeInfo& picked = layer.tree.nodes[layer.pickedNode];
+            ImGui::SeparatorText("Picked node");
+            ImGui::Text("node %d, level %u, %llu points", layer.pickedNode,
+                        unsigned(picked.level),
+                        static_cast<unsigned long long>(picked.mesh.vertexCount));
+        }
     }
 
     // ---- geometry rendering + streaming HUD (M1/M2) ----
@@ -228,8 +358,6 @@ void drawLayerInspector(Services& services, scene::I3SSceneLayer& layer,
         ImGui::TreePop();
     }
 
-    if (info.type == i3s::LayerType::PointCloud)
-        ImGui::TextDisabled("Point-cloud rendering lands with milestone M3.");
 }
 
 } // namespace
