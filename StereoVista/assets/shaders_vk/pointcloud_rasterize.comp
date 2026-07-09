@@ -22,8 +22,9 @@
 
 // `coherent` keeps the non-atomic early-reject pre-read below fresh across
 // the workgroup. The GL implementation measured compute 70% SLOWER without it
-// (stale reads let doomed atomics through) — keep it.
-layout(buffer_reference, scalar, buffer_reference_align = 8) coherent buffer PcFramebuffer {
+// (stale reads let doomed atomics through) — keep it. `restrict` is sound:
+// the framebuffer is only ever accessed through this one reference here.
+layout(buffer_reference, scalar, buffer_reference_align = 8) restrict coherent buffer PcFramebuffer {
     uint64_t px[];
 };
 
@@ -31,7 +32,11 @@ layout(buffer_reference, scalar, buffer_reference_align = 8) coherent buffer PcF
 // entry cannot win the pixel, the atomicMin is a guaranteed no-op — skip it
 // and trade one coalesced load for the avoided atomic. On dense/occluded
 // views this culls almost all redundant atomic traffic.
-void pcWritePixel(PcFramebuffer fb, ivec2 p, uint64_t entry) {
+// The reference is constructed HERE (a pointer construct is just a 64-bit
+// copy) instead of passed as a parameter: glslang decorates pointer-typed
+// argument temporaries AliasedPointer, which would defeat the restrict.
+void pcWritePixel(ivec2 p, uint64_t entry) {
+    restrict PcFramebuffer fb = PcFramebuffer(g_d.framebuffer);
     int idx = p.y * g_d.imageWidth + p.x;
     if (entry < fb.px[idx])
         atomicMin(fb.px[idx], entry);
@@ -45,11 +50,9 @@ void pcProcessPoint(ivec2 px, float ndcZ, float viewDepth, int radius, uint inde
     uint hi = (dist24 << 8) | (g_d.cloudID & 0xFFu);
     uint64_t entry = (uint64_t(hi) << 32) | uint64_t(index);
 
-    PcFramebuffer fb = PcFramebuffer(g_d.framebuffer);
-
     if (radius <= 0) {
         // Single-pixel fast path (splatting off / far points).
-        pcWritePixel(fb, clamp(px, ivec2(0), ivec2(g_d.imageWidth - 1, g_d.imageHeight - 1)), entry);
+        pcWritePixel(clamp(px, ivec2(0), ivec2(g_d.imageWidth - 1, g_d.imageHeight - 1)), entry);
         return;
     }
 
@@ -64,7 +67,7 @@ void pcProcessPoint(ivec2 px, float ndcZ, float viewDepth, int radius, uint inde
             ivec2 p = px + ivec2(dx, dy);
             if (p.x < 0 || p.y < 0 || p.x >= g_d.imageWidth || p.y >= g_d.imageHeight)
                 continue;
-            pcWritePixel(fb, p, entry);
+            pcWritePixel(p, entry);
         }
     }
 }

@@ -15,10 +15,10 @@
 
 #include "pointcloud_types.h"
 
-layout(buffer_reference, scalar, buffer_reference_align = 8) readonly buffer PcFramebufferRO {
+layout(buffer_reference, scalar, buffer_reference_align = 8) restrict readonly buffer PcFramebufferRO {
     uint64_t px[];
 };
-layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer PcColorRO {
+layout(buffer_reference, scalar, buffer_reference_align = 4) restrict readonly buffer PcColorRO {
     uint v[];
 };
 
@@ -33,7 +33,7 @@ void main() {
     int pixelID = coord.y * pc.imageWidth + coord.x;
     uint view = uint(gl_ViewIndex);
 
-    PcFramebufferRO fb =
+    restrict PcFramebufferRO fb =
         PcFramebufferRO(pc.framebuffer + uint64_t(view) * uint64_t(pc.pixelsPerView) * 8ul);
     uint64_t entry = fb.px[pixelID];
     if (entry == 0xFFFFFFFFFFFFFFFFUL)
@@ -44,7 +44,7 @@ void main() {
     float dist01 = float(hi >> 8) / 16777215.0;
     gl_FragDepth = 1.0 - dist01; // back to reverse-Z [0,1]
 
-    PcColorRO colors =
+    restrict PcColorRO colors =
         PcColorRO(pc.colorbuffer + uint64_t(view) * uint64_t(pc.pixelsPerView) * 4ul);
     uint rgba = colors.v[pixelID];
     vec3 color = vec3(float(rgba & 0xFFu), float((rgba >> 8) & 0xFFu),

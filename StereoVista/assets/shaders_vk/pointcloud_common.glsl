@@ -30,13 +30,18 @@ layout(local_size_x = SV_PC_RASTER_WORKGROUP, local_size_y = 1, local_size_z = 1
 // Read-only views of the cloud sections. The pass-owned write targets
 // (framebuffer / HQS buffers) are declared by each including shader with the
 // qualifiers it needs (coherent for the early-reject pre-read).
-layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer PcUints {
+// `restrict` everywhere: glslang decorates physical-storage-buffer pointers
+// Aliased by default, which forbids the driver from hoisting these reads
+// across the framebuffer atomics in the hot loop. No two references in any
+// of these shaders touch overlapping memory, so restrict is sound.
+layout(buffer_reference, scalar, buffer_reference_align = 4) restrict readonly buffer PcUints {
     uint v[];
 };
-layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer PcBatches {
+layout(buffer_reference, scalar, buffer_reference_align = 4) restrict readonly buffer PcBatches {
     PointCloudBatch b[];
 };
-layout(buffer_reference, scalar, buffer_reference_align = 8) readonly buffer PcDispatchRef {
+// The dispatch array lives device-local with a 400-byte (16-aligned) stride.
+layout(buffer_reference, scalar, buffer_reference_align = 16) restrict readonly buffer PcDispatchRef {
     PointCloudDispatch d;
 };
 
@@ -169,9 +174,11 @@ void pcMain() {
         splatScale = 0.5 * worldSpacing * modelScale * pxPerUnit;
     }
 
-    PcUints xyz4b = PcUints(g_d.xyz4b);
-    PcUints xyz8b = PcUints(g_d.xyz8b);
-    PcUints xyz12b = PcUints(g_d.xyz12b);
+    // restrict on the locals too: glslang otherwise decorates the pointer
+    // VARIABLES AliasedPointer even when the block type is restrict.
+    restrict PcUints xyz4b = PcUints(g_d.xyz4b);
+    restrict PcUints xyz8b = PcUints(g_d.xyz8b);
+    restrict PcUints xyz12b = PcUints(g_d.xyz12b);
     vec2 imageSize = vec2(float(g_d.imageWidth), float(g_d.imageHeight));
 
     // Strided point loop: thread T reads points T, T+128, ... (coalesced).

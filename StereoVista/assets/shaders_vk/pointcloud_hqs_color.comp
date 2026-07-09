@@ -18,13 +18,13 @@
 
 #include "pointcloud_common.glsl"
 
-layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer PcHqsDepthRO {
+layout(buffer_reference, scalar, buffer_reference_align = 4) restrict readonly buffer PcHqsDepthRO {
     uint v[];
 };
-layout(buffer_reference, scalar, buffer_reference_align = 4) coherent buffer PcHqsAccum {
+layout(buffer_reference, scalar, buffer_reference_align = 4) restrict coherent buffer PcHqsAccum {
     uint v[]; // R,G,B,count interleaved, 4 per pixel
 };
-layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer PcRgbaRO {
+layout(buffer_reference, scalar, buffer_reference_align = 4) restrict readonly buffer PcRgbaRO {
     uint v[];
 };
 
@@ -33,7 +33,7 @@ void pcAccumPixel(int idx, float linearDepth, uint R, uint G, uint B, float thre
     // nothing accumulates — exactly the GL behaviour.
     float nearest = uintBitsToFloat(PcHqsDepthRO(g_d.hqsDepth).v[idx]);
     if (linearDepth <= nearest * threshFactor) {
-        PcHqsAccum accum = PcHqsAccum(g_d.hqsAccum);
+        restrict PcHqsAccum accum = PcHqsAccum(g_d.hqsAccum);
         atomicAdd(accum.v[4 * idx + 0], R);
         atomicAdd(accum.v[4 * idx + 1], G);
         atomicAdd(accum.v[4 * idx + 2], B);
