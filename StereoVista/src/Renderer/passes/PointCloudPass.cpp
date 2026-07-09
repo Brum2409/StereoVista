@@ -103,7 +103,8 @@ void PointCloudPass::init(rhi::Device& device, rhi::ShaderCompiler& shaderCompil
             .setDebugName("pointcloud HQS resolve")
             .build(device);
 
-    dispatchBuffers_.resize(framesInFlight);
+    dispatchStaging_.resize(framesInFlight);
+    dispatchDevice_.resize(framesInFlight);
 
     // Only 65535 workgroups per dispatch dimension are guaranteed; chunk huge
     // clouds (65k batches = 671M points) across several dispatches.
@@ -152,6 +153,7 @@ void PointCloudPass::prepare(const FrameSubmission& submission, uint32_t frameSl
                              VkExtent2D extent, uint32_t viewCount) {
     active_ = false;
     dispatches_.clear();
+    dispatchCopyBytes_ = 0;
 
     std::vector<const PointCloudDrawItem*> clouds;
     clouds.reserve(submission.pointClouds.size());
@@ -200,7 +202,8 @@ void PointCloudPass::prepare(const FrameSubmission& submission, uint32_t frameSl
     const VkDeviceAddress hqsAccumBase =
         hqsAccum_.valid() ? hqsAccum_.deviceAddress() : 0;
 
-    std::vector<gpu::PointCloudDispatch> hostData;
+    std::vector<gpu::PointCloudDispatch>& hostData = hostData_;
+    hostData.clear();
     hostData.reserve(clouds.size() * viewCount_);
 
     for (size_t ci = 0; ci < clouds.size(); ++ci) {
@@ -244,23 +247,38 @@ void PointCloudPass::prepare(const FrameSubmission& submission, uint32_t frameSl
         }
     }
 
-    // Upload the dispatch structs into this slot's HostUpload buffer (the
-    // slot's previous submission has retired — renderFrame waited on the
-    // timeline — so growing/rewriting it is safe).
-    rhi::Buffer& dispatchBuffer = dispatchBuffers_[frameSlot];
+    // Write the dispatch structs into this slot's staging buffer; the shaders
+    // read them from the slot's DEVICE-LOCAL copy (recorded by recordCompute)
+    // — every geometry workgroup loads the whole struct and the lookup pass
+    // dereferences it per pixel, so reading it straight from host-visible
+    // memory would cross PCIe millions of times per frame. Growing/rewriting
+    // the slot's buffers is safe: its previous submission has retired
+    // (renderFrame waited on the timeline).
+    rhi::Buffer& staging = dispatchStaging_[frameSlot];
+    rhi::Buffer& deviceBuf = dispatchDevice_[frameSlot];
     const VkDeviceSize bytes = hostData.size() * sizeof(gpu::PointCloudDispatch);
-    if (!dispatchBuffer.valid() || dispatchBuffer.size() < bytes) {
+    if (!staging.valid() || staging.size() < bytes) {
+        rhi::BufferDesc desc{};
+        desc.size = std::max<VkDeviceSize>(bytes * 2, 16 * 1024);
+        desc.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        desc.memory = rhi::MemoryUsage::HostUpload;
+        desc.debugName = "pointcloud dispatch staging";
+        staging.create(*device_, desc);
+    }
+    if (!deviceBuf.valid() || deviceBuf.size() < bytes) {
         rhi::BufferDesc desc{};
         desc.size = std::max<VkDeviceSize>(bytes * 2, 16 * 1024);
         desc.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                     VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-        desc.memory = rhi::MemoryUsage::HostUpload;
+                     VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT; // + TRANSFER_DST (GpuOnly)
+        desc.memory = rhi::MemoryUsage::GpuOnly;
         desc.debugName = "pointcloud dispatch data";
-        dispatchBuffer.create(*device_, desc);
+        deviceBuf.create(*device_, desc);
     }
-    dispatchBuffer.upload(hostData.data(), bytes);
+    staging.upload(hostData.data(), bytes);
+    preparedSlot_ = frameSlot;
+    dispatchCopyBytes_ = bytes;
 
-    const VkDeviceAddress dispatchBase = dispatchBuffer.deviceAddress();
+    const VkDeviceAddress dispatchBase = deviceBuf.deviceAddress();
     size_t slot = 0;
     for (const PointCloudDrawItem* item : clouds) {
         for (uint32_t v = 0; v < viewCount_; ++v, ++slot) {
@@ -318,6 +336,23 @@ void PointCloudPass::recordCompute(VkCommandBuffer cmd) {
         return;
     beginLabel(cmd, hqsActive_ ? "pointcloud compute (HQS)" : "pointcloud compute");
 
+    // Dispatch data: staging -> device-local. No wait needed before the copy
+    // (the slot's previous submission retired before prepare() rewrote the
+    // staging buffer); the CLEAR|COPY -> COMPUTE barrier below makes it
+    // visible to the dispatches.
+    if (dispatchCopyBytes_ > 0) {
+        VkBufferCopy2 region{};
+        region.sType = VK_STRUCTURE_TYPE_BUFFER_COPY_2;
+        region.size = dispatchCopyBytes_;
+        VkCopyBufferInfo2 copy{};
+        copy.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2;
+        copy.srcBuffer = dispatchStaging_[preparedSlot_].handle();
+        copy.dstBuffer = dispatchDevice_[preparedSlot_].handle();
+        copy.regionCount = 1;
+        copy.pRegions = &region;
+        vkCmdCopyBuffer2(cmd, &copy);
+    }
+
     // The previous frame may still be reading (resolve fragments) or writing
     // (compute) these buffers — order the clears after all of it. Barriers
     // are queue-scoped, so this covers the prior command buffer too.
@@ -337,7 +372,9 @@ void PointCloudPass::recordCompute(VkCommandBuffer cmd) {
         vkCmdFillBuffer(cmd, framebuffer_.handle(), 0, VK_WHOLE_SIZE, 0xFFFFFFFFu);
     }
 
-    memoryBarrier(cmd, VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+    memoryBarrier(cmd,
+                  VK_PIPELINE_STAGE_2_CLEAR_BIT | VK_PIPELINE_STAGE_2_COPY_BIT,
+                  VK_ACCESS_2_TRANSFER_WRITE_BIT,
                   VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                   VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
                       VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
@@ -377,12 +414,16 @@ void PointCloudPass::recordCompute(VkCommandBuffer cmd) {
         // Colour lookup: ONE dispatch per view resolves every pixel against
         // its owning cloud (cloudID -> dispatch-array pointer walk in the
         // shader) — the GL app needed a fullscreen dispatch per cloud here.
+        // 2D grid (shader flattens row-major) so the group count stays under
+        // maxComputeWorkGroupCount[0] even for 8K-class targets.
         lookupPipeline_.bind(cmd);
         const uint32_t groups = (pixelsPerView_ + SV_PC_LOOKUP_WORKGROUP - 1) /
                                 SV_PC_LOOKUP_WORKGROUP;
+        const uint32_t groupsX = std::min(groups, maxGroupsX_);
+        const uint32_t groupsY = (groups + groupsX - 1) / groupsX;
         for (const gpu::PointCloudLookupPush& push : lookupPushes_) {
             lookupPipeline_.pushConstants(cmd, &push, sizeof(push));
-            vkCmdDispatch(cmd, groups, 1, 1);
+            vkCmdDispatch(cmd, groupsX, groupsY, 1);
         }
     }
 
@@ -432,7 +473,8 @@ void PointCloudPass::shutdown() {
     colorbuffer_.destroy();
     hqsDepth_.destroy();
     hqsAccum_.destroy();
-    dispatchBuffers_.clear();
+    dispatchStaging_.clear();
+    dispatchDevice_.clear();
     dispatches_.clear();
     active_ = false;
     device_ = nullptr;

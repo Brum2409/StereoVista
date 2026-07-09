@@ -34,7 +34,9 @@ static_assert(sizeof(OverlayPush) == 64, "OverlayPush layout drifted from GLSL s
 static_assert(sizeof(DepthSunPush) == 64, "DepthSunPush layout drifted");
 static_assert(sizeof(DepthPointPush) == 68, "DepthPointPush layout drifted");
 static_assert(sizeof(PointCloudBatch) == 32, "PointCloudBatch layout drifted from GLSL scalar");
-static_assert(sizeof(PointCloudDispatch) == 392, "PointCloudDispatch layout drifted from GLSL scalar");
+static_assert(sizeof(PointCloudDispatch) == 400, "PointCloudDispatch layout drifted from GLSL scalar");
+static_assert(sizeof(PointCloudDispatch) % 16 == 0,
+              "PointCloudDispatch stride must stay 16-aligned (vector loads)");
 static_assert(sizeof(PointCloudComputePush) == 16, "PointCloudComputePush layout drifted");
 static_assert(sizeof(PointCloudLookupPush) == 32, "PointCloudLookupPush layout drifted");
 static_assert(sizeof(PointCloudResolvePush) == 32, "PointCloudResolvePush layout drifted");

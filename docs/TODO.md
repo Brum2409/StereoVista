@@ -178,6 +178,16 @@ streaming architecture, phases S0–S6 with acceptance gates).
 
 Several were deliberately deferred during the migration — revisit when profiling
 justifies them (add **Tracy** first, below, so decisions are data-driven).
+
+**Done (point-cloud perf fix):** the per-frame `PointCloudDispatch` array used to
+live in HOST-VISIBLE memory and was read through BDA by every geometry workgroup
+(whole 400-byte struct) and by the colour-lookup pass per pixel — uncached PCIe
+traffic in the hottest loops, and the main regression vs the GL uniforms path.
+It is now staged and copied DEVICE-LOCAL at the top of `recordCompute`. The
+point-cloud buffer references are also `restrict` now (glslang otherwise emits
+`AliasedPointer`, blocking load hoisting across the framebuffer atomics), the
+dispatch struct stride is 16-byte aligned (400 B), and the lookup dispatch uses
+a 2D grid so 8K-class targets stay under `maxComputeWorkGroupCount[0]`.
 - ⚡ **Async compute queue** for the point-cloud (and later GI) compute, overlapped
   with graphics via a 2nd queue + timeline. `PointCloudPass::recordCompute` is
   self-contained, so this is localized. Detect a compute family; fall back to graphics.

@@ -19,10 +19,10 @@
 
 #include "pointcloud_types.h"
 
-layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer PcHqsDepthRO {
+layout(buffer_reference, scalar, buffer_reference_align = 4) restrict readonly buffer PcHqsDepthRO {
     uint v[];
 };
-layout(buffer_reference, scalar, buffer_reference_align = 4) readonly buffer PcHqsAccumRO {
+layout(buffer_reference, scalar, buffer_reference_align = 4) restrict readonly buffer PcHqsAccumRO {
     uint v[]; // R,G,B,count interleaved, 4 per pixel
 };
 
@@ -37,7 +37,7 @@ void main() {
     int pixelID = coord.y * pc.imageWidth + coord.x;
     uint view = uint(gl_ViewIndex);
 
-    PcHqsAccumRO accum =
+    restrict PcHqsAccumRO accum =
         PcHqsAccumRO(pc.hqsAccum + uint64_t(view) * uint64_t(pc.pixelsPerView) * 16ul);
     uint count = accum.v[4 * pixelID + 3];
     if (count == 0u)
@@ -48,7 +48,7 @@ void main() {
     uint B = accum.v[4 * pixelID + 2];
     vec3 color = vec3(float(R), float(G), float(B)) / (float(count) * 255.0);
 
-    PcHqsDepthRO depthBuf =
+    restrict PcHqsDepthRO depthBuf =
         PcHqsDepthRO(pc.hqsDepth + uint64_t(view) * uint64_t(pc.pixelsPerView) * 4ul);
     float d = uintBitsToFloat(depthBuf.v[pixelID]); // nearest linear eye depth
     vec2 projAB = pc.projAB[view].xy;

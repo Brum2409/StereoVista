@@ -55,7 +55,8 @@ public:
     void shutdown();
     void onSwapchainRecreated();
 
-    // Builds this frame's dispatch list into the slot's HostUpload buffer.
+    // Builds this frame's dispatch list into the slot's staging buffer
+    // (recordCompute copies it device-local before the dispatches).
     // No-op frame (no visible clouds) leaves the pass inactive.
     void prepare(const FrameSubmission& submission, uint32_t frameSlot,
                  VkExtent2D extent, uint32_t viewCount);
@@ -88,8 +89,15 @@ private:
     rhi::Buffer hqsDepth_;    // uint nearest linear depth bits, sentinel ~0
     rhi::Buffer hqsAccum_;    // uint x4 R,G,B,count
 
-    // Per-frame-in-flight dispatch-data buffers (HostUpload, grown on demand).
-    std::vector<rhi::Buffer> dispatchBuffers_;
+    // Per-frame-in-flight dispatch-data buffers, grown on demand. The
+    // geometry passes read the whole PointCloudDispatch per workgroup and the
+    // lookup pass dereferences it per pixel, so the shaders must NEVER read
+    // it from host-visible memory (PCIe): prepare() writes the staging half,
+    // recordCompute() copies it into the device-local half that every BDA in
+    // the pass points at. Per-slot so growth can recreate a buffer without
+    // racing the previous frame (the slot's last submission has retired).
+    std::vector<rhi::Buffer> dispatchStaging_; // HostUpload, TRANSFER_SRC
+    std::vector<rhi::Buffer> dispatchDevice_;  // GpuOnly, BDA target
 
     // ---- per-frame state written by prepare() ----
     struct DispatchRecord {
@@ -98,10 +106,14 @@ private:
     };
     std::vector<DispatchRecord> dispatches_; // cloud-major, view-minor
     std::vector<gpu::PointCloudLookupPush> lookupPushes_; // one per view
+    std::vector<gpu::PointCloudDispatch> hostData_; // scratch, reused per frame
     bool active_ = false;
     bool hqsActive_ = false;
     uint32_t pixelsPerView_ = 0;
     uint32_t viewCount_ = 1;
+    // Staging -> device dispatch-data copy recorded by recordCompute().
+    uint32_t preparedSlot_ = 0;
+    VkDeviceSize dispatchCopyBytes_ = 0;
     gpu::PointCloudResolvePush resolvePush_{};
     gpu::PointCloudHqsResolvePush hqsResolvePush_{};
 

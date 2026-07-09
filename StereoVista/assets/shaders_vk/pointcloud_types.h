@@ -36,8 +36,13 @@ struct PointCloudBatch {   // 32 bytes
 
 // One (cloud, view) unit of work, shared by the rasterize / HQS depth / HQS
 // color dispatches of that pair and read by the lookup pass. Built per frame
-// by renderer::PointCloudPass into a HostUpload buffer.
-struct PointCloudDispatch { // 392 bytes
+// by renderer::PointCloudPass into a HostUpload staging buffer and copied
+// into a DEVICE-LOCAL array at the top of the frame — every geometry
+// workgroup reads the whole struct and the lookup pass dereferences it per
+// pixel, so these reads must hit VRAM/L2, never host memory across PCIe.
+// sizeof is padded to 400 (multiple of 16) so the mat4/vec4 members of every
+// array element sit on 16-byte addresses (aligned vector loads).
+struct PointCloudDispatch { // 400 bytes
     mat4 mvp;               // proj * view * model of this view
     mat4 modelView;         // view * model (precision-level sphere projection)
     mat4 proj;              // this view's projection (precision level + splat)
@@ -63,6 +68,8 @@ struct PointCloudDispatch { // 392 bytes
     int clipPlaneCount;     // 0..SV_PC_CLIP_PLANES
     float hqsThreshold;     // relative depth window (0.01 = 1%)
     uint pad0;
+    uint pad1;              // pad to 400 bytes: 16-aligned array stride
+    uint pad2;
 };
 
 // Push constants of the three geometry-processing compute passes. baseBatch
