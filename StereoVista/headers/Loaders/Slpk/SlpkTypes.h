@@ -61,6 +61,36 @@ struct SpatialReference {
     }
 };
 
+// Scalar element type of a geometry stream / header field / attribute column.
+// (Declared here, above AttributeField, because the attribute storage
+// description below reuses it.)
+enum class ScalarType : uint8_t {
+    Unknown,
+    Float32, Float64,
+    UInt8, Int8,
+    UInt16, Int16,
+    UInt32, Int32,
+    UInt64, Int64,
+};
+
+inline size_t scalarSize(ScalarType t) {
+    switch (t) {
+    case ScalarType::UInt8: case ScalarType::Int8: return 1;
+    case ScalarType::UInt16: case ScalarType::Int16: return 2;
+    case ScalarType::Float32: case ScalarType::UInt32: case ScalarType::Int32: return 4;
+    case ScalarType::Float64: case ScalarType::UInt64: case ScalarType::Int64: return 8;
+    default: return 0;
+    }
+}
+
+// One leading header field of an attribute column ("count",
+// "attributeValuesByteCount") or of a raw geometry buffer ("vertexCount",
+// "featureCount").
+struct GeometryHeaderField {
+    std::string property;
+    ScalarType type = ScalarType::Unknown;
+};
+
 struct AttributeField {
     std::string key;  // resource key, e.g. "f_3" (mesh) / "2" (PCSL)
     std::string name; // field name, e.g. "OBJECTID"
@@ -69,6 +99,22 @@ struct AttributeField {
     // "embedded-elevation" (no resource; z carries it), or empty for a raw
     // value array.
     std::string encoding;
+
+    // ---- storage description (attributeStorageInfo, M4 column reader) ----
+    // Binary layout of nodes/<resource>/attributes/<key>/0.bin.gz: the header
+    // fields in order, then one section per `ordering` entry. The value
+    // descriptor comes from "attributeValues" or, for the OBJECTID field,
+    // "objectIds" (its section is named "ObjectIds" in `ordering`).
+    std::vector<GeometryHeaderField> header;
+    std::vector<std::string> ordering;      // "attributeValues",
+                                            // "attributeByteCounts", "ObjectIds"
+    ScalarType valueScalar = ScalarType::Unknown; // numeric columns (Oid32 ->
+                                                  // UInt32, Oid64 -> UInt64)
+    uint8_t valuesPerElement = 1;
+    bool valuesAreStrings = false;          // valueType "String" (UTF-8,
+                                            // null-terminated, byte-counted)
+    ScalarType byteCountScalar = ScalarType::Unknown; // attributeByteCounts
+    bool isObjectId = false;                // descriptor was "objectIds"
 };
 
 // Parsed layer-wide attribute statistics (statistics/<key>.json.gz) — ramp
@@ -104,26 +150,6 @@ struct TextureSetDefinition {
 
 // ---- geometry buffer descriptions (M1) --------------------------------------
 
-// Scalar element type of a geometry stream / header field.
-enum class ScalarType : uint8_t {
-    Unknown,
-    Float32, Float64,
-    UInt8, Int8,
-    UInt16, Int16,
-    UInt32, Int32,
-    UInt64, Int64,
-};
-
-inline size_t scalarSize(ScalarType t) {
-    switch (t) {
-    case ScalarType::UInt8: case ScalarType::Int8: return 1;
-    case ScalarType::UInt16: case ScalarType::Int16: return 2;
-    case ScalarType::Float32: case ScalarType::UInt32: case ScalarType::Int32: return 4;
-    case ScalarType::Float64: case ScalarType::UInt64: case ScalarType::Int64: return 8;
-    default: return 0;
-    }
-}
-
 // What a stream in a raw (uncompressed) geometry buffer means.
 enum class VertexSemantic : uint8_t {
     Position, Normal, Uv0, Color, UvRegion,
@@ -139,14 +165,6 @@ struct GeometryStream {
     ScalarType type = ScalarType::Unknown;
     uint8_t components = 0;
     bool perFeature = false;
-};
-
-// One leading header field of a raw buffer (1.6 defaultGeometrySchema.header;
-// 1.7+ raw buffers carry an implicit {vertexCount, featureCount} pair when
-// geometryBuffers[].offset == 8 — normalized into this same form).
-struct GeometryHeaderField {
-    std::string property; // "vertexCount", "featureCount", ...
-    ScalarType type = ScalarType::Unknown;
 };
 
 // One geometryBuffers[] entry (1.7+), or the whole 1.6 defaultGeometrySchema

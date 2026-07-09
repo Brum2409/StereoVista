@@ -398,6 +398,13 @@ void Device::createLogicalDevice() {
     if (!avail.v11.shaderDrawParameters)
         enable11.shaderDrawParameters = VK_FALSE;
 
+    // Optional: line-mode debug pipelines (M4 wireframe inspector). Universal
+    // on desktop GPUs but formally optional — enable when present, fail soft.
+    if (avail.f2.features.fillModeNonSolid) {
+        enable2.features.fillModeNonSolid = VK_TRUE;
+        fillModeNonSolid_ = true;
+    }
+
     std::vector<const char*> extensions;
     extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
     // imgui_impl_vulkan resolves vkCmdBeginRenderingKHR by its KHR alias, so

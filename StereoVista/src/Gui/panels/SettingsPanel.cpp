@@ -195,11 +195,16 @@ void drawRenderingTab(Services& services) {
     }
     helpMarker("Applied at the top of the next frame (never mid-frame).");
 
+    const bool wireSupported = services.wireframeSupported();
+    ImGui::BeginDisabled(!wireSupported);
     bool wireframe = services.settings().render.wireframe;
     if (ImGui::Checkbox("Wireframe", &wireframe))
         services.settings().render.wireframe = wireframe;
-    helpMarker("Stored for later - the Vulkan forward pass has no polygon-mode "
-               "toggle yet (docs/TODO.md).");
+    ImGui::EndDisabled();
+    helpMarker(wireSupported
+                   ? "Draw all scene geometry (models + scene layers) with the "
+                     "line-mode debug pipeline."
+                   : "Unavailable: this GPU lacks the fillModeNonSolid feature.");
 }
 
 // ── Lighting ─────────────────────────────────────────────────────────────────

@@ -150,8 +150,12 @@ I3SGeometry.{h,cpp}     Geometry decode: draco buffer → interleaved
 I3STexture.{h,cpp}      Texture decode: jpg/png via stb (exists) → RGBA8 mips
                         CPU-side; ktx2/basis via transcoder → BC7 mip chain.
                         Output: {VkFormat, extent, mip data spans} — RHI-free.
-I3SAttributes.{h,cpp}   attributeStorageInfo-driven column readers (string /
-                        numeric arrays per node) + layer statistics JSON.
+I3SAttributes.{h,cpp}   attributeStorageInfo-driven column readers (numeric /
+                        OID / UTF-8 string arrays per node, M4). Layer-wide
+                        statistics JSON ended up in I3SLayer::loadStatistics
+                        (M3) — one version-aware parser file, not two.
+SolarPosition.{h,cpp}   NOAA solar position (geolocation + UTC time -> ENU
+                        sun direction) for the daylight tool (M4).
 I3SStreamer.{h,cpp}     M2: thread pool + request lifecycle + caches (§6).
 GeoAnchor.{h,cpp}       WGS84 geodetic↔ECEF↔local-ENU (double precision, ~60
                         lines, no PROJ). anchor = dvec3; nodeLocalToAnchor(
@@ -557,18 +561,101 @@ Everything in §6 (design details below). Task list:
 
 ### M4 — Tool wins that fall out (each is small; do after M2)
 
-- [ ] Clip planes already hit meshes + clouds (`FrameSubmission::clipPlanes`)
-      — verify on I3S draws, add "slice layer" preset in the SLPK tab.
-- [ ] Attribute pop-up: click → feature attributes (M1 picking + M2 attribute
-      cache → small ImGui window). Feature filter/tint-by-attribute via
-      `DrawItem::tint` first (per-node), per-feature mask later.
-- [ ] Daylight: solar position (NOAA formulas, ~40 lines) from layer
-      geolocation + date/time sliders → drive `SunState.direction`.
-- [ ] Measurement/LOS on I3S surfaces: verify `MeasurementTool` +
-      depth-picking work (they should — depth is depth); fix what doesn't.
-- [ ] Inspector v1: wireframe toggle (dynamic polygon mode exists? check
-      `rhi::Pipeline` dynamic state; else a debug pipeline), LOD-level tint,
-      per-node hover info, memory HUD polish.
+- [x] Clip planes already hit meshes + clouds (`FrameSubmission::clipPlanes`)
+      — verified on both paths at code level (mesh.vert `gl_ClipDistance`;
+      `PointCloudPass` transforms planes cloud-local for the compute test) +
+      "Slice layer: X/Y/Z" preset in the Scene Layers panel (seeds
+      `ClipPlaneTool::addAxisAlignedPlane` at the layer center, widens the
+      display quad to layer scale; edit in the Clip Planes panel as usual).
+- [x] Attribute pop-up: click → feature attributes. NEW `i3s::I3SAttributes`
+      reads the per-node columns (`attributeStorageInfo`-driven — numeric /
+      Oid32/64 / byte-counted UTF-8 strings, `ObjectIds` ordering variant,
+      the ArcGIS 8-byte alignment pad — see field notes);
+      `I3SSceneLayer::pickFeatureAt` resolves the feature under the picked
+      point (synchronous node re-decode + closest triangle, cached per node)
+      and the panel shows the OID + name/value table. Feature
+      *filter*/tint-by-attribute is NOT in — needs the per-feature mask,
+      deferred with it (honest cut; `DrawItem::tint` is spent on
+      selection/LOD highlight instead).
+- [x] Daylight: NEW `i3s::SolarPosition` (NOAA formulas) + a per-layer
+      "Daylight" panel section (date / local time / UTC-offset seeded from
+      longitude) driving `settings.lighting.sun` while enabled; sun auto-off
+      below the horizon; azimuth/elevation readout. Geographic layers only.
+- [x] Measurement/LOS on I3S surfaces: code-verified — `MeasurementTool`
+      rides the depth-pick path, which reads the scene depth buffer that I3S
+      draws write like any other draw; nothing needed changing. (Owner
+      confirms visually with the gate below.)
+- [x] Inspector v1: no dynamic polygon mode in the RHI → a line-mode TWIN
+      pipeline in `ForwardPass` behind the optional `fillModeNonSolid`
+      feature (enabled when present; checkboxes gray out otherwise), driven
+      per-draw by NEW `DrawItem::wireframe` — per-layer toggle AND the
+      until-now-dead global `Settings::render.wireframe`. LOD-level tint +
+      picked-node warm highlight ride `DrawItem::tint`; hover info (node
+      under mouse + OBB outline, panel-driven, stale-proofed app-side);
+      point-pool VRAM added to the HUD.
+- [ ] 🧪 Gate: on DA12 + an ArcGIS package — click a building: OID +
+      attribute rows appear and match Scene Viewer's pop-up; slice preset
+      cuts mesh AND points; daylight slider swings shadows plausibly for the
+      site (sun sets ~west); wireframe + LOD tint + hover behave; measure on
+      I3S geometry. Commit: `M4: I3S tool wins`.
+      *(Code complete + harness/compile-checked — awaiting the owner's
+      Windows run; exact steps are in the M4 commit message.)*
+
+#### M4 field notes (reality vs. plan — read before follow-up work)
+
+- **Attribute column layout, empirically pinned** (DA12 + loaders.gl
+  cross-reference): header fields in declared order, then sections in
+  `ordering` order; **8-byte scalars (Float64/Int64/Oid64) are aligned to 8
+  bytes** — ArcGIS writes 4 pad bytes after the 4-byte count (DA12's
+  SOURCE_ID column: size = 8 + 8·count, and the value at offset 8 is sane
+  while offset 4 is garbage); string byte counts INCLUDE the null
+  terminator. The reader (`I3SAttributes::decodeColumn`) is
+  ordering-driven, so it generalizes loaders.gl's hardcoded shapes; section
+  names compare case-insensitively ("ObjectIds"). Numeric values widen to
+  double (exact below 2^53 — covers real OID schemes).
+- **Feature picking re-decodes on click** instead of keeping per-feature
+  structures resident: `pickFeatureAt` runs `I3SGeometry::decodeNode` for
+  the picked node (ms-scale, cached for repeat clicks — drilling one
+  building is the normal interaction), takes the nearest triangle's
+  nearest-corner feature index, and rejects hits farther than a small
+  slack off the surface (the OBB pick can land on overlapping content).
+  The OID column is cross-checked against the geometry buffer's feature
+  ids by the harness on every DA12 + synthetic node.
+- **1.6 attribute paths are derived from the geometry href**
+  (`nodes/<id>/geometries/0` → `nodes/<id>/attributes/<key>/0`) — node
+  documents' `attributeData` hrefs are not stored; the derivation is
+  harness-covered by the synthetic 1.6 package.
+- **Wireframe = a second fill-mode pipeline, not dynamic state.** The RHI
+  has no VK_EXT_extended_dynamic_state3; `ForwardPass` builds a
+  `VK_POLYGON_MODE_LINE` twin (identical layout — descriptor bindings stay
+  valid across the switch) only when the device advertises
+  `fillModeNonSolid` (now enabled opportunistically in
+  `Device::createLogicalDevice`; `Gui::Services::wireframeSupported()`
+  gates the checkboxes). Wireframe draws still cast solid shadows —
+  deliberate for a debug view.
+- **Daylight recomputes every frame while enabled** (a handful of trig
+  calls) and owns `sun.enabled` (off below the horizon) — driving the sun
+  is the feature; users take back control by unchecking it.
+- **Hover state is cleared app-side each frame** (`Application::buildUi`)
+  before panels run — the readout is panel-driven, and a hidden/closed
+  panel would otherwise leave a stale hover highlight + tint (caught in
+  review).
+- **Test coverage:** the gcc+ASan/UBSan harness was rebuilt for M4 (581
+  checks green): the M1 geometry bar (every DA12 + synthetic node — NOTE
+  the draco-vs-raw check now compares AABBs + sampled nearest-vertex
+  distance; vertex-weighted centroids are invalid across the two buffers
+  because raw is duplicated triangle soup and draco is deduplicated), the
+  M3 PCSL bar (SMALL_AUTZEN + the 7-node lepcc sidecar), the new attribute
+  bar (DA12 real columns incl. the Float64 pad + OID cross-check; synthetic
+  columns covering all four storage shapes on 1.7 and the 1.6 path
+  derivation; per-prefix truncation fuzz under ASan), and NOAA solar
+  property checks (solstice/equinox/sunrise/hemisphere sign conventions).
+  Texture paths are untouched by M4, so the KTX2 assets were not
+  regenerated this session (`make_ktx2_testdata.py` still covers them).
+  The changed Vulkan-side TUs (I3SSceneLayer, ForwardPass, Device,
+  SlpkPanel, SettingsPanel) gcc-object-check clean under `-Wall -Wextra`;
+  Renderer/passes/panels that include the changed headers syntax-check
+  clean (Application.cpp up to its pre-existing Windows-only XR members).
 
 ---
 

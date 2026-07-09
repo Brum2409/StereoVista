@@ -216,6 +216,10 @@ public:
         return double(app_.renderer_.uploadRing().capacity()) / (1024.0 * 1024.0);
     }
 
+    bool wireframeSupported() const override {
+        return app_.device_.fillModeNonSolidEnabled();
+    }
+
     int stereoMode() const override { return static_cast<int>(app_.stereoMode_); }
     void requestStereoMode(int mode) override {
         const StereoMode requested = static_cast<StereoMode>(mode);
@@ -1217,6 +1221,13 @@ void Application::buildFrameSubmission(renderer::FrameSubmission& submission) co
         if (layer)
             layer->submitDraws(submission, swapchain_.extent().height);
 
+    // Global wireframe toggle (M4): flag every draw — scene models and the
+    // I3S layers alike (per-layer wireframe is set in the layers' emitDraw).
+    // Draws render filled anyway when the device lacks fillModeNonSolid.
+    if (settings_.render.wireframe)
+        for (renderer::DrawItem& draw : submission.draws)
+            draw.wireframe = true;
+
     // Section/clip planes from the tool (applied whenever enabled planes exist,
     // regardless of the tool's editing mode). Kept side: dot(n,p)+d >= 0.
     submission.clipPlanes.clear();
@@ -1394,6 +1405,13 @@ void Application::run() {
 }
 
 void Application::buildUi() {
+    // The hover readout is panel-driven (the Scene Layers panel re-picks the
+    // node under the mouse while it is visible). Clear it first so a hidden/
+    // closed panel cannot leave a stale hover highlight behind.
+    for (const std::unique_ptr<scene::I3SSceneLayer>& layer : scene_.i3sLayers)
+        if (layer)
+            layer->hoverNode = -1;
+
     // The production GUI: the dockspace host + panels (Gui/) replace the interim
     // debug panel. GuiSystem::draw also hosts the plugin (tool) windows; the
     // toast overlay stays app-owned and renders on top.
@@ -1569,7 +1587,7 @@ void Application::pumpI3SLayers() {
 
 void Application::appendI3SOverlays() {
     for (const std::unique_ptr<scene::I3SSceneLayer>& layer : scene_.i3sLayers)
-        if (layer && layer->visible && layer->showObbs)
+        if (layer && layer->visible && layer->wantsObbOverlay())
             layer->appendObbOverlay(overlay_);
 }
 
@@ -1692,9 +1710,12 @@ void Application::shutdown() {
 void Application::performSelectionClick() {
     // clickCursorWorld_ is the exact surface point the GPU depth pick reported
     // under the press (empty space -> clear the selection).
-    for (const std::unique_ptr<scene::I3SSceneLayer>& layer : scene_.i3sLayers)
-        if (layer)
-            layer->pickedNode = -1;
+    for (const std::unique_ptr<scene::I3SSceneLayer>& layer : scene_.i3sLayers) {
+        if (!layer)
+            continue;
+        layer->pickedNode = -1;
+        layer->pickedFeature = scene::I3SSceneLayer::PickedFeature{};
+    }
     if (!clickCursorValid_) {
         selection_ = Selection{};
         return;
@@ -1711,6 +1732,9 @@ void Application::performSelectionClick() {
             const int node = layer->pickNodeAt(clickCursorWorld_);
             if (node >= 0) {
                 layer->pickedNode = node;
+                // M4: resolve the feature under the point + its attribute
+                // row (synchronous decode — click-rate only).
+                layer->pickFeatureAt(clickCursorWorld_, node);
                 break;
             }
         }

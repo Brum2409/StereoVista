@@ -78,7 +78,9 @@ StereoVista/
 │   │                       #   index), I3SLayer (1.6 / 1.7+ / PCSL node trees, materials,
 │   │                       #   statistics), I3SGeometry (draco + raw decode), I3STexture
 │   │                       #   (jpg/png + KTX2/basis→BC7), I3SPointCloud (LEPCC points),
-│   │                       #   GeoAnchor (WGS84↔ECEF↔ENU) — see docs/SLPK_IMPLEMENTATION_PLAN.md
+│   │                       #   I3SAttributes (per-node feature columns), SolarPosition
+│   │                       #   (NOAA daylight), GeoAnchor (WGS84↔ECEF↔ENU)
+│   │                       #   — see docs/SLPK_IMPLEMENTATION_PLAN.md
 │   └── Engine/             # XRSession (OpenXR/Vulkan), Screenshot, StbImageImpl,
 │                           #   + EXCLUDED GL-era reference (see Migration state)
 ├── headers/                # Header files (mirrors src/ structure)

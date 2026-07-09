@@ -50,6 +50,10 @@ public:
     const char* deviceName() const { return properties_.deviceName; }
     bool validationActive() const { return debugMessenger_ != VK_NULL_HANDLE; }
 
+    // True when the optional fillModeNonSolid feature was available and
+    // enabled — gates the line-mode (wireframe) debug pipelines.
+    bool fillModeNonSolidEnabled() const { return fillModeNonSolid_; }
+
     // Records into a transient command buffer, submits on the graphics queue
     // and blocks until completion. For setup/upload work only, never per-frame.
     void immediateSubmit(const std::function<void(VkCommandBuffer)>& record) const;
@@ -89,6 +93,7 @@ private:
     VkPhysicalDeviceProperties properties_{};
     VkCommandPool immediatePool_ = VK_NULL_HANDLE;
     VkPipelineCache pipelineCache_ = VK_NULL_HANDLE;
+    bool fillModeNonSolid_ = false;
 };
 
 } // namespace rhi

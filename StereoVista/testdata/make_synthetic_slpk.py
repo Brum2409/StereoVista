@@ -202,6 +202,34 @@ def raw_geometry_17(feature_id=77):
     return raw_geometry_16(feature_id)
 
 
+# ---------------- attribute columns (M4) ----------------
+# Binary layouts mirror real ArcGIS output (cross-checked with loaders.gl):
+# a UInt32 count header; 8-byte scalars padded to 8-byte alignment; string
+# byte counts INCLUDE the null terminator.
+
+def attr_oid32(oids):
+    return struct.pack("<I", len(oids)) + struct.pack("<%dI" % len(oids), *oids)
+
+
+def attr_string(strings):
+    blobs = [s.encode("utf-8") + b"\x00" for s in strings]
+    total = sum(len(b) for b in blobs)
+    out = struct.pack("<II", len(strings), total)
+    out += b"".join(struct.pack("<I", len(b)) for b in blobs)
+    return out + b"".join(blobs)
+
+
+def attr_f64(values):
+    # 4 pad bytes after the count: Float64 values are 8-aligned (ArcGIS).
+    return (struct.pack("<I", len(values)) + b"\x00" * 4 +
+            struct.pack("<%dd" % len(values), *values))
+
+
+def attr_i16(values):
+    return struct.pack("<I", len(values)) + struct.pack("<%dh" % len(values),
+                                                        *values)
+
+
 # ---------------- v1.6 3DObject ----------------
 
 def make16():
@@ -246,6 +274,16 @@ def make16():
              "header": [{"property": "count", "valueType": "UInt32"}],
              "ordering": ["attributeValues"],
              "attributeValues": {"valueType": "Oid32", "valuesPerElement": 1}},
+            {"key": "f_1", "name": "NAME",
+             "header": [
+                 {"property": "count", "valueType": "UInt32"},
+                 {"property": "attributeValuesByteCount", "valueType": "UInt32"},
+             ],
+             "ordering": ["attributeByteCounts", "attributeValues"],
+             "attributeByteCounts": {"valueType": "UInt32",
+                                     "valuesPerElement": 1},
+             "attributeValues": {"valueType": "String", "valuesPerElement": 1,
+                                 "encoding": "UTF-8"}},
         ],
     }
 
@@ -323,6 +361,12 @@ def make16():
         ("nodes/1/shared/sharedResource.json.gz", jgz(shared)),
         ("nodes/0-0/textures/0_0", png),  # 1.6 texture: raw, no extension
         ("nodes/1/textures/0_0", png),
+        # M4 attribute columns (path derived from the geometry href): OIDs
+        # match the feature ids in the geometry buffers above.
+        ("nodes/0-0/attributes/f_0/0.bin.gz", gz(attr_oid32([1]))),
+        ("nodes/1/attributes/f_0/0.bin.gz", gz(attr_oid32([2]))),
+        ("nodes/0-0/attributes/f_1/0.bin.gz", gz(attr_string(["alpha"]))),
+        ("nodes/1/attributes/f_1/0.bin.gz", gz(attr_string(["beta"]))),
     ]
     store_zip(os.path.join(OUT, "synthetic_16_object.slpk"), entries,
               with_hash_index=False)
@@ -378,6 +422,33 @@ def make17_textured():
                 ]
             }
         ],
+        # M4: one field per storage shape — the ObjectIds section variant,
+        # byte-counted strings, 8-aligned Float64, small signed scalars.
+        "attributeStorageInfo": [
+            {"key": "f_0", "name": "OBJECTID",
+             "header": [{"property": "count", "valueType": "UInt32"}],
+             "ordering": ["ObjectIds"],
+             "objectIds": {"valueType": "Oid32", "valuesPerElement": 1}},
+            {"key": "f_1", "name": "NAME",
+             "header": [
+                 {"property": "count", "valueType": "UInt32"},
+                 {"property": "attributeValuesByteCount", "valueType": "UInt32"},
+             ],
+             "ordering": ["attributeByteCounts", "attributeValues"],
+             "attributeByteCounts": {"valueType": "UInt32",
+                                     "valuesPerElement": 1},
+             "attributeValues": {"valueType": "String", "valuesPerElement": 1,
+                                 "encoding": "UTF-8"}},
+            {"key": "f_2", "name": "HEIGHT",
+             "header": [{"property": "count", "valueType": "UInt32"}],
+             "ordering": ["attributeValues"],
+             "attributeValues": {"valueType": "Float64",
+                                 "valuesPerElement": 1}},
+            {"key": "f_3", "name": "CATEGORY",
+             "header": [{"property": "count", "valueType": "UInt32"}],
+             "ordering": ["attributeValues"],
+             "attributeValues": {"valueType": "Int16", "valuesPerElement": 1}},
+        ],
     }
 
     # 3 nodes: root(coarse box) -> two children (smaller boxes, offset).
@@ -390,6 +461,7 @@ def make17_textured():
                 "material": {"definition": 0, "resource": 0},
                 "geometry": {"definition": 0, "resource": 0,
                              "vertexCount": 36, "featureCount": 1},
+                "attribute": {"resource": 0},
             },
         },
         {
@@ -400,6 +472,7 @@ def make17_textured():
                 "material": {"definition": 0, "resource": 1},
                 "geometry": {"definition": 0, "resource": 1,
                              "vertexCount": 36, "featureCount": 1},
+                "attribute": {"resource": 1},
             },
         },
         {
@@ -410,6 +483,7 @@ def make17_textured():
                 "material": {"definition": 0, "resource": 2},
                 "geometry": {"definition": 0, "resource": 2,
                              "vertexCount": 36, "featureCount": 1},
+                "attribute": {"resource": 2},
             },
         },
     ]
@@ -425,6 +499,16 @@ def make17_textured():
         ("nodes/1/textures/0.png", png),
         ("nodes/2/textures/0.png", png),
     ]
+    # M4 attribute columns; OIDs match raw_geometry_17's feature ids so the
+    # harness can cross-check the OID column against the geometry buffer.
+    for res in (0, 1, 2):
+        entries += [
+            (f"nodes/{res}/attributes/f_0/0.bin.gz", gz(attr_oid32([10 + res]))),
+            (f"nodes/{res}/attributes/f_1/0.bin.gz",
+             gz(attr_string([f"feature-{res}"]))),
+            (f"nodes/{res}/attributes/f_2/0.bin.gz", gz(attr_f64([12.5 + res]))),
+            (f"nodes/{res}/attributes/f_3/0.bin.gz", gz(attr_i16([res - 1]))),
+        ]
     store_zip(os.path.join(OUT, "synthetic_17_textured.slpk"), entries,
               with_hash_index=True)
 

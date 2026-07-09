@@ -50,11 +50,18 @@ writes
   it carries REAL raw geometry (header + PerAttributeArray streams with
   degree deltas, per-feature id/faceRange), per-node
   `shared/sharedResource.json` materials, and PNG textures (extensionless
-  1.6 hrefs).
+  1.6 hrefs). Since M4 it also carries per-node attribute columns
+  (Oid32 OBJECTID + UTF-8 NAME, `nodes/<id>/attributes/<key>/0.bin.gz` —
+  the path the reader derives from the geometry href).
 - **synthetic_17_textured.slpk** — v1.7 3DObject with a RAW-ONLY geometry
   buffer (offset-8 header) + glTF-style `materialDefinitions` + PNG
   `textureSetDefinitions`: covers the 1.7 legacy-buffer decode + texture +
-  material path (DA12 covers draco but has no textures).
+  material path (DA12 covers draco but has no textures). Since M4 each node
+  carries one attribute column per storage shape: OBJECTID via the
+  `ObjectIds` ordering variant, a byte-counted UTF-8 NAME string, an
+  8-byte-aligned Float64 HEIGHT (4 pad bytes after the count — the ArcGIS
+  layout), and an Int16 CATEGORY; the OIDs equal the geometry buffers'
+  feature ids so the harness cross-checks both paths.
 - **synthetic_pcsl20.slpk** — PCSL 2.0 point cloud: `store.index` paging
   (4 nodes/page → multi-page), implicit `firstChild`/`childCount` ranges,
   hash index written the ArcGIS way (md5 of stored path, last entry).

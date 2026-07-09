@@ -415,6 +415,8 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClCompile Include="src\Loaders\Slpk\I3SGeometry.cpp" />
     <ClCompile Include="src\Loaders\Slpk\I3STexture.cpp" />
     <ClCompile Include="src\Loaders\Slpk\I3SPointCloud.cpp" />
+    <ClCompile Include="src\Loaders\Slpk\I3SAttributes.cpp" />
+    <ClCompile Include="src\Loaders\Slpk\SolarPosition.cpp" />
     <ClCompile Include="src\Loaders\Slpk\BasisTranscoderImpl.cpp">
       <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
@@ -615,6 +617,8 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClInclude Include="headers\Loaders\Slpk\I3SGeometry.h" />
     <ClInclude Include="headers\Loaders\Slpk\I3STexture.h" />
     <ClInclude Include="headers\Loaders\Slpk\I3SPointCloud.h" />
+    <ClInclude Include="headers\Loaders\Slpk\I3SAttributes.h" />
+    <ClInclude Include="headers\Loaders\Slpk\SolarPosition.h" />
     <ClInclude Include="headers\Core\Profiling.h" />
     <ClInclude Include="headers\libs\lepcc\BitMask.h" />
     <ClInclude Include="headers\libs\lepcc\BitStuffer2.h" />

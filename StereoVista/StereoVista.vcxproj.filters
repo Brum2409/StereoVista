@@ -142,6 +142,12 @@
     <ClCompile Include="src\Loaders\Slpk\I3SPointCloud.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\Loaders\Slpk\I3SAttributes.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Loaders\Slpk\SolarPosition.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="headers\libs\lepcc\BitMask.cpp">
       <Filter>libs\lepcc</Filter>
     </ClCompile>
@@ -637,6 +643,12 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\Loaders\Slpk\I3SPointCloud.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Loaders\Slpk\I3SAttributes.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Loaders\Slpk\SolarPosition.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\libs\lepcc\BitMask.h">

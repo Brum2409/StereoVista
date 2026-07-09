@@ -815,9 +815,51 @@ bool I3SLayer::parseLayerInfo(const SlpkArchive& archive, LayerInfo& out,
             field.key = getS(a, "key");
             field.name = getS(a, "name");
             field.encoding = getS(a, "encoding");
+
+            // Full storage description (M4 column reader): leading header
+            // fields, section ordering, and the value descriptor — from
+            // "attributeValues" or, for the OBJECTID field, "objectIds".
+            const auto hdrIt = a.find("header");
+            if (hdrIt != a.end() && hdrIt->is_array()) {
+                for (const json& h : *hdrIt) {
+                    if (!h.is_object())
+                        continue;
+                    GeometryHeaderField f;
+                    f.property = getS(h, "property");
+                    f.type = scalarTypeFromString(
+                        getS(h, "valueType", getS(h, "type")));
+                    if (f.type != ScalarType::Unknown)
+                        field.header.push_back(std::move(f));
+                }
+            }
+            const auto ordIt = a.find("ordering");
+            if (ordIt != a.end() && ordIt->is_array())
+                for (const json& o : *ordIt)
+                    if (o.is_string())
+                        field.ordering.push_back(o.get<std::string>());
+
+            auto readValueDesc = [&field](const json& v) {
+                field.valueType = getS(v, "valueType");
+                field.valueScalar = scalarTypeFromString(field.valueType);
+                field.valuesAreStrings = field.valueType == "String";
+                const int vpe = getI(v, "valuesPerElement", 1);
+                field.valuesPerElement =
+                    static_cast<uint8_t>(vpe > 0 && vpe < 256 ? vpe : 1);
+            };
             const auto valIt = a.find("attributeValues");
             if (valIt != a.end() && valIt->is_object())
-                field.valueType = getS(*valIt, "valueType");
+                readValueDesc(*valIt);
+            const auto oidIt = a.find("objectIds");
+            if (oidIt != a.end() && oidIt->is_object()) {
+                field.isObjectId = true;
+                if (field.valueScalar == ScalarType::Unknown &&
+                    !field.valuesAreStrings)
+                    readValueDesc(*oidIt);
+            }
+            const auto bcIt = a.find("attributeByteCounts");
+            if (bcIt != a.end() && bcIt->is_object())
+                field.byteCountScalar =
+                    scalarTypeFromString(getS(*bcIt, "valueType"));
             out.attributeFields.push_back(std::move(field));
         }
     }

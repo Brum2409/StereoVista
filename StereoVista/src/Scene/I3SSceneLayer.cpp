@@ -240,7 +240,19 @@ bool I3SSceneLayer::load(const std::string& utf8Path) {
         pointColorMode =
             hasRgbColumn ? PointColorMode::Rgb : PointColorMode::Elevation;
     }
+
+    // Daylight defaults (M4): seed the site timezone from the longitude
+    // (15 deg/hour) so the panel's local-time slider starts sensible.
+    if (info.sr.isGeographic())
+        daylight.utcOffsetHours =
+            static_cast<float>(std::floor(anchor.originGeodetic().x / 15.0 + 0.5));
     return true;
+}
+
+glm::vec3 I3SSceneLayer::appDirectionFromEnu(const glm::dvec3& enu) {
+    const glm::vec3 app = kEnuToApp * glm::vec3(enu);
+    const float len = glm::length(app);
+    return len > 1e-6f ? app / len : glm::vec3(0.0f, 1.0f, 0.0f);
 }
 
 size_t I3SSceneLayer::countFilteredBoxes() const {
@@ -264,13 +276,8 @@ void I3SSceneLayer::appendObbOverlay(renderer::OverlayDrawList& overlay) const {
         { 0, 4 }, { 1, 5 }, { 2, 6 }, { 3, 7 }, // z edges
     };
 
-    int drawn = 0;
-    for (size_t i = 0; i < nodeBoxes.size() && drawn < obbMaxBoxes; ++i) {
-        const i3s::NodeInfo& n = tree.nodes[i];
-        const bool match = obbUpToLevel ? n.level <= obbLevel : n.level == obbLevel;
-        if (!match)
-            continue;
-
+    auto drawBox = [&](size_t i, const glm::vec4& color, float width,
+                       renderer::OverlayDepth depth) {
         const NodeBox& box = nodeBoxes[i];
         glm::vec3 corners[8];
         for (int corner = 0; corner < 8; ++corner) {
@@ -279,13 +286,37 @@ void I3SSceneLayer::appendObbOverlay(renderer::OverlayDrawList& overlay) const {
                                  (corner & 4) ? 1.0f : -1.0f);
             corners[corner] = box.center + box.axes * (box.halfSize * sign);
         }
-        const glm::vec4 color =
-            kLevelColors[n.level % (sizeof(kLevelColors) / sizeof(kLevelColors[0]))];
         for (const auto& e : kEdges)
-            overlay.line(corners[e[0]], corners[e[1]], color, 1.5f,
-                         renderer::OverlayDepth::Occluded);
-        ++drawn;
+            overlay.line(corners[e[0]], corners[e[1]], color, width, depth);
+    };
+
+    if (showObbs) {
+        int drawn = 0;
+        for (size_t i = 0; i < nodeBoxes.size() && drawn < obbMaxBoxes; ++i) {
+            const i3s::NodeInfo& n = tree.nodes[i];
+            const bool match =
+                obbUpToLevel ? n.level <= obbLevel : n.level == obbLevel;
+            if (!match)
+                continue;
+            drawBox(i, kLevelColors[n.level % (sizeof(kLevelColors) /
+                                               sizeof(kLevelColors[0]))],
+                    1.5f, renderer::OverlayDepth::Occluded);
+            ++drawn;
+        }
     }
+
+    // Picked / hovered node outlines (M4 inspector) draw regardless of the
+    // level display, always-on-top so the selection stays readable.
+    if (highlightPicked && pickedNode >= 0 &&
+        pickedNode < static_cast<int>(nodeBoxes.size()))
+        drawBox(static_cast<size_t>(pickedNode),
+                glm::vec4(1.0f, 0.62f, 0.15f, 1.0f), 2.5f,
+                renderer::OverlayDepth::Always);
+    if (hoverInfo && hoverNode >= 0 &&
+        hoverNode < static_cast<int>(nodeBoxes.size()) && hoverNode != pickedNode)
+        drawBox(static_cast<size_t>(hoverNode),
+                glm::vec4(0.9f, 0.9f, 0.9f, 0.8f), 1.5f,
+                renderer::OverlayDepth::Always);
 }
 
 // ---- worker pool ------------------------------------------------------------
@@ -1613,6 +1644,21 @@ void I3SSceneLayer::emitDraw(uint32_t nodeIndex,
     draw.castsShadows = true;
     draw.worldBoundsCenter = box.center;
     draw.worldBoundsRadius = glm::length(box.halfSize);
+
+    // Inspector v1 (M4): LOD-level tint + picked/hover highlight ride the
+    // per-draw albedo multiplier; wireframe rides the debug pipeline flag.
+    if (tintByLevel) {
+        const glm::vec4& c =
+            kLevelColors[tree.nodes[nodeIndex].level %
+                         (sizeof(kLevelColors) / sizeof(kLevelColors[0]))];
+        draw.tint = glm::vec3(c);
+    }
+    if (highlightPicked && pickedNode == static_cast<int>(nodeIndex))
+        draw.tint *= glm::vec3(1.9f, 1.35f, 0.55f); // warm selection boost
+    else if (hoverInfo && hoverNode == static_cast<int>(nodeIndex))
+        draw.tint *= 1.35f;
+    draw.wireframe = layerWireframe;
+
     submission.draws.push_back(draw);
 
     drawnStamp_[nodeIndex] = frameStamp_;
@@ -1808,6 +1854,175 @@ int I3SSceneLayer::pickNodeAt(const glm::vec3& worldPoint) const {
     for (const auto& entry : pointResidency_)
         consider(entry.first);
     return best;
+}
+
+namespace {
+
+// Closest point on triangle (a,b,c) to p — Ericson, Real-Time Collision
+// Detection §5.1.5 (Voronoi-region walk, no divisions until the region is
+// known).
+glm::vec3 closestPointOnTriangle(const glm::vec3& p, const glm::vec3& a,
+                                 const glm::vec3& b, const glm::vec3& c) {
+    const glm::vec3 ab = b - a;
+    const glm::vec3 ac = c - a;
+    const glm::vec3 ap = p - a;
+    const float d1 = glm::dot(ab, ap);
+    const float d2 = glm::dot(ac, ap);
+    if (d1 <= 0.0f && d2 <= 0.0f)
+        return a;
+
+    const glm::vec3 bp = p - b;
+    const float d3 = glm::dot(ab, bp);
+    const float d4 = glm::dot(ac, bp);
+    if (d3 >= 0.0f && d4 <= d3)
+        return b;
+
+    const float vc = d1 * d4 - d3 * d2;
+    if (vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f)
+        return a + (d1 / (d1 - d3)) * ab;
+
+    const glm::vec3 cp = p - c;
+    const float d5 = glm::dot(ab, cp);
+    const float d6 = glm::dot(ac, cp);
+    if (d6 >= 0.0f && d5 <= d6)
+        return c;
+
+    const float vb = d5 * d2 - d1 * d6;
+    if (vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f)
+        return a + (d2 / (d2 - d6)) * ac;
+
+    const float va = d3 * d6 - d5 * d4;
+    if (va <= 0.0f && (d4 - d3) >= 0.0f && (d5 - d6) >= 0.0f)
+        return b + ((d4 - d3) / ((d4 - d3) + (d5 - d6))) * (c - b);
+
+    const float denom = 1.0f / (va + vb + vc);
+    return a + ab * (vb * denom) + ac * (vc * denom);
+}
+
+} // namespace
+
+bool I3SSceneLayer::pickFeatureAt(const glm::vec3& worldPoint, int nodeIndex) {
+    pickedFeature = PickedFeature{};
+    if (!rendersGeometry() || !archive_ || nodeIndex < 0 ||
+        static_cast<size_t>(nodeIndex) >= tree.nodes.size())
+        return false;
+    const i3s::NodeInfo& node = tree.nodes[nodeIndex];
+    if (!node.mesh.hasGeometry)
+        return false;
+
+    // Node geometry, decoded on demand. Cached for repeat clicks: drilling
+    // through the features of one building is the normal interaction.
+    if (pickGeomNode_ != nodeIndex) {
+        i3s::GeometryData geom;
+        std::string error;
+        if (!i3s::I3SGeometry::decodeNode(*archive_, info, node,
+                                          frameForNode(node), geom, error)) {
+            pickedFeature.warning = "geometry decode failed: " + error;
+            return false;
+        }
+        pickGeom_ = std::move(geom);
+        pickGeomNode_ = nodeIndex;
+    }
+
+    pickedFeature.valid = true;
+    pickedFeature.nodeIndex = static_cast<uint32_t>(nodeIndex);
+
+    // Closest triangle to the picked surface point, in the node-local frame
+    // the vertices were decoded in.
+    const glm::vec3 local = worldPoint - nodeBoxes[nodeIndex].geomCenter;
+    const std::vector<renderer::Vertex>& verts = pickGeom_.vertices;
+    const std::vector<uint32_t>& indices = pickGeom_.indices;
+    float bestSq = FLT_MAX;
+    size_t bestTri = indices.size();
+    for (size_t i = 0; i + 2 < indices.size(); i += 3) {
+        const glm::vec3 q = closestPointOnTriangle(
+            local, verts[indices[i]].position, verts[indices[i + 1]].position,
+            verts[indices[i + 2]].position);
+        const glm::vec3 d = q - local;
+        const float distSq = glm::dot(d, d);
+        if (distSq < bestSq) {
+            bestSq = distSq;
+            bestTri = i;
+        }
+    }
+    if (bestTri >= indices.size()) {
+        pickedFeature.warning = "node has no triangles";
+        return true;
+    }
+    pickedFeature.distance = std::sqrt(bestSq);
+
+    // The depth-picked point lies on the drawn surface up to readback
+    // precision; a distant "closest" triangle means the pick actually landed
+    // on different content inside this node's OBB (overlapping layer, cloud).
+    const float slack =
+        std::max(0.75f, 0.002f * glm::length(nodeBoxes[nodeIndex].halfSize));
+    if (pickedFeature.distance > slack) {
+        pickedFeature.warning = "picked point is not on this node's surface";
+        return true;
+    }
+
+    if (pickGeom_.featureIndexPerVertex.empty()) {
+        pickedFeature.warning = "geometry buffer carries no feature ids";
+        return true;
+    }
+
+    // Feature of the triangle corner nearest the hit (a triangle's corners
+    // share one feature in every well-formed buffer; nearest-corner keeps
+    // the answer sane even at malformed seams).
+    uint32_t cornerIndex = indices[bestTri];
+    float cornerBest = FLT_MAX;
+    for (size_t c = 0; c < 3; ++c) {
+        const uint32_t vi = indices[bestTri + c];
+        const glm::vec3 d = verts[vi].position - local;
+        const float distSq = glm::dot(d, d);
+        if (distSq < cornerBest) {
+            cornerBest = distSq;
+            cornerIndex = vi;
+        }
+    }
+    const uint32_t featureIndex = pickGeom_.featureIndexPerVertex[cornerIndex];
+    pickedFeature.featureIndex = static_cast<int>(featureIndex);
+    if (featureIndex < pickGeom_.featureIds.size()) {
+        pickedFeature.featureId = pickGeom_.featureIds[featureIndex];
+        pickedFeature.hasFeatureId = true;
+    }
+
+    // Attribute row (columns cached per node; a failed column degrades to a
+    // placeholder value, never the pick).
+    if (info.attributeFields.empty()) {
+        pickedFeature.warning = "layer declares no attribute fields";
+        return true;
+    }
+    if (attrNode_ != nodeIndex) {
+        attrColumns_.assign(info.attributeFields.size(), i3s::AttributeColumn{});
+        attrErrors_.assign(info.attributeFields.size(), std::string());
+        for (size_t f = 0; f < info.attributeFields.size(); ++f) {
+            const i3s::AttributeField& field = info.attributeFields[f];
+            if (!field.encoding.empty())
+                continue; // PCSL-encoded columns are not per-feature rows
+            std::string err;
+            if (!i3s::I3SAttributes::readColumn(*archive_, info, node, field,
+                                                attrColumns_[f], err))
+                attrErrors_[f] = err;
+        }
+        attrNode_ = nodeIndex;
+    }
+    for (size_t f = 0; f < info.attributeFields.size(); ++f) {
+        const i3s::AttributeField& field = info.attributeFields[f];
+        if (!field.encoding.empty())
+            continue;
+        const i3s::AttributeColumn& col = attrColumns_[f];
+        std::string value;
+        if (col.count() > static_cast<size_t>(featureIndex))
+            value = col.displayValue(featureIndex);
+        else if (!attrErrors_[f].empty())
+            value = "<" + attrErrors_[f] + ">";
+        else
+            value = "<no value>";
+        pickedFeature.attributes.emplace_back(
+            field.name.empty() ? field.key : field.name, std::move(value));
+    }
+    return true;
 }
 
 I3SSceneLayer::Stats I3SSceneLayer::stats() const {

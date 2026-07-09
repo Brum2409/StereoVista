@@ -39,6 +39,10 @@ struct DrawItem {
     // Per-draw linear albedo multiplier (DrawPush.tint). 1,1,1 = neutral;
     // available for per-instance colour variation / highlighting.
     glm::vec3 tint{ 1.0f };
+    // Draw with the forward pass's line-mode debug pipeline (M4 inspector /
+    // the global wireframe toggle). Falls back to fill silently when the
+    // device lacks fillModeNonSolid. Shadows still render solid.
+    bool wireframe = false;
     // World-space bounding sphere; drives the sun shadow frustum fit (and
     // later CPU culling). Radius 0 = unknown, treated as a point.
     glm::vec3 worldBoundsCenter{ 0.0f };

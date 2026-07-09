@@ -2,19 +2,250 @@
 #include "Gui/Services.h"
 
 #include "Loaders/Slpk/SlpkArchive.h"
+#include "Loaders/Slpk/SolarPosition.h"
 #include "Scene/Scene.h"
+#include "Tools/ClipPlaneTool.h"
 
 #include "imgui/imgui.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <vector>
 
 namespace Gui {
 
 namespace {
+
+// Days per month, Gregorian (leap Februaries clamp at use).
+int daysInMonth(int year, int month) {
+    static const int kDays[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+    if (month < 1 || month > 12)
+        return 31;
+    const bool leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    return month == 2 && leap ? 29 : kDays[month - 1];
+}
+
+// ---- M4: daylight — drive the app sun from the layer's geolocation ---------
+void drawDaylightSection(Services& services, scene::I3SSceneLayer& layer) {
+    if (!layer.anchor.isGeodetic())
+        return; // projected/local layers carry no usable geolocation
+
+    ImGui::SeparatorText("Daylight");
+    scene::I3SSceneLayer::Daylight& dl = layer.daylight;
+    bool changed = false;
+
+    changed |= ImGui::Checkbox("Drive sun from date/time", &dl.driveSun);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Solar position (NOAA) at this layer's location.\n"
+                          "While on, the date/time below controls the scene sun.");
+    if (!dl.driveSun)
+        return;
+
+    int date[3] = { dl.year, dl.month, dl.day };
+    ImGui::SetNextItemWidth(160.0f);
+    if (ImGui::DragInt3("Y / M / D", date, 0.2f)) {
+        dl.year = std::min(std::max(date[0], 1900), 2100);
+        dl.month = std::min(std::max(date[1], 1), 12);
+        dl.day = std::min(std::max(date[2], 1), daysInMonth(dl.year, dl.month));
+        changed = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Now")) {
+        const std::time_t now = std::time(nullptr);
+        if (const std::tm* utc = std::gmtime(&now)) {
+            dl.year = utc->tm_year + 1900;
+            dl.month = utc->tm_mon + 1;
+            dl.day = utc->tm_mday;
+            dl.localHour = float(utc->tm_hour) + float(utc->tm_min) / 60.0f +
+                           dl.utcOffsetHours;
+            while (dl.localHour < 0.0f)
+                dl.localHour += 24.0f;
+            while (dl.localHour >= 24.0f)
+                dl.localHour -= 24.0f;
+            changed = true;
+        }
+    }
+    ImGui::SetNextItemWidth(160.0f);
+    changed |= ImGui::SliderFloat("Local time", &dl.localHour, 0.0f, 24.0f,
+                                  "%.2f h");
+    ImGui::SetNextItemWidth(160.0f);
+    changed |= ImGui::DragFloat("UTC offset", &dl.utcOffsetHours, 0.25f, -12.0f,
+                                14.0f, "%+.2f h");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Site timezone (seeded from the longitude; adjust "
+                          "for civil/DST time).");
+
+    // Recompute every frame while driving — the cost is a handful of
+    // trigonometric calls, and it keeps the sun honest after undo/preset
+    // edits elsewhere.
+    (void)changed;
+    const glm::dvec3 origin = layer.anchor.originGeodetic(); // lon/lat/h
+    double utcHours = double(dl.localHour) - double(dl.utcOffsetHours);
+    int day = dl.day;
+    int month = dl.month;
+    int year = dl.year;
+    // Fold the time into [0,24) shifting the date so midnight edges behave.
+    while (utcHours < 0.0) {
+        utcHours += 24.0;
+        if (--day < 1) {
+            if (--month < 1) {
+                month = 12;
+                --year;
+            }
+            day = daysInMonth(year, month);
+        }
+    }
+    while (utcHours >= 24.0) {
+        utcHours -= 24.0;
+        if (++day > daysInMonth(year, month)) {
+            day = 1;
+            if (++month > 12) {
+                month = 1;
+                ++year;
+            }
+        }
+    }
+    const glm::dvec3 toSunEnu =
+        i3s::solarDirectionEnu(origin.x, origin.y, year, month, day, utcHours);
+    const double elevationDeg = glm::degrees(std::asin(glm::clamp(toSunEnu.z, -1.0, 1.0)));
+    const double azimuthDeg =
+        glm::degrees(std::atan2(toSunEnu.x, toSunEnu.y)); // from north, cw
+
+    renderer::SunState& sun = services.settings().lighting.sun;
+    sun.direction =
+        -scene::I3SSceneLayer::appDirectionFromEnu(toSunEnu); // travel direction
+    sun.enabled = toSunEnu.z > 0.0;
+
+    ImGui::Text("Sun: azimuth %.1f deg, elevation %.1f deg%s",
+                azimuthDeg < 0.0 ? azimuthDeg + 360.0 : azimuthDeg, elevationDeg,
+                sun.enabled ? "" : "  (below horizon - sun off)");
+}
+
+// ---- M4: picked feature + attribute row -------------------------------------
+void drawPickedFeature(const scene::I3SSceneLayer& layer) {
+    const scene::I3SSceneLayer::PickedFeature& picked = layer.pickedFeature;
+    if (!picked.valid)
+        return;
+    if (picked.hasFeatureId)
+        ImGui::Text("feature %d (OID %llu), %.2f m from surface",
+                    picked.featureIndex,
+                    static_cast<unsigned long long>(picked.featureId),
+                    double(picked.distance));
+    else if (picked.featureIndex >= 0)
+        ImGui::Text("feature %d, %.2f m from surface", picked.featureIndex,
+                    double(picked.distance));
+    if (!picked.warning.empty())
+        ImGui::TextDisabled("(%s)", picked.warning.c_str());
+    if (picked.attributes.empty())
+        return;
+    if (ImGui::BeginTable("##attrs", 2,
+                          ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp |
+                              ImGuiTableFlags_BordersInnerV)) {
+        for (const auto& entry : picked.attributes) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(entry.first.c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(entry.second.c_str());
+        }
+        ImGui::EndTable();
+    }
+}
+
+// ---- M4: inspector v1 — hover readout + debug displays ----------------------
+void drawInspectorSection(Services& services, scene::I3SSceneLayer& layer) {
+    ImGui::SeparatorText("Inspector");
+    if (layer.rendersGeometry()) {
+        ImGui::Checkbox("Tint by LOD level", &layer.tintByLevel);
+        ImGui::SameLine();
+        const bool wireSupported = services.wireframeSupported();
+        ImGui::BeginDisabled(!wireSupported);
+        ImGui::Checkbox("Wireframe", &layer.layerWireframe);
+        ImGui::EndDisabled();
+        if (!wireSupported && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("This GPU lacks the fillModeNonSolid feature.");
+        ImGui::Checkbox("Highlight picked node", &layer.highlightPicked);
+    }
+    ImGui::Checkbox("Hover info", &layer.hoverInfo);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Show the node under the mouse (and outline its "
+                          "bounding box) while the cursor is on the layer.");
+
+    // Hover pick: the depth cursor under the mouse -> deepest drawn node.
+    layer.hoverNode = -1;
+    if (layer.hoverInfo && !ImGui::GetIO().WantCaptureMouse) {
+        glm::vec3 world;
+        if (services.pluginContext().cursorWorldPos(world))
+            layer.hoverNode = layer.pickNodeAt(world);
+        if (layer.hoverNode >= 0 &&
+            layer.hoverNode < int(layer.tree.nodes.size())) {
+            const i3s::NodeInfo& n = layer.tree.nodes[layer.hoverNode];
+            const ImVec2 mouse = ImGui::GetMousePos();
+            ImGui::SetNextWindowPos(ImVec2(mouse.x + 16.0f, mouse.y + 16.0f));
+            ImGui::SetNextWindowBgAlpha(0.75f);
+            if (ImGui::Begin("##i3sHover", nullptr,
+                             ImGuiWindowFlags_NoDecoration |
+                                 ImGuiWindowFlags_AlwaysAutoResize |
+                                 ImGuiWindowFlags_NoSavedSettings |
+                                 ImGuiWindowFlags_NoInputs |
+                                 ImGuiWindowFlags_NoFocusOnAppearing |
+                                 ImGuiWindowFlags_NoNav)) {
+                ImGui::Text("%s: node %d, level %u", layer.name.c_str(),
+                            layer.hoverNode, unsigned(n.level));
+                if (layer.rendersPoints())
+                    ImGui::Text("%llu points",
+                                static_cast<unsigned long long>(n.mesh.vertexCount));
+                else
+                    ImGui::Text("%llu vertices, %llu features",
+                                static_cast<unsigned long long>(n.mesh.vertexCount),
+                                static_cast<unsigned long long>(n.mesh.featureCount));
+            }
+            ImGui::End();
+        }
+    }
+}
+
+// ---- M4: slice preset — seed the clip tool from the layer bounds ------------
+void drawSliceSection(Services& services, scene::I3SSceneLayer& layer) {
+    ImGui::SeparatorText("Tools");
+    ImGui::TextUnformatted("Slice layer:");
+    ImGui::SameLine();
+    const glm::vec3 center = (layer.boundsMin + layer.boundsMax) * 0.5f;
+    const glm::vec3 extent = layer.boundsMax - layer.boundsMin;
+    int axis = -1;
+    if (ImGui::SmallButton("X"))
+        axis = 0;
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Y"))
+        axis = 1;
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Z"))
+        axis = 2;
+    ImGui::SameLine();
+    ImGui::TextDisabled("(?)");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Add a section plane through the layer center "
+                          "(edit it in the Clip Planes panel; clips meshes "
+                          "AND point clouds).");
+    if (axis >= 0) {
+        Tools::ClipPlaneTool& tool = services.clipTool();
+        const int index = tool.addAxisAlignedPlane(axis, center);
+        if (index >= 0) {
+            tool.setEnabled(true);
+            const float halfSpan =
+                std::max({ extent.x, extent.y, extent.z, 4.0f }) * 0.55f;
+            tool.displaySize = std::max(tool.displaySize, halfSpan);
+            services.toast("Section plane added through " + layer.name);
+        } else {
+            services.toast("Clip plane budget is full",
+                           Plugins::ToastLevel::Warning);
+        }
+    }
+}
 
 const char* lodMetricName(i3s::LodMetric metric) {
     switch (metric) {
@@ -174,9 +405,10 @@ void drawLayerInspector(Services& services, scene::I3SSceneLayer& layer,
                         stats.ready);
             ImGui::Text("%u queued | %u decoding | %u failed", stats.queued,
                         stats.decoding, stats.failed);
-            ImGui::Text("pool %.1f / %.0f M pts | %.1f M resident | %u batches",
+            ImGui::Text("pool %.1f / %.0f M pts (%.0f MB VRAM) | %.1f M resident | %u batches",
                         double(stats.poolPointsUsed) / 1e6,
                         double(stats.poolPointsCapacity) / 1e6,
+                        double(stats.poolPointsCapacity) * 16.0 / (1024.0 * 1024.0),
                         double(stats.residentPoints) / 1e6, stats.drawnBatches);
             ImGui::Text("decode %.1f MB/s | upload %.1f MB/s | CPU cache %.1f MB",
                         double(stats.decodeRateMBs), double(stats.uploadRateMBs),
@@ -254,8 +486,14 @@ void drawLayerInspector(Services& services, scene::I3SSceneLayer& layer,
                         static_cast<unsigned long long>(picked.mesh.featureCount));
             if (!picked.v16Id.empty())
                 ImGui::Text("id: %s", picked.v16Id.c_str());
+            drawPickedFeature(layer); // M4: feature + attribute row
         }
     }
+
+    // ---- M4 tool sections (inspector, slice preset, daylight) ----
+    drawInspectorSection(services, layer);
+    drawSliceSection(services, layer);
+    drawDaylightSection(services, layer);
 
     // ---- bounding-volume display (the M0 inspector view) ----
     ImGui::SeparatorText("Bounding volumes");

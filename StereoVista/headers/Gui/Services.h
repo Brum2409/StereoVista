@@ -113,6 +113,9 @@ public:
     virtual double uploadRingUsedMB() const = 0;
     virtual double uploadRingCapacityMB() const = 0;
 
+    // ── Wireframe (line-mode debug pipelines need optional GPU support) ─────
+    virtual bool wireframeSupported() const = 0;
+
     // ── Stereo (the applied mode lives on the app; changes are queued) ──────
     virtual int      stereoMode() const = 0; // 0=Off 1=QuadBuffer 2=SideBySide
     virtual void     requestStereoMode(int mode) = 0;

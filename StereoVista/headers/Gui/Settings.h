@@ -102,8 +102,8 @@ struct Settings {
 
     // ── Render toggles that aren't yet owned elsewhere ──────────────────────
     struct Render {
-        bool wireframe = false; // pending: the Vulkan forward pass has no polygon-
-                                // mode toggle yet (docs/TODO.md); stored for later.
+        bool wireframe = false; // line-mode debug pipeline over every draw (M4);
+                                // no-op when the GPU lacks fillModeNonSolid.
     } render;
 };
 

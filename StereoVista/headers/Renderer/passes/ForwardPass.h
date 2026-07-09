@@ -15,6 +15,9 @@ namespace renderer {
 // mesh.frag) writing linear HDR into the multiview scene target. Set 0 is
 // the renderer's shared per-frame set, set 1 the MaterialSystem's bindless
 // set — both external layouts; per-draw data rides push constants.
+// A line-mode twin of the same pipeline serves DrawItem::wireframe (M4
+// inspector) — built only when the device enabled fillModeNonSolid,
+// otherwise wireframe draws fall back to fill.
 class ForwardPass {
 public:
     ForwardPass() = default;
@@ -34,6 +37,7 @@ public:
 
 private:
     rhi::Pipeline pipeline_;
+    rhi::Pipeline wirePipeline_; // line-mode twin; may stay invalid
 };
 
 } // namespace renderer

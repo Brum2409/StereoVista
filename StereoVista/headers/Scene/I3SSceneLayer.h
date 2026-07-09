@@ -50,6 +50,7 @@
 
 #include "Engine/Data.h" // ComputeBatch (PCSL pool batches, M3)
 #include "Loaders/Slpk/GeoAnchor.h"
+#include "Loaders/Slpk/I3SAttributes.h"
 #include "Loaders/Slpk/I3SGeometry.h"
 #include "Loaders/Slpk/I3SPointCloud.h"
 #include "Loaders/Slpk/I3STexture.h"
@@ -138,7 +139,24 @@ public:
     int obbMaxBoxes = 2048;    // cap on boxes per frame (each box = 12 lines
                                // = 72 overlay vertices, uploaded dynamically)
 
-    // Appends the OBB wireframes (colored by tree level) to the overlay.
+    // ---- inspector v1 (M4) ----
+    bool tintByLevel = false;    // color mesh nodes by tree level (DrawItem::tint)
+    bool layerWireframe = false; // line-mode debug pipeline (needs GPU support;
+                                 // silently falls back to fill when absent)
+    bool highlightPicked = true; // warm tint + OBB outline on the picked node
+    bool hoverInfo = false;      // panel hover readout drives hoverNode below
+    int hoverNode = -1;          // node under the mouse (set by the panel per
+                                 // frame; -1 = none)
+
+    // True when appendObbOverlay would emit anything (level display on, or a
+    // picked/hovered node outline is due) — the app-side overlay gate.
+    bool wantsObbOverlay() const {
+        return showObbs || (highlightPicked && pickedNode >= 0) ||
+               (hoverInfo && hoverNode >= 0);
+    }
+
+    // Appends the OBB wireframes (colored by tree level) to the overlay,
+    // plus picked/hovered node outlines (drawn even when showObbs is off).
     void appendObbOverlay(renderer::OverlayDrawList& overlay) const;
 
     // Boxes currently passing the level filter (for the panel readout).
@@ -239,6 +257,43 @@ public:
     // Deepest node drawn last frame whose OBB contains the world point;
     // -1 when none. Main thread.
     int pickNodeAt(const glm::vec3& worldPoint) const;
+
+    // ---- feature picking + attributes (M4, mesh layers) --------------------
+
+    // The feature under the last pick, with its attribute row (name, value).
+    struct PickedFeature {
+        bool valid = false;      // a pick ran against a decodable node
+        uint32_t nodeIndex = 0;
+        int featureIndex = -1;   // node feature order; -1 = unresolved
+        uint64_t featureId = 0;  // OID from the geometry buffer
+        bool hasFeatureId = false;
+        float distance = 0.0f;   // picked point -> closest triangle (m)
+        std::vector<std::pair<std::string, std::string>> attributes;
+        std::string warning;     // why the feature/attributes are partial
+    };
+    PickedFeature pickedFeature;
+
+    // Resolves the feature under the picked world point within the given
+    // node and reads its attribute row. Synchronous (re-decodes the node's
+    // geometry — click-rate only; the last node's decode + columns are
+    // cached). Main thread. Fills pickedFeature; false when the node cannot
+    // be decoded at all.
+    bool pickFeatureAt(const glm::vec3& worldPoint, int nodeIndex);
+
+    // ---- daylight (M4; the panel drives the app sun from this) -------------
+    struct Daylight {
+        bool driveSun = false;   // while on, the panel updates the sun each frame
+        int year = 2026;
+        int month = 6;
+        int day = 21;
+        float localHour = 12.0f;      // site-local clock time [0,24)
+        float utcOffsetHours = 0.0f;  // site timezone (seeded from longitude)
+    };
+    Daylight daylight;
+
+    // Maps an ENU direction (x=east, y=north, z=up) into the app render
+    // frame — the same fixed swizzle the decoders use (east, up, -north).
+    static glm::vec3 appDirectionFromEnu(const glm::dvec3& enu);
 
     // Load-path warnings for the app to toast (drained by the caller).
     std::vector<std::string> drainWarnings();
@@ -540,6 +595,14 @@ private:
     bool warnedVertexColors_ = false;
     bool warnedUvWrap_ = false;
     bool warnedTexture_ = false;
+
+    // ---- feature-pick caches (M4; last picked node only, main thread) ----
+    int pickGeomNode_ = -1;   // node pickGeom_ was decoded for
+    i3s::GeometryData pickGeom_;
+    int attrNode_ = -1;       // node attrColumns_ were read for
+    // Parallel to info.attributeFields; a failed column stays empty.
+    std::vector<i3s::AttributeColumn> attrColumns_;
+    std::vector<std::string> attrErrors_;
 };
 
 } // namespace scene
