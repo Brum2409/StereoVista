@@ -75,8 +75,9 @@ StereoVista/
 │   ├── Core/               # Camera (glm), UndoManager (generic command stack)
 │   ├── Loaders/            # PointCloudLoader (LAS/LAZ/PLY/HDF5/XYZ/PCB parsers + RHI upload)
 │   │   └── Slpk/           #   SLPK/I3S (namespace i3s::): SlpkArchive (mmap ZIP64 + hash
-│   │                       #   index), I3SLayer (1.6 / 1.7+ / PCSL node trees + materials),
-│   │                       #   I3SGeometry (draco + raw decode), I3STexture (jpg/png),
+│   │                       #   index), I3SLayer (1.6 / 1.7+ / PCSL node trees, materials,
+│   │                       #   statistics), I3SGeometry (draco + raw decode), I3STexture
+│   │                       #   (jpg/png + KTX2/basis→BC7), I3SPointCloud (LEPCC points),
 │   │                       #   GeoAnchor (WGS84↔ECEF↔ENU) — see docs/SLPK_IMPLEMENTATION_PLAN.md
 │   └── Engine/             # XRSession (OpenXR/Vulkan), Screenshot, StbImageImpl,
 │                           #   + EXCLUDED GL-era reference (see Migration state)

@@ -18,6 +18,7 @@
 #include <cfloat>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 
 namespace scene {
@@ -189,6 +190,56 @@ bool I3SSceneLayer::load(const std::string& utf8Path) {
     drawnStamp_.assign(tree.nodes.size(), 0);
     wantStamp_.assign(tree.nodes.size(), 0);
     wantPriority_.assign(tree.nodes.size(), 0.0f);
+
+    // PCSL symbology defaults (M3): column availability from the attribute
+    // declarations, ramp bounds from the layer statistics, ArcGIS-style
+    // classification palette. All still pure CPU (worker-thread safe).
+    std::memcpy(classPalette, defaultClassPalette(), sizeof(classPalette));
+    if (rendersPoints()) {
+        std::string intensityKey, elevationKey, classKey;
+        for (const i3s::AttributeField& f : info.attributeFields) {
+            if (f.encoding == "lepcc-rgb" || f.name == "RGB")
+                hasRgbColumn = true;
+            else if (f.encoding == "lepcc-intensity" || f.name == "INTENSITY") {
+                hasIntensityColumn = true;
+                intensityKey = f.key;
+            } else if (f.encoding == "embedded-elevation" || f.name == "ELEVATION")
+                elevationKey = f.key;
+            else if (f.name == "CLASS_CODE") {
+                hasClassColumn = true;
+                classKey = f.key;
+            }
+        }
+
+        // Elevation bounds: statistics are absolute layer-SR heights; the app
+        // frame is anchored at the root OBB center, so subtracting its height
+        // maps them onto app Y (exact at the anchor, ramp-grade elsewhere).
+        // Fall back to the node-box union when no statistics exist.
+        elevationRampMin = boundsMin.y;
+        elevationRampMax = boundsMax.y;
+        i3s::AttributeStatistics stats;
+        std::string statsErr;
+        if (!elevationKey.empty() &&
+            i3s::I3SLayer::loadStatistics(*archive_, elevationKey, stats,
+                                          statsErr)) {
+            const float anchorZ = static_cast<float>(root.obbCenter.z);
+            elevationRampMin = static_cast<float>(stats.min) - anchorZ;
+            elevationRampMax = static_cast<float>(stats.max) - anchorZ;
+        }
+        intensityRampMin = 0.0f;
+        intensityRampMax = 255.0f;
+        if (!intensityKey.empty() &&
+            i3s::I3SLayer::loadStatistics(*archive_, intensityKey, stats,
+                                          statsErr)) {
+            intensityRampMin = static_cast<float>(stats.min);
+            intensityRampMax = static_cast<float>(stats.max);
+        }
+        if (!classKey.empty())
+            i3s::I3SLayer::loadStatistics(*archive_, classKey, classStats,
+                                          statsErr);
+        pointColorMode =
+            hasRgbColumn ? PointColorMode::Rgb : PointColorMode::Elevation;
+    }
     return true;
 }
 
@@ -240,7 +291,8 @@ void I3SSceneLayer::appendObbOverlay(renderer::OverlayDrawList& overlay) const {
 // ---- worker pool ------------------------------------------------------------
 
 void I3SSceneLayer::startStreaming() {
-    if (streaming_ || !rendersGeometry() || tree.nodes.empty() || !archive_)
+    if (streaming_ || !(rendersGeometry() || rendersPoints()) ||
+        tree.nodes.empty() || !archive_)
         return;
     stopWorkers_ = false;
     // plan §5 M2: hw/2 - 1 workers, floor 2. hardware_concurrency() may
@@ -288,11 +340,104 @@ i3s::NodeFrame I3SSceneLayer::frameForNode(const i3s::NodeInfo& node) const {
     return frame;
 }
 
+size_t I3SSceneLayer::PointPayload::cpuBytes() const {
+    size_t bytes = rgb.size() + intensity.size() * 2 + classCodes.size() +
+                   elevation.size() * 2;
+    for (const PointRun& run : runs)
+        bytes += (run.xyz4b.size() + run.xyz8b.size() + run.xyz12b.size()) * 4 +
+                 sizeof(Engine::ComputeBatch);
+    return bytes;
+}
+
 I3SSceneLayer::NodePayload I3SSceneLayer::decodePayload(uint32_t nodeIndex) const {
     NodePayload payload;
     payload.nodeIndex = nodeIndex;
     const i3s::NodeInfo& node = tree.nodes[nodeIndex];
     const i3s::NodeFrame frame = frameForNode(node);
+
+    if (rendersPoints()) {
+        // PCSL node: LEPCC decode, then quantize into pool-page runs right
+        // here on the worker — the pump only copies bytes.
+        i3s::PointCloudData data;
+        std::string pointErr;
+        {
+            SV_ZONE_N("i3s point decode");
+            if (!i3s::I3SPointCloud::decodeNode(*archive_, info, node, frame,
+                                                data, pointErr)) {
+                payload.failed = true;
+                payload.error = pointErr;
+                return payload;
+            }
+        }
+        payload.error = data.attributeWarning; // non-fatal, surfaced once
+
+        SV_ZONE_N("i3s point quantize");
+        auto points = std::make_unique<PointPayload>();
+        const uint32_t count = static_cast<uint32_t>(data.pointCount());
+        points->pointCount = count;
+        points->rgb = std::move(data.rgb);
+        points->intensity = std::move(data.intensity);
+        points->classCodes = std::move(data.classCodes);
+
+        // The pool's local space is the layer anchor space: absolute point =
+        // geometry center + node-relative decode output.
+        const glm::vec3 base = nodeBoxes[nodeIndex].geomCenter;
+        points->elevMin = base.y + data.localMin.y;
+        points->elevMax = base.y + data.localMax.y;
+        const float elevSpan =
+            std::max(points->elevMax - points->elevMin, 1e-6f);
+        points->elevation.resize(count);
+
+        constexpr uint32_t kSteps30Bit = 1u << 30;
+        constexpr uint32_t kMask10Bit = 1023u;
+        points->runs.resize((count + kPointPageSize - 1) / kPointPageSize);
+        for (size_t r = 0; r < points->runs.size(); ++r) {
+            PointRun& run = points->runs[r];
+            const uint32_t first = static_cast<uint32_t>(r) * kPointPageSize;
+            const uint32_t n = std::min(kPointPageSize, count - first);
+
+            glm::vec3 bMin(FLT_MAX), bMax(-FLT_MAX);
+            for (uint32_t k = 0; k < n; ++k) {
+                const glm::vec3 p = base + data.positions[first + k];
+                bMin = glm::min(bMin, p);
+                bMax = glm::max(bMax, p);
+            }
+            const glm::vec3 size = glm::max(bMax - bMin, glm::vec3(1e-6f));
+            run.batch = { bMin.x, bMin.y, bMin.z, bMax.x, bMax.y, bMax.z,
+                          static_cast<int>(n), 0 };
+            run.xyz4b.resize(n);
+            run.xyz8b.resize(n);
+            run.xyz12b.resize(n);
+            for (uint32_t k = 0; k < n; ++k) {
+                const glm::vec3 p = base + data.positions[first + k];
+                // Same 30-bit three-tier encoding as PointCloudLoader's
+                // quantizePoint (the compute rasterizer decodes per batch).
+                auto quantize = [&](float v, float lo, float span) -> uint32_t {
+                    const float t = glm::clamp((v - lo) / span, 0.0f, 1.0f);
+                    return std::min(
+                        static_cast<uint32_t>(t * static_cast<float>(kSteps30Bit)),
+                        kSteps30Bit - 1u);
+                };
+                const uint32_t xb = quantize(p.x, bMin.x, size.x);
+                const uint32_t yb = quantize(p.y, bMin.y, size.y);
+                const uint32_t zb = quantize(p.z, bMin.z, size.z);
+                run.xyz4b[k] = ((xb >> 20) & kMask10Bit) |
+                               (((yb >> 20) & kMask10Bit) << 10) |
+                               (((zb >> 20) & kMask10Bit) << 20);
+                run.xyz8b[k] = ((xb >> 10) & kMask10Bit) |
+                               (((yb >> 10) & kMask10Bit) << 10) |
+                               (((zb >> 10) & kMask10Bit) << 20);
+                run.xyz12b[k] = (xb & kMask10Bit) | ((yb & kMask10Bit) << 10) |
+                                ((zb & kMask10Bit) << 20);
+                const float elev01 =
+                    glm::clamp((p.y - points->elevMin) / elevSpan, 0.0f, 1.0f);
+                points->elevation[first + k] =
+                    static_cast<uint16_t>(elev01 * 65535.0f + 0.5f);
+            }
+        }
+        payload.points = std::move(points);
+        return payload;
+    }
 
     std::string err;
     {
@@ -369,6 +514,12 @@ std::vector<std::string> I3SSceneLayer::drainWarnings() {
 
 void I3SSceneLayer::surfacePayloadWarnings(const NodePayload& payload) {
     // One-shot data-quality warnings (surfaced as toasts by the app).
+    if (payload.points && !payload.error.empty() && !warnedAttributes_) {
+        // Non-fatal PCSL column problems (count mismatch, decode failure) —
+        // geometry still renders, colorization falls back.
+        warnedAttributes_ = true;
+        pushWarning(name + ": " + payload.error);
+    }
     if (payload.geometry.nonWhiteColors && !warnedVertexColors_) {
         warnedVertexColors_ = true;
         pushWarning(name + ": per-vertex colors present — not rendered yet "
@@ -601,6 +752,452 @@ void I3SSceneLayer::trimCpuCache() {
     }
 }
 
+// ---- point pool (PCSL, M3) ----------------------------------------------------
+
+// ArcGIS-style LAS classification colors (sRGB). Values beyond the table stay
+// neutral gray; everything is editable per layer in the Scene Layers panel.
+const glm::vec3* I3SSceneLayer::defaultClassPalette() {
+    static glm::vec3 palette[256];
+    static bool initialized = false;
+    if (!initialized) {
+        initialized = true;
+        for (glm::vec3& c : palette)
+            c = glm::vec3(0.59f, 0.59f, 0.59f);
+        auto set = [&](int value, int r, int g, int b) {
+            palette[value] = glm::vec3(r, g, b) / 255.0f;
+        };
+        set(0, 180, 180, 180);  // created, never classified
+        set(1, 209, 209, 209);  // unassigned
+        set(2, 166, 113, 3);    // ground
+        set(3, 145, 200, 80);   // low vegetation
+        set(4, 92, 179, 55);    // medium vegetation
+        set(5, 42, 140, 40);    // high vegetation
+        set(6, 230, 90, 60);    // building
+        set(7, 255, 60, 220);   // low point (noise)
+        set(8, 220, 220, 150);  // model key / reserved
+        set(9, 60, 130, 240);   // water
+        set(10, 150, 80, 180);  // rail
+        set(11, 110, 110, 110); // road surface
+        set(12, 240, 220, 90);  // overlap / reserved
+        set(13, 250, 190, 60);  // wire guard
+        set(14, 255, 230, 80);  // wire conductor
+        set(15, 200, 140, 90);  // transmission tower
+        set(16, 250, 160, 110); // wire structure connector
+        set(17, 140, 100, 70);  // bridge deck
+        set(18, 250, 60, 60);   // high noise
+    }
+    return palette;
+}
+
+namespace {
+
+uint32_t packRgba8(const glm::vec3& srgb, uint32_t a8) {
+    const uint32_t r8 =
+        static_cast<uint32_t>(glm::clamp(srgb.r, 0.0f, 1.0f) * 255.0f + 0.5f);
+    const uint32_t g8 =
+        static_cast<uint32_t>(glm::clamp(srgb.g, 0.0f, 1.0f) * 255.0f + 0.5f);
+    const uint32_t b8 =
+        static_cast<uint32_t>(glm::clamp(srgb.b, 0.0f, 1.0f) * 255.0f + 0.5f);
+    return (a8 << 24) | (b8 << 16) | (g8 << 8) | r8;
+}
+
+// Violet -> cyan -> green -> yellow -> red, the shape of ArcGIS's default
+// elevation stretch (SMALL_AUTZEN's own drawingInfo carries these hues).
+glm::vec3 elevationRamp(float t) {
+    static const glm::vec3 stops[5] = {
+        { 0.27f, 0.06f, 0.93f }, { 0.09f, 0.82f, 0.95f }, { 0.45f, 0.90f, 0.42f },
+        { 0.95f, 0.96f, 0.20f }, { 1.00f, 0.29f, 0.13f },
+    };
+    t = glm::clamp(t, 0.0f, 1.0f) * 4.0f;
+    const int seg = std::min(static_cast<int>(t), 3);
+    return glm::mix(stops[seg], stops[seg + 1], t - float(seg));
+}
+
+} // namespace
+
+uint32_t I3SSceneLayer::usedPages() const {
+    uint32_t graveyardPages = 0;
+    for (const PageGrave& grave : pageGraveyard_)
+        graveyardPages += static_cast<uint32_t>(grave.pages.size());
+    return poolPageCapacity() -
+           static_cast<uint32_t>(freePages_.size()) - graveyardPages;
+}
+
+bool I3SSceneLayer::pointPoolFull() const {
+    // Full for queueing purposes when free pages (graveyard excluded — those
+    // return within a frame or two) drop under 5% of the pool.
+    return pool_ && freePages_.size() < size_t(poolPageCapacity()) / 20 + 1;
+}
+
+void I3SSceneLayer::ensurePool(rhi::Device& device, rhi::UploadRing& ring) {
+    if (budgetPoolPoints == failedPoolBudget_)
+        return; // allocation failed at this size; wait for a budget change
+    const uint32_t wanted = static_cast<uint32_t>(
+        glm::clamp(budgetPoolPoints, 1 << 20, 256 << 20));
+    if (pool_ && poolCapacityPoints_ == (wanted / kPointPageSize) * kPointPageSize)
+        return;
+    // (Re)create: a budget change drops all residency — the traversal
+    // re-streams the cut. destroy() waits for the device (user action, rare).
+    releasePointPool();
+    const uint32_t capacity = (wanted / kPointPageSize) * kPointPageSize;
+    auto pool = std::make_unique<renderer::PointCloudGpu>();
+    // 2x batch capacity: the compacted batch array ping-pongs between two
+    // halves so a rewrite never races the previous frame's reads (see the
+    // header note at uploadedBatches_).
+    if (!pool->create(device, &ring, capacity, 2 * (capacity / kPointPageSize),
+                      name + " (i3s pool)")) {
+        failedPoolBudget_ = budgetPoolPoints;
+        pushWarning(name + ": point pool allocation failed (" +
+                    std::to_string(capacity / 1000000) + "M points) — lower "
+                    "the pool budget");
+        return;
+    }
+    failedPoolBudget_ = -1;
+    pool_ = std::move(pool);
+    poolCapacityPoints_ = capacity;
+    freePages_.resize(capacity / kPointPageSize);
+    for (uint32_t i = 0; i < freePages_.size(); ++i)
+        freePages_[i] = static_cast<uint32_t>(freePages_.size()) - 1 - i;
+}
+
+void I3SSceneLayer::releasePointPool() {
+    for (auto& entry : pointStaging_) {
+        states_[entry.first].store(static_cast<uint8_t>(NodeState::Unloaded),
+                                   std::memory_order_relaxed);
+    }
+    for (auto& entry : pointResidency_) {
+        states_[entry.first].store(static_cast<uint8_t>(NodeState::Unloaded),
+                                   std::memory_order_relaxed);
+    }
+    pointStaging_.clear();
+    pointResidency_.clear();
+    pageGraveyard_.clear();
+    freePages_.clear();
+    uploadedBatches_.clear();
+    drawnPointNodes_.clear();
+    activeBatchHalf_ = 0;
+    residentPoints_ = 0;
+    poolCapacityPoints_ = 0;
+    pool_.reset(); // destroy() drops its queued ring copies + waits
+}
+
+void I3SSceneLayer::retirePageGraveyard(uint64_t completedFrameValue) {
+    size_t kept = 0;
+    for (size_t i = 0; i < pageGraveyard_.size(); ++i) {
+        if (pageGraveyard_[i].retireValue <= completedFrameValue) {
+            freePages_.insert(freePages_.end(), pageGraveyard_[i].pages.begin(),
+                              pageGraveyard_[i].pages.end());
+        } else {
+            if (kept != i)
+                pageGraveyard_[kept] = std::move(pageGraveyard_[i]);
+            ++kept;
+        }
+    }
+    pageGraveyard_.resize(kept);
+}
+
+void I3SSceneLayer::evictPointsOverBudget(uint64_t frameRetireValue) {
+    // Keep >= 10% of the pool free (page-granular LRU; a node drawn last
+    // frame is part of the current cut and never evicts).
+    const uint32_t capacity = poolPageCapacity();
+    if (capacity == 0)
+        return;
+    const uint32_t targetUsed = capacity - capacity / 10;
+    if (usedPages() <= targetUsed)
+        return;
+
+    std::vector<std::pair<uint32_t, uint32_t>> candidates; // (drawnStamp, node)
+    candidates.reserve(pointResidency_.size());
+    for (const auto& entry : pointResidency_)
+        if (drawnStamp_[entry.first] != frameStamp_)
+            candidates.push_back({ drawnStamp_[entry.first], entry.first });
+    std::sort(candidates.begin(), candidates.end());
+
+    for (const auto& candidate : candidates) {
+        if (usedPages() <= targetUsed)
+            break;
+        auto it = pointResidency_.find(candidate.second);
+        pageGraveyard_.push_back({ std::move(it->second.pages),
+                                   frameRetireValue });
+        residentPoints_ -= std::min<uint64_t>(residentPoints_,
+                                              it->second.pointCount);
+        pointResidency_.erase(it);
+        states_[candidate.second].store(static_cast<uint8_t>(NodeState::Unloaded),
+                                        std::memory_order_relaxed);
+        ++evictedCount_;
+    }
+}
+
+void I3SSceneLayer::bakeRunColors(const PointResidency& node, size_t first,
+                                  size_t count, std::vector<uint32_t>& out) const {
+    out.resize(count);
+    const float intensitySpan =
+        std::max(intensityRampMax - intensityRampMin, 1e-6f);
+    const float elevSpan = std::max(node.elevMax - node.elevMin, 1e-6f);
+    const float rampSpan =
+        std::max(elevationRampMax - elevationRampMin, 1e-6f);
+    for (size_t k = 0; k < count; ++k) {
+        const size_t i = first + k;
+        // Alpha carries normalized intensity, like the LAS loaders.
+        uint32_t a8 = 255;
+        float intensity01 = 0.0f;
+        if (i < node.intensity.size()) {
+            intensity01 = glm::clamp(
+                (float(node.intensity[i]) - intensityRampMin) / intensitySpan,
+                0.0f, 1.0f);
+            a8 = static_cast<uint32_t>(intensity01 * 255.0f + 0.5f);
+        }
+        switch (pointColorMode) {
+        case PointColorMode::Rgb:
+            if (i * 3 + 2 < node.rgb.size()) {
+                out[k] = (a8 << 24) | (uint32_t(node.rgb[i * 3 + 2]) << 16) |
+                         (uint32_t(node.rgb[i * 3 + 1]) << 8) |
+                         uint32_t(node.rgb[i * 3 + 0]);
+            } else {
+                out[k] = (a8 << 24) | 0x00ffffffu;
+            }
+            break;
+        case PointColorMode::Intensity:
+            out[k] = packRgba8(glm::vec3(intensity01), a8);
+            break;
+        case PointColorMode::Classification:
+            out[k] = packRgba8(
+                classPalette[i < node.classCodes.size() ? node.classCodes[i] : 0],
+                a8);
+            break;
+        case PointColorMode::Elevation:
+        default: {
+            const float y = node.elevMin +
+                            (float(node.elevation[i]) / 65535.0f) * elevSpan;
+            out[k] = packRgba8(
+                elevationRamp((y - elevationRampMin) / rampSpan), a8);
+            break;
+        }
+        }
+    }
+}
+
+bool I3SSceneLayer::stagePointUpload(PointStaging& upload, rhi::UploadRing& ring,
+                                     int64_t& budgetStageBytes) {
+    PointPayload& points = *upload.payload.points;
+    // Bake against a residency view so staging and re-bakes share one path.
+    PointResidency view;
+    view.rgb = std::move(points.rgb);
+    view.intensity = std::move(points.intensity);
+    view.classCodes = std::move(points.classCodes);
+    view.elevation = std::move(points.elevation);
+    view.elevMin = points.elevMin;
+    view.elevMax = points.elevMax;
+
+    bool ok = true;
+    while (upload.runsStaged < points.runs.size()) {
+        if (budgetStageBytes <= 0 && upload.runsStaged > 0) {
+            ok = false; // post-paid: at least one run lands per pump
+            break;
+        }
+        const size_t r = upload.runsStaged;
+        const PointRun& run = points.runs[r];
+        const uint32_t page = upload.pages[r];
+        const VkDeviceSize pointOffset =
+            VkDeviceSize(page) * kPointPageSize * sizeof(uint32_t);
+        const VkDeviceSize bytes = VkDeviceSize(run.xyz4b.size()) * sizeof(uint32_t);
+
+        if (upload.runsStaged == 0)
+            upload.bakedEpoch = recolorEpoch_;
+        bakeRunColors(view, r * size_t(kPointPageSize), run.xyz4b.size(),
+                      rgbaScratch_);
+
+        const rhi::UploadRing::Marker marker = ring.mark();
+        if (!ring.stage(pool_->storage, pool_->xyz4bOffset + pointOffset,
+                        run.xyz4b.data(), bytes) ||
+            !ring.stage(pool_->storage, pool_->xyz8bOffset + pointOffset,
+                        run.xyz8b.data(), bytes) ||
+            !ring.stage(pool_->storage, pool_->xyz12bOffset + pointOffset,
+                        run.xyz12b.data(), bytes) ||
+            !ring.stage(pool_->storage, pool_->rgbaOffset + pointOffset,
+                        rgbaScratch_.data(), bytes)) {
+            ring.rollback(marker); // full — resume at this run next pump
+            ok = false;
+            break;
+        }
+        budgetStageBytes -= int64_t(bytes) * 4;
+        uploadedBytesWindow_ += uint64_t(bytes) * 4;
+        ++upload.runsStaged;
+    }
+
+    // Hand the columns back for the next attempt / residency.
+    points.rgb = std::move(view.rgb);
+    points.intensity = std::move(view.intensity);
+    points.classCodes = std::move(view.classCodes);
+    points.elevation = std::move(view.elevation);
+    return ok && upload.runsStaged == points.runs.size();
+}
+
+void I3SSceneLayer::finalizePointResidency(PointStaging& upload) {
+    const uint32_t nodeIndex = upload.payload.nodeIndex;
+    PointPayload& points = *upload.payload.points;
+
+    PointResidency residency;
+    residency.pages = std::move(upload.pages);
+    residency.batches.resize(points.runs.size());
+    for (size_t r = 0; r < points.runs.size(); ++r) {
+        residency.batches[r] = points.runs[r].batch;
+        residency.batches[r].firstPoint =
+            static_cast<int>(residency.pages[r] * kPointPageSize);
+    }
+    residency.rgb = std::move(points.rgb);
+    residency.intensity = std::move(points.intensity);
+    residency.classCodes = std::move(points.classCodes);
+    residency.elevation = std::move(points.elevation);
+    residency.elevMin = points.elevMin;
+    residency.elevMax = points.elevMax;
+    residency.pointCount = points.pointCount;
+    residency.bakedEpoch = upload.bakedEpoch;
+    residentPoints_ += points.pointCount;
+    pointResidency_[nodeIndex] = std::move(residency);
+    states_[nodeIndex].store(static_cast<uint8_t>(NodeState::Resident),
+                             std::memory_order_relaxed);
+}
+
+void I3SSceneLayer::recolorResidentPoints(rhi::UploadRing& ring,
+                                          int64_t& budgetStageBytes) {
+    recolorPending_ = 0;
+    if (!pool_)
+        return;
+    SV_ZONE_N("i3s point recolor");
+    for (auto& entry : pointResidency_) {
+        PointResidency& node = entry.second;
+        if (node.bakedEpoch == recolorEpoch_)
+            continue;
+        if (budgetStageBytes <= 0) {
+            ++recolorPending_;
+            continue; // keep counting for the HUD
+        }
+        // All pages of a node re-bake in one transaction (a split node would
+        // otherwise flicker two palettes); retried next pump on a full ring.
+        // Known benign race: the previous frame may still read the old rgba
+        // dwords while this frame's copy lands (no cross-frame barrier) —
+        // worst case is one frame of mixed colors during a recolor. Indices
+        // and positions are never rewritten in place, only colors.
+        const rhi::UploadRing::Marker marker = ring.mark();
+        bool staged = true;
+        int64_t bytes = 0;
+        for (size_t r = 0; r < node.batches.size(); ++r) {
+            const size_t count = size_t(node.batches[r].numPoints);
+            bakeRunColors(node, r * size_t(kPointPageSize), count, rgbaScratch_);
+            const VkDeviceSize pointOffset =
+                VkDeviceSize(node.pages[r]) * kPointPageSize * sizeof(uint32_t);
+            if (!ring.stage(pool_->storage, pool_->rgbaOffset + pointOffset,
+                            rgbaScratch_.data(), count * sizeof(uint32_t))) {
+                staged = false;
+                break;
+            }
+            bytes += int64_t(count * sizeof(uint32_t));
+        }
+        if (!staged) {
+            ring.rollback(marker);
+            ++recolorPending_;
+            continue;
+        }
+        budgetStageBytes -= bytes;
+        uploadedBytesWindow_ += uint64_t(bytes);
+        node.bakedEpoch = recolorEpoch_;
+    }
+}
+
+void I3SSceneLayer::pumpPoints(rhi::Device& device, rhi::UploadRing& ring,
+                               double& budgetMs, int64_t& budgetStageBytes,
+                               uint64_t frameRetireValue,
+                               uint64_t completedFrameValue,
+                               const std::function<double()>& elapsedMs) {
+    SV_ZONE_N("i3s point pump");
+    ensurePool(device, ring);
+    if (!pool_)
+        return;
+    const rhi::Device::MemoryBudget vram = device.deviceLocalBudget();
+    deviceUsageMB_ = vram.usageBytes >> 20;
+    deviceBudgetMB_ = vram.budgetBytes >> 20;
+    retirePageGraveyard(completedFrameValue);
+    evictPointsOverBudget(frameRetireValue);
+
+    // In-flight staging first (pages already committed).
+    for (auto it = pointStaging_.begin(); it != pointStaging_.end();) {
+        if (budgetMs - elapsedMs() <= 0.0 || budgetStageBytes <= 0)
+            break;
+        if (stagePointUpload(it->second, ring, budgetStageBytes)) {
+            finalizePointResidency(it->second);
+            it = pointStaging_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    // New uploads from the CPU cache, freshest + biggest-on-screen first.
+    std::vector<std::pair<float, uint32_t>> candidates; // (-priority, node)
+    for (const auto& entry : readyCache_) {
+        const uint32_t nodeIndex = entry.first;
+        if (frameStamp_ - wantStamp_[nodeIndex] > kWantFreshFrames)
+            continue;
+        candidates.push_back({ -wantPriority_[nodeIndex], nodeIndex });
+    }
+    std::sort(candidates.begin(), candidates.end());
+
+    for (const auto& candidate : candidates) {
+        if (budgetMs - elapsedMs() <= 0.0 || budgetStageBytes <= 0)
+            break;
+        const uint32_t nodeIndex = candidate.second;
+        auto cacheIt = readyCache_.find(nodeIndex);
+        if (!cacheIt->second.points || cacheIt->second.points->runs.empty()) {
+            states_[nodeIndex].store(static_cast<uint8_t>(NodeState::Failed),
+                                     std::memory_order_relaxed);
+            ++failedCount_;
+            cpuCacheBytes_ -=
+                std::min<uint64_t>(cpuCacheBytes_, cacheIt->second.cpuBytes());
+            readyCache_.erase(cacheIt);
+            continue;
+        }
+        const size_t pagesNeeded = cacheIt->second.points->runs.size();
+        if (pagesNeeded > size_t(poolPageCapacity())) {
+            if (!warnedNodeOverPool_) {
+                warnedNodeOverPool_ = true;
+                pushWarning(name + ": a node exceeds the whole point pool — "
+                            "raise the pool budget");
+            }
+            states_[nodeIndex].store(static_cast<uint8_t>(NodeState::Failed),
+                                     std::memory_order_relaxed);
+            ++failedCount_;
+            cpuCacheBytes_ -=
+                std::min<uint64_t>(cpuCacheBytes_, cacheIt->second.cpuBytes());
+            readyCache_.erase(cacheIt);
+            continue;
+        }
+        if (pagesNeeded > freePages_.size())
+            break; // pool saturated; eviction/graveyard frees pages later
+
+        PointStaging upload;
+        upload.payload = std::move(cacheIt->second);
+        cpuCacheBytes_ -=
+            std::min<uint64_t>(cpuCacheBytes_, upload.payload.cpuBytes());
+        readyCache_.erase(cacheIt);
+
+        upload.pages.resize(pagesNeeded);
+        for (size_t p = 0; p < pagesNeeded; ++p) {
+            upload.pages[p] = freePages_.back();
+            freePages_.pop_back();
+        }
+        states_[nodeIndex].store(static_cast<uint8_t>(NodeState::Staging),
+                                 std::memory_order_relaxed);
+        if (stagePointUpload(upload, ring, budgetStageBytes)) {
+            finalizePointResidency(upload);
+        } else {
+            pointStaging_[nodeIndex] = std::move(upload);
+        }
+    }
+
+    recolorResidentPoints(ring, budgetStageBytes);
+    SV_PLOT("i3s poolPages", double(usedPages()));
+}
+
 void I3SSceneLayer::pump(rhi::Device& device, renderer::MaterialSystem& materials,
                          rhi::UploadRing& ring, uint64_t frameRetireValue,
                          uint64_t completedFrameValue, double& budgetMs,
@@ -608,12 +1205,36 @@ void I3SSceneLayer::pump(rhi::Device& device, renderer::MaterialSystem& material
     if (!streaming_)
         return;
     SV_ZONE_N("i3s pump");
+    pumpRing_ = &ring;
     const auto start = std::chrono::steady_clock::now();
     auto elapsedMs = [&]() {
         return std::chrono::duration<double, std::milli>(
                    std::chrono::steady_clock::now() - start)
             .count();
     };
+
+    if (rendersPoints()) {
+        drainReadyQueue();
+        pumpPoints(device, ring, budgetMs, budgetStageBytes, frameRetireValue,
+                   completedFrameValue, elapsedMs);
+        trimCpuCache();
+
+        const double now = nowSeconds();
+        if (rateWindowStart_ == 0.0)
+            rateWindowStart_ = now;
+        const double window = now - rateWindowStart_;
+        if (window >= 0.5) {
+            const double mb = 1024.0 * 1024.0;
+            decodeRateMBs_ = float(double(decodedBytesWindow_.exchange(
+                                       0, std::memory_order_relaxed)) /
+                                   window / mb);
+            uploadRateMBs_ = float(double(uploadedBytesWindow_) / window / mb);
+            uploadedBytesWindow_ = 0;
+            rateWindowStart_ = now;
+        }
+        budgetMs -= elapsedMs();
+        return;
+    }
 
     drainReadyQueue();
     evictOverBudget(device, materials, frameRetireValue);
@@ -749,6 +1370,10 @@ void I3SSceneLayer::pump(rhi::Device& device, renderer::MaterialSystem& material
 
 void I3SSceneLayer::releaseGpu(renderer::MaterialSystem& materials,
                                rhi::UploadRing& ring, uint64_t retireValue) {
+    // Point layers: the pool owns every GPU byte; its destroy() drops queued
+    // ring copies and waits for the device itself.
+    releasePointPool();
+
     // Cancel staged-but-unflushed ring copies before their destinations die
     // with this layer (the caller waitIdle()s for the flushed ones).
     for (auto& entry : staging_) {
@@ -830,6 +1455,23 @@ float I3SSceneLayer::nodeMetric(uint32_t nodeIndex, const glm::vec3& cameraPos,
         // Expressed as metric > threshold  <=>  dist < threshold.
         metric = threshold * threshold / std::max(dist, 1e-3f);
         break;
+    case i3s::LodMetric::DensityThreshold: {
+        // PCSL: lodThreshold is the node's effective 2D area (world units^2).
+        // Screen density Ds = pointCount / (area * (px/m)^2); split when Ds
+        // falls under the density target. Normalized so metric > 1 = split
+        // (wantSplit compares against 1 for this metric).
+        const float pxPerMeter = screenFactor / dist;
+        const float areaPx = threshold * pxPerMeter * pxPerMeter;
+        const float pointCount = static_cast<float>(node.mesh.vertexCount);
+        if (threshold <= 0.0f || pointCount <= 0.0f) {
+            // Degenerate node page entries: refine once the box dominates
+            // the view (~512 px projected diameter).
+            metric = diameterPx / 512.0f;
+        } else {
+            metric = std::max(densityTarget, 1e-3f) * areaPx / pointCount;
+        }
+        break;
+    }
     case i3s::LodMetric::MaxScreenThreshold:
     default:
         metric = diameterPx;
@@ -842,12 +1484,16 @@ bool I3SSceneLayer::wantSplit(uint32_t nodeIndex, float metric) {
     const i3s::NodeInfo& node = tree.nodes[nodeIndex];
     if (node.childCount == 0)
         return false;
-    if (node.lodThreshold <= 0.0)
+    // The density metric is self-normalized (nodeMetric folds the node's
+    // threshold in); every other metric compares against the node threshold.
+    const bool densityMetric = info.lodMetric == i3s::LodMetric::DensityThreshold;
+    if (!densityMetric && node.lodThreshold <= 0.0)
         return true; // no threshold = always refine (typical group root)
 
     // Hysteresis: once split, merge back only when the metric drops 15% under
     // the split threshold.
-    const float threshold = static_cast<float>(node.lodThreshold);
+    const float threshold =
+        densityMetric ? 1.0f : static_cast<float>(node.lodThreshold);
     const bool wasSplit = splitState_[nodeIndex] != 0;
     const float effective = wasSplit ? threshold * kMergeHysteresis : threshold;
     const bool split = metric > effective;
@@ -882,7 +1528,9 @@ void I3SSceneLayer::rebuildWorkQueue() {
 
     const uint64_t budgetBytes =
         uint64_t(std::max(budgetGpuMB, 64)) * 1024ull * 1024ull;
-    const bool gpuFull = gpuBytes_ >= budgetBytes || vramPressure_;
+    const bool gpuFull = rendersPoints()
+                             ? pointPoolFull()
+                             : (gpuBytes_ >= budgetBytes || vramPressure_);
     const uint32_t nodeBudget = static_cast<uint32_t>(std::max(budgetMaxNodes, 1));
 
     std::lock_guard<std::mutex> lock(workMutex_);
@@ -901,6 +1549,7 @@ void I3SSceneLayer::rebuildWorkQueue() {
         // Everything already holding a node slot (the queue is empty here).
         const uint32_t pipeline =
             static_cast<uint32_t>(residency_.size() + staging_.size() +
+                                  pointResidency_.size() + pointStaging_.size() +
                                   readyCache_.size()) +
             decodingCount_.load(std::memory_order_relaxed);
         const size_t capacityLeft =
@@ -937,6 +1586,18 @@ void I3SSceneLayer::rebuildWorkQueue() {
 
 void I3SSceneLayer::emitDraw(uint32_t nodeIndex,
                              renderer::FrameSubmission& submission) {
+    if (rendersPoints()) {
+        // Point nodes collect into this frame's drawn set; submitPointDraws
+        // compacts them into the pool's batch array after the traversal.
+        if (pointResidency_.find(nodeIndex) == pointResidency_.end())
+            return;
+        drawnPointNodes_.push_back(nodeIndex);
+        drawnStamp_[nodeIndex] = frameStamp_;
+        wantStamp_[nodeIndex] = frameStamp_;
+        ++drawnLastFrame_;
+        return;
+    }
+
     const auto it = residency_.find(nodeIndex);
     if (it == residency_.end() || !it->second.mesh.valid())
         return;
@@ -1016,9 +1677,13 @@ void I3SSceneLayer::traverse(uint32_t nodeIndex,
         // approaching this node's split point, warm its children at low
         // priority — they arrive before the split instead of after.
         if (prefetch && node.childCount > 0 && node.lodThreshold > 0.0) {
+            const float splitThreshold =
+                info.lodMetric == i3s::LodMetric::DensityThreshold
+                    ? 1.0f
+                    : float(node.lodThreshold);
             const float predicted =
                 nodeMetric(nodeIndex, predictedPos, screenFactor);
-            if (predicted > float(node.lodThreshold) * kPrefetchBand) {
+            if (predicted > splitThreshold * kPrefetchBand) {
                 for (uint32_t c = 0; c < node.childCount; ++c) {
                     const uint32_t child = tree.childIndices[node.firstChild + c];
                     if (tree.nodes[child].mesh.hasGeometry)
@@ -1034,6 +1699,7 @@ void I3SSceneLayer::traverse(uint32_t nodeIndex,
 void I3SSceneLayer::submitDraws(renderer::FrameSubmission& submission,
                                 uint32_t viewportHeight) {
     drawnLastFrame_ = 0;
+    drawnPointNodes_.clear();
     if (!visible || !showGeometry || !streaming_ || tree.nodes.empty())
         return;
     SV_ZONE_N("i3s traversal");
@@ -1056,27 +1722,91 @@ void I3SSceneLayer::submitDraws(renderer::FrameSubmission& submission,
 
     traverse(0, submission, camera.position, predicted, screenFactor, frustum);
     rebuildWorkQueue();
+    if (rendersPoints())
+        submitPointDraws(submission);
+}
+
+void I3SSceneLayer::submitPointDraws(renderer::FrameSubmission& submission) {
+    if (!pool_ || !pool_->valid())
+        return;
+    SV_ZONE_N("i3s point batches");
+
+    // Compact this frame's drawn set into one batch array. Content usually
+    // repeats frame to frame — only a changed set touches the ring (32 B per
+    // batch; a few thousand batches = tens of KB).
+    batchScratch_.clear();
+    for (uint32_t nodeIndex : drawnPointNodes_) {
+        const auto it = pointResidency_.find(nodeIndex);
+        if (it == pointResidency_.end())
+            continue;
+        batchScratch_.insert(batchScratch_.end(), it->second.batches.begin(),
+                             it->second.batches.end());
+    }
+
+    const bool changed =
+        batchScratch_.size() != uploadedBatches_.size() ||
+        (!batchScratch_.empty() &&
+         std::memcmp(batchScratch_.data(), uploadedBatches_.data(),
+                     batchScratch_.size() * sizeof(Engine::ComputeBatch)) != 0);
+    if (changed) {
+        // Write the INACTIVE half (ping-pong): the previous frame may still
+        // be reading the active one — the inactive half was last read two
+        // submissions ago, which the renderer's frame-slot wait has retired.
+        const uint32_t half = activeBatchHalf_ ^ 1u;
+        const VkDeviceSize halfBytes = VkDeviceSize(poolPageCapacity()) *
+                                       renderer::PointCloudGpu::kBatchStride;
+        if (batchScratch_.empty()) {
+            uploadedBatches_.clear();
+        } else if (pumpRing_ &&
+                   batchScratch_.size() <= size_t(poolPageCapacity()) &&
+                   pumpRing_->stage(
+                       pool_->storage, pool_->batchesOffset + half * halfBytes,
+                       batchScratch_.data(),
+                       batchScratch_.size() * sizeof(Engine::ComputeBatch))) {
+            uploadedBatches_ = batchScratch_;
+            activeBatchHalf_ = half;
+        }
+        // else: ring full — keep drawing last frame's set (its pages are
+        // intact; evicted pages retire on the frame timeline).
+    }
+    if (uploadedBatches_.empty())
+        return;
+
+    renderer::PointCloudDrawItem item;
+    item.addresses = pool_->addresses;
+    item.addresses.batches +=
+        VkDeviceSize(activeBatchHalf_) * poolPageCapacity() *
+        renderer::PointCloudGpu::kBatchStride;
+    item.numBatches = static_cast<uint32_t>(uploadedBatches_.size());
+    item.pointsPerThread =
+        static_cast<int>((kPointPageSize + SV_PC_RASTER_WORKGROUP - 1) /
+                         SV_PC_RASTER_WORKGROUP);
+    item.model = glm::mat4(1.0f); // pool batches live in layer anchor space
+    submission.pointClouds.push_back(item);
 }
 
 int I3SSceneLayer::pickNodeAt(const glm::vec3& worldPoint) const {
     int best = -1;
     int bestLevel = -1;
-    for (const auto& entry : residency_) {
-        const uint32_t nodeIndex = entry.first;
+    auto consider = [&](uint32_t nodeIndex) {
         if (drawnStamp_[nodeIndex] != frameStamp_)
-            continue; // only nodes that are part of the current cut
+            return; // only nodes that are part of the current cut
         const NodeBox& box = nodeBoxes[nodeIndex];
         const glm::vec3 local = glm::transpose(box.axes) * (worldPoint - box.center);
         const glm::vec3 extent = box.halfSize + glm::vec3(0.05f); // pick slack
         if (std::fabs(local.x) > extent.x || std::fabs(local.y) > extent.y ||
             std::fabs(local.z) > extent.z)
-            continue;
+            return;
         const int level = tree.nodes[nodeIndex].level;
         if (level > bestLevel) {
             bestLevel = level;
             best = static_cast<int>(nodeIndex);
         }
-    }
+    };
+    for (const auto& entry : residency_)
+        consider(entry.first);
+    for (const auto& entry : pointResidency_)
+        consider(entry.first);
     return best;
 }
 
@@ -1085,8 +1815,14 @@ I3SSceneLayer::Stats I3SSceneLayer::stats() const {
     stats.queued = queuedCount_.load(std::memory_order_relaxed);
     stats.decoding = decodingCount_.load(std::memory_order_relaxed);
     stats.ready = static_cast<uint32_t>(readyCache_.size());
-    stats.staging = static_cast<uint32_t>(staging_.size());
-    stats.resident = static_cast<uint32_t>(residency_.size());
+    stats.staging = static_cast<uint32_t>(staging_.size() + pointStaging_.size());
+    stats.resident =
+        static_cast<uint32_t>(residency_.size() + pointResidency_.size());
+    stats.poolPointsUsed = uint64_t(usedPages()) * kPointPageSize;
+    stats.poolPointsCapacity = poolCapacityPoints_;
+    stats.residentPoints = residentPoints_;
+    stats.drawnBatches = static_cast<uint32_t>(uploadedBatches_.size());
+    stats.recolorPending = recolorPending_;
     stats.failed = failedCount_;
     stats.drawnLastFrame = drawnLastFrame_;
     stats.gpuBytes = gpuBytes_;

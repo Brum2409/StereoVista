@@ -48,12 +48,15 @@
 // and call releaseGpu() to hand texture slots back (else they leak).
 // ============================================================================
 
+#include "Engine/Data.h" // ComputeBatch (PCSL pool batches, M3)
 #include "Loaders/Slpk/GeoAnchor.h"
 #include "Loaders/Slpk/I3SGeometry.h"
+#include "Loaders/Slpk/I3SPointCloud.h"
 #include "Loaders/Slpk/I3STexture.h"
 #include "Loaders/Slpk/SlpkTypes.h"
 #include "RHI/Texture.h" // PendingUpload holds an rhi::Texture by value
 #include "Renderer/MeshBuffer.h"
+#include "Renderer/PointCloudGpu.h"
 
 #include <glm/glm.hpp>
 
@@ -61,6 +64,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -161,6 +165,45 @@ public:
         return info.type == i3s::LayerType::Object3D ||
                info.type == i3s::LayerType::IntegratedMesh;
     }
+    // True for layer types the point-cloud pool renders (PCSL, M3).
+    bool rendersPoints() const {
+        return info.type == i3s::LayerType::PointCloud;
+    }
+
+    // ---- point-cloud rendering (M3) ----------------------------------------
+    // One PointCloudGpu pool per layer; resident nodes own fixed 2048-point
+    // pages (one ComputeBatch each). Colorization is baked CPU-side into the
+    // pool's rgba section — mode/palette/bound edits re-bake progressively
+    // through the ring (no shader changes; the elevation mode could not be
+    // computed in the lookup pass anyway, it never sees positions).
+
+    enum class PointColorMode : int {
+        Rgb = 0,
+        Intensity = 1,
+        Classification = 2,
+        Elevation = 3,
+    };
+    PointColorMode pointColorMode = PointColorMode::Rgb;
+    float densityTarget = 0.25f; // traversal target, points per pixel^2
+    int budgetPoolPoints = 8000000; // pool capacity; applied on (re)create
+    // Ramp bounds, seeded from the layer statistics at load (panel-editable).
+    float intensityRampMin = 0.0f;
+    float intensityRampMax = 255.0f;
+    float elevationRampMin = 0.0f; // app-frame Y (anchor space)
+    float elevationRampMax = 1.0f;
+    // Classification palette (value-indexed, sRGB); ArcGIS-style defaults.
+    glm::vec3 classPalette[256];
+    // Which columns the layer declares (panel enables modes accordingly).
+    bool hasRgbColumn = false;
+    bool hasIntensityColumn = false;
+    bool hasClassColumn = false;
+    i3s::AttributeStatistics classStats; // labels/values for the palette UI
+
+    // Call after editing pointColorMode / palette / ramp bounds: resident
+    // nodes re-bake + re-upload their rgba pages over the next pumps.
+    void markPointColorsDirty() { ++recolorEpoch_; }
+
+    static const glm::vec3* defaultClassPalette(); // [256]
 
     // Spawns the decode workers (call once after load(), main thread). No-op
     // for non-mesh layers or when already running.
@@ -218,6 +261,12 @@ public:
         float uploadRateMBs = 0.0f; // bytes staged to the GPU, same window
         uint64_t deviceUsageMB = 0; // VMA device-local heap usage / budget
         uint64_t deviceBudgetMB = 0;
+        // Point-pool residency (PCSL layers only).
+        uint64_t poolPointsUsed = 0;     // page-granular commitment
+        uint64_t poolPointsCapacity = 0; // pool reservation
+        uint64_t residentPoints = 0;     // exact decoded points resident
+        uint32_t drawnBatches = 0;       // compacted batch count last frame
+        uint32_t recolorPending = 0;     // nodes awaiting a color re-bake
     };
     Stats stats() const;
 
@@ -235,6 +284,31 @@ private:
         NoContent, // group node without geometry
     };
 
+    // One pool page worth of quantized points, produced on the worker. The
+    // batch bounds are in anchor space; firstPoint is filled at stage time
+    // (page assignment is a main-thread decision).
+    struct PointRun {
+        Engine::ComputeBatch batch{};
+        std::vector<uint32_t> xyz4b;
+        std::vector<uint32_t> xyz8b;
+        std::vector<uint32_t> xyz12b;
+    };
+
+    // Worker output for one PCSL node: quantized position runs + the compact
+    // per-point colorization columns (kept CPU-side while resident so a
+    // mode/palette change re-bakes rgba without re-decoding, ~8 B/point).
+    struct PointPayload {
+        std::vector<PointRun> runs;
+        std::vector<uint8_t> rgb;        // 3 B/point or empty
+        std::vector<uint16_t> intensity; // per point or empty
+        std::vector<uint8_t> classCodes; // per point or empty
+        std::vector<uint16_t> elevation; // app-frame Y quantized over the node
+        float elevMin = 0.0f;            // dequant range (absolute app Y)
+        float elevMax = 0.0f;
+        uint32_t pointCount = 0;
+        size_t cpuBytes() const;
+    };
+
     // What a worker produces for one node (CPU only).
     struct NodePayload {
         uint32_t nodeIndex = 0;
@@ -243,7 +317,11 @@ private:
         std::string error;
         i3s::GeometryData geometry;
         i3s::TextureData texture;
-        size_t cpuBytes() const { return geometry.cpuBytes() + texture.cpuBytes(); }
+        std::unique_ptr<PointPayload> points; // PCSL layers only
+        size_t cpuBytes() const {
+            return geometry.cpuBytes() + texture.cpuBytes() +
+                   (points ? points->cpuBytes() : 0);
+        }
     };
 
     // A payload on its way to the GPU (buffers created, ring staging may span
@@ -271,6 +349,37 @@ private:
     // retireValue (an in-flight frame may still draw it).
     struct MeshGrave {
         renderer::MeshBuffer mesh;
+        uint64_t retireValue = 0;
+    };
+
+    // A point node on its way into the pool: pages are allocated up front,
+    // runs stage transactionally (resume at runsStaged on a full ring).
+    struct PointStaging {
+        NodePayload payload;
+        std::vector<uint32_t> pages; // one per run
+        size_t runsStaged = 0;
+        uint32_t bakedEpoch = 0; // recolorEpoch_ the staged rgba was baked at
+    };
+
+    // Pool residency of one PCSL node. `batches` are final (firstPoint =
+    // page * kPointPageSize); the colorization columns stay for re-bakes.
+    struct PointResidency {
+        std::vector<uint32_t> pages;
+        std::vector<Engine::ComputeBatch> batches;
+        std::vector<uint8_t> rgb;
+        std::vector<uint16_t> intensity;
+        std::vector<uint8_t> classCodes;
+        std::vector<uint16_t> elevation;
+        float elevMin = 0.0f;
+        float elevMax = 0.0f;
+        uint32_t pointCount = 0;
+        uint32_t bakedEpoch = 0;
+    };
+
+    // Pages of an evicted node: reusable once the frame timeline passes
+    // retireValue (the last uploaded batch array may still reference them).
+    struct PageGrave {
+        std::vector<uint32_t> pages;
         uint64_t retireValue = 0;
     };
 
@@ -315,6 +424,32 @@ private:
     void surfacePayloadWarnings(const NodePayload& payload);
     void pushWarning(const std::string& warning);
 
+    // Point-pool stages (main thread, M3).
+    static constexpr uint32_t kPointPageSize = 2048; // points per page/batch
+    uint32_t poolPageCapacity() const {
+        return pool_ ? poolCapacityPoints_ / kPointPageSize : 0;
+    }
+    uint32_t usedPages() const;
+    bool pointPoolFull() const;
+    void ensurePool(rhi::Device& device, rhi::UploadRing& ring);
+    void evictPointsOverBudget(uint64_t frameRetireValue);
+    void retirePageGraveyard(uint64_t completedFrameValue);
+    // Bakes rgba for `count` points starting at `first` of the node's columns
+    // under the current colorization mode into out (resized).
+    void bakeRunColors(const PointResidency& node, size_t first, size_t count,
+                       std::vector<uint32_t>& out) const;
+    // False = ring full (resumes at runsStaged next pump).
+    bool stagePointUpload(PointStaging& upload, rhi::UploadRing& ring,
+                          int64_t& budgetStageBytes);
+    void finalizePointResidency(PointStaging& upload);
+    void recolorResidentPoints(rhi::UploadRing& ring, int64_t& budgetStageBytes);
+    void pumpPoints(rhi::Device& device, rhi::UploadRing& ring, double& budgetMs,
+                    int64_t& budgetStageBytes, uint64_t frameRetireValue,
+                    uint64_t completedFrameValue,
+                    const std::function<double()>& elapsedMs);
+    void submitPointDraws(renderer::FrameSubmission& submission);
+    void releasePointPool();
+
     std::unique_ptr<i3s::SlpkArchive> archive_;
     std::string error_;
 
@@ -339,6 +474,34 @@ private:
     std::unordered_map<uint32_t, PendingUpload> staging_;
     std::unordered_map<uint32_t, NodeResidency> residency_;
     std::vector<MeshGrave> graveyard_;
+
+    // ---- point-pool state (PCSL layers, M3; main thread) ----
+    std::unique_ptr<renderer::PointCloudGpu> pool_;
+    uint32_t poolCapacityPoints_ = 0; // pool_'s created capacity
+    std::vector<uint32_t> freePages_; // LIFO free list
+    std::unordered_map<uint32_t, PointStaging> pointStaging_;
+    std::unordered_map<uint32_t, PointResidency> pointResidency_;
+    std::vector<PageGrave> pageGraveyard_;
+    uint32_t recolorEpoch_ = 0;
+    uint32_t recolorPending_ = 0;
+    uint64_t residentPoints_ = 0;
+    std::vector<uint32_t> drawnPointNodes_; // filled by emitDraw per frame
+    // The compacted batch array as last successfully ring-uploaded; item
+    // emission uses its count so a full ring degrades to last frame's set.
+    // The batches section is double-sized and ping-ponged: the ring flush
+    // has no barrier against the PREVIOUS frame's reads (frames may overlap
+    // on the queue), but the half being rewritten was last read two
+    // submissions ago — retired by the renderer's frame-slot wait.
+    std::vector<Engine::ComputeBatch> uploadedBatches_;
+    uint32_t activeBatchHalf_ = 0;
+    std::vector<Engine::ComputeBatch> batchScratch_;
+    std::vector<uint32_t> rgbaScratch_;
+    // Captured each pump so submitDraws can stage the batch array (the pump
+    // always runs earlier in the frame).
+    rhi::UploadRing* pumpRing_ = nullptr;
+    int failedPoolBudget_ = -1; // don't retry a failed allocation every frame
+    bool warnedNodeOverPool_ = false;
+    bool warnedAttributes_ = false;
     std::vector<Want> wants_;           // collected by traverse, consumed by
                                         // rebuildWorkQueue every frame
     std::vector<uint8_t> splitState_;   // traversal hysteresis

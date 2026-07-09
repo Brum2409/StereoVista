@@ -1040,4 +1040,58 @@ bool I3SLayer::parse16SharedResource(const SlpkArchive& archive,
     return true;
 }
 
+// ---- layer-wide attribute statistics (M3) --------------------------------------
+
+bool I3SLayer::loadStatistics(const SlpkArchive& archive, const std::string& key,
+                              AttributeStatistics& out, std::string& error) {
+    out = AttributeStatistics{};
+    std::vector<uint8_t> bytes;
+    // SLPK convention: statistics/<key>.json.gz (read() is gzip-transparent);
+    // some cookers nest a summary document one level deeper.
+    if (!archive.read("statistics/" + key + ".json", bytes) &&
+        !archive.read("statistics/" + key + "/0.json", bytes))
+        return false; // absent = no statistics, not an error (error stays empty)
+
+    json doc;
+    if (!parseJsonBytes(bytes, doc)) {
+        error = "statistics/" + key + ".json is not valid JSON";
+        return false;
+    }
+    const auto statsIt = doc.find("stats");
+    if (statsIt == doc.end() || !statsIt->is_object()) {
+        error = "statistics/" + key + ".json has no stats object";
+        return false;
+    }
+    out.min = getD(*statsIt, "min", 0.0);
+    out.max = getD(*statsIt, "max", 0.0);
+    out.valid = out.max >= out.min;
+
+    auto notePresent = [&out](int value) {
+        for (int v : out.presentValues)
+            if (v == value)
+                return;
+        out.presentValues.push_back(value);
+    };
+    const auto freqIt = statsIt->find("mostFrequentValues");
+    if (freqIt != statsIt->end() && freqIt->is_array())
+        for (const json& entry : *freqIt)
+            if (entry.is_object())
+                notePresent(getI(entry, "value", 0));
+    const auto labelsOuterIt = doc.find("labels");
+    if (labelsOuterIt != doc.end() && labelsOuterIt->is_object()) {
+        const auto labelsIt = labelsOuterIt->find("labels");
+        if (labelsIt != labelsOuterIt->end() && labelsIt->is_array()) {
+            for (const json& entry : *labelsIt) {
+                if (!entry.is_object())
+                    continue;
+                const int value = getI(entry, "value", 0);
+                out.classLabels.push_back({ value, getS(entry, "label") });
+                notePresent(value);
+            }
+        }
+    }
+    std::sort(out.presentValues.begin(), out.presentValues.end());
+    return out.valid;
+}
+
 } // namespace i3s
