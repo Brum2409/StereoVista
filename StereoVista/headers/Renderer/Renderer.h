@@ -162,6 +162,16 @@ public:
     // command buffer; space retires against the frame timeline.
     rhi::UploadRing& uploadRing() { return uploadRing_; }
 
+    // Frame-timeline sync points for streaming systems that defer GPU
+    // destruction (M2). frameRetireValue() is the value the NEXT submission
+    // will signal — releasing a resource between frames, it upper-bounds
+    // every frame that may still reference it (in-flight binds AND ring
+    // copies flushed into the next frame). completedFrameValue() is the
+    // counter the GPU has retired; a deferred destroy with retireValue <= it
+    // is safe now.
+    uint64_t frameRetireValue() const { return timelineValue_ + 1; }
+    uint64_t completedFrameValue() const;
+
     TonemapSettings& tonemapSettings() { return tonemapSettings_; }
 
     // Queues a capture of the next presented frame (tonemapped scene + UI) to

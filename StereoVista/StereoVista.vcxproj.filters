@@ -19,6 +19,12 @@
     <Filter Include="libs\draco">
       <UniqueIdentifier>{197be9b4-c483-4f72-89ba-0253bb0a2abe}</UniqueIdentifier>
     </Filter>
+    <Filter Include="libs\basisu">
+      <UniqueIdentifier>{8e37bf49-aeb1-48d0-b8f1-afcba38ceba0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="libs\tracy">
+      <UniqueIdentifier>{ad7f0bb0-378d-4da4-b304-d6589420b336}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Shaders">
       <UniqueIdentifier>{B2E1A5C4-7D3F-4E86-9A0B-52C6D1F0A9E3}</UniqueIdentifier>
       <Extensions>vert;frag;comp;geom;glsl;spv</Extensions>
@@ -129,6 +135,15 @@
     </ClCompile>
     <ClCompile Include="src\Loaders\Slpk\I3STexture.cpp">
       <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Loaders\Slpk\BasisTranscoderImpl.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\basisu\zstd\zstddeclib.c">
+      <Filter>libs\basisu</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\tracy\TracyClient.cpp">
+      <Filter>libs\tracy</Filter>
     </ClCompile>
     <ClCompile Include="headers\libs\draco\attributes\attribute_octahedron_transform.cc">
       <Filter>libs\draco</Filter>
@@ -587,6 +602,192 @@
     </ClInclude>
     <ClInclude Include="headers\Loaders\Slpk\I3STexture.h">
       <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Core\Profiling.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\basisu\transcoder\basisu.h">
+      <Filter>libs\basisu</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\basisu\transcoder\basisu_astc_hdr_core.h">
+      <Filter>libs\basisu</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\basisu\transcoder\basisu_astc_helpers.h">
+      <Filter>libs\basisu</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\basisu\transcoder\basisu_containers.h">
+      <Filter>libs\basisu</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\basisu\transcoder\basisu_containers_impl.h">
+      <Filter>libs\basisu</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\basisu\transcoder\basisu_file_headers.h">
+      <Filter>libs\basisu</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\basisu\transcoder\basisu_idct.h">
+      <Filter>libs\basisu</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\basisu\transcoder\basisu_transcoder.h">
+      <Filter>libs\basisu</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\basisu\transcoder\basisu_transcoder_internal.h">
+      <Filter>libs\basisu</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\basisu\transcoder\basisu_transcoder_uastc.h">
+      <Filter>libs\basisu</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\basisu\zstd\zstd.h">
+      <Filter>libs\basisu</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\basisu\zstd\zstd_errors.h">
+      <Filter>libs\basisu</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\client\TracyArmCpuTable.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\client\TracyCallstack.h">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\client\TracyCallstack.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\client\TracyCpuid.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\client\TracyDebug.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\client\TracyDxt1.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\client\TracyFastVector.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\client\TracyKCore.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\client\TracyLock.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\client\TracyProfiler.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\client\TracyRingBuffer.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\client\TracyScoped.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\client\TracyStringHelpers.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\client\TracySysPower.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\client\TracySysTime.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\client\TracySysTrace.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\client\TracyThread.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\client\tracy_SPSCQueue.h">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\client\tracy_concurrentqueue.h">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\client\tracy_rpmalloc.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\common\TracyAlign.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\common\TracyAlloc.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\common\TracyApi.h">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\common\TracyColor.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\common\TracyForceInline.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\common\TracyMutex.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\common\TracyProtocol.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\common\TracyQueue.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\common\TracySocket.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\common\TracyStackFrames.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\common\TracySystem.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\common\TracyVersion.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\common\TracyWinFamily.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\common\TracyYield.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\common\tracy_lz4.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\common\tracy_lz4hc.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\libbacktrace\backtrace.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\libbacktrace\config.h">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\libbacktrace\filenames.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\libbacktrace\internal.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\tracy\Tracy.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\tracy\TracyC.h">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\tracy\TracyCUDA.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\tracy\TracyD3D11.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\tracy\TracyD3D12.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\tracy\TracyLua.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\tracy\TracyOpenCL.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\tracy\TracyOpenGL.hpp">
+      <Filter>libs\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\tracy\tracy\TracyVulkan.hpp">
+      <Filter>libs\tracy</Filter>
     </ClInclude>
     <ClInclude Include="headers\libs\draco\attributes\attribute_octahedron_transform.h">
       <Filter>libs\draco</Filter>
@@ -1248,6 +1449,120 @@
     </None>
     <None Include="assets\shaders_vk\pointcloud_common.glsl">
       <Filter>Shaders</Filter>
+    </None>
+    <None Include="headers\libs\basisu\transcoder\basisu_astc_cfgs.inl">
+      <Filter>libs\basisu</Filter>
+    </None>
+    <None Include="headers\libs\basisu\transcoder\basisu_etc1_mods.inl">
+      <Filter>libs\basisu</Filter>
+    </None>
+    <None Include="headers\libs\basisu\transcoder\basisu_transcoder.cpp">
+      <Filter>libs\basisu</Filter>
+    </None>
+    <None Include="headers\libs\basisu\transcoder\basisu_transcoder_tables_astc.inc">
+      <Filter>libs\basisu</Filter>
+    </None>
+    <None Include="headers\libs\basisu\transcoder\basisu_transcoder_tables_astc_0_255.inc">
+      <Filter>libs\basisu</Filter>
+    </None>
+    <None Include="headers\libs\basisu\transcoder\basisu_transcoder_tables_atc_55.inc">
+      <Filter>libs\basisu</Filter>
+    </None>
+    <None Include="headers\libs\basisu\transcoder\basisu_transcoder_tables_atc_56.inc">
+      <Filter>libs\basisu</Filter>
+    </None>
+    <None Include="headers\libs\basisu\transcoder\basisu_transcoder_tables_bc7_m5_alpha.inc">
+      <Filter>libs\basisu</Filter>
+    </None>
+    <None Include="headers\libs\basisu\transcoder\basisu_transcoder_tables_bc7_m5_color.inc">
+      <Filter>libs\basisu</Filter>
+    </None>
+    <None Include="headers\libs\basisu\transcoder\basisu_transcoder_tables_dxt1_5.inc">
+      <Filter>libs\basisu</Filter>
+    </None>
+    <None Include="headers\libs\basisu\transcoder\basisu_transcoder_tables_dxt1_6.inc">
+      <Filter>libs\basisu</Filter>
+    </None>
+    <None Include="headers\libs\basisu\transcoder\basisu_transcoder_tables_pvrtc2_45.inc">
+      <Filter>libs\basisu</Filter>
+    </None>
+    <None Include="headers\libs\basisu\transcoder\basisu_transcoder_tables_pvrtc2_alpha_33.inc">
+      <Filter>libs\basisu</Filter>
+    </None>
+    <None Include="headers\libs\tracy\client\TracyAlloc.cpp">
+      <Filter>libs\tracy</Filter>
+    </None>
+    <None Include="headers\libs\tracy\client\TracyCallstack.cpp">
+      <Filter>libs\tracy</Filter>
+    </None>
+    <None Include="headers\libs\tracy\client\TracyDxt1.cpp">
+      <Filter>libs\tracy</Filter>
+    </None>
+    <None Include="headers\libs\tracy\client\TracyKCore.cpp">
+      <Filter>libs\tracy</Filter>
+    </None>
+    <None Include="headers\libs\tracy\client\TracyOverride.cpp">
+      <Filter>libs\tracy</Filter>
+    </None>
+    <None Include="headers\libs\tracy\client\TracyProfiler.cpp">
+      <Filter>libs\tracy</Filter>
+    </None>
+    <None Include="headers\libs\tracy\client\TracyRocprof.cpp">
+      <Filter>libs\tracy</Filter>
+    </None>
+    <None Include="headers\libs\tracy\client\TracySysPower.cpp">
+      <Filter>libs\tracy</Filter>
+    </None>
+    <None Include="headers\libs\tracy\client\TracySysTime.cpp">
+      <Filter>libs\tracy</Filter>
+    </None>
+    <None Include="headers\libs\tracy\client\TracySysTrace.cpp">
+      <Filter>libs\tracy</Filter>
+    </None>
+    <None Include="headers\libs\tracy\client\tracy_rpmalloc.cpp">
+      <Filter>libs\tracy</Filter>
+    </None>
+    <None Include="headers\libs\tracy\common\TracySocket.cpp">
+      <Filter>libs\tracy</Filter>
+    </None>
+    <None Include="headers\libs\tracy\common\TracyStackFrames.cpp">
+      <Filter>libs\tracy</Filter>
+    </None>
+    <None Include="headers\libs\tracy\common\TracySystem.cpp">
+      <Filter>libs\tracy</Filter>
+    </None>
+    <None Include="headers\libs\tracy\common\tracy_lz4.cpp">
+      <Filter>libs\tracy</Filter>
+    </None>
+    <None Include="headers\libs\tracy\common\tracy_lz4hc.cpp">
+      <Filter>libs\tracy</Filter>
+    </None>
+    <None Include="headers\libs\tracy\libbacktrace\alloc.cpp">
+      <Filter>libs\tracy</Filter>
+    </None>
+    <None Include="headers\libs\tracy\libbacktrace\dwarf.cpp">
+      <Filter>libs\tracy</Filter>
+    </None>
+    <None Include="headers\libs\tracy\libbacktrace\elf.cpp">
+      <Filter>libs\tracy</Filter>
+    </None>
+    <None Include="headers\libs\tracy\libbacktrace\fileline.cpp">
+      <Filter>libs\tracy</Filter>
+    </None>
+    <None Include="headers\libs\tracy\libbacktrace\macho.cpp">
+      <Filter>libs\tracy</Filter>
+    </None>
+    <None Include="headers\libs\tracy\libbacktrace\mmapio.cpp">
+      <Filter>libs\tracy</Filter>
+    </None>
+    <None Include="headers\libs\tracy\libbacktrace\posix.cpp">
+      <Filter>libs\tracy</Filter>
+    </None>
+    <None Include="headers\libs\tracy\libbacktrace\sort.cpp">
+      <Filter>libs\tracy</Filter>
+    </None>
+    <None Include="headers\libs\tracy\libbacktrace\state.cpp">
+      <Filter>libs\tracy</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>

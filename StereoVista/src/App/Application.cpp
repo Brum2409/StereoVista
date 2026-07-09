@@ -1,5 +1,6 @@
 #include "App/Application.h"
 
+#include "Core/Profiling.h"
 #include "Gui/Services.h" // abstract facade implemented by MainGuiServices below
 
 #include "Engine/Screenshot.h"
@@ -296,12 +297,18 @@ public:
     size_t slpkLoadsInFlight() const override { return app_.slpkJobs_.size(); }
     void frameI3SLayer(size_t index) override { app_.frameI3SLayer(index); }
     void unloadI3SLayer(size_t index) override {
-        // The layer owns live MeshBuffers/textures an in-flight frame may
-        // still reference; unload is rare, so a full device wait is the
-        // simple safe answer (same class of hitch as a swapchain rebuild).
-        app_.device_.waitIdle();
         if (index >= app_.scene_.i3sLayers.size())
             return;
+        // Cancel staged-but-unflushed ring copies + hand bindless texture
+        // slots and material entries back BEFORE the layer (and its buffers)
+        // dies — M1 leaked the slots here. Then the layer's remaining live
+        // MeshBuffers may still be referenced by an in-flight frame; unload
+        // is rare, so a full device wait is the simple safe answer (same
+        // class of hitch as a swapchain rebuild).
+        app_.scene_.i3sLayers[index]->releaseGpu(app_.renderer_.materials(),
+                                                 app_.renderer_.uploadRing(),
+                                                 app_.renderer_.frameRetireValue());
+        app_.device_.waitIdle();
         app_.scene_.i3sLayers.erase(app_.scene_.i3sLayers.begin() +
                                     static_cast<std::ptrdiff_t>(index));
         app_.scene_.computeWorldBounds();
@@ -1274,6 +1281,8 @@ void Application::run() {
     while (!window_.shouldClose()) {
         window_.pollEvents();
 
+        SV_FRAME_MARK();
+
         // Drag-dropped files + finished SLPK worker parses (both main-thread,
         // CPU-only; new layers are adopted into the scene here). The I3S pump
         // then turns decoded node payloads into GPU residency under a budget.
@@ -1537,20 +1546,20 @@ void Application::pumpSlpkLoads() {
 }
 
 void Application::pumpI3SLayers() {
-    // ONE frame budget for GPU creates across all layers (MeshBuffer::create
-    // and Texture::upload block on immediateSubmit — bounded per frame so
-    // loading never owns the frame).
-    constexpr double kBudgetMs = 5.0;
-    const auto start = std::chrono::steady_clock::now();
+    // ONE per-frame budget pair shared across all layers (panel-editable,
+    // plan §6.5): pump CPU time + bytes staged through the upload ring. Each
+    // layer's pump decrements what it consumed; the byte budget is post-paid
+    // so a single oversized node can overshoot once instead of never loading.
+    double budgetMs = std::max(double(scene::I3SSceneLayer::sPumpBudgetMs), 0.5);
+    int64_t budgetStageBytes =
+        int64_t(std::max(scene::I3SSceneLayer::sPumpStageBudgetMB, 4)) * 1024 * 1024;
     for (const std::unique_ptr<scene::I3SSceneLayer>& layer : scene_.i3sLayers) {
         if (!layer)
             continue;
-        const double elapsed =
-            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
-                                                      start)
-                .count();
-        if (elapsed < kBudgetMs)
-            layer->pumpGpuCreates(device_, renderer_.materials(), kBudgetMs - elapsed);
+        if (budgetMs > 0.0)
+            layer->pump(device_, renderer_.materials(), renderer_.uploadRing(),
+                        renderer_.frameRetireValue(), renderer_.completedFrameValue(),
+                        budgetMs, budgetStageBytes);
         for (const std::string& warning : layer->drainWarnings())
             pushToast(warning, Plugins::ToastLevel::Warning);
     }

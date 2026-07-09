@@ -38,6 +38,48 @@ bool hasStencil(VkFormat format) {
     }
 }
 
+// Texel-block geometry for the formats the upload paths accept. Uncompressed
+// formats are 1x1 blocks; the BC formats used by the streaming texture path
+// (M2: KTX2/Basis -> BC7) are 4x4. Block size doubles as the required
+// bufferOffset alignment for vkCmdCopyBufferToImage.
+struct BlockInfo {
+    uint32_t width = 1;
+    uint32_t height = 1;
+    uint32_t bytes = 0;
+};
+
+BlockInfo blockInfo(VkFormat format) {
+    switch (format) {
+    case VK_FORMAT_BC1_RGB_UNORM_BLOCK:
+    case VK_FORMAT_BC1_RGB_SRGB_BLOCK:
+    case VK_FORMAT_BC1_RGBA_UNORM_BLOCK:
+    case VK_FORMAT_BC1_RGBA_SRGB_BLOCK:
+    case VK_FORMAT_BC4_UNORM_BLOCK:
+    case VK_FORMAT_BC4_SNORM_BLOCK:
+        return { 4, 4, 8 };
+    case VK_FORMAT_BC3_UNORM_BLOCK:
+    case VK_FORMAT_BC3_SRGB_BLOCK:
+    case VK_FORMAT_BC5_UNORM_BLOCK:
+    case VK_FORMAT_BC5_SNORM_BLOCK:
+    case VK_FORMAT_BC7_UNORM_BLOCK:
+    case VK_FORMAT_BC7_SRGB_BLOCK:
+        return { 4, 4, 16 };
+    default:
+        return { 1, 1, 0 }; // bytes filled from texelSize by the caller
+    }
+}
+
+// Tightly-packed byte size of one mip level (block-compressed aware).
+VkDeviceSize mipByteSize(VkFormat format, uint32_t texelSizeBytes,
+                         uint32_t width, uint32_t height) {
+    const BlockInfo block = blockInfo(format);
+    if (block.bytes == 0)
+        return VkDeviceSize(width) * height * texelSizeBytes;
+    const VkDeviceSize blocksX = (width + block.width - 1) / block.width;
+    const VkDeviceSize blocksY = (height + block.height - 1) / block.height;
+    return blocksX * blocksY * block.bytes;
+}
+
 // Bytes per texel for the uncompressed formats upload() accepts. Compressed
 // formats need a different copy layout — add them when an asset path does.
 uint32_t texelSize(VkFormat format) {
@@ -280,6 +322,95 @@ void Texture::upload(const void* pixels, size_t byteSize) {
                                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                                           mips - 1, 1));
+    });
+}
+
+void Texture::uploadMips(const MipData* mips, uint32_t mipCount) {
+    if (!valid())
+        throw std::runtime_error("rhi::Texture::uploadMips on an invalid texture");
+    if (aspect_ != VK_IMAGE_ASPECT_COLOR_BIT)
+        throw std::runtime_error("rhi::Texture::uploadMips supports color formats only");
+    if (desc_.arrayLayers != 1)
+        throw std::runtime_error("rhi::Texture::uploadMips is single-layer only");
+    if (mipCount == 0 || mipCount != desc_.mipLevels)
+        throw std::runtime_error("rhi::Texture::uploadMips: mip count mismatch (got " +
+                                 std::to_string(mipCount) + ", texture has " +
+                                 std::to_string(desc_.mipLevels) + ")");
+    // create() only adds TRANSFER_DST automatically for blit chains; a
+    // single-level texture must have requested it in the desc.
+    if (desc_.mipLevels == 1 && !(desc_.usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT))
+        throw std::runtime_error(
+            "rhi::Texture::uploadMips: desc.usage lacks TRANSFER_DST");
+
+    const BlockInfo block = blockInfo(desc_.format);
+    const uint32_t texel = block.bytes == 0 ? texelSize(desc_.format) : 0;
+    // bufferOffset must be a multiple of the texel block size; one alignment
+    // covers every accepted format (16 is a multiple of 4, 8 and 16).
+    constexpr VkDeviceSize kMipAlign = 16;
+
+    // Validate the level sizes and lay the chain out in one staging buffer.
+    std::vector<VkDeviceSize> offsets(mipCount);
+    VkDeviceSize total = 0;
+    for (uint32_t level = 0; level < mipCount; ++level) {
+        const uint32_t w = std::max(desc_.extent.width >> level, 1u);
+        const uint32_t h = std::max(desc_.extent.height >> level, 1u);
+        const VkDeviceSize expected = mipByteSize(desc_.format, texel, w, h);
+        if (mips[level].size != expected || !mips[level].data)
+            throw std::runtime_error(
+                "rhi::Texture::uploadMips: level " + std::to_string(level) +
+                " byte size mismatch (got " + std::to_string(mips[level].size) +
+                ", expected " + std::to_string(expected) + ")");
+        total = (total + kMipAlign - 1) & ~(kMipAlign - 1);
+        offsets[level] = total;
+        total += expected;
+    }
+
+    Buffer staging;
+    BufferDesc stagingDesc{};
+    stagingDesc.size = total;
+    stagingDesc.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    stagingDesc.memory = MemoryUsage::HostUpload;
+    staging.create(*device_, stagingDesc);
+    for (uint32_t level = 0; level < mipCount; ++level)
+        std::memcpy(static_cast<char*>(staging.mapped()) + offsets[level],
+                    mips[level].data, mips[level].size);
+    staging.flush();
+
+    std::vector<VkBufferImageCopy2> regions(mipCount);
+    for (uint32_t level = 0; level < mipCount; ++level) {
+        VkBufferImageCopy2& region = regions[level];
+        region = {};
+        region.sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2;
+        region.bufferOffset = offsets[level];
+        region.imageSubresource.aspectMask = aspect_;
+        region.imageSubresource.mipLevel = level;
+        region.imageSubresource.layerCount = 1;
+        region.imageExtent = { std::max(desc_.extent.width >> level, 1u),
+                               std::max(desc_.extent.height >> level, 1u), 1 };
+    }
+
+    device_->immediateSubmit([&](VkCommandBuffer cmd) {
+        cmdImageBarrier(cmd, imageBarrier(image_, aspect_,
+                                          VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
+                                          VK_PIPELINE_STAGE_2_COPY_BIT,
+                                          VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                          VK_IMAGE_LAYOUT_UNDEFINED,
+                                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL));
+        VkCopyBufferToImageInfo2 copy{};
+        copy.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2;
+        copy.srcBuffer = staging.handle();
+        copy.dstImage = image_;
+        copy.dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        copy.regionCount = mipCount;
+        copy.pRegions = regions.data();
+        vkCmdCopyBufferToImage2(cmd, &copy);
+        cmdImageBarrier(cmd, imageBarrier(image_, aspect_,
+                                          VK_PIPELINE_STAGE_2_COPY_BIT,
+                                          VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                          VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                          VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
     });
 }
 

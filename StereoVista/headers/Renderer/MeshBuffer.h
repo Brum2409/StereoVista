@@ -10,6 +10,7 @@
 
 namespace rhi {
 class Device;
+class UploadRing;
 }
 
 namespace renderer {
@@ -43,6 +44,22 @@ public:
                 const char* debugName = nullptr);
     void destroy();
     bool valid() const { return indexCount_ > 0 && vertices_.valid(); }
+
+    // Streaming path (SLPK plan §6.3): createForStreaming() makes the
+    // device-local buffers UNFILLED (no blocking upload); stagePayload() then
+    // copies the data through the UploadRing — all-or-nothing per call, false
+    // = the ring is full right now, retry next frame (the buffers persist).
+    // valid() flips true only when stagePayload succeeded; the caller must
+    // not draw before the ring flushed into a frame (the flush precedes all
+    // draws in the frame command buffer, so "staged this pump" is drawable
+    // the same frame). dropPendingCopies() cancels staged-but-unflushed
+    // copies before an early destroy (layer unload).
+    void createForStreaming(rhi::Device& device, uint32_t vertexCount,
+                            uint32_t indexCount, const char* debugName = nullptr);
+    bool stagePayload(rhi::UploadRing& ring, const Vertex* vertices,
+                      size_t vertexCount, const uint32_t* indices,
+                      size_t indexCount);
+    void dropPendingCopies(rhi::UploadRing& ring) const;
 
     VkBuffer vertexBuffer() const { return vertices_.handle(); }
     VkBuffer indexBuffer() const { return indices_.handle(); }

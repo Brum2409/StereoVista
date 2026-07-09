@@ -1,5 +1,6 @@
 #include "Renderer/Renderer.h"
 
+#include "Core/Profiling.h"
 #include "Engine/Screenshot.h"
 #include "RHI/Barrier.h"
 #include "RHI/Device.h"
@@ -393,6 +394,7 @@ VkDescriptorSet Renderer::writeFrameSet(FrameContext& frame,
 }
 
 void Renderer::beginFrameSlot(FrameContext& frame) {
+    SV_ZONE_N("beginFrameSlot");
     const StatsClock::time_point start = StatsClock::now();
 
     // Block until this slot's previous submission retired.
@@ -419,10 +421,18 @@ void Renderer::beginFrameSlot(FrameContext& frame) {
         frame.pendingDepth = DepthReadback{};
     }
 
-    // Retire upload-ring space owned by frames the GPU has finished.
+    // Retire upload-ring space owned by frames the GPU has finished, and
+    // destroy graveyard textures those frames could still have sampled.
     uint64_t completed = 0;
     VK_CHECK(vkGetSemaphoreCounterValue(device_->device(), frameTimeline_, &completed));
     uploadRing_.reclaim(completed);
+    materials_.collectGarbage(completed);
+}
+
+uint64_t Renderer::completedFrameValue() const {
+    uint64_t completed = 0;
+    VK_CHECK(vkGetSemaphoreCounterValue(device_->device(), frameTimeline_, &completed));
+    return completed;
 }
 
 void Renderer::armDepthPick(FrameContext& frame, const FrameSubmission& submission) {
@@ -462,6 +472,7 @@ void Renderer::armDepthPick(FrameContext& frame, const FrameSubmission& submissi
 
 rhi::PresentResult Renderer::renderFrame(const FrameSubmission& submission,
                                          ImDrawData* uiDrawData) {
+    SV_ZONE_N("renderFrame");
     pollScreenshot(false);
 
     FrameContext& frame = frames_[frameSlot_];

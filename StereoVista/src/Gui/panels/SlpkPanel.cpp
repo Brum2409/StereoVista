@@ -68,7 +68,7 @@ void drawLayerInspector(Services& services, scene::I3SSceneLayer& layer,
         return; // layer reference is dead
     }
 
-    // ---- geometry rendering (M1) ----
+    // ---- geometry rendering + streaming HUD (M1/M2) ----
     if (layer.rendersGeometry()) {
         ImGui::SeparatorText("Geometry");
         ImGui::Checkbox("Render geometry", &layer.showGeometry);
@@ -85,14 +85,34 @@ void drawLayerInspector(Services& services, scene::I3SSceneLayer& layer,
             ImGui::SetNextItemWidth(160.0f);
             ImGui::SliderInt("VRAM budget (MB)", &layer.budgetGpuMB, 128, 8192,
                              "%d", ImGuiSliderFlags_Logarithmic);
+            ImGui::SetNextItemWidth(160.0f);
+            ImGui::SliderInt("CPU cache (MB)", &layer.budgetCpuMB, 64, 4096, "%d",
+                             ImGuiSliderFlags_Logarithmic);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Decoded payloads kept for re-upload without "
+                                  "re-decoding (cancelled/evicted nodes).");
+            ImGui::Checkbox("Prefetch", &layer.prefetch);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Warm one LOD past the cut along the camera "
+                                  "velocity (low priority).");
 
             const scene::I3SSceneLayer::Stats stats = layer.stats();
-            ImGui::Text("%u drawn | %u resident | %u decoding | %u failed",
-                        stats.drawnLastFrame, stats.resident, stats.decoding,
-                        stats.failed);
-            ImGui::Text("GPU %.1f MB | CPU queue %.1f MB",
+            ImGui::Text("%u drawn | %u resident | %u staging | %u ready",
+                        stats.drawnLastFrame, stats.resident, stats.staging,
+                        stats.ready);
+            ImGui::Text("%u queued | %u decoding | %u failed", stats.queued,
+                        stats.decoding, stats.failed);
+            ImGui::Text("GPU %.1f MB | CPU cache %.1f MB",
                         double(stats.gpuBytes) / (1024.0 * 1024.0),
-                        double(stats.cpuPendingBytes) / (1024.0 * 1024.0));
+                        double(stats.cpuCacheBytes) / (1024.0 * 1024.0));
+            ImGui::Text("decode %.1f MB/s | upload %.1f MB/s",
+                        double(stats.decodeRateMBs), double(stats.uploadRateMBs));
+            ImGui::Text("evicted %u | cancelled %u | graveyard %u", stats.evicted,
+                        stats.cancelled, stats.graveyard);
+            ImGui::Text("ring %.1f / %.0f MB | VRAM %llu / %llu MB",
+                        services.uploadRingUsedMB(), services.uploadRingCapacityMB(),
+                        static_cast<unsigned long long>(stats.deviceUsageMB),
+                        static_cast<unsigned long long>(stats.deviceBudgetMB));
         }
         if (layer.pickedNode >= 0 &&
             layer.pickedNode < int(layer.tree.nodes.size())) {
@@ -231,6 +251,15 @@ void drawSlpkPanel(Services& services, bool* open) {
     const size_t inFlight = services.slpkLoadsInFlight();
     if (inFlight > 0)
         ImGui::Text("Opening %zu package(s)...", inFlight);
+
+    // Per-frame pump budgets, shared across all layers (plan §6.5).
+    ImGui::SetNextItemWidth(140.0f);
+    ImGui::SliderFloat("Pump ms/frame", &scene::I3SSceneLayer::sPumpBudgetMs, 0.5f,
+                       10.0f, "%.1f");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(140.0f);
+    ImGui::SliderInt("MB/frame", &scene::I3SSceneLayer::sPumpStageBudgetMB, 4, 128,
+                     "%d", ImGuiSliderFlags_Logarithmic);
 
     ImGui::SeparatorText("Layers");
     scene::Scene& scene = services.scene();

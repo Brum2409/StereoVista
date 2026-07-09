@@ -54,6 +54,15 @@ public:
     // and blocks until completion. For setup/upload work only, never per-frame.
     void immediateSubmit(const std::function<void(VkCommandBuffer)>& record) const;
 
+    // Live device-local heap totals from VMA (usage covers every allocation,
+    // budget is the OS/driver's current recommendation). Cheap per-frame; the
+    // streaming caps derive their ceiling from it (SLPK plan §6.5).
+    struct MemoryBudget {
+        uint64_t usageBytes = 0;
+        uint64_t budgetBytes = 0;
+    };
+    MemoryBudget deviceLocalBudget() const;
+
     void waitIdle() const;
 
     // Debug-utils object name; no-op unless validation is active.

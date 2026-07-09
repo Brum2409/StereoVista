@@ -60,6 +60,19 @@ public:
     // SHADER_READ_ONLY_OPTIMAL.
     void upload(const void* pixels, size_t byteSize);
 
+    // Staged upload of a CPU-supplied full mip chain (mipCount == mipLevels,
+    // single layer, tightly packed per level) — copies only, NO blit, so
+    // block-compressed formats (BC7/BC5) work. Blocks on immediateSubmit like
+    // upload(); the per-frame streaming path is UploadRing::stageImage. The
+    // desc must have included TRANSFER_DST in usage when mipLevels == 1
+    // (create() adds it automatically for chains). Leaves every level in
+    // SHADER_READ_ONLY_OPTIMAL.
+    struct MipData {
+        const void* data = nullptr;
+        size_t size = 0; // must equal the level's tightly-packed byte size
+    };
+    void uploadMips(const MipData* mips, uint32_t mipCount);
+
     // Extra view over a layer range (e.g. one cube face group of a cube array
     // as a 2D_ARRAY attachment view). The CALLER owns the returned view and
     // must vkDestroyImageView it before this texture is destroyed.

@@ -37,6 +37,9 @@ const FeatureRequirement kRequiredFeatures[] = {
     // HARD requirement since Phase 6: mesh.vert writes the user section
     // planes to gl_ClipDistance (hardware clipping). Universal on desktop.
     { "shaderClipDistance", &VkPhysicalDeviceFeatures::shaderClipDistance, nullptr, nullptr, nullptr },
+    // HARD requirement since SLPK M2: streamed I3S textures upload as BC7
+    // (KTX2/Basis transcode). Universal on desktop (the Windows target).
+    { "textureCompressionBC", &VkPhysicalDeviceFeatures::textureCompressionBC, nullptr, nullptr, nullptr },
     { "multiview", nullptr, &VkPhysicalDeviceVulkan11Features::multiview, nullptr, nullptr },
     { "shaderBufferInt64Atomics", nullptr, nullptr, &VkPhysicalDeviceVulkan12Features::shaderBufferInt64Atomics, nullptr },
     { "timelineSemaphore", nullptr, nullptr, &VkPhysicalDeviceVulkan12Features::timelineSemaphore, nullptr },
@@ -384,6 +387,7 @@ void Device::createLogicalDevice() {
     enable2.features.imageCubeArray = VK_TRUE;
     enable2.features.shaderInt64 = VK_TRUE;
     enable2.features.shaderClipDistance = VK_TRUE; // mesh.vert gl_ClipDistance
+    enable2.features.textureCompressionBC = VK_TRUE; // I3S BC7 textures (M2)
 
     // shaderDrawParameters is enabled above without being in the required
     // table — verify it here so an exotic driver fails soft instead of
@@ -539,6 +543,23 @@ void Device::immediateSubmit(const std::function<void(VkCommandBuffer)>& record)
     VK_CHECK(vkQueueWaitIdle(graphicsQueue_));
 
     vkFreeCommandBuffers(device_, immediatePool_, 1, &cmd);
+}
+
+Device::MemoryBudget Device::deviceLocalBudget() const {
+    MemoryBudget total;
+    if (allocator_ == VK_NULL_HANDLE)
+        return total;
+    VkPhysicalDeviceMemoryProperties mem{};
+    vkGetPhysicalDeviceMemoryProperties(physicalDevice_, &mem);
+    VmaBudget budgets[VK_MAX_MEMORY_HEAPS] = {};
+    vmaGetHeapBudgets(allocator_, budgets);
+    for (uint32_t heap = 0; heap < mem.memoryHeapCount; ++heap) {
+        if (!(mem.memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT))
+            continue;
+        total.usageBytes += budgets[heap].usage;
+        total.budgetBytes += budgets[heap].budget;
+    }
+    return total;
 }
 
 void Device::waitIdle() const {

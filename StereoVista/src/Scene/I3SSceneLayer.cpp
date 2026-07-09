@@ -1,9 +1,11 @@
 #include "Scene/I3SSceneLayer.h"
 
+#include "Core/Profiling.h"
 #include "Loaders/Slpk/I3SLayer.h"
 #include "Loaders/Slpk/SlpkArchive.h"
 #include "RHI/Device.h"
 #include "RHI/Texture.h"
+#include "RHI/UploadRing.h"
 #include "Renderer/FrameSubmission.h"
 #include "Renderer/GpuTypes.h"
 #include "Renderer/MaterialSystem.h"
@@ -70,15 +72,37 @@ bool sphereInFrustum(const glm::vec4 planes[6], const glm::vec3& center,
     return true;
 }
 
-constexpr double kPumpDefaultBudgetMs = 4.0;
 // Backpressure: the work queue never grows past this many pending requests,
 // bounding both worker latency to camera moves and ready-payload memory.
 constexpr size_t kMaxQueuedRequests = 96;
 // Split/merge hysteresis (plan §6.2): a split node merges back only when the
 // metric falls 15% below the split threshold, so LOD boundaries don't flicker.
 constexpr float kMergeHysteresis = 1.0f / 1.15f;
+// Prefetch band (plan §6.1): children are requested at low priority once the
+// (velocity-predicted) metric climbs past this fraction of the split
+// threshold — one LOD ring beyond the cut, warmed before it is needed.
+constexpr float kPrefetchBand = 0.75f;
+// Camera-velocity look-ahead in frames (~0.25 s at 60 fps).
+constexpr float kPredictFrames = 15.0f;
+// A payload bigger than this fraction of the ring takes the blocking
+// immediateSubmit path instead of starving the ring (giant root nodes).
+constexpr int kBlockingPathRingDivisor = 2;
+// Payloads whose want is older than this many frames stay cache-only.
+constexpr uint32_t kWantFreshFrames = 3;
+// VMA device-local pressure trigger (plan §6.5 ceiling).
+constexpr double kVramPressureFraction = 0.85;
+
+double nowSeconds() {
+    return std::chrono::duration<double>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
 
 } // namespace
+
+// Panel-editable per-frame pump budgets, shared across layers (plan §6.5).
+float I3SSceneLayer::sPumpBudgetMs = 3.0f;
+int I3SSceneLayer::sPumpStageBudgetMB = 32;
 
 I3SSceneLayer::I3SSceneLayer() = default;
 
@@ -154,7 +178,7 @@ bool I3SSceneLayer::load(const std::string& utf8Path) {
     boundsMin = minB;
     boundsMax = maxB;
 
-    // M1 per-node state arrays (fixed size once the tree is known).
+    // Per-node state arrays (fixed size once the tree is known).
     states_ = std::make_unique<std::atomic<uint8_t>[]>(tree.nodes.size());
     for (size_t i = 0; i < tree.nodes.size(); ++i)
         states_[i].store(static_cast<uint8_t>(tree.nodes[i].mesh.hasGeometry
@@ -163,6 +187,8 @@ bool I3SSceneLayer::load(const std::string& utf8Path) {
                          std::memory_order_relaxed);
     splitState_.assign(tree.nodes.size(), 0);
     drawnStamp_.assign(tree.nodes.size(), 0);
+    wantStamp_.assign(tree.nodes.size(), 0);
+    wantPriority_.assign(tree.nodes.size(), 0.0f);
     return true;
 }
 
@@ -211,14 +237,14 @@ void I3SSceneLayer::appendObbOverlay(renderer::OverlayDrawList& overlay) const {
     }
 }
 
-// ---- M1: streaming ------------------------------------------------------------
+// ---- worker pool ------------------------------------------------------------
 
 void I3SSceneLayer::startStreaming() {
     if (streaming_ || !rendersGeometry() || tree.nodes.empty() || !archive_)
         return;
     stopWorkers_ = false;
     const unsigned hw = std::thread::hardware_concurrency();
-    const unsigned count = std::max(1u, std::min(4u, hw / 2));
+    const unsigned count = std::max(2u, hw / 2 - 1); // plan §5 M2
     workers_.reserve(count);
     for (unsigned i = 0; i < count; ++i)
         workers_.emplace_back([this]() { workerLoop(); });
@@ -267,26 +293,33 @@ I3SSceneLayer::NodePayload I3SSceneLayer::decodePayload(uint32_t nodeIndex) cons
     const i3s::NodeFrame frame = frameForNode(node);
 
     std::string err;
-    if (!i3s::I3SGeometry::decodeNode(*archive_, info, node, frame,
-                                      payload.geometry, err)) {
-        payload.failed = true;
-        payload.error = err;
-        return payload;
+    {
+        SV_ZONE_N("i3s geometry decode");
+        if (!i3s::I3SGeometry::decodeNode(*archive_, info, node, frame,
+                                          payload.geometry, err)) {
+            payload.failed = true;
+            payload.error = err;
+            return payload;
+        }
     }
 
     bool unsupported = false;
-    if (!i3s::I3STexture::loadNodeTexture(*archive_, info, node, payload.texture,
-                                          unsupported, err)) {
-        // A texture problem degrades to untextured rendering — the node still
-        // shows up; the panel + a one-shot toast explain why it looks flat.
-        payload.textureUnsupported = unsupported;
-        payload.error = err;
-        payload.texture = i3s::TextureData{};
+    {
+        SV_ZONE_N("i3s texture decode");
+        if (!i3s::I3STexture::loadNodeTexture(*archive_, info, node,
+                                              payload.texture, unsupported, err)) {
+            // A texture problem degrades to untextured rendering — the node
+            // still shows up; the panel + a one-shot toast explain why.
+            payload.textureUnsupported = unsupported;
+            payload.error = err;
+            payload.texture = i3s::TextureData{};
+        }
     }
     return payload;
 }
 
 void I3SSceneLayer::workerLoop() {
+    SV_THREAD_NAME("i3s decode");
     for (;;) {
         uint32_t nodeIndex = 0;
         {
@@ -296,19 +329,25 @@ void I3SSceneLayer::workerLoop() {
                 return;
             nodeIndex = workQueue_.front();
             workQueue_.pop_front();
+            queuedCount_.store(static_cast<uint32_t>(workQueue_.size()),
+                               std::memory_order_relaxed);
+            decodingCount_.fetch_add(1, std::memory_order_relaxed);
             states_[nodeIndex].store(static_cast<uint8_t>(NodeState::Decoding),
                                      std::memory_order_relaxed);
         }
 
         NodePayload payload = decodePayload(nodeIndex);
-        const size_t bytes = payload.cpuBytes();
+        decodedBytesWindow_.fetch_add(payload.cpuBytes(), std::memory_order_relaxed);
+        // State flips BEFORE the payload is published: once the pump can see
+        // the payload, no late store from this thread can clobber a state the
+        // main thread has already advanced past Ready (Staging/Resident).
+        states_[nodeIndex].store(static_cast<uint8_t>(NodeState::Ready),
+                                 std::memory_order_release);
         {
             std::lock_guard<std::mutex> lock(readyMutex_);
             readyQueue_.push_back(std::move(payload));
         }
-        cpuPendingBytes_.fetch_add(bytes, std::memory_order_relaxed);
-        states_[nodeIndex].store(static_cast<uint8_t>(NodeState::Ready),
-                                 std::memory_order_release);
+        decodingCount_.fetch_sub(1, std::memory_order_relaxed);
     }
 }
 
@@ -324,143 +363,414 @@ std::vector<std::string> I3SSceneLayer::drainWarnings() {
     return out;
 }
 
-void I3SSceneLayer::pumpGpuCreates(rhi::Device& device,
-                                   renderer::MaterialSystem& materials,
-                                   double budgetMs) {
-    if (!streaming_)
-        return;
+// ---- pump: decoded payloads -> GPU residency (main thread) -------------------
+
+void I3SSceneLayer::surfacePayloadWarnings(const NodePayload& payload) {
+    // One-shot data-quality warnings (surfaced as toasts by the app).
+    if (payload.geometry.nonWhiteColors && !warnedVertexColors_) {
+        warnedVertexColors_ = true;
+        pushWarning(name + ": per-vertex colors present — not rendered yet "
+                           "(needs a vertex-stream extension, planned)");
+    }
+    if (payload.geometry.uvRegionWrapDetected && !warnedUvWrap_) {
+        warnedUvWrap_ = true;
+        pushWarning(name + ": uv-regions with wrap semantics — clamped "
+                           "(atlas wrap needs a shader path, planned)");
+    }
+    if (payload.textureUnsupported && !warnedTexture_) {
+        warnedTexture_ = true;
+        pushWarning(name + ": " + payload.error);
+    }
+}
+
+void I3SSceneLayer::drainReadyQueue() {
+    std::vector<NodePayload> drained;
     {
         std::lock_guard<std::mutex> lock(readyMutex_);
-        for (NodePayload& payload : readyQueue_)
-            pendingCreates_.push_back(std::move(payload));
-        readyQueue_.clear();
+        drained.swap(readyQueue_);
     }
-
-    if (budgetMs <= 0.0)
-        budgetMs = kPumpDefaultBudgetMs;
-    const auto start = std::chrono::steady_clock::now();
-    auto withinBudget = [&]() {
-        const double elapsed =
-            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
-                                                      start)
-                .count();
-        return elapsed < budgetMs;
-    };
-
-    size_t processed = 0;
-    while (processed < pendingCreates_.size() && withinBudget()) {
-        NodePayload& payload = pendingCreates_[processed++];
+    for (NodePayload& payload : drained) {
         const uint32_t nodeIndex = payload.nodeIndex;
-        cpuPendingBytes_.fetch_sub(payload.cpuBytes(), std::memory_order_relaxed);
-        inFlightCount_.fetch_sub(1, std::memory_order_relaxed);
-
         if (payload.failed) {
             states_[nodeIndex].store(static_cast<uint8_t>(NodeState::Failed),
                                      std::memory_order_relaxed);
-            failedCount_.fetch_add(1, std::memory_order_relaxed);
-            if (failedCount_.load(std::memory_order_relaxed) <= 3)
+            ++failedCount_;
+            if (failedCount_ <= 3)
                 pushWarning(name + ": node " + std::to_string(nodeIndex) +
                             " failed: " + payload.error);
             continue;
         }
-
-        // One-shot data-quality warnings (surfaced as toasts by the app).
-        if (payload.geometry.nonWhiteColors && !warnedVertexColors_) {
-            warnedVertexColors_ = true;
-            pushWarning(name + ": per-vertex colors present — not rendered yet "
-                               "(needs a vertex-stream extension, planned)");
-        }
-        if (payload.geometry.uvRegionWrapDetected && !warnedUvWrap_) {
-            warnedUvWrap_ = true;
-            pushWarning(name + ": uv-regions with wrap semantics — clamped "
-                               "(atlas wrap needs a shader path, planned)");
-        }
-        if (payload.textureUnsupported && !warnedTexture_) {
-            warnedTexture_ = true;
-            pushWarning(name + ": " + payload.error);
-        }
-
-        // GPU material: texture (if any) + material entry. Untextured nodes
-        // share one entry per material definition.
-        uint32_t textureIndex = renderer::kInvalidTexture;
-        uint64_t textureBytes = 0;
-        if (payload.texture.valid() &&
-            materials.textureCount() + 1 < renderer::MaterialSystem::kTextureCapacity) {
-            rhi::TextureDesc desc{};
-            desc.format = VK_FORMAT_R8G8B8A8_SRGB; // base color: hardware sRGB decode
-            desc.extent = { uint32_t(payload.texture.width),
-                            uint32_t(payload.texture.height) };
-            desc.mipLevels = rhi::computeMipCount(desc.extent.width, desc.extent.height);
-            desc.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
-            desc.debugName = "i3s texture";
-            rhi::Texture texture;
-            texture.create(device, desc);
-            texture.upload(payload.texture.rgba.data(), payload.texture.rgba.size());
-            textureIndex = materials.addTexture(std::move(texture));
-            // Mip chain ~ 4/3 of level 0.
-            textureBytes = uint64_t(payload.texture.rgba.size()) * 4 / 3;
-        }
-
-        const i3s::NodeInfo& node = tree.nodes[nodeIndex];
-        int defIndex = node.mesh.materialDefinition;
-        if (defIndex < 0 && !info.materials.empty())
-            defIndex = 0;
-        const i3s::MaterialDesc materialDesc =
-            (defIndex >= 0 && defIndex < static_cast<int>(info.materials.size()))
-                ? info.materials[defIndex]
-                : i3s::MaterialDesc{};
-
-        uint32_t materialIndex = 0;
-        const auto sharedIt = textureIndex == renderer::kInvalidTexture
-                                  ? sharedMaterialByDef_.find(defIndex)
-                                  : sharedMaterialByDef_.end();
-        if (sharedIt != sharedMaterialByDef_.end()) {
-            materialIndex = sharedIt->second;
-        } else {
-            renderer::gpu::MaterialData material{};
-            material.baseColor = materialDesc.baseColor;
-            material.metallic = materialDesc.metallicFactor;
-            material.roughness = materialDesc.roughnessFactor;
-            material.emissive = std::max(
-                materialDesc.emissiveFactor.x,
-                std::max(materialDesc.emissiveFactor.y, materialDesc.emissiveFactor.z));
-            material.normalScale = 1.0f;
-            material.albedoTexture = textureIndex;
-            material.normalTexture = renderer::kInvalidTexture;
-            material.metallicTexture = renderer::kInvalidTexture;
-            material.roughnessTexture = renderer::kInvalidTexture;
-            material.aoTexture = renderer::kInvalidTexture;
-            // House convention (ModelImporter): a texture replaces the flat
-            // base color rather than multiplying it.
-            if (textureIndex != renderer::kInvalidTexture)
-                material.baseColor = glm::vec4(1.0f);
-            materialIndex = materials.addMaterial(material);
-            if (textureIndex == renderer::kInvalidTexture)
-                sharedMaterialByDef_[defIndex] = materialIndex;
-        }
-
-        NodeResidency residency;
-        renderer::MeshData meshData;
-        meshData.vertices = std::move(payload.geometry.vertices);
-        meshData.indices = std::move(payload.geometry.indices);
-        residency.indexCount = static_cast<uint32_t>(meshData.indices.size());
-        residency.materialIndex = materialIndex;
-        residency.gpuBytes = uint64_t(meshData.vertices.size()) * sizeof(renderer::Vertex) +
-                             uint64_t(meshData.indices.size()) * sizeof(uint32_t) +
-                             textureBytes;
-        residency.mesh.create(device, meshData, "i3s node");
-
-        gpuBytes_.fetch_add(residency.gpuBytes, std::memory_order_relaxed);
-        residency_[nodeIndex] = std::move(residency);
-        residentCount_.fetch_add(1, std::memory_order_relaxed);
-        states_[nodeIndex].store(static_cast<uint8_t>(NodeState::Resident),
-                                 std::memory_order_relaxed);
+        surfacePayloadWarnings(payload);
+        cpuCacheBytes_ += payload.cpuBytes();
+        readyCache_[nodeIndex] = std::move(payload); // state stays Ready
     }
-    pendingCreates_.erase(pendingCreates_.begin(),
-                          pendingCreates_.begin() + processed);
 }
 
-// ---- M1: traversal + submission --------------------------------------------------
+void I3SSceneLayer::retireGraveyard(uint64_t completedFrameValue) {
+    size_t kept = 0;
+    for (size_t i = 0; i < graveyard_.size(); ++i) {
+        if (graveyard_[i].retireValue <= completedFrameValue) {
+            graveyard_[i].mesh.destroy();
+        } else {
+            if (kept != i)
+                graveyard_[kept] = std::move(graveyard_[i]);
+            ++kept;
+        }
+    }
+    graveyard_.resize(kept);
+}
+
+void I3SSceneLayer::evictOverBudget(rhi::Device& device,
+                                    renderer::MaterialSystem& materials,
+                                    uint64_t frameRetireValue) {
+    // The user slider is the primary cap; the VMA device-local budget is the
+    // hard ceiling shared with everything else in the app (plan §6.5).
+    const rhi::Device::MemoryBudget vram = device.deviceLocalBudget();
+    deviceUsageMB_ = vram.usageBytes >> 20;
+    deviceBudgetMB_ = vram.budgetBytes >> 20;
+    vramPressure_ = vram.budgetBytes > 0 &&
+                    double(vram.usageBytes) >
+                        double(vram.budgetBytes) * kVramPressureFraction;
+
+    const uint64_t budgetBytes =
+        uint64_t(std::max(budgetGpuMB, 64)) * 1024ull * 1024ull;
+    const size_t nodeTarget = static_cast<size_t>(std::max(budgetMaxNodes, 1));
+    uint64_t byteTarget = budgetBytes;
+    if (gpuBytes_ > budgetBytes)
+        byteTarget = budgetBytes / 10 * 9; // shed below budget: no thrash at the line
+    if (vramPressure_)
+        byteTarget = std::min(byteTarget, gpuBytes_ / 10 * 9); // relieve 10%/frame
+
+    if (gpuBytes_ <= byteTarget && residency_.size() <= nodeTarget)
+        return;
+
+    // LRU order over evictable nodes. A node drawn THIS frame stamp is part
+    // of the current cut and never evicts — it must leave via traversal
+    // first (plan §6.5).
+    std::vector<std::pair<uint32_t, uint32_t>> candidates; // (drawnStamp, node)
+    candidates.reserve(residency_.size());
+    for (const auto& entry : residency_)
+        if (drawnStamp_[entry.first] != frameStamp_)
+            candidates.push_back({ drawnStamp_[entry.first], entry.first });
+    std::sort(candidates.begin(), candidates.end());
+
+    for (const auto& candidate : candidates) {
+        if (gpuBytes_ <= byteTarget && residency_.size() <= nodeTarget)
+            break;
+        const uint32_t nodeIndex = candidate.second;
+        auto it = residency_.find(nodeIndex);
+        NodeResidency& r = it->second;
+        graveyard_.push_back({ std::move(r.mesh), frameRetireValue });
+        if (r.textureIndex != renderer::kInvalidTexture)
+            materials.freeTexture(r.textureIndex, frameRetireValue);
+        if (r.ownsMaterial)
+            materials.freeMaterial(r.materialIndex);
+        gpuBytes_ -= std::min(gpuBytes_, r.gpuBytes);
+        residency_.erase(it);
+        states_[nodeIndex].store(static_cast<uint8_t>(NodeState::Unloaded),
+                                 std::memory_order_relaxed);
+        ++evictedCount_;
+    }
+}
+
+bool I3SSceneLayer::stagePendingUpload(PendingUpload& upload, rhi::UploadRing& ring,
+                                       int64_t& budgetStageBytes) {
+    // Budget check is post-paid: a single node may overshoot the per-frame
+    // byte budget once (classic amortization — otherwise a node bigger than
+    // the budget could never load).
+    if (!upload.meshStaged) {
+        if (budgetStageBytes <= 0)
+            return false;
+        const i3s::GeometryData& g = upload.payload.geometry;
+        if (!upload.mesh.stagePayload(ring, g.vertices.data(), g.vertices.size(),
+                                      g.indices.data(), g.indices.size()))
+            return false; // ring full — retry next frame
+        const int64_t bytes =
+            int64_t(g.vertices.size() * sizeof(renderer::Vertex) +
+                    g.indices.size() * sizeof(uint32_t));
+        budgetStageBytes -= bytes;
+        uploadedBytesWindow_ += uint64_t(bytes);
+    }
+    if (upload.texture.valid() && !upload.textureStaged) {
+        if (budgetStageBytes <= 0)
+            return false;
+        // All mips in ONE transaction — the flush's whole-image layout
+        // transition requires the complete chain (stageImage contract).
+        const i3s::TextureData& tex = upload.payload.texture;
+        const rhi::UploadRing::Marker marker = ring.mark();
+        for (size_t level = 0; level < tex.mips.size(); ++level) {
+            const i3s::TextureData::Mip& mip = tex.mips[level];
+            if (!ring.stageImage(upload.texture, static_cast<uint32_t>(level),
+                                 tex.data.data() + mip.offset, mip.size)) {
+                ring.rollback(marker);
+                return false;
+            }
+        }
+        upload.textureStaged = true;
+        budgetStageBytes -= int64_t(tex.data.size());
+        uploadedBytesWindow_ += tex.data.size();
+    }
+    return upload.meshStaged && (!upload.texture.valid() || upload.textureStaged);
+}
+
+void I3SSceneLayer::finalizeResidency(PendingUpload& upload,
+                                      renderer::MaterialSystem& materials) {
+    const uint32_t nodeIndex = upload.payload.nodeIndex;
+
+    uint32_t textureIndex = renderer::kInvalidTexture;
+    if (upload.texture.valid())
+        textureIndex = materials.addTexture(std::move(upload.texture));
+
+    const i3s::NodeInfo& node = tree.nodes[nodeIndex];
+    int defIndex = node.mesh.materialDefinition;
+    if (defIndex < 0 && !info.materials.empty())
+        defIndex = 0;
+    const i3s::MaterialDesc materialDesc =
+        (defIndex >= 0 && defIndex < static_cast<int>(info.materials.size()))
+            ? info.materials[defIndex]
+            : i3s::MaterialDesc{};
+
+    uint32_t materialIndex = 0;
+    bool ownsMaterial = false;
+    const auto sharedIt = textureIndex == renderer::kInvalidTexture
+                              ? sharedMaterialByDef_.find(defIndex)
+                              : sharedMaterialByDef_.end();
+    if (sharedIt != sharedMaterialByDef_.end()) {
+        materialIndex = sharedIt->second;
+    } else {
+        renderer::gpu::MaterialData material{};
+        material.baseColor = materialDesc.baseColor;
+        material.metallic = materialDesc.metallicFactor;
+        material.roughness = materialDesc.roughnessFactor;
+        material.emissive = std::max(
+            materialDesc.emissiveFactor.x,
+            std::max(materialDesc.emissiveFactor.y, materialDesc.emissiveFactor.z));
+        material.normalScale = 1.0f;
+        material.albedoTexture = textureIndex;
+        material.normalTexture = renderer::kInvalidTexture;
+        material.metallicTexture = renderer::kInvalidTexture;
+        material.roughnessTexture = renderer::kInvalidTexture;
+        material.aoTexture = renderer::kInvalidTexture;
+        // House convention (ModelImporter): a texture replaces the flat
+        // base color rather than multiplying it.
+        if (textureIndex != renderer::kInvalidTexture)
+            material.baseColor = glm::vec4(1.0f);
+        materialIndex = materials.addMaterial(material);
+        if (textureIndex == renderer::kInvalidTexture)
+            sharedMaterialByDef_[defIndex] = materialIndex;
+        else
+            ownsMaterial = true;
+    }
+
+    NodeResidency residency;
+    residency.mesh = std::move(upload.mesh);
+    residency.materialIndex = materialIndex;
+    residency.textureIndex = textureIndex;
+    residency.ownsMaterial = ownsMaterial;
+    residency.gpuBytes = upload.gpuBytes; // accounted into gpuBytes_ at creation
+    residency.indexCount = static_cast<uint32_t>(upload.payload.geometry.indices.size());
+    residency_[nodeIndex] = std::move(residency);
+    states_[nodeIndex].store(static_cast<uint8_t>(NodeState::Resident),
+                             std::memory_order_relaxed);
+}
+
+void I3SSceneLayer::trimCpuCache() {
+    const uint64_t budget = uint64_t(std::max(budgetCpuMB, 64)) * 1024ull * 1024ull;
+    if (cpuCacheBytes_ <= budget)
+        return;
+    // Cancelled-after-decode payloads were paid for and stay cached until the
+    // budget forces them out — oldest want first (plan §6.1/§6.5).
+    std::vector<std::pair<uint32_t, uint32_t>> order; // (wantStamp, node)
+    order.reserve(readyCache_.size());
+    for (const auto& entry : readyCache_)
+        order.push_back({ wantStamp_[entry.first], entry.first });
+    std::sort(order.begin(), order.end());
+    for (const auto& victim : order) {
+        if (cpuCacheBytes_ <= budget)
+            break;
+        auto it = readyCache_.find(victim.second);
+        if (wantStamp_[victim.second] == frameStamp_)
+            continue; // wanted right now — keep even over budget
+        cpuCacheBytes_ -= std::min<uint64_t>(cpuCacheBytes_, it->second.cpuBytes());
+        readyCache_.erase(it);
+        states_[victim.second].store(static_cast<uint8_t>(NodeState::Unloaded),
+                                     std::memory_order_relaxed);
+    }
+}
+
+void I3SSceneLayer::pump(rhi::Device& device, renderer::MaterialSystem& materials,
+                         rhi::UploadRing& ring, uint64_t frameRetireValue,
+                         uint64_t completedFrameValue, double& budgetMs,
+                         int64_t& budgetStageBytes) {
+    if (!streaming_)
+        return;
+    SV_ZONE_N("i3s pump");
+    const auto start = std::chrono::steady_clock::now();
+    auto elapsedMs = [&]() {
+        return std::chrono::duration<double, std::milli>(
+                   std::chrono::steady_clock::now() - start)
+            .count();
+    };
+
+    drainReadyQueue();
+    evictOverBudget(device, materials, frameRetireValue);
+    retireGraveyard(completedFrameValue);
+
+    // In-flight staging first — those nodes already hold device memory.
+    for (auto it = staging_.begin(); it != staging_.end();) {
+        if (budgetMs - elapsedMs() <= 0.0 || budgetStageBytes <= 0)
+            break;
+        if (stagePendingUpload(it->second, ring, budgetStageBytes)) {
+            finalizeResidency(it->second, materials);
+            it = staging_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    // New uploads from the CPU cache: freshest + biggest-on-screen first.
+    const uint64_t budgetBytes =
+        uint64_t(std::max(budgetGpuMB, 64)) * 1024ull * 1024ull;
+    std::vector<std::pair<float, uint32_t>> candidates; // (-priority, node)
+    for (const auto& entry : readyCache_) {
+        const uint32_t nodeIndex = entry.first;
+        if (frameStamp_ - wantStamp_[nodeIndex] > kWantFreshFrames)
+            continue; // cache-only until wanted again
+        candidates.push_back({ -wantPriority_[nodeIndex], nodeIndex });
+    }
+    std::sort(candidates.begin(), candidates.end());
+
+    for (const auto& candidate : candidates) {
+        if (budgetMs - elapsedMs() <= 0.0 || budgetStageBytes <= 0)
+            break;
+        if (gpuBytes_ >= budgetBytes || vramPressure_)
+            break;
+        if (residency_.size() + staging_.size() >=
+            static_cast<size_t>(std::max(budgetMaxNodes, 1)))
+            break;
+        if (!materials.textureSlotAvailable())
+            break;
+
+        const uint32_t nodeIndex = candidate.second;
+        auto cacheIt = readyCache_.find(nodeIndex);
+        PendingUpload upload;
+        upload.payload = std::move(cacheIt->second);
+        cpuCacheBytes_ -= std::min<uint64_t>(cpuCacheBytes_, upload.payload.cpuBytes());
+        readyCache_.erase(cacheIt);
+
+        const i3s::GeometryData& g = upload.payload.geometry;
+        const i3s::TextureData& tex = upload.payload.texture;
+        const uint64_t meshBytes = uint64_t(g.vertices.size()) * sizeof(renderer::Vertex) +
+                                   uint64_t(g.indices.size()) * sizeof(uint32_t);
+        upload.gpuBytes = meshBytes + tex.data.size();
+
+        if (g.vertices.empty() || g.indices.empty()) {
+            states_[nodeIndex].store(static_cast<uint8_t>(NodeState::Failed),
+                                     std::memory_order_relaxed);
+            ++failedCount_;
+            continue;
+        }
+
+        gpuBytes_ += upload.gpuBytes;
+
+        rhi::Texture texture;
+        if (tex.valid()) {
+            rhi::TextureDesc desc{};
+            desc.format = tex.format == i3s::TextureData::Format::Bc7
+                              ? VK_FORMAT_BC7_SRGB_BLOCK
+                              : VK_FORMAT_R8G8B8A8_SRGB;
+            desc.extent = { uint32_t(tex.width), uint32_t(tex.height) };
+            desc.mipLevels = static_cast<uint32_t>(tex.mips.size());
+            desc.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            desc.debugName = "i3s texture";
+            texture.create(device, desc);
+        }
+
+        if (upload.payload.cpuBytes() >
+            size_t(ring.capacity() / kBlockingPathRingDivisor)) {
+            // Giant node (rare — oversized roots): the ring would starve, so
+            // take the blocking loading-time path instead (plan §6.3 keeps it).
+            renderer::MeshData meshData;
+            meshData.vertices = std::move(upload.payload.geometry.vertices);
+            meshData.indices = upload.payload.geometry.indices; // keep for count
+            upload.mesh.create(device, meshData, "i3s node");
+            if (tex.valid()) {
+                std::vector<rhi::Texture::MipData> mips(tex.mips.size());
+                for (size_t level = 0; level < tex.mips.size(); ++level)
+                    mips[level] = { tex.data.data() + tex.mips[level].offset,
+                                    tex.mips[level].size };
+                texture.uploadMips(mips.data(), static_cast<uint32_t>(mips.size()));
+            }
+            upload.texture = std::move(texture);
+            upload.meshStaged = true;
+            upload.textureStaged = true;
+            uploadedBytesWindow_ += upload.gpuBytes;
+            finalizeResidency(upload, materials);
+            continue;
+        }
+
+        upload.mesh.createForStreaming(device,
+                                       static_cast<uint32_t>(g.vertices.size()),
+                                       static_cast<uint32_t>(g.indices.size()),
+                                       "i3s node");
+        upload.texture = std::move(texture);
+        states_[nodeIndex].store(static_cast<uint8_t>(NodeState::Staging),
+                                 std::memory_order_relaxed);
+        if (stagePendingUpload(upload, ring, budgetStageBytes)) {
+            finalizeResidency(upload, materials);
+        } else {
+            staging_[nodeIndex] = std::move(upload); // retry next pump
+        }
+    }
+
+    trimCpuCache();
+
+    // Throughput window for the HUD.
+    const double now = nowSeconds();
+    if (rateWindowStart_ == 0.0)
+        rateWindowStart_ = now;
+    const double window = now - rateWindowStart_;
+    if (window >= 0.5) {
+        const double mb = 1024.0 * 1024.0;
+        decodeRateMBs_ = float(double(decodedBytesWindow_.exchange(
+                                   0, std::memory_order_relaxed)) /
+                               window / mb);
+        uploadRateMBs_ = float(double(uploadedBytesWindow_) / window / mb);
+        uploadedBytesWindow_ = 0;
+        rateWindowStart_ = now;
+    }
+    SV_PLOT("i3s gpuMB", double(gpuBytes_) / (1024.0 * 1024.0));
+
+    budgetMs -= elapsedMs();
+}
+
+void I3SSceneLayer::releaseGpu(renderer::MaterialSystem& materials,
+                               rhi::UploadRing& ring, uint64_t retireValue) {
+    // Cancel staged-but-unflushed ring copies before their destinations die
+    // with this layer (the caller waitIdle()s for the flushed ones).
+    for (auto& entry : staging_) {
+        entry.second.mesh.dropPendingCopies(ring);
+        if (entry.second.texture.valid())
+            ring.dropPendingFor(entry.second.texture);
+    }
+    staging_.clear();
+
+    // Hand every bindless slot + material entry back (deferred destroy).
+    for (auto& entry : residency_) {
+        NodeResidency& r = entry.second;
+        if (r.textureIndex != renderer::kInvalidTexture)
+            materials.freeTexture(r.textureIndex, retireValue);
+        if (r.ownsMaterial)
+            materials.freeMaterial(r.materialIndex);
+        r.textureIndex = renderer::kInvalidTexture;
+        r.ownsMaterial = false;
+    }
+    for (const auto& shared : sharedMaterialByDef_)
+        materials.freeMaterial(shared.second);
+    sharedMaterialByDef_.clear();
+}
+
+// ---- traversal + submission --------------------------------------------------
 
 bool I3SSceneLayer::coverable(uint32_t nodeIndex) const {
     const NodeState state =
@@ -483,25 +793,20 @@ bool I3SSceneLayer::childrenCoverable(uint32_t nodeIndex) const {
     return true;
 }
 
-bool I3SSceneLayer::wantSplit(uint32_t nodeIndex, const glm::vec3& cameraPos,
-                              float screenFactor) {
+float I3SSceneLayer::nodeMetric(uint32_t nodeIndex, const glm::vec3& cameraPos,
+                                float screenFactor) const {
     const i3s::NodeInfo& node = tree.nodes[nodeIndex];
-    if (node.childCount == 0)
-        return false;
-    if (node.lodThreshold <= 0.0)
-        return true; // no threshold = always refine (typical group root)
-
     const NodeBox& box = nodeBoxes[nodeIndex];
     const float radius = glm::length(box.halfSize);
     const float dist = glm::length(cameraPos - box.center);
     if (dist <= radius)
-        return true; // camera inside the node: always refine
+        return FLT_MAX; // camera inside the node: always refine
 
     // Projected bounding-sphere size (the spec's lodSelection metrics).
     const float diameterPx = (2.0f * radius * screenFactor) / dist;
 
     float metric = 0.0f;
-    float threshold = static_cast<float>(node.lodThreshold);
+    const float threshold = static_cast<float>(node.lodThreshold);
     switch (info.lodMetric) {
     case i3s::LodMetric::MaxScreenThresholdSQ:
         metric = 0.25f * 3.14159265f * diameterPx * diameterPx; // pi/4 * d^2
@@ -516,10 +821,19 @@ bool I3SSceneLayer::wantSplit(uint32_t nodeIndex, const glm::vec3& cameraPos,
         metric = diameterPx;
         break;
     }
-    metric *= std::max(lodScale, 0.01f);
+    return metric * std::max(lodScale, 0.01f);
+}
+
+bool I3SSceneLayer::wantSplit(uint32_t nodeIndex, float metric) {
+    const i3s::NodeInfo& node = tree.nodes[nodeIndex];
+    if (node.childCount == 0)
+        return false;
+    if (node.lodThreshold <= 0.0)
+        return true; // no threshold = always refine (typical group root)
 
     // Hysteresis: once split, merge back only when the metric drops 15% under
     // the split threshold.
+    const float threshold = static_cast<float>(node.lodThreshold);
     const bool wasSplit = splitState_[nodeIndex] != 0;
     const float effective = wasSplit ? threshold * kMergeHysteresis : threshold;
     const bool split = metric > effective;
@@ -527,30 +841,84 @@ bool I3SSceneLayer::wantSplit(uint32_t nodeIndex, const glm::vec3& cameraPos,
     return split;
 }
 
-void I3SSceneLayer::requestNode(uint32_t nodeIndex) {
-    // Budgets: node count counts resident + everything still in flight;
-    // GPU bytes gate on what is actually resident (no eviction yet — once
-    // the budget is hit the cut simply stops refining).
-    const uint32_t inFlight = inFlightCount_.load(std::memory_order_relaxed);
-    const uint32_t resident = residentCount_.load(std::memory_order_relaxed);
-    if (resident + inFlight >= static_cast<uint32_t>(std::max(budgetMaxNodes, 1)))
-        return;
-    if (gpuBytes_.load(std::memory_order_relaxed) >=
-        uint64_t(std::max(budgetGpuMB, 64)) * 1024ull * 1024ull)
-        return;
-
-    std::lock_guard<std::mutex> lock(workMutex_);
-    if (workQueue_.size() >= kMaxQueuedRequests)
-        return;
+void I3SSceneLayer::want(uint32_t nodeIndex, float priority, bool isPrefetch) {
     const NodeState state =
         static_cast<NodeState>(states_[nodeIndex].load(std::memory_order_relaxed));
-    if (state != NodeState::Unloaded)
+    if (state == NodeState::Failed || state == NodeState::NoContent)
         return;
-    states_[nodeIndex].store(static_cast<uint8_t>(NodeState::Queued),
-                             std::memory_order_relaxed);
-    workQueue_.push_back(nodeIndex);
-    inFlightCount_.fetch_add(1, std::memory_order_relaxed);
-    workCv_.notify_one();
+    if (wantStamp_[nodeIndex] == frameStamp_)
+        priority = std::max(priority, wantPriority_[nodeIndex]);
+    wantStamp_[nodeIndex] = frameStamp_;
+    wantPriority_[nodeIndex] = priority;
+    // Only Unloaded/Queued nodes need queue placement; Ready/Staging advance
+    // through the pump, which reads the stamps refreshed above.
+    if (state == NodeState::Unloaded || state == NodeState::Queued)
+        wants_.push_back({ priority, nodeIndex, isPrefetch });
+}
+
+void I3SSceneLayer::rebuildWorkQueue() {
+    SV_ZONE_N("i3s queue rebuild");
+    // Real wants before prefetch, then biggest screen contribution first
+    // (plan §6.1: re-prioritized every frame).
+    std::sort(wants_.begin(), wants_.end(), [](const Want& a, const Want& b) {
+        if (a.isPrefetch != b.isPrefetch)
+            return !a.isPrefetch;
+        return a.priority > b.priority;
+    });
+
+    const uint64_t budgetBytes =
+        uint64_t(std::max(budgetGpuMB, 64)) * 1024ull * 1024ull;
+    const bool gpuFull = gpuBytes_ >= budgetBytes || vramPressure_;
+    const uint32_t nodeBudget = static_cast<uint32_t>(std::max(budgetMaxNodes, 1));
+
+    std::lock_guard<std::mutex> lock(workMutex_);
+
+    // Cancel-then-requeue: everything still Queued falls back to Unloaded;
+    // wants re-add what this frame's cut still needs, in priority order.
+    std::vector<uint32_t> previous(workQueue_.begin(), workQueue_.end());
+    workQueue_.clear();
+    for (uint32_t nodeIndex : previous)
+        if (static_cast<NodeState>(states_[nodeIndex].load(
+                std::memory_order_relaxed)) == NodeState::Queued)
+            states_[nodeIndex].store(static_cast<uint8_t>(NodeState::Unloaded),
+                                     std::memory_order_relaxed);
+
+    if (!gpuFull) {
+        // Everything already holding a node slot (the queue is empty here).
+        const uint32_t pipeline =
+            static_cast<uint32_t>(residency_.size() + staging_.size() +
+                                  readyCache_.size()) +
+            decodingCount_.load(std::memory_order_relaxed);
+        const size_t capacityLeft =
+            pipeline < nodeBudget ? size_t(nodeBudget - pipeline) : 0;
+        const size_t cap = std::min(kMaxQueuedRequests, capacityLeft);
+        for (const Want& w : wants_) {
+            if (workQueue_.size() >= cap)
+                break;
+            // Prefetch only fills the queue's back half — it must never
+            // crowd out a hole the cut actually has.
+            if (w.isPrefetch && workQueue_.size() >= cap / 2)
+                break;
+            if (static_cast<NodeState>(states_[w.nodeIndex].load(
+                    std::memory_order_relaxed)) != NodeState::Unloaded)
+                continue;
+            states_[w.nodeIndex].store(static_cast<uint8_t>(NodeState::Queued),
+                                       std::memory_order_relaxed);
+            workQueue_.push_back(w.nodeIndex);
+        }
+    }
+
+    // Anything from the old queue that did not re-enter was cancelled.
+    for (uint32_t nodeIndex : previous)
+        if (static_cast<NodeState>(states_[nodeIndex].load(
+                std::memory_order_relaxed)) == NodeState::Unloaded)
+            ++cancelledCount_;
+
+    queuedCount_.store(static_cast<uint32_t>(workQueue_.size()),
+                       std::memory_order_relaxed);
+    wants_.clear();
+    if (!workQueue_.empty())
+        workCv_.notify_all();
 }
 
 void I3SSceneLayer::emitDraw(uint32_t nodeIndex,
@@ -573,12 +941,14 @@ void I3SSceneLayer::emitDraw(uint32_t nodeIndex,
     submission.draws.push_back(draw);
 
     drawnStamp_[nodeIndex] = frameStamp_;
+    wantStamp_[nodeIndex] = frameStamp_; // drawn = wanted (LRU freshness)
     ++drawnLastFrame_;
 }
 
 void I3SSceneLayer::traverse(uint32_t nodeIndex,
                              renderer::FrameSubmission& submission,
-                             const glm::vec3& cameraPos, float screenFactor,
+                             const glm::vec3& cameraPos,
+                             const glm::vec3& predictedPos, float screenFactor,
                              const glm::vec4 frustum[6]) {
     const NodeBox& box = nodeBoxes[nodeIndex];
     // 1.15 margin keeps the right stereo eye covered by the view-0 frustum.
@@ -588,26 +958,25 @@ void I3SSceneLayer::traverse(uint32_t nodeIndex,
     const i3s::NodeInfo& node = tree.nodes[nodeIndex];
     const NodeState state =
         static_cast<NodeState>(states_[nodeIndex].load(std::memory_order_relaxed));
+    const float metric = nodeMetric(nodeIndex, cameraPos, screenFactor);
 
-    if (wantSplit(nodeIndex, cameraPos, screenFactor)) {
+    if (wantSplit(nodeIndex, metric)) {
         if (childrenCoverable(nodeIndex)) {
             for (uint32_t c = 0; c < node.childCount; ++c)
                 traverse(tree.childIndices[node.firstChild + c], submission,
-                         cameraPos, screenFactor, frustum);
+                         cameraPos, predictedPos, screenFactor, frustum);
             return;
         }
-        // Children incomplete: request the missing ones (only those inside
-        // the frustum) and keep showing this node meanwhile — never a hole.
+        // Children incomplete: want the missing ones (only those inside the
+        // frustum) and keep showing this node meanwhile — never a hole.
         for (uint32_t c = 0; c < node.childCount; ++c) {
             const uint32_t child = tree.childIndices[node.firstChild + c];
             const NodeBox& childBox = nodeBoxes[child];
             if (!sphereInFrustum(frustum, childBox.center,
                                  glm::length(childBox.halfSize) * 1.15f))
                 continue;
-            if (static_cast<NodeState>(states_[child].load(
-                    std::memory_order_relaxed)) == NodeState::Unloaded &&
-                tree.nodes[child].mesh.hasGeometry)
-                requestNode(child);
+            if (tree.nodes[child].mesh.hasGeometry)
+                want(child, nodeMetric(child, cameraPos, screenFactor), false);
         }
         if (state == NodeState::Resident) {
             emitDraw(nodeIndex, submission);
@@ -617,19 +986,35 @@ void I3SSceneLayer::traverse(uint32_t nodeIndex,
             for (uint32_t c = 0; c < node.childCount; ++c) {
                 const uint32_t child = tree.childIndices[node.firstChild + c];
                 if (coverable(child))
-                    traverse(child, submission, cameraPos, screenFactor, frustum);
+                    traverse(child, submission, cameraPos, predictedPos,
+                             screenFactor, frustum);
             }
-            if (state == NodeState::Unloaded && node.mesh.hasGeometry)
-                requestNode(nodeIndex);
+            if (node.mesh.hasGeometry)
+                want(nodeIndex, metric, false);
         }
         return;
     }
 
     // This node IS the right LOD for this camera.
-    if (state == NodeState::Resident)
+    if (state == NodeState::Resident) {
         emitDraw(nodeIndex, submission);
-    else if (state == NodeState::Unloaded && node.mesh.hasGeometry)
-        requestNode(nodeIndex);
+        // Prefetch ring (plan §6.1): when the velocity-predicted camera is
+        // approaching this node's split point, warm its children at low
+        // priority — they arrive before the split instead of after.
+        if (prefetch && node.childCount > 0 && node.lodThreshold > 0.0) {
+            const float predicted =
+                nodeMetric(nodeIndex, predictedPos, screenFactor);
+            if (predicted > float(node.lodThreshold) * kPrefetchBand) {
+                for (uint32_t c = 0; c < node.childCount; ++c) {
+                    const uint32_t child = tree.childIndices[node.firstChild + c];
+                    if (tree.nodes[child].mesh.hasGeometry)
+                        want(child, predicted, true);
+                }
+            }
+        }
+    } else if (node.mesh.hasGeometry) {
+        want(nodeIndex, metric, false);
+    }
 }
 
 void I3SSceneLayer::submitDraws(renderer::FrameSubmission& submission,
@@ -637,6 +1022,7 @@ void I3SSceneLayer::submitDraws(renderer::FrameSubmission& submission,
     drawnLastFrame_ = 0;
     if (!visible || !showGeometry || !streaming_ || tree.nodes.empty())
         return;
+    SV_ZONE_N("i3s traversal");
     ++frameStamp_;
 
     const renderer::ViewCamera& camera = submission.views[0];
@@ -647,7 +1033,15 @@ void I3SSceneLayer::submitDraws(renderer::FrameSubmission& submission,
     glm::vec4 frustum[6];
     extractFrustum(camera.proj * camera.view, frustum);
 
-    traverse(0, submission, camera.position, screenFactor, frustum);
+    // Velocity-predicted camera for the prefetch band (~0.25 s ahead).
+    glm::vec3 predicted = camera.position;
+    if (haveCameraHistory_)
+        predicted += (camera.position - prevCameraPos_) * kPredictFrames;
+    prevCameraPos_ = camera.position;
+    haveCameraHistory_ = true;
+
+    traverse(0, submission, camera.position, predicted, screenFactor, frustum);
+    rebuildWorkQueue();
 }
 
 int I3SSceneLayer::pickNodeAt(const glm::vec3& worldPoint) const {
@@ -674,13 +1068,22 @@ int I3SSceneLayer::pickNodeAt(const glm::vec3& worldPoint) const {
 
 I3SSceneLayer::Stats I3SSceneLayer::stats() const {
     Stats stats;
-    stats.resident = residentCount_.load(std::memory_order_relaxed);
-    stats.decoding = inFlightCount_.load(std::memory_order_relaxed);
-    stats.failed = failedCount_.load(std::memory_order_relaxed);
+    stats.queued = queuedCount_.load(std::memory_order_relaxed);
+    stats.decoding = decodingCount_.load(std::memory_order_relaxed);
+    stats.ready = static_cast<uint32_t>(readyCache_.size());
+    stats.staging = static_cast<uint32_t>(staging_.size());
+    stats.resident = static_cast<uint32_t>(residency_.size());
+    stats.failed = failedCount_;
     stats.drawnLastFrame = drawnLastFrame_;
-    stats.gpuBytes = gpuBytes_.load(std::memory_order_relaxed);
-    stats.cpuPendingBytes = cpuPendingBytes_.load(std::memory_order_relaxed);
-    stats.readyPending = static_cast<uint32_t>(pendingCreates_.size());
+    stats.gpuBytes = gpuBytes_;
+    stats.cpuCacheBytes = cpuCacheBytes_;
+    stats.evicted = evictedCount_;
+    stats.cancelled = cancelledCount_;
+    stats.graveyard = static_cast<uint32_t>(graveyard_.size());
+    stats.decodeRateMBs = decodeRateMBs_;
+    stats.uploadRateMBs = uploadRateMBs_;
+    stats.deviceUsageMB = deviceUsageMB_;
+    stats.deviceBudgetMB = deviceBudgetMB_;
     return stats;
 }
 

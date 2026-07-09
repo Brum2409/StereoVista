@@ -95,14 +95,22 @@ void MaterialSystem::init(rhi::Device& device) {
 uint32_t MaterialSystem::addTexture(rhi::Texture&& texture) {
     if (!device_)
         throw std::runtime_error("MaterialSystem used before init()");
-    if (textures_.size() >= kTextureCapacity)
-        throw std::runtime_error("MaterialSystem: bindless texture capacity exceeded");
 
-    const uint32_t index = static_cast<uint32_t>(textures_.size());
-    textures_.push_back(std::move(texture));
+    uint32_t index = 0;
+    if (!freeSlots_.empty()) {
+        index = freeSlots_.back();
+        freeSlots_.pop_back();
+        textures_[index] = std::move(texture);
+    } else {
+        if (textures_.size() >= kTextureCapacity)
+            throw std::runtime_error(
+                "MaterialSystem: bindless texture capacity exceeded");
+        index = static_cast<uint32_t>(textures_.size());
+        textures_.push_back(std::move(texture));
+    }
 
     VkDescriptorImageInfo info{};
-    info.imageView = textures_.back().view();
+    info.imageView = textures_[index].view();
     info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     VkWriteDescriptorSet write{};
     write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -116,16 +124,68 @@ uint32_t MaterialSystem::addTexture(rhi::Texture&& texture) {
     return index;
 }
 
+void MaterialSystem::freeTexture(uint32_t index, uint64_t retireValue) {
+    if (index >= textures_.size() || !textures_[index].valid())
+        return; // already freed / never lived — idempotent
+    Grave grave;
+    grave.texture = std::move(textures_[index]);
+    grave.slot = index;
+    grave.retireValue = retireValue;
+    graveyard_.push_back(std::move(grave));
+    // The slot joins freeSlots_ in collectGarbage(), together with the
+    // destroy — reuse rewrites the descriptor, which is only legal once no
+    // in-flight frame can still sample the old image through it.
+}
+
+void MaterialSystem::collectGarbage(uint64_t completedTimelineValue) {
+    size_t kept = 0;
+    for (size_t i = 0; i < graveyard_.size(); ++i) {
+        if (graveyard_[i].retireValue <= completedTimelineValue) {
+            freeSlots_.push_back(graveyard_[i].slot);
+            graveyard_[i].texture.destroy();
+        } else {
+            if (kept != i)
+                graveyard_[kept] = std::move(graveyard_[i]);
+            ++kept;
+        }
+    }
+    graveyard_.resize(kept);
+}
+
 uint32_t MaterialSystem::addMaterial(const gpu::MaterialData& data) {
+    if (!freeMaterials_.empty()) {
+        const uint32_t index = freeMaterials_.back();
+        freeMaterials_.pop_back();
+        materials_[index] = data;
+        return index;
+    }
     materials_.push_back(data);
     return static_cast<uint32_t>(materials_.size() - 1);
+}
+
+void MaterialSystem::freeMaterial(uint32_t index) {
+    if (index >= materials_.size())
+        return;
+    // Scrub so a stale reference can't sample a recycled texture slot.
+    gpu::MaterialData scrubbed{};
+    scrubbed.baseColor = glm::vec4(1.0f, 0.0f, 1.0f, 1.0f); // debug magenta
+    scrubbed.albedoTexture = kInvalidTexture;
+    scrubbed.normalTexture = kInvalidTexture;
+    scrubbed.metallicTexture = kInvalidTexture;
+    scrubbed.roughnessTexture = kInvalidTexture;
+    scrubbed.aoTexture = kInvalidTexture;
+    materials_[index] = scrubbed;
+    freeMaterials_.push_back(index);
 }
 
 void MaterialSystem::shutdown() {
     if (!device_)
         return;
     textures_.clear();
+    freeSlots_.clear();
+    graveyard_.clear();
     materials_.clear();
+    freeMaterials_.clear();
     if (pool_ != VK_NULL_HANDLE)
         vkDestroyDescriptorPool(device_->device(), pool_, nullptr);
     if (layout_ != VK_NULL_HANDLE)

@@ -125,7 +125,7 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;_CONSOLE;SV_VULKAN_VALIDATION=1;VK_NO_PROTOTYPES;GLFW_INCLUDE_NONE;IMGUI_IMPL_VULKAN_USE_VOLK;GLM_FORCE_DEPTH_ZERO_TO_ONE;%(PreprocessorDefinitions);_CRT_SECURE_NO_WARNINGS;_ITERATOR_DEBUG_LEVEL=0;_HAS_ITERATOR_DEBUGGING=0</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;SV_VULKAN_VALIDATION=1;VK_NO_PROTOTYPES;GLFW_INCLUDE_NONE;IMGUI_IMPL_VULKAN_USE_VOLK;GLM_FORCE_DEPTH_ZERO_TO_ONE;TRACY_ENABLE;TRACY_ON_DEMAND;%(PreprocessorDefinitions);_CRT_SECURE_NO_WARNINGS;_ITERATOR_DEBUG_LEVEL=0;_HAS_ITERATOR_DEBUGGING=0</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <AdditionalIncludeDirectories>../dependencies/include;../dependencies/include/hdf5;../dependencies/include/laszip;../dependencies/include/openxr;include;src;headers;src;headers/libs/imgui;backend;headers/libs;headers/libs/volk;headers/libs/3dconnexion;headers/libs/highfive;headers/libs/highfive/bits;headers/libs/hdf5;headers/libs/highfive/h5easy_bits</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
@@ -136,7 +136,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>false</GenerateDebugInformation>
-      <AdditionalDependencies>glfw3_mt.lib;shaderc_shared.lib;assimp-vc143-mt.lib;libhdf5.lib;libhdf5_cpp.lib;libzlib.lib;libaec.lib;libszaec.lib;legacy_stdio_definitions.lib;Shlwapi.lib;TDxNavLib.lib;laszip64.lib;openxr_loader.lib;delayimp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>glfw3_mt.lib;shaderc_shared.lib;assimp-vc143-mt.lib;libhdf5.lib;libhdf5_cpp.lib;libzlib.lib;libaec.lib;libszaec.lib;legacy_stdio_definitions.lib;Shlwapi.lib;TDxNavLib.lib;laszip64.lib;openxr_loader.lib;delayimp.lib;ws2_32.lib;dbghelp.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>../dependencies/lib/release;../dependencies/lib/x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <DelayLoadDLLs>openxr_loader.dll;%(DelayLoadDLLs)</DelayLoadDLLs>
     </Link>
@@ -155,7 +155,7 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;_CONSOLE;VK_NO_PROTOTYPES;GLFW_INCLUDE_NONE;IMGUI_IMPL_VULKAN_USE_VOLK;GLM_FORCE_DEPTH_ZERO_TO_ONE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;VK_NO_PROTOTYPES;GLFW_INCLUDE_NONE;IMGUI_IMPL_VULKAN_USE_VOLK;GLM_FORCE_DEPTH_ZERO_TO_ONE;TRACY_ENABLE;TRACY_ON_DEMAND;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <AdditionalIncludeDirectories>../dependencies/include;../dependencies/include/hdf5;../dependencies/include/laszip;../dependencies/include/openxr;headers;src;headers/libs/imgui;backend;headers/libs;headers/libs/volk;headers/libs/3dconnexion;headers/libs/highfive;headers/libs/highfive/bits;headers/libs/hdf5;headers/libs/highfive/h5easy_bits</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
@@ -169,7 +169,7 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>../dependencies/lib/release;../dependencies/lib/x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>glfw3_mt.lib;shaderc_shared.lib;assimp-vc143-mt.lib;libhdf5.lib;libhdf5_cpp.lib;libzlib.lib;libaec.lib;libszaec.lib;legacy_stdio_definitions.lib;Shlwapi.lib;TDxNavLib.lib;laszip64.lib;openxr_loader.lib;delayimp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>glfw3_mt.lib;shaderc_shared.lib;assimp-vc143-mt.lib;libhdf5.lib;libhdf5_cpp.lib;libzlib.lib;libaec.lib;libszaec.lib;legacy_stdio_definitions.lib;Shlwapi.lib;TDxNavLib.lib;laszip64.lib;openxr_loader.lib;delayimp.lib;ws2_32.lib;dbghelp.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <DelayLoadDLLs>openxr_loader.dll;%(DelayLoadDLLs)</DelayLoadDLLs>
       <IgnoreAllDefaultLibraries>
       </IgnoreAllDefaultLibraries>
@@ -335,6 +335,44 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <None Include="assets\shaders_vk\pointcloud_types.h" />
     <None Include="assets\shaders_vk\pointcloud_common.glsl" />
     <None Include="assets\shaders_vk\overlay_types.h" />
+    <None Include="headers\libs\basisu\transcoder\basisu_astc_cfgs.inl" />
+    <None Include="headers\libs\basisu\transcoder\basisu_etc1_mods.inl" />
+    <None Include="headers\libs\basisu\transcoder\basisu_transcoder.cpp" />
+    <None Include="headers\libs\basisu\transcoder\basisu_transcoder_tables_astc.inc" />
+    <None Include="headers\libs\basisu\transcoder\basisu_transcoder_tables_astc_0_255.inc" />
+    <None Include="headers\libs\basisu\transcoder\basisu_transcoder_tables_atc_55.inc" />
+    <None Include="headers\libs\basisu\transcoder\basisu_transcoder_tables_atc_56.inc" />
+    <None Include="headers\libs\basisu\transcoder\basisu_transcoder_tables_bc7_m5_alpha.inc" />
+    <None Include="headers\libs\basisu\transcoder\basisu_transcoder_tables_bc7_m5_color.inc" />
+    <None Include="headers\libs\basisu\transcoder\basisu_transcoder_tables_dxt1_5.inc" />
+    <None Include="headers\libs\basisu\transcoder\basisu_transcoder_tables_dxt1_6.inc" />
+    <None Include="headers\libs\basisu\transcoder\basisu_transcoder_tables_pvrtc2_45.inc" />
+    <None Include="headers\libs\basisu\transcoder\basisu_transcoder_tables_pvrtc2_alpha_33.inc" />
+    <None Include="headers\libs\tracy\client\TracyAlloc.cpp" />
+    <None Include="headers\libs\tracy\client\TracyCallstack.cpp" />
+    <None Include="headers\libs\tracy\client\TracyDxt1.cpp" />
+    <None Include="headers\libs\tracy\client\TracyKCore.cpp" />
+    <None Include="headers\libs\tracy\client\TracyOverride.cpp" />
+    <None Include="headers\libs\tracy\client\TracyProfiler.cpp" />
+    <None Include="headers\libs\tracy\client\TracyRocprof.cpp" />
+    <None Include="headers\libs\tracy\client\TracySysPower.cpp" />
+    <None Include="headers\libs\tracy\client\TracySysTime.cpp" />
+    <None Include="headers\libs\tracy\client\TracySysTrace.cpp" />
+    <None Include="headers\libs\tracy\client\tracy_rpmalloc.cpp" />
+    <None Include="headers\libs\tracy\common\TracySocket.cpp" />
+    <None Include="headers\libs\tracy\common\TracyStackFrames.cpp" />
+    <None Include="headers\libs\tracy\common\TracySystem.cpp" />
+    <None Include="headers\libs\tracy\common\tracy_lz4.cpp" />
+    <None Include="headers\libs\tracy\common\tracy_lz4hc.cpp" />
+    <None Include="headers\libs\tracy\libbacktrace\alloc.cpp" />
+    <None Include="headers\libs\tracy\libbacktrace\dwarf.cpp" />
+    <None Include="headers\libs\tracy\libbacktrace\elf.cpp" />
+    <None Include="headers\libs\tracy\libbacktrace\fileline.cpp" />
+    <None Include="headers\libs\tracy\libbacktrace\macho.cpp" />
+    <None Include="headers\libs\tracy\libbacktrace\mmapio.cpp" />
+    <None Include="headers\libs\tracy\libbacktrace\posix.cpp" />
+    <None Include="headers\libs\tracy\libbacktrace\sort.cpp" />
+    <None Include="headers\libs\tracy\libbacktrace\state.cpp" />
   </ItemGroup>
   <ItemGroup>
     <!-- Vulkan application (active) -->
@@ -376,6 +414,11 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClCompile Include="src\Loaders\Slpk\I3SLayer.cpp" />
     <ClCompile Include="src\Loaders\Slpk\I3SGeometry.cpp" />
     <ClCompile Include="src\Loaders\Slpk\I3STexture.cpp" />
+    <ClCompile Include="src\Loaders\Slpk\BasisTranscoderImpl.cpp">
+      <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <ClCompile Include="headers\libs\basisu\zstd\zstddeclib.c" />
+    <ClCompile Include="headers\libs\tracy\TracyClient.cpp" />
     <!-- vendored libdeflate v1.25 (decompress-only subset) + md5-c -->
     <ClCompile Include="headers\libs\libdeflate\lib\adler32.c" />
     <ClCompile Include="headers\libs\libdeflate\lib\crc32.c" />
@@ -560,6 +603,68 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClInclude Include="headers\Loaders\Slpk\I3SLayer.h" />
     <ClInclude Include="headers\Loaders\Slpk\I3SGeometry.h" />
     <ClInclude Include="headers\Loaders\Slpk\I3STexture.h" />
+    <ClInclude Include="headers\Core\Profiling.h" />
+    <ClInclude Include="headers\libs\basisu\transcoder\basisu.h" />
+    <ClInclude Include="headers\libs\basisu\transcoder\basisu_astc_hdr_core.h" />
+    <ClInclude Include="headers\libs\basisu\transcoder\basisu_astc_helpers.h" />
+    <ClInclude Include="headers\libs\basisu\transcoder\basisu_containers.h" />
+    <ClInclude Include="headers\libs\basisu\transcoder\basisu_containers_impl.h" />
+    <ClInclude Include="headers\libs\basisu\transcoder\basisu_file_headers.h" />
+    <ClInclude Include="headers\libs\basisu\transcoder\basisu_idct.h" />
+    <ClInclude Include="headers\libs\basisu\transcoder\basisu_transcoder.h" />
+    <ClInclude Include="headers\libs\basisu\transcoder\basisu_transcoder_internal.h" />
+    <ClInclude Include="headers\libs\basisu\transcoder\basisu_transcoder_uastc.h" />
+    <ClInclude Include="headers\libs\basisu\zstd\zstd.h" />
+    <ClInclude Include="headers\libs\basisu\zstd\zstd_errors.h" />
+    <ClInclude Include="headers\libs\tracy\client\TracyArmCpuTable.hpp" />
+    <ClInclude Include="headers\libs\tracy\client\TracyCallstack.h" />
+    <ClInclude Include="headers\libs\tracy\client\TracyCallstack.hpp" />
+    <ClInclude Include="headers\libs\tracy\client\TracyCpuid.hpp" />
+    <ClInclude Include="headers\libs\tracy\client\TracyDebug.hpp" />
+    <ClInclude Include="headers\libs\tracy\client\TracyDxt1.hpp" />
+    <ClInclude Include="headers\libs\tracy\client\TracyFastVector.hpp" />
+    <ClInclude Include="headers\libs\tracy\client\TracyKCore.hpp" />
+    <ClInclude Include="headers\libs\tracy\client\TracyLock.hpp" />
+    <ClInclude Include="headers\libs\tracy\client\TracyProfiler.hpp" />
+    <ClInclude Include="headers\libs\tracy\client\TracyRingBuffer.hpp" />
+    <ClInclude Include="headers\libs\tracy\client\TracyScoped.hpp" />
+    <ClInclude Include="headers\libs\tracy\client\TracyStringHelpers.hpp" />
+    <ClInclude Include="headers\libs\tracy\client\TracySysPower.hpp" />
+    <ClInclude Include="headers\libs\tracy\client\TracySysTime.hpp" />
+    <ClInclude Include="headers\libs\tracy\client\TracySysTrace.hpp" />
+    <ClInclude Include="headers\libs\tracy\client\TracyThread.hpp" />
+    <ClInclude Include="headers\libs\tracy\client\tracy_SPSCQueue.h" />
+    <ClInclude Include="headers\libs\tracy\client\tracy_concurrentqueue.h" />
+    <ClInclude Include="headers\libs\tracy\client\tracy_rpmalloc.hpp" />
+    <ClInclude Include="headers\libs\tracy\common\TracyAlign.hpp" />
+    <ClInclude Include="headers\libs\tracy\common\TracyAlloc.hpp" />
+    <ClInclude Include="headers\libs\tracy\common\TracyApi.h" />
+    <ClInclude Include="headers\libs\tracy\common\TracyColor.hpp" />
+    <ClInclude Include="headers\libs\tracy\common\TracyForceInline.hpp" />
+    <ClInclude Include="headers\libs\tracy\common\TracyMutex.hpp" />
+    <ClInclude Include="headers\libs\tracy\common\TracyProtocol.hpp" />
+    <ClInclude Include="headers\libs\tracy\common\TracyQueue.hpp" />
+    <ClInclude Include="headers\libs\tracy\common\TracySocket.hpp" />
+    <ClInclude Include="headers\libs\tracy\common\TracyStackFrames.hpp" />
+    <ClInclude Include="headers\libs\tracy\common\TracySystem.hpp" />
+    <ClInclude Include="headers\libs\tracy\common\TracyVersion.hpp" />
+    <ClInclude Include="headers\libs\tracy\common\TracyWinFamily.hpp" />
+    <ClInclude Include="headers\libs\tracy\common\TracyYield.hpp" />
+    <ClInclude Include="headers\libs\tracy\common\tracy_lz4.hpp" />
+    <ClInclude Include="headers\libs\tracy\common\tracy_lz4hc.hpp" />
+    <ClInclude Include="headers\libs\tracy\libbacktrace\backtrace.hpp" />
+    <ClInclude Include="headers\libs\tracy\libbacktrace\config.h" />
+    <ClInclude Include="headers\libs\tracy\libbacktrace\filenames.hpp" />
+    <ClInclude Include="headers\libs\tracy\libbacktrace\internal.hpp" />
+    <ClInclude Include="headers\libs\tracy\tracy\Tracy.hpp" />
+    <ClInclude Include="headers\libs\tracy\tracy\TracyC.h" />
+    <ClInclude Include="headers\libs\tracy\tracy\TracyCUDA.hpp" />
+    <ClInclude Include="headers\libs\tracy\tracy\TracyD3D11.hpp" />
+    <ClInclude Include="headers\libs\tracy\tracy\TracyD3D12.hpp" />
+    <ClInclude Include="headers\libs\tracy\tracy\TracyLua.hpp" />
+    <ClInclude Include="headers\libs\tracy\tracy\TracyOpenCL.hpp" />
+    <ClInclude Include="headers\libs\tracy\tracy\TracyOpenGL.hpp" />
+    <ClInclude Include="headers\libs\tracy\tracy\TracyVulkan.hpp" />
     <ClInclude Include="headers\Scene\I3SSceneLayer.h" />
     <ClInclude Include="headers\Renderer\Projection.h" />
     <ClInclude Include="headers\Renderer\Renderer.h" />
