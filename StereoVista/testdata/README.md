@@ -18,6 +18,19 @@ them onto the window.
 
   (From the loaders.gl test suite, github.com/visgl/loaders.gl.)
 
+## Real package (PCSL 1.x, Point Cloud)
+
+- **SMALL_AUTZEN_LAS_All.slpk** (~10 KB, 106 points, WGS84, single leaf
+  node, LEPCC-encoded xyz + intensity + raw class-code/flag columns —
+  exercises the `.bin.pccxyz`/`.pccint` naming and the lepcc decode path
+  for milestone M3):
+
+  ```
+  curl -L -o SMALL_AUTZEN_LAS_All.slpk https://raw.githubusercontent.com/Esri/lepcc/master/testData/SMALL_AUTZEN_LAS_All.slpk
+  ```
+
+  (From the Esri/lepcc repository's own test data.)
+
 ## Synthetic packages (v1.6 mesh, v1.7 textured mesh, PCSL 2.0)
 
 No small public v1.6 / textured / point-cloud `.slpk` could be found for

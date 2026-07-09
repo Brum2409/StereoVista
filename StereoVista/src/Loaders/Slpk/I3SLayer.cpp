@@ -814,6 +814,7 @@ bool I3SLayer::parseLayerInfo(const SlpkArchive& archive, LayerInfo& out,
             AttributeField field;
             field.key = getS(a, "key");
             field.name = getS(a, "name");
+            field.encoding = getS(a, "encoding");
             const auto valIt = a.find("attributeValues");
             if (valIt != a.end() && valIt->is_object())
                 field.valueType = getS(*valIt, "valueType");

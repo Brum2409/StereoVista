@@ -62,9 +62,13 @@ struct SpatialReference {
 };
 
 struct AttributeField {
-    std::string key;  // resource key, e.g. "f_3"
+    std::string key;  // resource key, e.g. "f_3" (mesh) / "2" (PCSL)
     std::string name; // field name, e.g. "OBJECTID"
     std::string valueType;
+    // PCSL: how the column is stored — "lepcc-rgb", "lepcc-intensity",
+    // "embedded-elevation" (no resource; z carries it), or empty for a raw
+    // value array.
+    std::string encoding;
 };
 
 // One format alternative of a texture set: file stem + encoding, addressed as

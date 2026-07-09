@@ -25,6 +25,9 @@
     <Filter Include="libs\tracy">
       <UniqueIdentifier>{ad7f0bb0-378d-4da4-b304-d6589420b336}</UniqueIdentifier>
     </Filter>
+    <Filter Include="libs\lepcc">
+      <UniqueIdentifier>{4367069d-ecb1-45f5-8ee4-b1081f0b60a1}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Shaders">
       <UniqueIdentifier>{B2E1A5C4-7D3F-4E86-9A0B-52C6D1F0A9E3}</UniqueIdentifier>
       <Extensions>vert;frag;comp;geom;glsl;spv</Extensions>
@@ -135,6 +138,36 @@
     </ClCompile>
     <ClCompile Include="src\Loaders\Slpk\I3STexture.cpp">
       <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Loaders\Slpk\I3SPointCloud.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\lepcc\BitMask.cpp">
+      <Filter>libs\lepcc</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\lepcc\BitStuffer2.cpp">
+      <Filter>libs\lepcc</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\lepcc\ClusterRGB.cpp">
+      <Filter>libs\lepcc</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\lepcc\Common.cpp">
+      <Filter>libs\lepcc</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\lepcc\FlagBytes.cpp">
+      <Filter>libs\lepcc</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\lepcc\Huffman.cpp">
+      <Filter>libs\lepcc</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\lepcc\Intensity.cpp">
+      <Filter>libs\lepcc</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\lepcc\LEPCC.cpp">
+      <Filter>libs\lepcc</Filter>
+    </ClCompile>
+    <ClCompile Include="headers\libs\lepcc\lepcc_c_api_impl.cpp">
+      <Filter>libs\lepcc</Filter>
     </ClCompile>
     <ClCompile Include="src\Loaders\Slpk\BasisTranscoderImpl.cpp">
       <Filter>Source Files</Filter>
@@ -602,6 +635,42 @@
     </ClInclude>
     <ClInclude Include="headers\Loaders\Slpk\I3STexture.h">
       <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Loaders\Slpk\I3SPointCloud.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\lepcc\BitMask.h">
+      <Filter>libs\lepcc</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\lepcc\BitStuffer2.h">
+      <Filter>libs\lepcc</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\lepcc\ClusterRGB.h">
+      <Filter>libs\lepcc</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\lepcc\Common.h">
+      <Filter>libs\lepcc</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\lepcc\FlagBytes.h">
+      <Filter>libs\lepcc</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\lepcc\Huffman.h">
+      <Filter>libs\lepcc</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\lepcc\Intensity.h">
+      <Filter>libs\lepcc</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\lepcc\LEPCC.h">
+      <Filter>libs\lepcc</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\lepcc\utl_const_array.h">
+      <Filter>libs\lepcc</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\lepcc\include\lepcc_c_api.h">
+      <Filter>libs\lepcc</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\libs\lepcc\include\lepcc_types.h">
+      <Filter>libs\lepcc</Filter>
     </ClInclude>
     <ClInclude Include="headers\Core\Profiling.h">
       <Filter>Header Files</Filter>

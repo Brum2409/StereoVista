@@ -414,11 +414,22 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClCompile Include="src\Loaders\Slpk\I3SLayer.cpp" />
     <ClCompile Include="src\Loaders\Slpk\I3SGeometry.cpp" />
     <ClCompile Include="src\Loaders\Slpk\I3STexture.cpp" />
+    <ClCompile Include="src\Loaders\Slpk\I3SPointCloud.cpp" />
     <ClCompile Include="src\Loaders\Slpk\BasisTranscoderImpl.cpp">
       <AdditionalOptions>/bigobj %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <ClCompile Include="headers\libs\basisu\zstd\zstddeclib.c" />
     <ClCompile Include="headers\libs\tracy\TracyClient.cpp" />
+    <!-- vendored lepcc (Esri point-cloud compression, decoder use only) -->
+    <ClCompile Include="headers\libs\lepcc\BitMask.cpp" />
+    <ClCompile Include="headers\libs\lepcc\BitStuffer2.cpp" />
+    <ClCompile Include="headers\libs\lepcc\ClusterRGB.cpp" />
+    <ClCompile Include="headers\libs\lepcc\Common.cpp" />
+    <ClCompile Include="headers\libs\lepcc\FlagBytes.cpp" />
+    <ClCompile Include="headers\libs\lepcc\Huffman.cpp" />
+    <ClCompile Include="headers\libs\lepcc\Intensity.cpp" />
+    <ClCompile Include="headers\libs\lepcc\LEPCC.cpp" />
+    <ClCompile Include="headers\libs\lepcc\lepcc_c_api_impl.cpp" />
     <!-- vendored libdeflate v1.25 (decompress-only subset) + md5-c -->
     <ClCompile Include="headers\libs\libdeflate\lib\adler32.c" />
     <ClCompile Include="headers\libs\libdeflate\lib\crc32.c" />
@@ -603,7 +614,19 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClInclude Include="headers\Loaders\Slpk\I3SLayer.h" />
     <ClInclude Include="headers\Loaders\Slpk\I3SGeometry.h" />
     <ClInclude Include="headers\Loaders\Slpk\I3STexture.h" />
+    <ClInclude Include="headers\Loaders\Slpk\I3SPointCloud.h" />
     <ClInclude Include="headers\Core\Profiling.h" />
+    <ClInclude Include="headers\libs\lepcc\BitMask.h" />
+    <ClInclude Include="headers\libs\lepcc\BitStuffer2.h" />
+    <ClInclude Include="headers\libs\lepcc\ClusterRGB.h" />
+    <ClInclude Include="headers\libs\lepcc\Common.h" />
+    <ClInclude Include="headers\libs\lepcc\FlagBytes.h" />
+    <ClInclude Include="headers\libs\lepcc\Huffman.h" />
+    <ClInclude Include="headers\libs\lepcc\Intensity.h" />
+    <ClInclude Include="headers\libs\lepcc\LEPCC.h" />
+    <ClInclude Include="headers\libs\lepcc\utl_const_array.h" />
+    <ClInclude Include="headers\libs\lepcc\include\lepcc_c_api.h" />
+    <ClInclude Include="headers\libs\lepcc\include\lepcc_types.h" />
     <ClInclude Include="headers\libs\basisu\transcoder\basisu.h" />
     <ClInclude Include="headers\libs\basisu\transcoder\basisu_astc_hdr_core.h" />
     <ClInclude Include="headers\libs\basisu\transcoder\basisu_astc_helpers.h" />
