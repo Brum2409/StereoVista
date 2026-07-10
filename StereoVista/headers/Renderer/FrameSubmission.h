@@ -43,6 +43,12 @@ struct DrawItem {
     // the global wireframe toggle). Falls back to fill silently when the
     // device lacks fillModeNonSolid. Shadows still render solid.
     bool wireframe = false;
+    // Rasterize without back-face culling (forward pass dynamic cull mode).
+    // The GL app never enabled GL_CULL_FACE for the scene, so imported models
+    // set this for parity (open meshes / inconsistent winding keep both
+    // sides); I3S draws set it from the material's doubleSided flag. The
+    // shadow pipelines always cull NONE regardless.
+    bool twoSided = false;
     // World-space bounding sphere; drives the sun shadow frustum fit (and
     // later CPU culling). Radius 0 = unknown, treated as a point.
     glm::vec3 worldBoundsCenter{ 0.0f };

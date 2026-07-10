@@ -736,6 +736,18 @@ void I3SSceneLayer::finalizeResidency(PendingUpload& upload,
         material.metallicTexture = renderer::kInvalidTexture;
         material.roughnessTexture = renderer::kInvalidTexture;
         material.aoTexture = renderer::kInvalidTexture;
+        material.alphaCutoff = materialDesc.alphaCutoff;
+        if (materialDesc.doubleSided)
+            material.flags |= SV_MATERIAL_TWO_SIDED;
+        // Alpha handling: mask discards below the cutoff. Blend (no sorted
+        // transparency pass yet) is approximated as mask, but ONLY for
+        // textured materials — cutouts (vegetation, fences) read correctly
+        // that way, while a flat semi-transparent color would discard the
+        // whole mesh once its alpha fell under the cutoff.
+        if (materialDesc.alphaMode == i3s::MaterialDesc::AlphaMode::Mask ||
+            (materialDesc.alphaMode == i3s::MaterialDesc::AlphaMode::Blend &&
+             textureIndex != renderer::kInvalidTexture))
+            material.flags |= SV_MATERIAL_ALPHA_MASK;
         // House convention (ModelImporter): a texture replaces the flat
         // base color rather than multiplying it.
         if (textureIndex != renderer::kInvalidTexture)
@@ -752,6 +764,7 @@ void I3SSceneLayer::finalizeResidency(PendingUpload& upload,
     residency.materialIndex = materialIndex;
     residency.textureIndex = textureIndex;
     residency.ownsMaterial = ownsMaterial;
+    residency.twoSided = materialDesc.doubleSided;
     residency.gpuBytes = upload.gpuBytes; // accounted into gpuBytes_ at creation
     residency.indexCount = static_cast<uint32_t>(upload.payload.geometry.indices.size());
     residency_[nodeIndex] = std::move(residency);
@@ -1642,6 +1655,7 @@ void I3SSceneLayer::emitDraw(uint32_t nodeIndex,
     draw.normalMatrix = glm::mat3(1.0f);
     draw.materialIndex = it->second.materialIndex;
     draw.castsShadows = true;
+    draw.twoSided = it->second.twoSided; // material doubleSided / cullFace none
     draw.worldBoundsCenter = box.center;
     draw.worldBoundsRadius = glm::length(box.halfSize);
 

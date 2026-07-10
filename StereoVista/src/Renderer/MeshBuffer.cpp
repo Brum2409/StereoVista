@@ -4,10 +4,26 @@
 #include "RHI/UploadRing.h"
 
 #include <cstddef>
+#include <cstring>
 #include <stdexcept>
 #include <string>
 
 namespace renderer {
+
+namespace {
+
+// Extra usage when the device enabled the ray-tracing extensions: the future
+// RT mode (docs/TODO.md §H) builds BLAS geometry straight from these buffers
+// via their device addresses — baked in at creation because usage flags are
+// immutable, so meshes resident before the RT mode toggles on stay usable.
+VkBufferUsageFlags rayTracingUsage(const rhi::Device& device) {
+    if (!device.rayTracingSupported())
+        return 0;
+    return VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
+           VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+}
+
+} // namespace
 
 void MeshBuffer::create(rhi::Device& device, const MeshData& data,
                         const char* debugName) {
@@ -16,19 +32,54 @@ void MeshBuffer::create(rhi::Device& device, const MeshData& data,
                                  std::string(debugName ? debugName : "?") + "'");
     destroy();
 
+    const VkDeviceSize vbBytes = data.vertices.size() * sizeof(Vertex);
+    const VkDeviceSize ibBytes = data.indices.size() * sizeof(uint32_t);
+
     rhi::BufferDesc vbDesc{};
-    vbDesc.size = data.vertices.size() * sizeof(Vertex);
-    vbDesc.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    vbDesc.size = vbBytes;
+    vbDesc.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | rayTracingUsage(device);
     vbDesc.debugName = debugName;
     vertices_.create(device, vbDesc);
-    vertices_.upload(data.vertices.data(), vbDesc.size);
 
     rhi::BufferDesc ibDesc{};
-    ibDesc.size = data.indices.size() * sizeof(uint32_t);
-    ibDesc.usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+    ibDesc.size = ibBytes;
+    ibDesc.usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | rayTracingUsage(device);
     ibDesc.debugName = debugName;
     indices_.create(device, ibDesc);
-    indices_.upload(data.indices.data(), ibDesc.size);
+
+    // One staging buffer + ONE submit for both copies. Buffer::upload would
+    // stage and drain the queue per buffer — two full GPU syncs per mesh adds
+    // up fast on scene loads with hundreds of meshes.
+    rhi::Buffer staging;
+    rhi::BufferDesc stagingDesc{};
+    stagingDesc.size = vbBytes + ibBytes;
+    stagingDesc.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    stagingDesc.memory = rhi::MemoryUsage::HostUpload;
+    staging.create(device, stagingDesc);
+    std::memcpy(staging.mapped(), data.vertices.data(), vbBytes);
+    std::memcpy(static_cast<char*>(staging.mapped()) + vbBytes,
+                data.indices.data(), ibBytes);
+    staging.flush();
+
+    device.immediateSubmit([&](VkCommandBuffer cmd) {
+        VkBufferCopy2 region{};
+        region.sType = VK_STRUCTURE_TYPE_BUFFER_COPY_2;
+        VkCopyBufferInfo2 copy{};
+        copy.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2;
+        copy.srcBuffer = staging.handle();
+        copy.regionCount = 1;
+        copy.pRegions = &region;
+
+        region.srcOffset = 0;
+        region.size = vbBytes;
+        copy.dstBuffer = vertices_.handle();
+        vkCmdCopyBuffer2(cmd, &copy);
+
+        region.srcOffset = vbBytes;
+        region.size = ibBytes;
+        copy.dstBuffer = indices_.handle();
+        vkCmdCopyBuffer2(cmd, &copy);
+    });
 
     indexCount_ = static_cast<uint32_t>(data.indices.size());
 }
@@ -42,13 +93,14 @@ void MeshBuffer::createForStreaming(rhi::Device& device, uint32_t vertexCount,
 
     rhi::BufferDesc vbDesc{};
     vbDesc.size = VkDeviceSize(vertexCount) * sizeof(Vertex);
-    vbDesc.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT; // GpuOnly adds TRANSFER_DST
+    vbDesc.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | // GpuOnly adds TRANSFER_DST
+                   rayTracingUsage(device);
     vbDesc.debugName = debugName;
     vertices_.create(device, vbDesc);
 
     rhi::BufferDesc ibDesc{};
     ibDesc.size = VkDeviceSize(indexCount) * sizeof(uint32_t);
-    ibDesc.usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+    ibDesc.usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | rayTracingUsage(device);
     ibDesc.debugName = debugName;
     indices_.create(device, ibDesc);
     // indexCount_ stays 0 (invalid) until stagePayload lands the data.

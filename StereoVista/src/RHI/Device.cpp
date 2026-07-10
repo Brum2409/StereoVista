@@ -414,6 +414,47 @@ void Device::createLogicalDevice() {
     if (hasExtension(available, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME))
         extensions.push_back(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
 
+    // Ray-tracing readiness (docs/TODO.md §H): enable
+    // VK_KHR_acceleration_structure + VK_KHR_ray_query (plus
+    // VK_KHR_deferred_host_operations, an acceleration-structure dependency)
+    // whenever the GPU offers them, so the planned RT mode can build
+    // BLAS/TLAS from the SAME mesh buffers on this device without a rebuild.
+    // Purely additive: nothing dispatches ray queries until the RT passes
+    // land; a GPU without the extensions simply reports
+    // rayTracingSupported() == false and skips the extra buffer usage.
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR enableAccel{};
+    enableAccel.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+    VkPhysicalDeviceRayQueryFeaturesKHR enableRayQuery{};
+    enableRayQuery.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+    if (hasExtension(available, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) &&
+        hasExtension(available, VK_KHR_RAY_QUERY_EXTENSION_NAME) &&
+        hasExtension(available, VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME)) {
+        VkPhysicalDeviceAccelerationStructureFeaturesKHR accelAvail{};
+        accelAvail.sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+        VkPhysicalDeviceRayQueryFeaturesKHR rayQueryAvail{};
+        rayQueryAvail.sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+        accelAvail.pNext = &rayQueryAvail;
+        VkPhysicalDeviceFeatures2 rtQuery{};
+        rtQuery.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        rtQuery.pNext = &accelAvail;
+        vkGetPhysicalDeviceFeatures2(physicalDevice_, &rtQuery);
+        if (accelAvail.accelerationStructure && rayQueryAvail.rayQuery) {
+            extensions.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+            extensions.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+            extensions.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+            enableAccel.accelerationStructure = VK_TRUE;
+            enableRayQuery.rayQuery = VK_TRUE;
+            enableAccel.pNext = &enableRayQuery;
+            enable13.pNext = &enableAccel;
+            rayTracingSupported_ = true;
+            std::cout << "[vulkan] ray tracing available "
+                         "(acceleration_structure + ray_query enabled)\n";
+        }
+    }
+
     // XR readiness (Phase 7b): an OpenXR runtime shares THIS device to import
     // the headset's swapchain images, and it uses the Win32 external
     // memory/semaphore/fence extensions internally. Enable them up front (only

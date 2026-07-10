@@ -228,10 +228,16 @@ struct GeometryDefinition {
 // texture href lives on the node (NodeMesh::v16TexturePath) since 1.6 images
 // are per-node resources.
 struct MaterialDesc {
+    // glTF-style alpha handling. Blend (true transparency) has no sorted
+    // pass yet — the renderer approximates it as Mask so foliage/fence
+    // cutouts read correctly instead of rendering as opaque cards.
+    enum class AlphaMode { Opaque, Mask, Blend };
+
     glm::vec4 baseColor{ 1.0f, 1.0f, 1.0f, 1.0f };
     float metallicFactor = 0.0f;
     float roughnessFactor = 0.85f;
     glm::vec3 emissiveFactor{ 0.0f };
+    AlphaMode alphaMode = AlphaMode::Opaque;
     float alphaCutoff = 0.25f;
     bool doubleSided = false;
 
