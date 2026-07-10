@@ -188,9 +188,18 @@ point-cloud buffer references are also `restrict` now (glslang otherwise emits
 `AliasedPointer`, blocking load hoisting across the framebuffer atomics), the
 dispatch struct stride is 16-byte aligned (400 B), and the lookup dispatch uses
 a 2D grid so 8K-class targets stay under `maxComputeWorkGroupCount[0]`.
-- ⚡ **Async compute queue** for the point-cloud (and later GI) compute, overlapped
-  with graphics via a 2nd queue + timeline. `PointCloudPass::recordCompute` is
-  self-contained, so this is localized. Detect a compute family; fall back to graphics.
+**Done (async compute queue):** the point-cloud compute (dispatch copy + clears
++ rasterize/HQS + lookup) now runs on a second queue — a dedicated compute
+family when the GPU has one, else a second graphics-family queue — overlapped
+with the same frame's upload/shadow/forward work. The frame is three
+submissions chained by two new timelines (upload + compute; full diagram in
+`Renderer.h`); cross-queue buffers (cloud storage, per-pixel buffers, dispatch
+data) are `VK_SHARING_MODE_CONCURRENT` via `BufferDesc::shareGraphicsCompute`,
+so there are zero queue-family ownership transfers (release/acquire helpers for
+EXCLUSIVE resources exist in `RHI/Barrier.h` for the RT phase). Single-queue
+GPUs and the debug toggle (Point Clouds panel; status in Diagnostics) fall back
+to the old inline recording, decided per frame. For RT/GI: grab
+`Device::computeQueue()` / `immediateSubmitCompute()`.
 - ⚡ **Subgroup ops** in the HQS colour-accumulate pass (`subgroupMin`/ballot) instead
   of per-pixel atomics — a large compute win on dense clouds.
 - ⚡ **Variable-rate shading** (`VK_KHR_fragment_shading_rate`) on the point-cloud

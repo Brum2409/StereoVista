@@ -53,6 +53,46 @@ inline VkBufferMemoryBarrier2 bufferBarrier(
     return barrier;
 }
 
+// ---- Queue-family ownership transfer (async compute) ----
+// EXCLUSIVE resources whose contents must survive a graphics <-> compute
+// family hop need a paired transfer: record the RELEASE barrier on the source
+// queue, the ACQUIRE barrier (identical parameters) on the destination queue,
+// and order the two submissions with a semaphore. Per the spec, the release's
+// dstStageMask/dstAccessMask and the acquire's srcStageMask/srcAccessMask are
+// ignored — both halves come from ONE description of the transfer.
+//
+// Buffers that hop EVERY frame don't use this: create them with
+// BufferDesc::shareGraphicsCompute (CONCURRENT) instead. These helpers exist
+// for resources where exclusive ownership is worth keeping — images (where
+// CONCURRENT disables compression) and rarely-migrating buffers (e.g. a
+// future BLAS/TLAS handed from a compute-queue build to graphics-queue use).
+
+inline VkBufferMemoryBarrier2 bufferQueueTransfer(
+    VkBuffer buffer, uint32_t srcQueueFamily, uint32_t dstQueueFamily,
+    VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
+    VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess,
+    VkDeviceSize offset = 0, VkDeviceSize size = VK_WHOLE_SIZE) {
+    VkBufferMemoryBarrier2 barrier =
+        bufferBarrier(buffer, srcStage, srcAccess, dstStage, dstAccess, offset, size);
+    barrier.srcQueueFamilyIndex = srcQueueFamily;
+    barrier.dstQueueFamilyIndex = dstQueueFamily;
+    return barrier;
+}
+
+inline VkImageMemoryBarrier2 imageQueueTransfer(
+    VkImage image, VkImageAspectFlags aspect,
+    uint32_t srcQueueFamily, uint32_t dstQueueFamily,
+    VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
+    VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess,
+    VkImageLayout oldLayout, VkImageLayout newLayout) {
+    VkImageMemoryBarrier2 barrier =
+        imageBarrier(image, aspect, srcStage, srcAccess, dstStage, dstAccess,
+                     oldLayout, newLayout);
+    barrier.srcQueueFamilyIndex = srcQueueFamily;
+    barrier.dstQueueFamilyIndex = dstQueueFamily;
+    return barrier;
+}
+
 inline void cmdBarrier(VkCommandBuffer cmd,
                        const VkImageMemoryBarrier2* images, uint32_t imageCount,
                        const VkBufferMemoryBarrier2* buffers = nullptr,

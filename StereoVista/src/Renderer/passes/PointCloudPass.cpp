@@ -132,6 +132,10 @@ void PointCloudPass::ensureTargets(uint32_t viewCount) {
         // Big long-lived per-pixel buffers (HQS accum is ~133 MB at 4K) get
         // their own VkDeviceMemory, same policy as PointCloudGpu (A.13).
         desc.dedicated = bytes >= (64ull << 20);
+        // Written by the async compute queue, read by the resolve fragments
+        // on the graphics queue — CONCURRENT sharing (also keeps the toggle
+        // between the async and inline paths transfer-free).
+        desc.shareGraphicsCompute = true;
         desc.debugName = name;
         buffer.create(*device_, desc);
     };
@@ -262,6 +266,10 @@ void PointCloudPass::prepare(const FrameSubmission& submission, uint32_t frameSl
         desc.size = std::max<VkDeviceSize>(bytes * 2, 16 * 1024);
         desc.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
         desc.memory = rhi::MemoryUsage::HostUpload;
+        // The staging->device copy records on the async compute queue when
+        // enabled and inline on the graphics queue when not; sharing spares
+        // the pair a family-ownership hand-off on every toggle.
+        desc.shareGraphicsCompute = true;
         desc.debugName = "pointcloud dispatch staging";
         staging.create(*device_, desc);
     }
@@ -271,6 +279,7 @@ void PointCloudPass::prepare(const FrameSubmission& submission, uint32_t frameSl
         desc.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT; // + TRANSFER_DST (GpuOnly)
         desc.memory = rhi::MemoryUsage::GpuOnly;
+        desc.shareGraphicsCompute = true; // same reason as the staging half
         desc.debugName = "pointcloud dispatch data";
         deviceBuf.create(*device_, desc);
     }
@@ -331,7 +340,7 @@ void PointCloudPass::prepare(const FrameSubmission& submission, uint32_t frameSl
     active_ = true;
 }
 
-void PointCloudPass::recordCompute(VkCommandBuffer cmd) {
+void PointCloudPass::recordCompute(VkCommandBuffer cmd, bool asyncQueue) {
     if (!active_)
         return;
     beginLabel(cmd, hqsActive_ ? "pointcloud compute (HQS)" : "pointcloud compute");
@@ -353,14 +362,19 @@ void PointCloudPass::recordCompute(VkCommandBuffer cmd) {
         vkCmdCopyBuffer2(cmd, &copy);
     }
 
-    // The previous frame may still be reading (resolve fragments) or writing
-    // (compute) these buffers — order the clears after all of it. Barriers
-    // are queue-scoped, so this covers the prior command buffer too.
-    memoryBarrier(cmd,
-                  VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
-                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                  VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-                  VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+    // Inline (single-queue) path only: the previous frame may still be
+    // reading (resolve fragments) or writing (compute) these buffers — order
+    // the clears after all of it. Barriers are queue-scoped, so this covers
+    // the prior command buffer too. On the ASYNC queue this ordering is the
+    // Renderer's job (the compute submission waits the previous frame's
+    // graphics timeline value before anything here executes) — and the
+    // FRAGMENT stage bit would be illegal on a compute-only family anyway.
+    if (!asyncQueue)
+        memoryBarrier(cmd,
+                      VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
+                          VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                      VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                      VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
 
     // Clear only what this frame's path consumes. Sentinel 0xFFFF... marks
     // "no point" in both the 64-bit framebuffer (fill repeats the 32-bit
@@ -427,11 +441,15 @@ void PointCloudPass::recordCompute(VkCommandBuffer cmd) {
         }
     }
 
-    // Make the results visible to the fullscreen resolve fragments.
-    memoryBarrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                  VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-                  VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                  VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+    // Make the results visible to the fullscreen resolve fragments. On the
+    // async queue the semaphore signal/wait pair (compute timeline -> scene
+    // submission at FRAGMENT_SHADER) carries this dependency instead, with
+    // full memory availability per the semaphore rules.
+    if (!asyncQueue)
+        memoryBarrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                      VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                      VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
     endLabel(cmd);
 }
 

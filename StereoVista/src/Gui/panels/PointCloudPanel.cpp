@@ -43,6 +43,24 @@ void drawPointCloudPanel(Services& services, bool* open) {
         ImGui::SliderInt("Max radius (px)", &pc.splatMaxRadius, 1, 8);
     }
 
+    // Async compute (renderer-wide; point clouds are today's only compute
+    // consumer, so the toggle lives with them). Greyed out when the GPU has
+    // no second queue — the renderer falls back to inline compute anyway.
+    {
+        const FrameDiagnostics d = services.diagnostics();
+        ImGui::BeginDisabled(!d.asyncComputeSupported);
+        ImGui::Checkbox("Async compute", &services.settings().render.asyncCompute);
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (!d.asyncComputeSupported)
+            ImGui::TextDisabled("(no compute queue on this GPU)");
+        else if (d.asyncComputeActive)
+            ImGui::TextDisabled("(overlapping this frame)");
+        else
+            ImGui::TextDisabled(d.asyncComputeEnabled ? "(idle - no visible clouds)"
+                                                      : "(inline fallback)");
+    }
+
     ImGui::Text("Upload ring: %.1f / %.0f MB in flight", services.uploadRingUsedMB(),
                 services.uploadRingCapacityMB());
 

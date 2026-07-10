@@ -23,6 +23,16 @@ void Buffer::create(Device& device, const BufferDesc& desc) {
     bufInfo.size = size_;
     bufInfo.usage = usage_;
     bufInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    // Cross-queue buffers (see BufferDesc): CONCURRENT over the two families
+    // when they actually differ — CONCURRENT with one family is invalid, and
+    // EXCLUSIVE is by definition correct on a single family.
+    const uint32_t sharedFamilies[2] = { device.graphicsQueueFamily(),
+                                         device.computeQueueFamily() };
+    if (desc.shareGraphicsCompute && sharedFamilies[0] != sharedFamilies[1]) {
+        bufInfo.sharingMode = VK_SHARING_MODE_CONCURRENT;
+        bufInfo.queueFamilyIndexCount = 2;
+        bufInfo.pQueueFamilyIndices = sharedFamilies;
+    }
 
     VmaAllocationCreateInfo allocInfo{};
     allocInfo.usage = VMA_MEMORY_USAGE_AUTO;

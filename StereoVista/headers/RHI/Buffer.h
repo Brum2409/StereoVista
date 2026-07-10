@@ -26,6 +26,16 @@ struct BufferDesc {
     // long-lived buffers (large point clouds) — keeps them from fragmenting
     // the shared pools and lets the driver manage them individually (A.13).
     bool dedicated = false;
+    // VK_SHARING_MODE_CONCURRENT across the graphics + async-compute queue
+    // families (no-op when they are the same family). Set it on every buffer
+    // both queues touch with contents that must survive the hop — cloud
+    // geometry (uploaded on graphics, dispatched on compute) and the
+    // point-cloud per-pixel buffers (written on compute, resolved on
+    // graphics). Concurrent sharing on BUFFERS costs nothing measurable on
+    // desktop GPUs and removes the per-frame queue-family ownership
+    // release/acquire dance an EXCLUSIVE buffer would need. Rarely-migrating
+    // EXCLUSIVE resources use the Barrier.h queue-transfer helpers instead.
+    bool shareGraphicsCompute = false;
     const char* debugName = nullptr;
 };
 

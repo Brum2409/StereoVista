@@ -45,6 +45,14 @@ void drawDiagnosticsPanel(Services& services, bool* open) {
     ImGui::Text("GPU: %s", d.gpuName);
     ImGui::Text("Vulkan %u.%u.%u", d.apiMajor, d.apiMinor, d.apiPatch);
     ImGui::Text("Validation layers: %s", d.validation ? "on" : "off");
+    ImGui::Text("Async compute: %s",
+                !d.asyncComputeSupported ? "unavailable (single queue)"
+                : d.asyncComputeDedicatedFamily ? "dedicated queue family"
+                                                : "second graphics-family queue");
+    if (d.asyncComputeSupported)
+        ImGui::Text("  %s", d.asyncComputeActive ? "point-cloud compute overlapping"
+                            : d.asyncComputeEnabled ? "enabled, idle this frame"
+                                                    : "disabled (inline fallback)");
 
     ImGui::End();
 }

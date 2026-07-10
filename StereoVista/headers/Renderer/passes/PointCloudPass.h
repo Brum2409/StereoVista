@@ -38,10 +38,23 @@ namespace renderer {
 //
 // Frame protocol (driven by Renderer):
 //   prepare()        before recording — sizes buffers, uploads dispatch data
-//   recordCompute()  in the frame command buffer, before the scene pass
+//   recordCompute()  the clears + dispatches. Two homes (Renderer decides per
+//                    frame): the ASYNC COMPUTE queue's command buffer
+//                    (asyncQueue=true — the default frame path, overlapped
+//                    with the shadow + forward graphics work and ordered by
+//                    the Renderer's timeline semaphores), or inline in the
+//                    frame command buffer before the scene pass
+//                    (asyncQueue=false — single-queue fallback, ordered by
+//                    queue-scoped barriers as before)
 //   recordResolve()  inside the scene render pass, after ForwardPass
 //   onSwapchainRecreated()  device idle — drops the size-dependent buffers
 //                           (recreated lazily by the next prepare)
+//
+// Cross-queue state: every buffer the dispatches touch that the graphics
+// queue also touches (the per-pixel buffers read by the resolve, the cloud
+// geometry streamed by the upload ring, the dispatch data) is created with
+// BufferDesc::shareGraphicsCompute, so no queue-family ownership transfers
+// appear anywhere in the pass.
 class PointCloudPass {
 public:
     PointCloudPass() = default;
@@ -63,8 +76,13 @@ public:
 
     bool active() const { return active_; }
 
-    // Clears + compute dispatches + barriers; call before the scene pass.
-    void recordCompute(VkCommandBuffer cmd);
+    // Clears + compute dispatches + barriers. asyncQueue=true when cmd will
+    // be submitted on the async compute queue: the cross-frame and
+    // compute->fragment hand-off barriers are omitted (the Renderer's
+    // semaphore chain owns that ordering, and their graphics stage bits are
+    // illegal on a compute-only family); the internal copy/clear->compute and
+    // compute->compute barriers are recorded either way.
+    void recordCompute(VkCommandBuffer cmd, bool asyncQueue);
     // Fullscreen composite; call inside the scene pass after opaque geometry.
     void recordResolve(VkCommandBuffer cmd) const;
 

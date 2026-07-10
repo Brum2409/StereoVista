@@ -173,6 +173,14 @@ void Device::init(GLFWwindow* window, bool enableValidation) {
     poolInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
     poolInfo.queueFamilyIndex = graphicsQueueFamily_;
     VK_CHECK(vkCreateCommandPool(device_, &poolInfo, nullptr, &immediatePool_));
+
+    // Immediate-submit pool for the async compute queue (setup-time compute
+    // work — future BLAS/TLAS builds). Only when a distinct queue exists;
+    // immediateSubmitCompute falls back to the graphics path otherwise.
+    if (asyncComputeAvailable()) {
+        poolInfo.queueFamilyIndex = computeQueueFamily_;
+        VK_CHECK(vkCreateCommandPool(device_, &poolInfo, nullptr, &immediateComputePool_));
+    }
 }
 
 void Device::createInstance(bool enableValidation) {
@@ -340,6 +348,34 @@ void Device::pickPhysicalDevice() {
 
     physicalDevice_ = best;
     graphicsQueueFamily_ = bestFamily;
+
+    // Async compute queue selection (docs/TODO.md §G). Best first:
+    //  1. a DEDICATED compute family (compute without graphics) — a separate
+    //     hardware engine on NVIDIA/AMD, the real overlap case;
+    //  2. a SECOND queue on the graphics family — same engine class, but the
+    //     driver may still schedule it around graphics work;
+    //  3. neither — computeQueue_ will alias graphicsQueue_ (no async).
+    {
+        uint32_t familyCount = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice_, &familyCount, nullptr);
+        std::vector<VkQueueFamilyProperties> families(familyCount);
+        vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice_, &familyCount,
+                                                 families.data());
+
+        computeQueueFamily_ = graphicsQueueFamily_;
+        computeQueueIndex_ = 0;
+        for (uint32_t i = 0; i < familyCount; ++i) {
+            if ((families[i].queueFlags & VK_QUEUE_COMPUTE_BIT) &&
+                !(families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
+                computeQueueFamily_ = i;
+                break;
+            }
+        }
+        if (computeQueueFamily_ == graphicsQueueFamily_ &&
+            families[graphicsQueueFamily_].queueCount >= 2)
+            computeQueueIndex_ = 1;
+    }
+
     vkGetPhysicalDeviceProperties(physicalDevice_, &properties_);
     std::cout << "[vulkan] using GPU: " << properties_.deviceName << " (driver Vulkan "
               << VK_API_VERSION_MAJOR(properties_.apiVersion) << "."
@@ -479,18 +515,31 @@ void Device::createLogicalDevice() {
         if (hasExtension(available, name))
             extensions.push_back(name);
 
-    const float priority = 1.0f;
-    VkDeviceQueueCreateInfo queueInfo{};
-    queueInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-    queueInfo.queueFamilyIndex = graphicsQueueFamily_;
-    queueInfo.queueCount = 1;
-    queueInfo.pQueuePriorities = &priority;
+    // Graphics queue + the async compute queue picked in pickPhysicalDevice.
+    // Equal priorities: the point-cloud compute IS on the frame's critical
+    // path (the resolve waits on it), so it must not be starved behind
+    // graphics the way a "background" async queue would be.
+    const float priorities[2] = { 1.0f, 1.0f };
+    VkDeviceQueueCreateInfo queueInfos[2]{};
+    queueInfos[0].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+    queueInfos[0].queueFamilyIndex = graphicsQueueFamily_;
+    queueInfos[0].queueCount =
+        (computeQueueFamily_ == graphicsQueueFamily_ && computeQueueIndex_ == 1) ? 2 : 1;
+    queueInfos[0].pQueuePriorities = priorities;
+    uint32_t queueInfoCount = 1;
+    if (computeQueueFamily_ != graphicsQueueFamily_) {
+        queueInfos[1].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queueInfos[1].queueFamilyIndex = computeQueueFamily_;
+        queueInfos[1].queueCount = 1;
+        queueInfos[1].pQueuePriorities = priorities;
+        queueInfoCount = 2;
+    }
 
     VkDeviceCreateInfo deviceInfo{};
     deviceInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     deviceInfo.pNext = &enable2;
-    deviceInfo.queueCreateInfoCount = 1;
-    deviceInfo.pQueueCreateInfos = &queueInfo;
+    deviceInfo.queueCreateInfoCount = queueInfoCount;
+    deviceInfo.pQueueCreateInfos = queueInfos;
     deviceInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
     deviceInfo.ppEnabledExtensionNames = extensions.data();
 
@@ -500,6 +549,16 @@ void Device::createLogicalDevice() {
     volkLoadDevice(device_);
 
     vkGetDeviceQueue(device_, graphicsQueueFamily_, 0, &graphicsQueue_);
+    vkGetDeviceQueue(device_, computeQueueFamily_, computeQueueIndex_, &computeQueue_);
+
+    if (computeQueueFamily_ != graphicsQueueFamily_)
+        std::cout << "[vulkan] async compute: dedicated queue family "
+                  << computeQueueFamily_ << "\n";
+    else if (computeQueueIndex_ == 1)
+        std::cout << "[vulkan] async compute: second queue on the graphics family\n";
+    else
+        std::cout << "[vulkan] async compute: unavailable (single queue) - "
+                     "compute stays on the graphics queue\n";
 }
 
 void Device::createAllocator() {
@@ -564,14 +623,19 @@ void Device::savePipelineCache() {
     // Failure is acceptable: the cache is an optimization, not state.
 }
 
-void Device::immediateSubmit(const std::function<void(VkCommandBuffer)>& record) const {
+namespace {
+
+// Shared body of immediateSubmit / immediateSubmitCompute: transient command
+// buffer from `pool`, submit on `queue`, block until completion.
+void submitImmediateOn(VkDevice device, VkQueue queue, VkCommandPool pool,
+                       const std::function<void(VkCommandBuffer)>& record) {
     VkCommandBufferAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocInfo.commandPool = immediatePool_;
+    allocInfo.commandPool = pool;
     allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     allocInfo.commandBufferCount = 1;
     VkCommandBuffer cmd = VK_NULL_HANDLE;
-    VK_CHECK(vkAllocateCommandBuffers(device_, &allocInfo, &cmd));
+    VK_CHECK(vkAllocateCommandBuffers(device, &allocInfo, &cmd));
 
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -587,10 +651,25 @@ void Device::immediateSubmit(const std::function<void(VkCommandBuffer)>& record)
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
     submit.commandBufferInfoCount = 1;
     submit.pCommandBufferInfos = &cmdInfo;
-    VK_CHECK(vkQueueSubmit2(graphicsQueue_, 1, &submit, VK_NULL_HANDLE));
-    VK_CHECK(vkQueueWaitIdle(graphicsQueue_));
+    VK_CHECK(vkQueueSubmit2(queue, 1, &submit, VK_NULL_HANDLE));
+    VK_CHECK(vkQueueWaitIdle(queue));
 
-    vkFreeCommandBuffers(device_, immediatePool_, 1, &cmd);
+    vkFreeCommandBuffers(device, pool, 1, &cmd);
+}
+
+} // namespace
+
+void Device::immediateSubmit(const std::function<void(VkCommandBuffer)>& record) const {
+    submitImmediateOn(device_, graphicsQueue_, immediatePool_, record);
+}
+
+void Device::immediateSubmitCompute(
+    const std::function<void(VkCommandBuffer)>& record) const {
+    if (!asyncComputeAvailable()) {
+        immediateSubmit(record);
+        return;
+    }
+    submitImmediateOn(device_, computeQueue_, immediateComputePool_, record);
 }
 
 Device::MemoryBudget Device::deviceLocalBudget() const {
@@ -636,6 +715,8 @@ void Device::shutdown() {
             vkDestroyPipelineCache(device_, pipelineCache_, nullptr);
         if (immediatePool_ != VK_NULL_HANDLE)
             vkDestroyCommandPool(device_, immediatePool_, nullptr);
+        if (immediateComputePool_ != VK_NULL_HANDLE)
+            vkDestroyCommandPool(device_, immediateComputePool_, nullptr);
         if (allocator_ != VK_NULL_HANDLE)
             vmaDestroyAllocator(allocator_);
         vkDestroyDevice(device_, nullptr);
@@ -648,6 +729,7 @@ void Device::shutdown() {
 
     pipelineCache_ = VK_NULL_HANDLE;
     immediatePool_ = VK_NULL_HANDLE;
+    immediateComputePool_ = VK_NULL_HANDLE;
     allocator_ = VK_NULL_HANDLE;
     device_ = VK_NULL_HANDLE;
     surface_ = VK_NULL_HANDLE;
@@ -656,6 +738,9 @@ void Device::shutdown() {
     physicalDevice_ = VK_NULL_HANDLE;
     graphicsQueue_ = VK_NULL_HANDLE;
     graphicsQueueFamily_ = UINT32_MAX;
+    computeQueue_ = VK_NULL_HANDLE;
+    computeQueueFamily_ = UINT32_MAX;
+    computeQueueIndex_ = 0;
 }
 
 } // namespace rhi
