@@ -188,6 +188,15 @@ state).
 - **Point clouds:** Schütz compute software rasterizer — `uint64` framebuffer +
   `atomicMin` (`shaderBufferInt64Atomics`), standard + HQS, all-BDA (zero
   descriptor sets per cloud), streamed via a persistently-mapped `UploadRing`.
+- **Async compute:** the point-cloud compute rides the device's **async compute
+  queue** (dedicated family, else a 2nd graphics-family queue), overlapped with
+  the frame's upload/shadow/forward work; the frame is three submissions chained
+  by upload/compute/frame **timeline semaphores** (diagram in `Renderer.h`).
+  Cross-queue buffers are CONCURRENT-shared (`BufferDesc::shareGraphicsCompute`);
+  queue-transfer barrier helpers for EXCLUSIVE resources live in `RHI/Barrier.h`.
+  Single-queue GPUs / the panel toggle fall back to inline recording per frame.
+  Future compute consumers (RT BLAS/TLAS, GI) grab `Device::computeQueue()` or
+  `immediateSubmitCompute()`.
 - **Overlay:** ONE dynamic-vertex-buffer renderer (`OverlayDrawList` → `OverlayPass`)
   — lines expand to screen-space quads in the VS; per-batch dynamic depth
   test/write/compare-op collapses the old two GL overlay shader paths.

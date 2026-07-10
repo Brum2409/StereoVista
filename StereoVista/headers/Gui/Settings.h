@@ -106,6 +106,12 @@ struct Settings {
     struct Render {
         bool wireframe = false; // line-mode debug pipeline over every draw (M4);
                                 // no-op when the GPU lacks fillModeNonSolid.
+        bool asyncCompute = true; // run the compute passes (point clouds today;
+                                  // RT/GI later) on the async compute queue,
+                                  // overlapped with the graphics work. No-op
+                                  // when the GPU exposes no second queue; off =
+                                  // the same dispatches record inline (A/B
+                                  // debugging aid).
     } render;
 };
 

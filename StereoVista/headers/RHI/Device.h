@@ -42,6 +42,43 @@ public:
     uint32_t graphicsQueueFamily() const { return graphicsQueueFamily_; }
     VkQueue graphicsQueue() const { return graphicsQueue_; }
 
+    // ---- Async compute queue ----
+    // Selected at device creation, best first: (1) a DEDICATED compute queue
+    // family (compute without graphics — NVIDIA's compute family, AMD's ACEs),
+    // (2) a SECOND queue on the graphics family, (3) none — computeQueue()
+    // aliases graphicsQueue() and asyncComputeAvailable() is false, so callers
+    // that submit to computeQueue() unconditionally would serialize instead of
+    // break; the Renderer checks asyncComputeAvailable() and keeps its inline
+    // single-queue path for that case.
+    //
+    // Consumers today: the point-cloud compute pipeline (Renderer). Planned:
+    // ray-tracing BLAS/TLAS builds and the GI compute passes (docs/TODO.md §H)
+    // — grab computeQueue() + a timeline semaphore for per-frame work, or
+    // immediateSubmitCompute() for setup-time builds.
+    //
+    // Cross-queue rules that come with this queue:
+    //  * Buffers touched by BOTH families every frame are created with
+    //    BufferDesc::shareGraphicsCompute (VK_SHARING_MODE_CONCURRENT) so no
+    //    per-frame queue-family ownership transfers are needed.
+    //  * EXCLUSIVE resources that migrate rarely use the release/acquire
+    //    helpers in RHI/Barrier.h (bufferQueueTransfer / imageQueueTransfer).
+    //  * All cross-queue ordering rides timeline semaphores (wait-before-
+    //    signal is legal, so submission order between the queues is free).
+    uint32_t computeQueueFamily() const { return computeQueueFamily_; }
+    VkQueue computeQueue() const { return computeQueue_; }
+    // True when a compute queue distinct from the graphics queue exists (a
+    // dedicated family OR a second same-family queue) — the gate for every
+    // async-compute submission path.
+    bool asyncComputeAvailable() const {
+        return computeQueue_ != VK_NULL_HANDLE && computeQueue_ != graphicsQueue_;
+    }
+    // True when the compute queue lives on its OWN family (the strongest
+    // hardware-overlap case; also the case where CONCURRENT sharing /
+    // ownership transfers actually matter).
+    bool computeQueueDedicatedFamily() const {
+        return computeQueueFamily_ != graphicsQueueFamily_;
+    }
+
     // Disk-backed pipeline cache (StereoVista/pipeline_cache.bin) shared by
     // every pipeline build; the driver itself rejects stale/foreign blobs.
     VkPipelineCache pipelineCache() const { return pipelineCache_; }
@@ -64,6 +101,13 @@ public:
     // Records into a transient command buffer, submits on the graphics queue
     // and blocks until completion. For setup/upload work only, never per-frame.
     void immediateSubmit(const std::function<void(VkCommandBuffer)>& record) const;
+
+    // Same contract on the async compute queue (setup-time compute/transfer
+    // work off the graphics timeline — e.g. the future BLAS/TLAS builds).
+    // Falls back to immediateSubmit() when no distinct compute queue exists,
+    // so recorded work must stick to compute-queue-legal commands (dispatch,
+    // copy, fill, barriers with compute/transfer stages) in both cases.
+    void immediateSubmitCompute(const std::function<void(VkCommandBuffer)>& record) const;
 
     // Live device-local heap totals from VMA (usage covers every allocation,
     // budget is the OS/driver's current recommendation). Cheap per-frame; the
@@ -97,8 +141,16 @@ private:
     uint32_t graphicsQueueFamily_ = UINT32_MAX;
     VkQueue graphicsQueue_ = VK_NULL_HANDLE;
 
+    // Async compute queue (see the accessor block above). computeQueueIndex_
+    // is the queue slot within computeQueueFamily_ (1 when riding a second
+    // graphics-family queue, else 0).
+    uint32_t computeQueueFamily_ = UINT32_MAX;
+    uint32_t computeQueueIndex_ = 0;
+    VkQueue computeQueue_ = VK_NULL_HANDLE;
+
     VkPhysicalDeviceProperties properties_{};
     VkCommandPool immediatePool_ = VK_NULL_HANDLE;
+    VkCommandPool immediateComputePool_ = VK_NULL_HANDLE;
     VkPipelineCache pipelineCache_ = VK_NULL_HANDLE;
     bool fillModeNonSolid_ = false;
     bool rayTracingSupported_ = false;

@@ -45,6 +45,10 @@ bool PointCloudGpu::create(rhi::Device& device, rhi::UploadRing* ring,
                  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
     desc.memory = rhi::MemoryUsage::GpuOnly;
     desc.dedicated = totalBytes >= kDedicatedBytes;
+    // Uploaded/streamed on the graphics queue, rasterized by the async
+    // compute queue every frame — CONCURRENT sharing keeps the contents
+    // valid across the hop with no per-frame ownership transfers.
+    desc.shareGraphicsCompute = true;
     const std::string debugName = "pointcloud '" + name + "'";
     desc.debugName = debugName.c_str();
 

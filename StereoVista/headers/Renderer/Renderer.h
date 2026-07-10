@@ -70,6 +70,37 @@ namespace renderer {
 // Synchronization: one timeline semaphore paces the CPU against the GPU
 // (per-slot wait before reuse — no fences); binary semaphores exist only
 // where WSI demands them. All barriers/submits use synchronization2.
+//
+// ASYNC COMPUTE (docs/TODO.md §G): the point-cloud compute (dispatch-data
+// copy + clears + rasterize/HQS + lookup) is submitted on the device's async
+// compute queue, overlapped with the same frame's upload + shadow + forward
+// graphics work. The frame is three submissions chained by timelines:
+//
+//   graphics batch 1  [ring flush | aux | shadow]
+//       waits  computeTimeline >= prev   @ALL_TRANSFER   (WAR: streamed
+//              copies may rewrite cloud ranges the previous frame's compute
+//              still reads — resort-in-place)
+//       signals uploadTimeline = N       @ALL_TRANSFER   (fires when the
+//              flush copies retire, NOT when shadow finishes)
+//   compute           [dispatch copy | clears | rasterize/HQS | lookup]
+//       waits  frameTimeline  >= N-1     @ALL_COMMANDS   (prev frame's
+//              resolve was the last reader of the per-pixel buffers)
+//       waits  uploadTimeline >= N       @COMPUTE        (cloud chunks
+//              staged THIS frame are flushed in batch 1)
+//       signals computeTimeline = cN     @ALL_COMMANDS
+//   graphics batch 2  [scene pass | resolve | tonemap | overlay | UI]
+//       waits  acquire                   @COLOR_ATTACHMENT_OUTPUT
+//       waits  computeTimeline >= cN     @FRAGMENT       (the fullscreen
+//              resolve reads the per-pixel buffers via BDA)
+//       signals frameTimeline = N, renderFinished
+//
+// Timeline waits may be submitted before their signals (wait-before-signal),
+// so submission order across the two queues is free. Cross-queue buffers are
+// CONCURRENT-shared (BufferDesc::shareGraphicsCompute) — zero queue-family
+// ownership transfers. Devices without a distinct compute queue (and the
+// debug-panel toggle) fall back to recording the same dispatches inline
+// before the scene pass, ordered by queue-scoped barriers as before; the
+// fallback is decided per frame, so the toggle is always safe.
 class Renderer {
 public:
     static constexpr uint32_t kFramesInFlight = 2;
@@ -143,6 +174,18 @@ public:
     uint32_t viewCount() const { return viewCount_; }
     const FrameStats& frameStats() const { return frameStats_; }
 
+    // ---- Async compute (see the class comment) ----
+    // Enabled by default whenever the device exposes a distinct compute
+    // queue; the setter is the debug-panel toggle and may flip every frame.
+    void setAsyncCompute(bool enabled) { asyncComputeRequested_ = enabled; }
+    bool asyncComputeSupported() const;
+    bool asyncComputeEnabled() const {
+        return asyncComputeRequested_ && asyncComputeSupported();
+    }
+    // True when the last submitted frame actually placed compute work on the
+    // async queue (enabled AND point clouds were visible that frame).
+    bool asyncComputeActive() const { return lastFrameAsyncCompute_; }
+
     // ---- Depth picking (Phase 6) ----
     // Results of the depth rectangles requested via FrameSubmission
     // ::depthQueries, published when the frame that copied them retires
@@ -184,7 +227,21 @@ public:
 private:
     struct FrameContext {
         VkCommandPool commandPool = VK_NULL_HANDLE;
+        // Two graphics command buffers per slot, submitted as two batches of
+        // ONE vkQueueSubmit2: preCommandBuffer carries the upload flush + aux
+        // work + shadow passes (its transfer stages signal the upload
+        // timeline so the async compute dispatches may consume this frame's
+        // streamed cloud chunks); commandBuffer carries the scene pass and
+        // everything after it (and waits the compute timeline).
+        VkCommandBuffer preCommandBuffer = VK_NULL_HANDLE;
         VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+        // Async compute: per-slot pool (created on the compute queue family)
+        // + the command buffer submitted on Device::computeQueue(). Recorded
+        // only on frames that take the async path; resetting with the slot is
+        // safe because the slot's graphics retirement implies its compute
+        // submission retired (the scene batch waited on it).
+        VkCommandPool computePool = VK_NULL_HANDLE;
+        VkCommandBuffer computeCommandBuffer = VK_NULL_HANDLE;
         VkSemaphore acquireSemaphore = VK_NULL_HANDLE;
         rhi::DescriptorAllocator descriptors;
         rhi::Buffer frameUbo;      // gpu::FrameData
@@ -229,17 +286,36 @@ private:
     // Clamp submission.depthQueries to the scene extent, size the slot readback,
     // and arm frame.pendingDepth for this frame's copy (view 0).
     void armDepthPick(FrameContext& frame, const FrameSubmission& submission);
-    // Shared scene recording (uploads -> shadow -> point-cloud compute ->
-    // multiview scene pass -> depth-pick copies). Leaves sceneColor_ in
+    // First graphics batch (uploads -> aux -> shadow), recorded into
+    // frame.preCommandBuffer. The caller owns vkBeginCommandBuffer/End.
+    void recordPreScene(VkCommandBuffer cmd, const FrameSubmission& submission,
+                        VkDescriptorSet frameSet, uint32_t shadowedLightCount);
+    // Decides this frame's compute path and, on the async path, records the
+    // slot's compute command buffer (begin/end included). Returns true when a
+    // compute submission must accompany this frame; false = the point-cloud
+    // compute (if any) records inline in the scene batch.
+    bool recordAsyncCompute(FrameContext& frame);
+    // Scene recording for the second graphics batch ([inline point-cloud
+    // compute when !asyncCompute] -> scene target barriers -> multiview scene
+    // pass -> depth-pick copies). Leaves sceneColor_ in
     // COLOR_ATTACHMENT_OPTIMAL and sceneDepth_ in DEPTH_ATTACHMENT_OPTIMAL. The
     // caller owns vkBeginCommandBuffer/End and the post-scene resolve.
     void recordScene(VkCommandBuffer cmd, FrameContext& frame,
                      const FrameSubmission& submission, VkDescriptorSet frameSet,
-                     uint32_t shadowedLightCount);
+                     bool asyncCompute);
     void recordFrameXR(FrameContext& frame, const XrEyeTarget eyes[2], bool eyeSrgb,
                        uint32_t windowImageIndex, bool haveWindow, bool doMirror,
                        const FrameSubmission& submission, VkDescriptorSet frameSet,
-                       uint32_t shadowedLightCount, ImDrawData* uiDrawData);
+                       bool asyncCompute, ImDrawData* uiDrawData);
+    // Submits the frame: the compute batch on the async queue (when
+    // computeActive) plus the two graphics batches, wiring the timeline chain
+    // documented in the class comment. Advances timelineValue_ /
+    // uploadTimelineValue_ / computeTimelineValue_, stamps
+    // frame.submittedTimelineValue and notifies the upload ring.
+    // renderFinished may be VK_NULL_HANDLE (XR frame without a window image);
+    // waitAcquire gates the frame.acquireSemaphore wait the same way.
+    void submitFrame(FrameContext& frame, bool computeActive, bool waitAcquire,
+                     VkSemaphore renderFinished);
 
     // One backbuffer-resolve target per eye, derived from viewCount_ + the
     // swapchain layer count: mono = 1 full-window eye; quad-buffer stereo = 2
@@ -262,7 +338,7 @@ private:
                                   const std::vector<gpu::PointLightData>& lights);
     void recordFrame(FrameContext& frame, uint32_t imageIndex,
                      const FrameSubmission& submission, VkDescriptorSet frameSet,
-                     uint32_t shadowedLightCount, ImDrawData* uiDrawData,
+                     bool asyncCompute, ImDrawData* uiDrawData,
                      bool captureThisFrame);
     void pollScreenshot(bool blockUntilDone);
     void finishScreenshot();
@@ -276,6 +352,18 @@ private:
     FrameContext frames_[kFramesInFlight];
     VkSemaphore frameTimeline_ = VK_NULL_HANDLE;
     uint64_t timelineValue_ = 0;
+    // Async-compute chain (class comment): computeTimeline_ is signaled by
+    // every compute-queue submission and waited by the scene batch (and, at
+    // transfer stages, by the NEXT frame's upload batch — the WAR guard);
+    // uploadTimeline_ is signaled by each frame's upload/shadow batch at its
+    // transfer stages and waited by that frame's compute submission. Both
+    // count monotonically; the *_Value_ members are the last SIGNALED values.
+    VkSemaphore computeTimeline_ = VK_NULL_HANDLE;
+    uint64_t computeTimelineValue_ = 0;
+    VkSemaphore uploadTimeline_ = VK_NULL_HANDLE;
+    uint64_t uploadTimelineValue_ = 0;
+    bool asyncComputeRequested_ = true; // debug-panel toggle (default on)
+    bool lastFrameAsyncCompute_ = false;
     uint32_t frameSlot_ = 0;
     FrameStats frameStats_;
 

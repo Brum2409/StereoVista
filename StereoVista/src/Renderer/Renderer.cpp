@@ -50,6 +50,11 @@ void Renderer::init(rhi::Device& device, rhi::Swapchain& swapchain,
     semInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
     semInfo.pNext = &timelineType;
     VK_CHECK(vkCreateSemaphore(device_->device(), &semInfo, nullptr, &frameTimeline_));
+    // Async-compute chain timelines (created even when the device has no
+    // distinct compute queue: waits on their initial value 0 are free and the
+    // submit code stays branch-light).
+    VK_CHECK(vkCreateSemaphore(device_->device(), &semInfo, nullptr, &computeTimeline_));
+    VK_CHECK(vkCreateSemaphore(device_->device(), &semInfo, nullptr, &uploadTimeline_));
 
     createFrameContexts();
     createSceneTarget();
@@ -91,8 +96,21 @@ void Renderer::createFrameContexts() {
         allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
         allocInfo.commandPool = frame.commandPool;
         allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocInfo.commandBufferCount = 2;
+        VkCommandBuffer graphicsCmds[2] = {};
+        VK_CHECK(vkAllocateCommandBuffers(device_->device(), &allocInfo, graphicsCmds));
+        frame.preCommandBuffer = graphicsCmds[0];
+        frame.commandBuffer = graphicsCmds[1];
+
+        // Compute pool on the compute queue family (== the graphics family on
+        // single-queue devices — the buffer then simply never records).
+        poolInfo.queueFamilyIndex = device_->computeQueueFamily();
+        VK_CHECK(vkCreateCommandPool(device_->device(), &poolInfo, nullptr,
+                                     &frame.computePool));
+        allocInfo.commandPool = frame.computePool;
         allocInfo.commandBufferCount = 1;
-        VK_CHECK(vkAllocateCommandBuffers(device_->device(), &allocInfo, &frame.commandBuffer));
+        VK_CHECK(vkAllocateCommandBuffers(device_->device(), &allocInfo,
+                                          &frame.computeCommandBuffer));
 
         VkSemaphoreCreateInfo semInfo{};
         semInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -476,6 +494,153 @@ void Renderer::armDepthPick(FrameContext& frame, const FrameSubmission& submissi
     frame.pendingDepth.cameraPos = cam0.position;
 }
 
+void Renderer::submitFrame(FrameContext& frame, bool computeActive, bool waitAcquire,
+                           VkSemaphore renderFinished) {
+    lastFrameAsyncCompute_ = computeActive;
+
+    // Values for this frame's chain (class comment). priorComputeValue guards
+    // the WAR hazard on the upload batch: its ring copies may rewrite
+    // (resort-in-place) cloud ranges the PREVIOUS compute submission still
+    // reads. uploadValue is signaled by the upload batch's transfer stages
+    // and consumed by the compute batch (streamed cloud chunks staged this
+    // frame flush in that batch).
+    const uint64_t priorFrameValue = timelineValue_;
+    const uint64_t priorComputeValue = computeTimelineValue_;
+    const uint64_t uploadValue = ++uploadTimelineValue_;
+    uint64_t computeWaitValue = priorComputeValue;
+
+    // ---- Async compute submission ----
+    // Submitted first, but it waits on uploadTimeline before its dispatches —
+    // a wait the graphics submit below has yet to enqueue the signal for.
+    // Timeline semaphores explicitly allow wait-before-signal, so the two
+    // vkQueueSubmit2 calls may come in either order.
+    if (computeActive) {
+        computeWaitValue = ++computeTimelineValue_;
+
+        VkSemaphoreSubmitInfo computeWaits[2]{};
+        // Previous frame's graphics: its resolve fragments were the last
+        // readers of the per-pixel buffers this submission clears.
+        computeWaits[0].sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+        computeWaits[0].semaphore = frameTimeline_;
+        computeWaits[0].value = priorFrameValue;
+        computeWaits[0].stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        // This frame's upload flush: the cloud geometry the dispatches read.
+        // Only the dispatches wait — the dispatch-data copy and the clears
+        // touch no ring destination and start immediately.
+        computeWaits[1].sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+        computeWaits[1].semaphore = uploadTimeline_;
+        computeWaits[1].value = uploadValue;
+        computeWaits[1].stageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+
+        VkSemaphoreSubmitInfo computeSignal{};
+        computeSignal.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+        computeSignal.semaphore = computeTimeline_;
+        computeSignal.value = computeWaitValue;
+        computeSignal.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+
+        VkCommandBufferSubmitInfo computeCmd{};
+        computeCmd.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+        computeCmd.commandBuffer = frame.computeCommandBuffer;
+
+        VkSubmitInfo2 computeSubmit{};
+        computeSubmit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+        computeSubmit.waitSemaphoreInfoCount = 2;
+        computeSubmit.pWaitSemaphoreInfos = computeWaits;
+        computeSubmit.commandBufferInfoCount = 1;
+        computeSubmit.pCommandBufferInfos = &computeCmd;
+        computeSubmit.signalSemaphoreInfoCount = 1;
+        computeSubmit.pSignalSemaphoreInfos = &computeSignal;
+        VK_CHECK(vkQueueSubmit2(device_->computeQueue(), 1, &computeSubmit,
+                                VK_NULL_HANDLE));
+    }
+
+    // ---- Graphics: two batches in ONE vkQueueSubmit2 ----
+    // Batch 0 (uploads + aux + shadow). Its semaphore ops touch only the
+    // transfer stages, so the shadow raster work neither delays the upload
+    // signal nor stalls on the previous compute.
+    VkSemaphoreSubmitInfo preWait{};
+    preWait.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+    preWait.semaphore = computeTimeline_;
+    preWait.value = priorComputeValue;
+    preWait.stageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+
+    VkSemaphoreSubmitInfo preSignal{};
+    preSignal.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+    preSignal.semaphore = uploadTimeline_;
+    preSignal.value = uploadValue;
+    preSignal.stageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+
+    VkCommandBufferSubmitInfo preCmd{};
+    preCmd.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+    preCmd.commandBuffer = frame.preCommandBuffer;
+
+    // Batch 1 (scene + resolve + backbuffer). On the async path the compute
+    // results are first read by the resolve fragments; on the inline path
+    // the wait value is an already-signaled old one UNLESS the previous
+    // frame ran async — then it orders this frame's inline clears/dispatches
+    // after that compute work, which is why the inline stage mask also
+    // covers CLEAR/COPY/COMPUTE.
+    VkSemaphoreSubmitInfo sceneWaits[2]{};
+    uint32_t sceneWaitCount = 0;
+    if (waitAcquire) {
+        // First swapchain-image access this frame is the UNDEFINED->attachment
+        // transition feeding the tonemap+UI pass.
+        sceneWaits[sceneWaitCount].sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+        sceneWaits[sceneWaitCount].semaphore = frame.acquireSemaphore;
+        sceneWaits[sceneWaitCount].stageMask =
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        ++sceneWaitCount;
+    }
+    sceneWaits[sceneWaitCount].sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+    sceneWaits[sceneWaitCount].semaphore = computeTimeline_;
+    sceneWaits[sceneWaitCount].value = computeWaitValue;
+    sceneWaits[sceneWaitCount].stageMask =
+        computeActive ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT
+                      : (VK_PIPELINE_STAGE_2_CLEAR_BIT | VK_PIPELINE_STAGE_2_COPY_BIT |
+                         VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
+                         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT);
+    ++sceneWaitCount;
+
+    VkSemaphoreSubmitInfo sceneSignals[2]{};
+    uint32_t sceneSignalCount = 0;
+    sceneSignals[sceneSignalCount].sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+    sceneSignals[sceneSignalCount].semaphore = frameTimeline_;
+    sceneSignals[sceneSignalCount].value = ++timelineValue_;
+    sceneSignals[sceneSignalCount].stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    ++sceneSignalCount;
+    if (renderFinished != VK_NULL_HANDLE) {
+        sceneSignals[sceneSignalCount].sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+        sceneSignals[sceneSignalCount].semaphore = renderFinished;
+        sceneSignals[sceneSignalCount].stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        ++sceneSignalCount;
+    }
+
+    VkCommandBufferSubmitInfo sceneCmd{};
+    sceneCmd.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+    sceneCmd.commandBuffer = frame.commandBuffer;
+
+    VkSubmitInfo2 graphicsSubmits[2]{};
+    graphicsSubmits[0].sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+    graphicsSubmits[0].waitSemaphoreInfoCount = 1;
+    graphicsSubmits[0].pWaitSemaphoreInfos = &preWait;
+    graphicsSubmits[0].commandBufferInfoCount = 1;
+    graphicsSubmits[0].pCommandBufferInfos = &preCmd;
+    graphicsSubmits[0].signalSemaphoreInfoCount = 1;
+    graphicsSubmits[0].pSignalSemaphoreInfos = &preSignal;
+    graphicsSubmits[1].sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+    graphicsSubmits[1].waitSemaphoreInfoCount = sceneWaitCount;
+    graphicsSubmits[1].pWaitSemaphoreInfos = sceneWaits;
+    graphicsSubmits[1].commandBufferInfoCount = 1;
+    graphicsSubmits[1].pCommandBufferInfos = &sceneCmd;
+    graphicsSubmits[1].signalSemaphoreInfoCount = sceneSignalCount;
+    graphicsSubmits[1].pSignalSemaphoreInfos = sceneSignals;
+    VK_CHECK(vkQueueSubmit2(device_->graphicsQueue(), 2, graphicsSubmits,
+                            VK_NULL_HANDLE));
+
+    frame.submittedTimelineValue = timelineValue_;
+    uploadRing_.notifySubmitted(timelineValue_);
+}
+
 rhi::PresentResult Renderer::renderFrame(const FrameSubmission& submission,
                                          ImDrawData* uiDrawData) {
     SV_ZONE_N("renderFrame");
@@ -508,7 +673,11 @@ rhi::PresentResult Renderer::renderFrame(const FrameSubmission& submission,
         captureThisFrame = true;
     }
 
+    // Both pools: the slot's graphics retirement (waited in beginFrameSlot)
+    // implies its compute submission retired too — the scene batch waited on
+    // the compute timeline before its fragments ran.
     VK_CHECK(vkResetCommandPool(device_->device(), frame.commandPool, 0));
+    VK_CHECK(vkResetCommandPool(device_->device(), frame.computePool, 0));
     frame.descriptors.reset();
 
     gpu::FrameData frameData{};
@@ -545,40 +714,22 @@ rhi::PresentResult Renderer::renderFrame(const FrameSubmission& submission,
 
     armDepthPick(frame, submission);
 
-    recordFrame(frame, imageIndex, submission, frameSet, shadowedLightCount,
+    // Record the three command buffers: uploads+shadow, the async compute
+    // batch (when this frame takes the async path), then scene+backbuffer.
+    {
+        VkCommandBufferBeginInfo beginInfo{};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        VK_CHECK(vkBeginCommandBuffer(frame.preCommandBuffer, &beginInfo));
+        recordPreScene(frame.preCommandBuffer, submission, frameSet, shadowedLightCount);
+        VK_CHECK(vkEndCommandBuffer(frame.preCommandBuffer));
+    }
+    const bool asyncCompute = recordAsyncCompute(frame);
+    recordFrame(frame, imageIndex, submission, frameSet, asyncCompute,
                 uiDrawData, captureThisFrame);
 
-    VkSemaphoreSubmitInfo waitAcquire{};
-    waitAcquire.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
-    waitAcquire.semaphore = frame.acquireSemaphore;
-    // First swapchain-image access this frame is the UNDEFINED->attachment
-    // transition feeding the tonemap+UI pass.
-    waitAcquire.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-
-    VkSemaphoreSubmitInfo signals[2]{};
-    signals[0].sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
-    signals[0].semaphore = frameTimeline_;
-    signals[0].value = ++timelineValue_;
-    signals[0].stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    signals[1].sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
-    signals[1].semaphore = swapchain_->renderFinishedSemaphore(imageIndex);
-    signals[1].stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-
-    VkCommandBufferSubmitInfo cmdInfo{};
-    cmdInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
-    cmdInfo.commandBuffer = frame.commandBuffer;
-
-    VkSubmitInfo2 submit{};
-    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
-    submit.waitSemaphoreInfoCount = 1;
-    submit.pWaitSemaphoreInfos = &waitAcquire;
-    submit.commandBufferInfoCount = 1;
-    submit.pCommandBufferInfos = &cmdInfo;
-    submit.signalSemaphoreInfoCount = 2;
-    submit.pSignalSemaphoreInfos = signals;
-    VK_CHECK(vkQueueSubmit2(device_->graphicsQueue(), 1, &submit, VK_NULL_HANDLE));
-    frame.submittedTimelineValue = timelineValue_;
-    uploadRing_.notifySubmitted(timelineValue_);
+    submitFrame(frame, asyncCompute, /*waitAcquire=*/true,
+                swapchain_->renderFinishedSemaphore(imageIndex));
 
     if (captureThisFrame) {
         screenshot_.timelineValue = timelineValue_;
@@ -608,7 +759,9 @@ rhi::PresentResult Renderer::renderFrameXR(const FrameSubmission& submission,
     const bool haveWindow = (imageIndex != UINT32_MAX);
     const bool doMirror = haveWindow && mirrorToWindow;
 
+    // Both pools — same slot-retirement argument as renderFrame.
     VK_CHECK(vkResetCommandPool(device_->device(), frame.commandPool, 0));
+    VK_CHECK(vkResetCommandPool(device_->device(), frame.computePool, 0));
     frame.descriptors.reset();
 
     gpu::FrameData frameData{};
@@ -637,43 +790,24 @@ rhi::PresentResult Renderer::renderFrameXR(const FrameSubmission& submission,
 
     armDepthPick(frame, submission);
 
+    {
+        VkCommandBufferBeginInfo beginInfo{};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        VK_CHECK(vkBeginCommandBuffer(frame.preCommandBuffer, &beginInfo));
+        recordPreScene(frame.preCommandBuffer, submission, frameSet, shadowedLightCount);
+        VK_CHECK(vkEndCommandBuffer(frame.preCommandBuffer));
+    }
+    const bool asyncCompute = recordAsyncCompute(frame);
     recordFrameXR(frame, eyes, eyeSrgb, imageIndex, haveWindow, doMirror,
-                  submission, frameSet, shadowedLightCount, uiDrawData);
+                  submission, frameSet, asyncCompute, uiDrawData);
 
     // The HMD eye images need no WSI semaphore (OpenXR sequences them via
     // acquire/wait/release); only the window mirror waits on its acquire and
     // signals its present-complete semaphore.
-    VkSemaphoreSubmitInfo waitAcquire{};
-    waitAcquire.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
-    waitAcquire.semaphore = frame.acquireSemaphore;
-    waitAcquire.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-
-    VkSemaphoreSubmitInfo signals[2]{};
-    signals[0].sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
-    signals[0].semaphore = frameTimeline_;
-    signals[0].value = ++timelineValue_;
-    signals[0].stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    if (haveWindow) {
-        signals[1].sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
-        signals[1].semaphore = swapchain_->renderFinishedSemaphore(imageIndex);
-        signals[1].stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    }
-
-    VkCommandBufferSubmitInfo cmdInfo{};
-    cmdInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
-    cmdInfo.commandBuffer = frame.commandBuffer;
-
-    VkSubmitInfo2 submit{};
-    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
-    submit.waitSemaphoreInfoCount = haveWindow ? 1u : 0u;
-    submit.pWaitSemaphoreInfos = haveWindow ? &waitAcquire : nullptr;
-    submit.commandBufferInfoCount = 1;
-    submit.pCommandBufferInfos = &cmdInfo;
-    submit.signalSemaphoreInfoCount = haveWindow ? 2u : 1u;
-    submit.pSignalSemaphoreInfos = signals;
-    VK_CHECK(vkQueueSubmit2(device_->graphicsQueue(), 1, &submit, VK_NULL_HANDLE));
-    frame.submittedTimelineValue = timelineValue_;
-    uploadRing_.notifySubmitted(timelineValue_);
+    submitFrame(frame, asyncCompute, /*waitAcquire=*/haveWindow,
+                haveWindow ? swapchain_->renderFinishedSemaphore(imageIndex)
+                           : VK_NULL_HANDLE);
 
     frameSlot_ = (frameSlot_ + 1) % kFramesInFlight;
 
@@ -682,9 +816,12 @@ rhi::PresentResult Renderer::renderFrameXR(const FrameSubmission& submission,
     return rhi::PresentResult::OutOfDate; // window swapchain needs a recreate
 }
 
-void Renderer::recordScene(VkCommandBuffer cmd, FrameContext& frame,
-                           const FrameSubmission& submission, VkDescriptorSet frameSet,
-                           uint32_t shadowedLightCount) {
+bool Renderer::asyncComputeSupported() const {
+    return device_ != nullptr && device_->asyncComputeAvailable();
+}
+
+void Renderer::recordPreScene(VkCommandBuffer cmd, const FrameSubmission& submission,
+                              VkDescriptorSet frameSet, uint32_t shadowedLightCount) {
     // ---- Pass 0: streaming uploads staged since the last frame ----
     uploadRing_.flush(cmd);
 
@@ -695,11 +832,32 @@ void Renderer::recordScene(VkCommandBuffer cmd, FrameContext& frame,
     // ---- Pass 1: shadow casters (owns its targets + transitions) ----
     shadowPass_.record(cmd, frameSet, materials_.set(), materials_.materials(),
                        submission, shadowedLightCount);
+}
 
+bool Renderer::recordAsyncCompute(FrameContext& frame) {
+    if (!(asyncComputeEnabled() && pointCloudPass_.active()))
+        return false;
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    VK_CHECK(vkBeginCommandBuffer(frame.computeCommandBuffer, &beginInfo));
+    pointCloudPass_.recordCompute(frame.computeCommandBuffer, /*asyncQueue=*/true);
+    VK_CHECK(vkEndCommandBuffer(frame.computeCommandBuffer));
+    return true;
+}
+
+void Renderer::recordScene(VkCommandBuffer cmd, FrameContext& frame,
+                           const FrameSubmission& submission, VkDescriptorSet frameSet,
+                           bool asyncCompute) {
     // ---- Pass 1b: point-cloud compute (Schütz rasterize / HQS) ----
-    // Clears + dispatches + its own barriers; the fullscreen resolve joins
-    // the scene pass below. No-op when the frame has no visible clouds.
-    pointCloudPass_.recordCompute(cmd);
+    // Async path: already recorded into the slot's compute command buffer
+    // (recordAsyncCompute) and ordered against this batch by the compute
+    // timeline. Fallback: record it inline, exactly where the single-queue
+    // frame always had it — clears + dispatches + queue-scoped barriers; the
+    // fullscreen resolve joins the scene pass below either way. No-op when
+    // the frame has no visible clouds.
+    if (!asyncCompute)
+        pointCloudPass_.recordCompute(cmd, /*asyncQueue=*/false);
 
     // Scene target: previous contents are irrelevant (UNDEFINED discard).
     {
@@ -839,7 +997,7 @@ void Renderer::recordScene(VkCommandBuffer cmd, FrameContext& frame,
 
 void Renderer::recordFrame(FrameContext& frame, uint32_t imageIndex,
                            const FrameSubmission& submission, VkDescriptorSet frameSet,
-                           uint32_t shadowedLightCount, ImDrawData* uiDrawData,
+                           bool asyncCompute, ImDrawData* uiDrawData,
                            bool captureThisFrame) {
     VkCommandBuffer cmd = frame.commandBuffer;
     VkCommandBufferBeginInfo beginInfo{};
@@ -847,9 +1005,11 @@ void Renderer::recordFrame(FrameContext& frame, uint32_t imageIndex,
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     VK_CHECK(vkBeginCommandBuffer(cmd, &beginInfo));
 
-    // Shared scene passes (uploads -> shadow -> point-cloud compute -> multiview
-    // scene pass -> depth-pick copies), then the backbuffer resolve below.
-    recordScene(cmd, frame, submission, frameSet, shadowedLightCount);
+    // Scene passes ([inline point-cloud compute] -> multiview scene pass ->
+    // depth-pick copies), then the backbuffer resolve below. Uploads + shadow
+    // ride the preceding batch (frame.preCommandBuffer); queue-scoped
+    // barriers still order the two batches on the graphics queue.
+    recordScene(cmd, frame, submission, frameSet, asyncCompute);
 
     // ---- Pass 4: per-eye tonemap + overlay resolve into the backbuffer, then
     //      ImGui. Mono = 1 full-window eye; quad-buffer stereo = 2 full-window
@@ -1024,7 +1184,7 @@ void Renderer::recordFrame(FrameContext& frame, uint32_t imageIndex,
 void Renderer::recordFrameXR(FrameContext& frame, const XrEyeTarget eyes[2], bool eyeSrgb,
                              uint32_t windowImageIndex, bool haveWindow, bool doMirror,
                              const FrameSubmission& submission, VkDescriptorSet frameSet,
-                             uint32_t shadowedLightCount, ImDrawData* uiDrawData) {
+                             bool asyncCompute, ImDrawData* uiDrawData) {
     VkCommandBuffer cmd = frame.commandBuffer;
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -1032,7 +1192,7 @@ void Renderer::recordFrameXR(FrameContext& frame, const XrEyeTarget eyes[2], boo
     VK_CHECK(vkBeginCommandBuffer(cmd, &beginInfo));
 
     // Same multiview scene pass as the desktop path (already 2-view).
-    recordScene(cmd, frame, submission, frameSet, shadowedLightCount);
+    recordScene(cmd, frame, submission, frameSet, asyncCompute);
 
     // Scene color (all layers): attachment -> sampled by the eye resolves.
     rhi::cmdImageBarrier(cmd, rhi::imageBarrier(
@@ -1303,9 +1463,14 @@ void Renderer::destroyFrameContexts() {
             vkDestroySemaphore(device_->device(), frame.acquireSemaphore, nullptr);
         if (frame.commandPool != VK_NULL_HANDLE)
             vkDestroyCommandPool(device_->device(), frame.commandPool, nullptr);
+        if (frame.computePool != VK_NULL_HANDLE)
+            vkDestroyCommandPool(device_->device(), frame.computePool, nullptr);
         frame.acquireSemaphore = VK_NULL_HANDLE;
         frame.commandPool = VK_NULL_HANDLE;
+        frame.preCommandBuffer = VK_NULL_HANDLE;
         frame.commandBuffer = VK_NULL_HANDLE;
+        frame.computePool = VK_NULL_HANDLE;
+        frame.computeCommandBuffer = VK_NULL_HANDLE;
         frame.submittedTimelineValue = 0;
     }
 }
@@ -1341,6 +1506,12 @@ void Renderer::shutdown() {
     if (frameTimeline_ != VK_NULL_HANDLE)
         vkDestroySemaphore(device_->device(), frameTimeline_, nullptr);
     frameTimeline_ = VK_NULL_HANDLE;
+    if (computeTimeline_ != VK_NULL_HANDLE)
+        vkDestroySemaphore(device_->device(), computeTimeline_, nullptr);
+    computeTimeline_ = VK_NULL_HANDLE;
+    if (uploadTimeline_ != VK_NULL_HANDLE)
+        vkDestroySemaphore(device_->device(), uploadTimeline_, nullptr);
+    uploadTimeline_ = VK_NULL_HANDLE;
     device_ = nullptr;
     swapchain_ = nullptr;
     shaderCompiler_ = nullptr;

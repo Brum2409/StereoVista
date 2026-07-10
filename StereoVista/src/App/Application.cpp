@@ -154,6 +154,10 @@ public:
         d.acquireMs = s.acquireMs;
         d.presentMs = s.presentMs;
         d.swapchainRecreations = app_.swapchainRecreations_;
+        d.asyncComputeSupported = app_.device_.asyncComputeAvailable();
+        d.asyncComputeDedicatedFamily = app_.device_.computeQueueDedicatedFamily();
+        d.asyncComputeEnabled = app_.renderer_.asyncComputeEnabled();
+        d.asyncComputeActive = app_.renderer_.asyncComputeActive();
         return d;
     }
 
@@ -1358,6 +1362,10 @@ void Application::run() {
         updateCamera(dt);
         if (pluginContext_)
             pluginManager_.update(*pluginContext_, dt);
+
+        // Async compute is a per-frame decision in the renderer, so the panel
+        // toggle applies instantly (and safely mid-run) on both render paths.
+        renderer_.setAsyncCompute(settings_.render.asyncCompute);
 
         rhi::PresentResult presentResult = rhi::PresentResult::Success;
         if (xrRunning()) {

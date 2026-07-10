@@ -54,6 +54,14 @@ struct FrameDiagnostics {
     float fps = 0.0f, frameMs = 0.0f;
     float slotWaitMs = 0.0f, acquireMs = 0.0f, presentMs = 0.0f;
     uint32_t swapchainRecreations = 0;
+
+    // Async compute queue: whether the device has one, whether it rides its
+    // own queue family (vs a second graphics-family queue), and whether the
+    // last frame actually submitted compute work on it.
+    bool asyncComputeSupported = false;
+    bool asyncComputeDedicatedFamily = false;
+    bool asyncComputeEnabled = false;
+    bool asyncComputeActive = false;
 };
 
 // Live streaming progress for one point cloud (mirror of
