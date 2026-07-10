@@ -1490,6 +1490,15 @@
     <CustomBuild Include="assets\shaders_vk\depth_point.vert">
       <Filter>Shaders</Filter>
     </CustomBuild>
+    <CustomBuild Include="assets\shaders_vk\depth_sun_masked.vert">
+      <Filter>Shaders</Filter>
+    </CustomBuild>
+    <CustomBuild Include="assets\shaders_vk\depth_point_masked.vert">
+      <Filter>Shaders</Filter>
+    </CustomBuild>
+    <CustomBuild Include="assets\shaders_vk\depth_masked.frag">
+      <Filter>Shaders</Filter>
+    </CustomBuild>
     <CustomBuild Include="assets\shaders_vk\skybox.vert">
       <Filter>Shaders</Filter>
     </CustomBuild>

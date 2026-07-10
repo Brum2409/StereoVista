@@ -170,4 +170,15 @@ rhi::VertexBinding MeshBuffer::positionOnlyBinding() {
     return binding;
 }
 
+rhi::VertexBinding MeshBuffer::positionUvBinding() {
+    rhi::VertexBinding binding{};
+    binding.binding = 0;
+    binding.stride = sizeof(Vertex);
+    binding.attributes = {
+        { 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, position) },
+        { 1, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex, uv) },
+    };
+    return binding;
+}
+
 } // namespace renderer

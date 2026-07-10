@@ -72,6 +72,9 @@ public:
     // Position-only layout for the depth-only shadow pipelines (same stride,
     // unused attributes simply not declared).
     static rhi::VertexBinding positionOnlyBinding();
+    // Position + UV for the alpha-masked shadow pipelines (the fragment stage
+    // samples albedo alpha).
+    static rhi::VertexBinding positionUvBinding();
 
 private:
     rhi::Buffer vertices_;

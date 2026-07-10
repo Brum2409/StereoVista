@@ -60,7 +60,7 @@ void Renderer::init(rhi::Device& device, rhi::Swapchain& swapchain,
     createFrameSetLayout();
 
     const uint32_t viewMask = (1u << viewCount_) - 1u;
-    shadowPass_.init(device, shaderCompiler, frameSetLayout_);
+    shadowPass_.init(device, shaderCompiler, frameSetLayout_, materials_.setLayout());
     forwardPass_.init(device, shaderCompiler, kSceneColorFormat, kSceneDepthFormat,
                       viewMask, frameSetLayout_, materials_.setLayout());
     pointCloudPass_.init(device, shaderCompiler, kSceneColorFormat, kSceneDepthFormat,
@@ -693,7 +693,8 @@ void Renderer::recordScene(VkCommandBuffer cmd, FrameContext& frame,
         submission.recordAux(cmd);
 
     // ---- Pass 1: shadow casters (owns its targets + transitions) ----
-    shadowPass_.record(cmd, frameSet, submission, shadowedLightCount);
+    shadowPass_.record(cmd, frameSet, materials_.set(), materials_.materials(),
+                       submission, shadowedLightCount);
 
     // ---- Pass 1b: point-cloud compute (Schütz rasterize / HQS) ----
     // Clears + dispatches + its own barriers; the fullscreen resolve joins

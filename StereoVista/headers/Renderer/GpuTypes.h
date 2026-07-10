@@ -8,6 +8,7 @@
 
 #include <glm/glm.hpp>
 
+#include <cstddef>
 #include <cstdint>
 
 namespace renderer {
@@ -33,6 +34,11 @@ static_assert(sizeof(OverlayViewParams) == 96, "OverlayViewParams layout drifted
 static_assert(sizeof(OverlayPush) == 64, "OverlayPush layout drifted from GLSL scalar");
 static_assert(sizeof(DepthSunPush) == 64, "DepthSunPush layout drifted");
 static_assert(sizeof(DepthPointPush) == 68, "DepthPointPush layout drifted");
+static_assert(sizeof(DepthMaskedPush) == 68, "DepthMaskedPush layout drifted");
+static_assert(sizeof(DepthPointMaskedPush) == 72, "DepthPointMaskedPush layout drifted");
+static_assert(offsetof(DepthMaskedPush, materialIndex) ==
+                  offsetof(DepthPointMaskedPush, materialIndex),
+              "depth_masked.frag reads materialIndex at one offset for both pipelines");
 static_assert(sizeof(PointCloudBatch) == 32, "PointCloudBatch layout drifted from GLSL scalar");
 static_assert(sizeof(PointCloudDispatch) == 400, "PointCloudDispatch layout drifted from GLSL scalar");
 static_assert(sizeof(PointCloudDispatch) % 16 == 0,

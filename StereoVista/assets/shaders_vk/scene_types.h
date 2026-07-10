@@ -143,4 +143,20 @@ struct DepthPointPush {    // point shadow casters (multiview, 6 faces at once)
     uint lightSlot;        // index into pointShadowFaceVP / cube-array layer
 };
 
+// Alpha-masked caster twins: the masked shadow pipelines add a fragment stage
+// that discards below the material's alphaCutoff (depth_masked.frag), so
+// cutout geometry shadows its silhouette instead of its full card. The shared
+// fragment shader declares the COMMON PREFIX (model at 0, materialIndex at
+// 64) — keep materialIndex directly after model in both.
+struct DepthMaskedPush {   // sun, 68 bytes
+    mat4 model;
+    uint materialIndex;
+};
+
+struct DepthPointMaskedPush { // point (multiview), 72 bytes
+    mat4 model;
+    uint materialIndex;
+    uint lightSlot;
+};
+
 #endif // SV_SCENE_TYPES_H

@@ -36,10 +36,32 @@ VkSampler createCompareSampler(rhi::Device& device, VkSamplerAddressMode address
     return sampler;
 }
 
+// How a draw participates in the shadow passes, from its material.
+enum class CasterKind { Skip, Opaque, Masked };
+
+CasterKind classifyCaster(const DrawItem& draw,
+                          const std::vector<gpu::MaterialData>& materials) {
+    if (!draw.castsShadows || !draw.mesh)
+        return CasterKind::Skip;
+    if (draw.materialIndex >= materials.size())
+        return CasterKind::Opaque; // defensive: unknown material casts solid
+    const gpu::MaterialData& mat = materials[draw.materialIndex];
+    if (!(mat.flags & SV_MATERIAL_ALPHA_MASK))
+        return CasterKind::Opaque;
+    if (mat.albedoTexture != kInvalidTexture)
+        return CasterKind::Masked;
+    // Flat-color mask: the whole surface passes or fails the cutoff at once
+    // (mesh.frag applies the same test), so it casts solid or not at all —
+    // no per-fragment work needed.
+    return mat.baseColor.a < mat.alphaCutoff ? CasterKind::Skip
+                                             : CasterKind::Opaque;
+}
+
 } // namespace
 
 void ShadowPass::init(rhi::Device& device, rhi::ShaderCompiler& shaderCompiler,
-                      VkDescriptorSetLayout frameSetLayout) {
+                      VkDescriptorSetLayout frameSetLayout,
+                      VkDescriptorSetLayout materialSetLayout) {
     shutdown();
     device_ = &device;
 
@@ -112,6 +134,40 @@ void ShadowPass::init(rhi::Device& device, rhi::ShaderCompiler& shaderCompiler,
             .externalSetLayout(0, frameSetLayout)
             .setDebugName("point shadow casters")
             .build(device);
+
+    // Alpha-masked twins: a fragment stage samples the material's albedo
+    // alpha (set 1 = the bindless array; the material table already rides
+    // the frame set at binding 2) and discards below alphaCutoff, so cutout
+    // geometry shadows its silhouette. Only masked casters pay the fragment
+    // cost — opaque ones keep the fragment-less early-Z pipelines above.
+    sunMaskedPipeline_ =
+        rhi::GraphicsPipelineBuilder{}
+            .setShaders(shaderCompiler.load("assets/shaders_vk/depth_sun_masked.vert"),
+                        shaderCompiler.load("assets/shaders_vk/depth_masked.frag"))
+            .setDepthFormat(VK_FORMAT_D32_SFLOAT)
+            .setDepth(true, true)
+            .setCullMode(VK_CULL_MODE_NONE)
+            .setDepthBias(-1.0f, -2.0f)
+            .addVertexBinding(MeshBuffer::positionUvBinding())
+            .externalSetLayout(0, frameSetLayout)
+            .externalSetLayout(1, materialSetLayout)
+            .setDebugName("sun shadow casters (masked)")
+            .build(device);
+
+    pointMaskedPipeline_ =
+        rhi::GraphicsPipelineBuilder{}
+            .setShaders(shaderCompiler.load("assets/shaders_vk/depth_point_masked.vert"),
+                        shaderCompiler.load("assets/shaders_vk/depth_masked.frag"))
+            .setDepthFormat(VK_FORMAT_D32_SFLOAT)
+            .setViewMask(0x3F)
+            .setDepth(true, true)
+            .setCullMode(VK_CULL_MODE_NONE)
+            .setDepthBias(-1.0f, -2.0f)
+            .addVertexBinding(MeshBuffer::positionUvBinding())
+            .externalSetLayout(0, frameSetLayout)
+            .externalSetLayout(1, materialSetLayout)
+            .setDebugName("point shadow casters (masked)")
+            .build(device);
 }
 
 std::vector<int> ShadowPass::prepare(const FrameSubmission& submission,
@@ -170,9 +226,15 @@ std::vector<int> ShadowPass::prepare(const FrameSubmission& submission,
     frame.sunWorldToDepth = 1.0f / (farPlane - nearPlane);
 
     // ---- Point light cube faces + slot assignment ----
+    // Far plane from the submission (panel-editable; the GL app hardcoded
+    // far_plane = 50). record()'s range cull uses the same value. Depth
+    // precision spreads over the range, so the clamp only guards degeneracy.
+    const float pointFar =
+        std::max(submission.pointShadowRange, kPointShadowNear + 0.5f);
+    pointShadowFar_ = pointFar;
     frame.pointShadowNear = kPointShadowNear;
-    frame.pointShadowFar = kPointShadowFar;
-    const glm::mat4 faceProj = perspectiveCubeFace(kPointShadowNear, kPointShadowFar);
+    frame.pointShadowFar = pointFar;
+    const glm::mat4 faceProj = perspectiveCubeFace(kPointShadowNear, pointFar);
 
     std::vector<int> slots;
     slots.reserve(submission.pointLights.size());
@@ -196,6 +258,8 @@ std::vector<int> ShadowPass::prepare(const FrameSubmission& submission,
 }
 
 void ShadowPass::record(VkCommandBuffer cmd, VkDescriptorSet frameSet,
+                        VkDescriptorSet materialSet,
+                        const std::vector<gpu::MaterialData>& materials,
                         const FrameSubmission& submission,
                         uint32_t shadowedLightCount) {
     // Fresh maps every frame: previous contents are irrelevant.
@@ -250,16 +314,43 @@ void ShadowPass::record(VkCommandBuffer cmd, VkDescriptorSet frameSet,
             scissor.extent = rendering.renderArea.extent;
             vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-            sunPipeline_.bind(cmd);
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    sunPipeline_.layout(), 0, 1, &frameSet, 0, nullptr);
+            // Opaque casters first (fragment-less early-Z pipeline), then the
+            // alpha-masked set under one pipeline + material-set bind.
+            bool boundOpaque = false;
+            bool anyMasked = false;
             for (const DrawItem& draw : submission.draws) {
-                if (!draw.castsShadows || !draw.mesh)
+                const CasterKind kind = classifyCaster(draw, materials);
+                if (kind == CasterKind::Masked)
+                    anyMasked = true;
+                if (kind != CasterKind::Opaque)
                     continue;
+                if (!boundOpaque) {
+                    sunPipeline_.bind(cmd);
+                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                            sunPipeline_.layout(), 0, 1, &frameSet,
+                                            0, nullptr);
+                    boundOpaque = true;
+                }
                 gpu::DepthSunPush push{};
                 push.model = draw.model;
                 sunPipeline_.pushConstants(cmd, &push, sizeof(push));
                 draw.mesh->bindAndDraw(cmd);
+            }
+            if (anyMasked) {
+                sunMaskedPipeline_.bind(cmd);
+                VkDescriptorSet sets[2] = { frameSet, materialSet };
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                        sunMaskedPipeline_.layout(), 0, 2, sets,
+                                        0, nullptr);
+                for (const DrawItem& draw : submission.draws) {
+                    if (classifyCaster(draw, materials) != CasterKind::Masked)
+                        continue;
+                    gpu::DepthMaskedPush push{};
+                    push.model = draw.model;
+                    push.materialIndex = draw.materialIndex;
+                    sunMaskedPipeline_.pushConstants(cmd, &push, sizeof(push));
+                    draw.mesh->bindAndDraw(cmd);
+                }
             }
         }
         vkCmdEndRendering(cmd);
@@ -293,23 +384,54 @@ void ShadowPass::record(VkCommandBuffer cmd, VkDescriptorSet frameSet,
             scissor.extent = rendering.renderArea.extent;
             vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-            pointPipeline_.bind(cmd);
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    pointPipeline_.layout(), 0, 1, &frameSet, 0, nullptr);
+            // Range cull: a caster entirely beyond the shadow far plane
+            // cannot darken anything this light reaches. With many meshes
+            // only the light's neighborhood pays vertex cost.
+            auto inRange = [&](const DrawItem& draw) {
+                return glm::distance(draw.worldBoundsCenter, slotLightPos_[slot]) <=
+                       pointShadowFar_ + draw.worldBoundsRadius;
+            };
+
+            bool boundOpaque = false;
+            bool anyMasked = false;
             for (const DrawItem& draw : submission.draws) {
-                if (!draw.castsShadows || !draw.mesh)
+                const CasterKind kind = classifyCaster(draw, materials);
+                if (kind == CasterKind::Skip || !inRange(draw))
                     continue;
-                // Range cull: a caster entirely beyond the shadow far plane
-                // cannot darken anything this light reaches. With many
-                // meshes only the light's neighborhood pays vertex cost.
-                if (glm::distance(draw.worldBoundsCenter, slotLightPos_[slot]) >
-                    kPointShadowFar + draw.worldBoundsRadius)
+                if (kind == CasterKind::Masked) {
+                    anyMasked = true;
                     continue;
+                }
+                if (!boundOpaque) {
+                    pointPipeline_.bind(cmd);
+                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                            pointPipeline_.layout(), 0, 1, &frameSet,
+                                            0, nullptr);
+                    boundOpaque = true;
+                }
                 gpu::DepthPointPush push{};
                 push.model = draw.model;
                 push.lightSlot = slot;
                 pointPipeline_.pushConstants(cmd, &push, sizeof(push));
                 draw.mesh->bindAndDraw(cmd);
+            }
+            if (anyMasked) {
+                pointMaskedPipeline_.bind(cmd);
+                VkDescriptorSet sets[2] = { frameSet, materialSet };
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                        pointMaskedPipeline_.layout(), 0, 2, sets,
+                                        0, nullptr);
+                for (const DrawItem& draw : submission.draws) {
+                    if (classifyCaster(draw, materials) != CasterKind::Masked ||
+                        !inRange(draw))
+                        continue;
+                    gpu::DepthPointMaskedPush push{};
+                    push.model = draw.model;
+                    push.materialIndex = draw.materialIndex;
+                    push.lightSlot = slot;
+                    pointMaskedPipeline_.pushConstants(cmd, &push, sizeof(push));
+                    draw.mesh->bindAndDraw(cmd);
+                }
             }
         }
         vkCmdEndRendering(cmd);
@@ -344,6 +466,8 @@ void ShadowPass::shutdown() {
         return;
     sunPipeline_.destroy();
     pointPipeline_.destroy();
+    sunMaskedPipeline_.destroy();
+    pointMaskedPipeline_.destroy();
     for (VkImageView& view : pointShadowFaceViews_) {
         if (view != VK_NULL_HANDLE)
             vkDestroyImageView(device_->device(), view, nullptr);

@@ -75,6 +75,8 @@ struct Settings {
     struct Lighting {
         bool  shadows     = true;
         bool  softShadows = true;  // PCSS contact hardening (else fixed-width PCF)
+        // Point-light shadow reach in world units (cube-map far plane).
+        float pointShadowRange = 50.0f;
         float ambient     = 0.03f; // flat ambient albedo multiplier
         renderer::SunState sun;    // enabled defaults false; Application turns it on
     } lighting;

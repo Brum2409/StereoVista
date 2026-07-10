@@ -219,6 +219,30 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
       <AdditionalInputs>$(ProjectDir)assets\shaders_vk\scene_types.h</AdditionalInputs>
       <Message>glslc %(Filename)%(Extension)</Message>
     </CustomBuild>
+    <CustomBuild Include="assets\shaders_vk\depth_sun_masked.vert">
+      <FileType>Document</FileType>
+      <Command>if not exist "$(OutDir)assets\shaders_vk" mkdir "$(OutDir)assets\shaders_vk"
+"$(SolutionDir)dependencies\tools\glslc.exe" --target-env=vulkan1.3 -O -o "$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv" "%(FullPath)"</Command>
+      <Outputs>$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv</Outputs>
+      <AdditionalInputs>$(ProjectDir)assets\shaders_vk\scene_types.h</AdditionalInputs>
+      <Message>glslc %(Filename)%(Extension)</Message>
+    </CustomBuild>
+    <CustomBuild Include="assets\shaders_vk\depth_point_masked.vert">
+      <FileType>Document</FileType>
+      <Command>if not exist "$(OutDir)assets\shaders_vk" mkdir "$(OutDir)assets\shaders_vk"
+"$(SolutionDir)dependencies\tools\glslc.exe" --target-env=vulkan1.3 -O -o "$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv" "%(FullPath)"</Command>
+      <Outputs>$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv</Outputs>
+      <AdditionalInputs>$(ProjectDir)assets\shaders_vk\scene_types.h</AdditionalInputs>
+      <Message>glslc %(Filename)%(Extension)</Message>
+    </CustomBuild>
+    <CustomBuild Include="assets\shaders_vk\depth_masked.frag">
+      <FileType>Document</FileType>
+      <Command>if not exist "$(OutDir)assets\shaders_vk" mkdir "$(OutDir)assets\shaders_vk"
+"$(SolutionDir)dependencies\tools\glslc.exe" --target-env=vulkan1.3 -O -o "$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv" "%(FullPath)"</Command>
+      <Outputs>$(OutDir)assets\shaders_vk\%(Filename)%(Extension).spv</Outputs>
+      <AdditionalInputs>$(ProjectDir)assets\shaders_vk\scene_types.h</AdditionalInputs>
+      <Message>glslc %(Filename)%(Extension)</Message>
+    </CustomBuild>
     <CustomBuild Include="assets\shaders_vk\skybox.vert">
       <FileType>Document</FileType>
       <Command>if not exist "$(OutDir)assets\shaders_vk" mkdir "$(OutDir)assets\shaders_vk"

@@ -1190,6 +1190,7 @@ void Application::buildFrameSubmission(renderer::FrameSubmission& submission) co
     submission.sky = settings_.sky;
     submission.shadowsEnabled = settings_.lighting.shadows;
     submission.softShadows = settings_.lighting.softShadows;
+    submission.pointShadowRange = settings_.lighting.pointShadowRange;
     submission.ambient = settings_.lighting.ambient;
 
     // ---- Point clouds (Phase 5: Schütz compute rasterizer) ----

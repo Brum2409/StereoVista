@@ -215,6 +215,11 @@ void drawLightingTab(Services& services) {
     if (l.shadows) {
         ImGui::SameLine();
         ImGui::Checkbox("Soft (PCSS)", &l.softShadows);
+        ImGui::SliderFloat("Point shadow range", &l.pointShadowRange, 5.0f,
+                           500.0f, "%.0f m", ImGuiSliderFlags_Logarithmic);
+        helpMarker("How far point-light shadows reach (cube-map far plane). "
+                   "Depth precision spreads over this range - keep it as "
+                   "tight as the scene allows.");
     }
 
     ImGui::SeparatorText("Sun");

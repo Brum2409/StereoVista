@@ -169,6 +169,10 @@ struct FrameSubmission {
     std::vector<PointLightState> pointLights; // beyond kMaxPointLights ignored
     bool shadowsEnabled = true;
     bool softShadows = true; // PCSS contact hardening (else fixed-width PCF)
+    // Point-light shadow reach in world units (cube-map far plane; the GL app
+    // hardcoded far_plane = 50). Depth precision spreads over the range, so
+    // keep it as tight as the scene allows.
+    float pointShadowRange = 50.0f;
     float ambient = 0.03f;   // flat ambient albedo multiplier (GL parity)
     SkyState sky;
     std::vector<PointCloudDrawItem> pointClouds; // beyond SV_PC_MAX_CLOUDS share the last id
