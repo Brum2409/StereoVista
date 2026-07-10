@@ -92,6 +92,8 @@ struct Settings {
         float hqsThreshold   = 0.01f; // relative depth window
         bool  splatEnabled   = true;  // adaptive splats (close-up hole filling)
         int   splatMaxRadius = 4;     // upper clamp on splat radius, px (1-8)
+        bool  lodEnabled     = true;  // per-batch density LOD (points/pixel budget)
+        float lodPointsPerPixel = 2.0f; // target on-screen density (HQS likes 3-4)
     } pointCloud;
 
     // ── 3D cursor (only the fields that gate the loop; the detailed appearance

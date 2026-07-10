@@ -1206,6 +1206,11 @@ void Application::buildFrameSubmission(renderer::FrameSubmission& submission) co
         item.addresses = pc.gpu->addresses;
         item.numBatches = pc.numBatches;
         item.pointsPerThread = pc.computePointsPerThread;
+        // Streaming clouds keep full density: phase-1 batches are file-order
+        // (scan strips, degenerate AABBs — the spacing estimate over-thins
+        // them) and seeing every arriving point is the load feedback anyway.
+        // LOD kicks in when the stream (incl. the Morton resort) completes.
+        item.densityLod = !pc.isStreaming();
         // GL parity: translate * rotX * rotY * rotZ * scale.
         glm::mat4 model(1.0f);
         model = glm::translate(model, pc.position);
@@ -1220,6 +1225,8 @@ void Application::buildFrameSubmission(renderer::FrameSubmission& submission) co
     submission.pointCloudSettings.hqsThreshold = settings_.pointCloud.hqsThreshold;
     submission.pointCloudSettings.splatMaxRadius =
         settings_.pointCloud.splatEnabled ? settings_.pointCloud.splatMaxRadius : 0;
+    submission.pointCloudSettings.lodPointsPerPixel =
+        settings_.pointCloud.lodEnabled ? settings_.pointCloud.lodPointsPerPixel : 0.0f;
 
     // ---- SLPK/I3S layers: SSE traversal -> DrawItems (M1) and pool-backed
     // PointCloudDrawItems (M3). Runs AFTER the draws/pointClouds vectors are

@@ -194,6 +194,7 @@ void PointCloudPass::prepare(const FrameSubmission& submission, uint32_t frameSl
         static_cast<int>(std::min<size_t>(submission.clipPlanes.size(), SV_PC_CLIP_PLANES));
     const float hqsThreshold = std::max(settings.hqsThreshold, 0.0f);
     const int splatMaxRadius = std::max(settings.splatMaxRadius, 0);
+    const float lodPointsPerPixel = std::max(settings.lodPointsPerPixel, 0.0f);
 
     // The inactive mode's addresses stay 0 — its shaders don't run and the
     // active mode's shaders never dereference the other mode's pointers.
@@ -247,6 +248,7 @@ void PointCloudPass::prepare(const FrameSubmission& submission, uint32_t frameSl
             d.splatMaxRadius = splatMaxRadius;
             d.clipPlaneCount = clipCount;
             d.hqsThreshold = hqsThreshold;
+            d.lodPointsPerPixel = item.densityLod ? lodPointsPerPixel : 0.0f;
             hostData.push_back(d);
         }
     }

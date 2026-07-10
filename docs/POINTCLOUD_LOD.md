@@ -1,10 +1,23 @@
 # Point-Cloud LOD for the Compute Rasterizer — Research & Design
 
-> **Status: research/design doc (no code yet).** Answers `TODO.md` §F ("re-implement
-> LOD selection feeding the compute path") with a concrete, staged plan derived from
-> the Schütz line of work and the Magnopus production write-up. Sources are linked in
-> §7; read them before implementing a stage. Companion plans: `SLPK_ROADMAP.md`
-> (§4.2 streamer, §4.4 traversal, Phase S3) — Stage 3 below deliberately reuses them.
+> **Status: Stage 1 IMPLEMENTED** (in-shader per-batch density LOD — see the
+> implementation notes in §3); Stages 2–3 remain design. Answers `TODO.md` §F
+> ("re-implement LOD selection feeding the compute path") with a concrete, staged
+> plan derived from the Schütz line of work and the Magnopus production write-up.
+> Sources are linked in §7; read them before implementing a stage. Companion plans:
+> `SLPK_ROADMAP.md` (§4.2 streamer, §4.4 traversal, Phase S3) — Stage 3 below
+> deliberately reuses them.
+>
+> **System shape (why this layering serves every source):** everything the
+> renderer draws — flat drop-in files (LAS/LAZ/XYZ/PLY/…), I3S/SLPK point-cloud
+> scene layers, and any future presorted/custom LOD format — reaches the compute
+> rasterizer as *batches*. Stage 1 therefore lives in the batch prologue and
+> applies to all of them: the I3S node traversal (already shipped, M3) decides
+> *which* batches are resident, Stage 1 decides *how many points inside each
+> batch* are worth processing this frame, and Stage 3 extends the node/segment
+> residency model to local files and out-of-core sizes. A future custom format
+> only has to produce batches (plus, optionally, per-point levels for Stage 2 or
+> node segments for Stage 3) to inherit the whole system.
 
 ---
 
@@ -147,7 +160,29 @@ list. `TODO.md` §F explicitly says out-of-core LOD falls out of that work.
 Before adding buffers, get per-pass GPU timings (geometry vs lookup vs resolve, per
 view count) so Stages 1–2 have a baseline and an accept/reject criterion.
 
-### Stage 1 — in-shader batch density LOD (no new data, ~a day)
+### Stage 1 — in-shader batch density LOD (no new data) — ✅ IMPLEMENTED
+
+> **As built:** `pointcloud_common.glsl` prologue computes a per-view keep
+> fraction `keep = clamp(ρ · spacingPx², 0, 1)` with
+> `spacingPx = pcBatchSpacing · modelScale · pxPerUnit / wNear`, where `wNear`
+> is the smallest clip-space w over the batch AABB (`pcNearestClipW` — nearest
+> part of the batch sets the density, so nothing is thinned below target;
+> `wNear ≤ 0` → full detail). The merged keep is the MAX over visible views
+> (one subset feeds every eye, like the precision level). The point loop then
+> iterates `nKeep = keep · numPoints` ordinals and maps each to one uniformly
+> jittered pick from its stride window (`pcHash01` lowbias32 jitter breaks
+> Z-curve aliasing); the jitter is deterministic in the ordinal so the HQS
+> depth/colour passes select the same subset. Splat scale grows by
+> `1/sqrt(keep)` so adaptive splats close the thinned holes. `pcBatchSpacing`
+> gained a linear floor (`d0/N`) so degenerate near-1D AABBs don't collapse
+> the estimate. Plumbing: `PointCloudDispatch::lodPointsPerPixel` (0 = off) ←
+> `PointCloudSettings::lodPointsPerPixel` ← panel "Density LOD" checkbox +
+> points/pixel slider (default ON at 2.0); per-cloud gate
+> `PointCloudDrawItem::densityLod` — `Application` submits `false` while a
+> cloud is still streaming (phase-1 file-order strip batches would over-thin,
+> and seeing every arriving point is the load feedback), I3S pool items keep
+> the default `true` so momentarily over-dense resident pages are thinned
+> until the traversal/eviction catches up.
 
 The observation that makes this nearly free: **within each batch, points are in
 Morton order** (loader phase 2 sorts globally, shuffles *whole batches* only). A
@@ -261,8 +296,8 @@ rate with HQS; VRAM bounded under a hard budget while roaming.
 
 | Piece | Where | Stage |
 |---|---|---|
-| Projected-area → `n_target`, strided-jittered sampling, effective-count spacing | `assets/shaders_vk/pointcloud_common.glsl` prologue + loop | 1 |
-| `pointsPerPixel` setting + panel toggle | `FrameSubmission.h` (`PointCloudSettings`), debug panel | 1 |
+| Projected-area → `n_target`, strided-jittered sampling, effective-count spacing | `assets/shaders_vk/pointcloud_common.glsl` prologue + loop | 1 ✅ |
+| `pointsPerPixel` setting + panel toggle | `FrameSubmission.h` (`PointCloudSettings`), point-cloud panel | 1 ✅ |
 | Per-point level+rand section (u8), proxy selection & colour filtering at import | `PointCloudLoader.cpp` (post-Morton), `PointCloudGpu` (+1 section), `pointcloud_types.h` | 2 |
 | `pointcloud_reduce.comp`, LOD-cloud double buffer, indirect dispatch, budgets | `passes/PointCloudPass` (+ new pass-owned buffers), async-compute record path | 2 |
 | Node cooking for local files (2023 split/sample), disk cache | new `Loaders/` step; shares batch/quantise code | 3 |

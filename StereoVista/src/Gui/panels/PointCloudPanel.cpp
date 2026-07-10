@@ -42,6 +42,20 @@ void drawPointCloudPanel(Services& services, bool* open) {
         ImGui::SetNextItemWidth(140.0f);
         ImGui::SliderInt("Max radius (px)", &pc.splatMaxRadius, 1, 8);
     }
+    // Density LOD: the rasterizer thins each batch to ~N points per on-screen
+    // pixel (continuous, per-batch — no popping). Works for flat clouds and
+    // I3S pool pages alike; docs/POINTCLOUD_LOD.md Stage 1.
+    ImGui::Checkbox("Density LOD", &pc.lodEnabled);
+    if (pc.lodEnabled) {
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(140.0f);
+        ImGui::SliderFloat("Points / pixel", &pc.lodPointsPerPixel, 0.25f, 8.0f,
+                           "%.2f", ImGuiSliderFlags_Logarithmic);
+        if (!pc.splatEnabled) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("(enable splats to close thinned holes)");
+        }
+    }
 
     // Async compute (renderer-wide; point clouds are today's only compute
     // consumer, so the toggle lives with them). Greyed out when the GPU has

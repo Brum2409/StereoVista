@@ -136,6 +136,10 @@ struct PointCloudDrawItem {
     uint32_t numBatches = 0;
     int pointsPerThread = 0; // ceil(kComputeBatchSize / SV_PC_RASTER_WORKGROUP)
     glm::mat4 model{ 1.0f };
+    // Per-cloud gate for the density LOD (ANDed with the frame-wide
+    // lodPointsPerPixel setting). Streaming clouds submit false while their
+    // batches are still file-order (see Application::buildSubmission).
+    bool densityLod = true;
 };
 
 // Frame-wide point-cloud rendering options (GL: preferences.pointSplatSettings
@@ -144,6 +148,12 @@ struct PointCloudSettings {
     bool hqs = false;          // High-Quality Shading (3-pass averaging)
     float hqsThreshold = 0.01f; // relative depth window (1% = paper default)
     int splatMaxRadius = 0;    // 0 = single-pixel; >0 = adaptive splat clamp (px)
+    // Density LOD budget: the compute rasterizer thins each batch to ~this
+    // many points per on-screen pixel (0 = off, process every point). Applies
+    // to every batch source — flat clouds and I3S pool pages alike — see
+    // docs/POINTCLOUD_LOD.md Stage 1. Pair with adaptive splats: the splat
+    // radius grows with the thinning to keep surfaces closed.
+    float lodPointsPerPixel = 2.0f;
 };
 
 // Matches skybox.frag's SKY_MODE_* indices.

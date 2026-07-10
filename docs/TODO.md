@@ -163,6 +163,9 @@ reference. This is the single biggest gap.
   see `docs/SLPK_ROADMAP.md` (Phase S3) before building a standalone octree.
   **Research & staged design (in-shader density LOD → CLOD reduction pass →
   hierarchical/out-of-core via the I3S streamer): `docs/POINTCLOUD_LOD.md`.**
+  Stage 1 (per-batch density LOD in the rasterizer prologue, points-per-pixel
+  budget, panel toggle) is ✅ implemented — it applies to every batch source
+  (flat clouds + I3S pool pages); Stages 2–3 remain.
 - ⚡ See G for the deferred compute-path perf items.
 
 ---

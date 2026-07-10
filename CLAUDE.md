@@ -188,6 +188,9 @@ state).
 - **Point clouds:** Schütz compute software rasterizer — `uint64` framebuffer +
   `atomicMin` (`shaderBufferInt64Atomics`), standard + HQS, all-BDA (zero
   descriptor sets per cloud), streamed via a persistently-mapped `UploadRing`.
+  Continuous per-batch **density LOD** (points-per-pixel budget, jittered stride
+  sampling of the Morton-ordered batches) thins the point loop in the workgroup
+  prologue for every batch source — see `docs/POINTCLOUD_LOD.md`.
 - **Async compute:** the point-cloud compute rides the device's **async compute
   queue** (dedicated family, else a 2nd graphics-family queue), overlapped with
   the frame's upload/shadow/forward work; the frame is three submissions chained

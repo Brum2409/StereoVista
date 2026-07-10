@@ -168,7 +168,38 @@ float pcBatchSpacing(vec3 boxSize, int numPoints) {
     float d2 = min(boxSize.x, min(boxSize.y, boxSize.z));
     float d1 = (boxSize.x + boxSize.y + boxSize.z) - d0 - d2;
     float area = max(d0 * d1, 1e-12);
-    return sqrt(area / float(numPoints));
+    // Floor with the linear estimate so a degenerate (near-1D) AABB — e.g. a
+    // scan-line batch — yields the along-the-line spacing instead of ~0.
+    // Inert for compact batches: sqrt(d0*d1/N) >> d0/N whenever d1 > d0/N.
+    return max(sqrt(area / float(numPoints)), d0 / float(numPoints));
+}
+
+// ── Density LOD (docs/POINTCLOUD_LOD.md Stage 1) ─────────────────────────────
+// Smallest clip-space w over the batch AABB (w of point p is dot(row3, p, 1);
+// the min over the box distributes per axis). This is the batch's nearest
+// depth for perspective projections — the density estimate uses it so a batch
+// spanning depth is thinned for its NEAREST (most demanding) part, never
+// below target anywhere. Orthographic rows give w = 1: distance-independent
+// density, still correct.
+float pcNearestClipW(mat4 m, vec3 bmin, vec3 bmax) {
+    float r3x = m[0][3], r3y = m[1][3], r3z = m[2][3], r3w = m[3][3];
+    return min(r3x * bmin.x, r3x * bmax.x) +
+           min(r3y * bmin.y, r3y * bmax.y) +
+           min(r3z * bmin.z, r3z * bmax.z) + r3w;
+}
+
+// lowbias32 integer hash (Chris Wellons) → [0,1) jitter for the stride
+// sampling. Deterministic in the point ordinal so the HQS depth and colour
+// passes select the SAME subset, and the standard pass's framebuffer indices
+// stay valid for the lookup pass.
+uint pcHash(uint x) {
+    x ^= x >> 16; x *= 0x7feb352du;
+    x ^= x >> 15; x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return x;
+}
+float pcHash01(uint x) {
+    return float(pcHash(x)) * (1.0 / 4294967296.0);
 }
 
 // ── Per-point callback the including pass defines ─────────────────────────────
@@ -187,17 +218,24 @@ void pcMain() {
     vec3 boxSize = bmax - bmin;
 
     // View-invariant part of the per-point radius formula (the per-view rest
-    // is radius_px = splatScale_v / clip.w, folded below).
-    float worldSpacing =
-        g_d.splatMaxRadius > 0 ? pcBatchSpacing(boxSize, batch.numPoints) : 0.0;
+    // is radius_px = splatScale_v / clip.w, folded below). The density LOD
+    // shares the spacing estimate.
+    const bool lodOn = g_d.lodPointsPerPixel > 0.0;
+    float worldSpacing = (g_d.splatMaxRadius > 0 || lodOn)
+                             ? pcBatchSpacing(boxSize, batch.numPoints)
+                             : 0.0;
 
-    // Per-view prologue: cull, precision level, splat scale, write targets.
-    // One AABB test per view replaces up to kComputeBatchSize per-point clip
-    // tests; the decode level is the MOST precise any visible view needs
-    // (stereo eyes almost always agree).
+    // Per-view prologue: cull, precision level, splat scale, density LOD keep
+    // fraction, write targets. One AABB test per view replaces up to
+    // kComputeBatchSize per-point clip tests; the decode level is the MOST
+    // precise any visible view needs and the keep fraction is the LARGEST any
+    // visible view needs (stereo eyes almost always agree) — the merged
+    // subset must be one set, because points are decoded once and written to
+    // every eye.
     g_viewCount = min(pc.viewCount, SV_PC_MAX_VIEWS);
     int level = 4;
     bool anyVisible = false;
+    float lodKeep = lodOn ? 0.0 : 1.0;
     for (uint v = 0u; v < g_viewCount; ++v) {
         mat4 mvp, modelView, proj;
         if (v == 0u) {
@@ -227,14 +265,50 @@ void pcMain() {
 
         // proj[1][1] carries the house Y-flip, hence abs() (the GL reference
         // had it positive).
-        if (g_d.splatMaxRadius > 0) {
+        if (g_d.splatMaxRadius > 0 || lodOn) {
             float modelScale = length(vec3(modelView[0]));
             float pxPerUnit = abs(proj[1][1]) * float(g_d.imageHeight) * 0.5;
-            g_viewSplatScale[v] = 0.5 * worldSpacing * modelScale * pxPerUnit;
+            // Screen-space spacing of neighbouring points at clip w = 1.
+            float spacingPxAtW1 = worldSpacing * modelScale * pxPerUnit;
+            if (g_d.splatMaxRadius > 0)
+                g_viewSplatScale[v] = 0.5 * spacingPxAtW1;
+            if (lodOn) {
+                // On-screen density at the batch's NEAREST depth is
+                // 1/spacingPx² points per pixel; keep the fraction that
+                // thins it to the lodPointsPerPixel budget. wNear <= 0
+                // (camera beside/inside the box) → full detail.
+                float wNear = pcNearestClipW(mvp, bmin, bmax);
+                if (wNear <= 0.0) {
+                    lodKeep = 1.0;
+                } else {
+                    float spacingPx = spacingPxAtW1 / wNear;
+                    lodKeep = max(lodKeep,
+                                  clamp(g_d.lodPointsPerPixel * spacingPx * spacingPx,
+                                        0.0, 1.0));
+                }
+            }
         }
     }
     if (!anyVisible)
         return;
+
+    // Density LOD thinning: sample nKeep of the batch's points with one
+    // jittered pick per stride window. Points inside a batch are in Morton
+    // order (loader phase 2), so a stride across the index range is an
+    // approximately uniform spatial subsample and the jitter breaks the
+    // Z-curve's structured patterns. The splat scale grows by 1/sqrt(keep) —
+    // pcBatchSpacing of the surviving subset — so adaptive splats close the
+    // thinned holes automatically.
+    uint nKeep = uint(batch.numPoints);
+    float lodStride = 1.0;
+    if (lodKeep < 1.0 && batch.numPoints > 1) {
+        nKeep = clamp(uint(lodKeep * float(batch.numPoints) + 0.5), 1u,
+                      uint(batch.numPoints));
+        lodStride = float(batch.numPoints) / float(nKeep);
+        float splatGrow = inversesqrt(max(lodKeep, 1e-4));
+        for (uint v = 0u; v < g_viewCount; ++v)
+            g_viewSplatScale[v] *= splatGrow;
+    }
 
     // restrict on the locals too: glslang otherwise decorates the pointer
     // VARIABLES AliasedPointer even when the block type is restrict.
@@ -243,11 +317,21 @@ void pcMain() {
     restrict PcUints xyz12b = PcUints(g_d.xyz12b);
     vec2 imageSize = vec2(float(g_d.imageWidth), float(g_d.imageHeight));
 
-    // Strided point loop: thread T reads points T, T+128, ... (coalesced).
+    // Strided point loop: thread T handles ordinals T, T+128, ... (coalesced
+    // reads at full density; at reduced density ordinal e maps to the point
+    // picked uniformly at random from stride window [e, e+1)·lodStride, so
+    // every window contributes exactly one point). e >= nKeep also covers the
+    // old numPoints bound: nKeep == numPoints when the LOD is off.
     for (int i = 0; i < g_d.pointsPerThread; i++) {
-        uint localIndex = uint(i) * gl_WorkGroupSize.x + gl_LocalInvocationID.x;
-        if (int(localIndex) >= batch.numPoints)
+        uint e = uint(i) * gl_WorkGroupSize.x + gl_LocalInvocationID.x;
+        if (e >= nKeep)
             return;
+        uint localIndex = e;
+        if (nKeep < uint(batch.numPoints)) {
+            float jitter = pcHash01(e * 0x9E3779B9u ^ batchIndex * 0x85EBCA6Bu);
+            localIndex = min(uint((float(e) + jitter) * lodStride),
+                             uint(batch.numPoints) - 1u);
+        }
         uint index = uint(batch.firstPoint) + localIndex;
 
         // Decode the 10/20/30-bit quantised local position.

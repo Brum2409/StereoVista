@@ -79,7 +79,13 @@ struct PointCloudDispatch { // 400 bytes
     int splatMaxRadius;     // 0 = single-pixel; >0 = adaptive splat clamp (px)
     int clipPlaneCount;     // 0..SV_PC_CLIP_PLANES
     float hqsThreshold;     // relative depth window (0.01 = 1%)
-    uint pad0;
+    // Density LOD budget in points per pixel (0 = off). The batch prologue
+    // estimates the batch's on-screen point spacing and thins the point loop
+    // to ~this density with jittered stride sampling (Morton order inside a
+    // batch makes a stride an approximately uniform spatial subsample) —
+    // docs/POINTCLOUD_LOD.md Stage 1. View-invariant: the merged keep uses
+    // the most demanding visible view, like the precision level.
+    float lodPointsPerPixel;
     uint pad1;              // pad to 400 bytes: 16-aligned array stride
     uint pad2;
 };
