@@ -200,6 +200,18 @@ EXCLUSIVE resources exist in `RHI/Barrier.h` for the RT phase). Single-queue
 GPUs and the debug toggle (Point Clouds panel; status in Diagnostics) fall back
 to the old inline recording, decided per frame. For RT/GI: grab
 `Device::computeQueue()` / `immediateSubmitCompute()`.
+**Done (single-pass multi-view point-cloud geometry):** the rasterize / HQS
+depth / HQS colour dispatches used to run once PER VIEW — in stereo/XR every
+point was fetched, bit-unpacked and clip-tested twice. One dispatch per cloud
+now covers all views: the shader reads the point streams (the pass's dominant
+memory traffic) and decodes once, then projects + writes per eye
+(`pointcloud_common.glsl` per-view prologue; `PointCloudComputePush.viewCount`;
+the dispatch array stays cloud-major/view-minor for the lookup pass, the
+geometry shader strides `SV_PC_DISPATCH_STRIDE` from the pushed view-0 struct
+to its siblings). Atomic traffic is unchanged (both eyes must be written);
+stream reads, decode ALU, per-batch cull/LOD prologue and the vkCmdDispatch
+count halve. The decode precision level is the most precise any visible view
+requests. Mono compiles to the same work as before (view loop of 1).
 - ⚡ **Subgroup ops** in the HQS colour-accumulate pass (`subgroupMin`/ballot) instead
   of per-pixel atomics — a large compute win on dense clouds.
 - ⚡ **Variable-rate shading** (`VK_KHR_fragment_shading_rate`) on the point-cloud

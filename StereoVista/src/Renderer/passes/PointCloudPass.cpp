@@ -287,16 +287,17 @@ void PointCloudPass::prepare(const FrameSubmission& submission, uint32_t frameSl
     preparedSlot_ = frameSlot;
     dispatchCopyBytes_ = bytes;
 
+    // ONE geometry dispatch record per cloud (single-pass multi-view): it
+    // receives the (cloud, view 0) struct address and the shader strides to
+    // the sibling views' structs itself — the dispatch array stays
+    // cloud-major/view-minor for the lookup pass.
     const VkDeviceAddress dispatchBase = deviceBuf.deviceAddress();
-    size_t slot = 0;
-    for (const PointCloudDrawItem* item : clouds) {
-        for (uint32_t v = 0; v < viewCount_; ++v, ++slot) {
-            DispatchRecord record;
-            record.dispatchData =
-                dispatchBase + slot * sizeof(gpu::PointCloudDispatch);
-            record.numBatches = item->numBatches;
-            dispatches_.push_back(record);
-        }
+    for (size_t ci = 0; ci < clouds.size(); ++ci) {
+        DispatchRecord record;
+        record.dispatchData =
+            dispatchBase + ci * viewCount_ * sizeof(gpu::PointCloudDispatch);
+        record.numBatches = clouds[ci]->numBatches;
+        dispatches_.push_back(record);
     }
 
     lookupPushes_.clear();
@@ -393,7 +394,9 @@ void PointCloudPass::recordCompute(VkCommandBuffer cmd, bool asyncQueue) {
                   VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
                       VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
 
-    // One workgroup per batch, chunked against maxComputeWorkGroupCount[0].
+    // One workgroup per batch covering EVERY view (the shader decodes each
+    // point once and projects it per eye), chunked against
+    // maxComputeWorkGroupCount[0].
     auto dispatchGeometry = [&](const rhi::Pipeline& pipeline) {
         pipeline.bind(cmd);
         for (const DispatchRecord& record : dispatches_) {
@@ -401,6 +404,7 @@ void PointCloudPass::recordCompute(VkCommandBuffer cmd, bool asyncQueue) {
                 gpu::PointCloudComputePush push{};
                 push.dispatchData = record.dispatchData;
                 push.baseBatch = base;
+                push.viewCount = viewCount_;
                 pipeline.pushConstants(cmd, &push, sizeof(push));
                 vkCmdDispatch(cmd, std::min(record.numBatches - base, maxGroupsX_), 1, 1);
             }

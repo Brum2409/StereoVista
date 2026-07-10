@@ -23,18 +23,21 @@ layout(buffer_reference, scalar, buffer_reference_align = 4) restrict coherent b
 
 // Reference constructed in the callee (not passed as a parameter) so the
 // restrict survives — glslang decorates argument temporaries AliasedPointer.
-void pcWriteDepth(ivec2 p, uint dz) {
-    restrict PcHqsDepth depthBuf = PcHqsDepth(g_d.hqsDepth);
+void pcWriteDepth(uint view, ivec2 p, uint dz) {
+    restrict PcHqsDepth depthBuf = PcHqsDepth(g_viewHqsDepth[view]);
     int idx = p.y * g_d.imageWidth + p.x;
     if (dz < depthBuf.v[idx]) // early-z reject before the atomic
         atomicMin(depthBuf.v[idx], dz);
 }
 
-void pcProcessPoint(ivec2 px, float ndcZ, float viewDepth, int radius, uint index) {
+void pcProcessPoint(uint view, ivec2 px, float ndcZ, float viewDepth, int radius,
+                    uint index) {
     uint dz = floatBitsToUint(viewDepth);
 
     if (radius <= 0) {
-        pcWriteDepth(clamp(px, ivec2(0), ivec2(g_d.imageWidth - 1, g_d.imageHeight - 1)), dz);
+        pcWriteDepth(view,
+                     clamp(px, ivec2(0), ivec2(g_d.imageWidth - 1, g_d.imageHeight - 1)),
+                     dz);
         return;
     }
     int r2 = radius * radius;
@@ -45,7 +48,7 @@ void pcProcessPoint(ivec2 px, float ndcZ, float viewDepth, int radius, uint inde
             ivec2 p = px + ivec2(dx, dy);
             if (p.x < 0 || p.y < 0 || p.x >= g_d.imageWidth || p.y >= g_d.imageHeight)
                 continue;
-            pcWriteDepth(p, dz);
+            pcWriteDepth(view, p, dz);
         }
     }
 }

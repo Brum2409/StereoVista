@@ -19,12 +19,14 @@ namespace renderer {
 // Schütz compute point-cloud rasterizer (Phase 5) — the Vulkan rewrite of
 // Engine::ComputePointCloudRenderer.
 //
-// Standard path per frame (per view via multiview-shaped buffer sections):
+// Standard path per frame (per-view sections of the per-pixel buffers):
 //   clear 64-bit framebuffer -> rasterize dispatches (one workgroup per
-//   batch; atomicMin of (dist24|cloudID|index)) -> per-cloud colour lookup
-//   dispatches -> fullscreen resolve drawn INSIDE the scene pass after the
-//   opaque meshes (writes gl_FragDepth; reverse-Z GREATER composites points
-//   against mesh depth and updates the depth attachment).
+//   batch, SINGLE-PASS MULTI-VIEW: each point is read and decoded once, then
+//   projected + atomicMin'd (dist24|cloudID|index) once per eye — stereo/XR
+//   does not rerun the geometry phase) -> colour lookup dispatch per view ->
+//   fullscreen resolve drawn INSIDE the scene pass after the opaque meshes
+//   (writes gl_FragDepth; reverse-Z GREATER composites points against mesh
+//   depth and updates the depth attachment).
 //
 // HQS path swaps the middle for depth (atomicMin linear eye depth) ->
 // colour accumulate (atomicAdd within the relative depth window) -> HQS
@@ -119,10 +121,11 @@ private:
 
     // ---- per-frame state written by prepare() ----
     struct DispatchRecord {
-        VkDeviceAddress dispatchData = 0;
+        VkDeviceAddress dispatchData = 0; // (cloud, view 0) struct; the shader
+                                          // strides to the sibling views
         uint32_t numBatches = 0;
     };
-    std::vector<DispatchRecord> dispatches_; // cloud-major, view-minor
+    std::vector<DispatchRecord> dispatches_; // one per cloud (all views)
     std::vector<gpu::PointCloudLookupPush> lookupPushes_; // one per view
     std::vector<gpu::PointCloudDispatch> hostData_; // scratch, reused per frame
     bool active_ = false;

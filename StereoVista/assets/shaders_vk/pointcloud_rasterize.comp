@@ -35,14 +35,15 @@ layout(buffer_reference, scalar, buffer_reference_align = 8) restrict coherent b
 // The reference is constructed HERE (a pointer construct is just a 64-bit
 // copy) instead of passed as a parameter: glslang decorates pointer-typed
 // argument temporaries AliasedPointer, which would defeat the restrict.
-void pcWritePixel(ivec2 p, uint64_t entry) {
-    restrict PcFramebuffer fb = PcFramebuffer(g_d.framebuffer);
+void pcWritePixel(uint view, ivec2 p, uint64_t entry) {
+    restrict PcFramebuffer fb = PcFramebuffer(g_viewFramebuffer[view]);
     int idx = p.y * g_d.imageWidth + p.x;
     if (entry < fb.px[idx])
         atomicMin(fb.px[idx], entry);
 }
 
-void pcProcessPoint(ivec2 px, float ndcZ, float viewDepth, int radius, uint index) {
+void pcProcessPoint(uint view, ivec2 px, float ndcZ, float viewDepth, int radius,
+                    uint index) {
     // Reverse-Z: ndc.z is 1 at near, 0 at far; store the DISTANCE-like
     // 1 - ndc.z so atomicMin keeps the nearest point.
     float dist01 = clamp(1.0 - ndcZ, 0.0, 1.0);
@@ -52,7 +53,9 @@ void pcProcessPoint(ivec2 px, float ndcZ, float viewDepth, int radius, uint inde
 
     if (radius <= 0) {
         // Single-pixel fast path (splatting off / far points).
-        pcWritePixel(clamp(px, ivec2(0), ivec2(g_d.imageWidth - 1, g_d.imageHeight - 1)), entry);
+        pcWritePixel(view,
+                     clamp(px, ivec2(0), ivec2(g_d.imageWidth - 1, g_d.imageHeight - 1)),
+                     entry);
         return;
     }
 
@@ -67,7 +70,7 @@ void pcProcessPoint(ivec2 px, float ndcZ, float viewDepth, int radius, uint inde
             ivec2 p = px + ivec2(dx, dy);
             if (p.x < 0 || p.y < 0 || p.x >= g_d.imageWidth || p.y >= g_d.imageHeight)
                 continue;
-            pcWritePixel(p, entry);
+            pcWritePixel(view, p, entry);
         }
     }
 }

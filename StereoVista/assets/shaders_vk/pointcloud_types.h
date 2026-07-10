@@ -24,6 +24,15 @@
 #define SV_PC_LOOKUP_WORKGROUP 256
 // cloudID packs into 8 bits of the 64-bit framebuffer entry.
 #define SV_PC_MAX_CLOUDS 256
+// Upper bound on the views ONE geometry dispatch projects (single-pass
+// multi-view: decode once, write every eye). Must equal the renderer's
+// SV_MAX_VIEWS — static_asserted in GpuTypes.h; scene_types.h is deliberately
+// not included here (see the header comment).
+#define SV_PC_MAX_VIEWS 2
+// sizeof(PointCloudDispatch). GLSL has no sizeof, but the geometry shaders
+// stride from the pushed view-0 struct to its view siblings with this;
+// GpuTypes.h static_asserts it against the real C++ sizeof.
+#define SV_PC_DISPATCH_STRIDE 400
 
 // Batch descriptor — must stay bit-identical to Engine::ComputeBatch (32
 // bytes; identical under scalar and std430 rules).
@@ -34,12 +43,15 @@ struct PointCloudBatch {   // 32 bytes
     int firstPoint;
 };
 
-// One (cloud, view) unit of work, shared by the rasterize / HQS depth / HQS
-// color dispatches of that pair and read by the lookup pass. Built per frame
-// by renderer::PointCloudPass into a HostUpload staging buffer and copied
-// into a DEVICE-LOCAL array at the top of the frame — every geometry
-// workgroup reads the whole struct and the lookup pass dereferences it per
-// pixel, so these reads must hit VRAM/L2, never host memory across PCIe.
+// One (cloud, view) entry of the frame's dispatch array (cloud-major,
+// view-minor). Built per frame by renderer::PointCloudPass into a HostUpload
+// staging buffer and copied into a DEVICE-LOCAL array at the top of the frame
+// — the geometry workgroups and the per-pixel lookup dereference it, so these
+// reads must hit VRAM/L2, never host memory across PCIe. The geometry passes
+// are single-pass multi-view: ONE dispatch per cloud receives the view-0
+// address, reads the decode-invariant fields + view 0 from it, and strides
+// SV_PC_DISPATCH_STRIDE to the sibling views for their matrices and targets;
+// the lookup pass still reads one struct per (cloud, view).
 // sizeof is padded to 400 (multiple of 16) so the mat4/vec4 members of every
 // array element sit on 16-byte addresses (aligned vector loads).
 struct PointCloudDispatch { // 400 bytes
@@ -78,9 +90,9 @@ struct PointCloudDispatch { // 400 bytes
 // here and below make sizeof() in C++ equal the GLSL scalar block size, so
 // pushing sizeof(struct) bytes never exceeds the reflected range.
 struct PointCloudComputePush { // 16 bytes
-    uint64_t dispatchData;     // PointCloudDispatch*
+    uint64_t dispatchData;     // PointCloudDispatch* of (this cloud, view 0)
     uint baseBatch;
-    uint pad0;
+    uint viewCount;            // views this dispatch projects (1 = mono)
 };
 
 // Push constants of the colour-lookup pass. ✎ Better than GL: instead of one

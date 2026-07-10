@@ -40,9 +40,14 @@ static_assert(offsetof(DepthMaskedPush, materialIndex) ==
                   offsetof(DepthPointMaskedPush, materialIndex),
               "depth_masked.frag reads materialIndex at one offset for both pipelines");
 static_assert(sizeof(PointCloudBatch) == 32, "PointCloudBatch layout drifted from GLSL scalar");
-static_assert(sizeof(PointCloudDispatch) == 400, "PointCloudDispatch layout drifted from GLSL scalar");
+static_assert(sizeof(PointCloudDispatch) == SV_PC_DISPATCH_STRIDE,
+              "PointCloudDispatch layout drifted from SV_PC_DISPATCH_STRIDE — the "
+              "geometry shaders stride the per-view structs with the define");
 static_assert(sizeof(PointCloudDispatch) % 16 == 0,
               "PointCloudDispatch stride must stay 16-aligned (vector loads)");
+static_assert(SV_PC_MAX_VIEWS == SV_MAX_VIEWS,
+              "single-pass multi-view geometry sizes its per-view arrays with "
+              "SV_PC_MAX_VIEWS; keep it equal to the renderer's view cap");
 static_assert(sizeof(PointCloudComputePush) == 16, "PointCloudComputePush layout drifted");
 static_assert(sizeof(PointCloudLookupPush) == 32, "PointCloudLookupPush layout drifted");
 static_assert(sizeof(PointCloudResolvePush) == 32, "PointCloudResolvePush layout drifted");

@@ -28,12 +28,13 @@ layout(buffer_reference, scalar, buffer_reference_align = 4) restrict readonly b
     uint v[];
 };
 
-void pcAccumPixel(int idx, float linearDepth, uint R, uint G, uint B, float threshFactor) {
+void pcAccumPixel(uint view, int idx, float linearDepth, uint R, uint G, uint B,
+                  float threshFactor) {
     // Sentinel bits decode to NaN-ish garbage; the comparison then fails and
     // nothing accumulates — exactly the GL behaviour.
-    float nearest = uintBitsToFloat(PcHqsDepthRO(g_d.hqsDepth).v[idx]);
+    float nearest = uintBitsToFloat(PcHqsDepthRO(g_viewHqsDepth[view]).v[idx]);
     if (linearDepth <= nearest * threshFactor) {
-        restrict PcHqsAccum accum = PcHqsAccum(g_d.hqsAccum);
+        restrict PcHqsAccum accum = PcHqsAccum(g_viewHqsAccum[view]);
         atomicAdd(accum.v[4 * idx + 0], R);
         atomicAdd(accum.v[4 * idx + 1], G);
         atomicAdd(accum.v[4 * idx + 2], B);
@@ -41,7 +42,8 @@ void pcAccumPixel(int idx, float linearDepth, uint R, uint G, uint B, float thre
     }
 }
 
-void pcProcessPoint(ivec2 px, float ndcZ, float viewDepth, int radius, uint index) {
+void pcProcessPoint(uint view, ivec2 px, float ndcZ, float viewDepth, int radius,
+                    uint index) {
     uint color = PcRgbaRO(g_d.rgba).v[index];
     uint R = (color >> 0) & 0xFFu;
     uint G = (color >> 8) & 0xFFu;
@@ -50,7 +52,7 @@ void pcProcessPoint(ivec2 px, float ndcZ, float viewDepth, int radius, uint inde
 
     if (radius <= 0) {
         ivec2 p = clamp(px, ivec2(0), ivec2(g_d.imageWidth - 1, g_d.imageHeight - 1));
-        pcAccumPixel(p.y * g_d.imageWidth + p.x, viewDepth, R, G, B, threshFactor);
+        pcAccumPixel(view, p.y * g_d.imageWidth + p.x, viewDepth, R, G, B, threshFactor);
         return;
     }
     int r2 = radius * radius;
@@ -61,7 +63,8 @@ void pcProcessPoint(ivec2 px, float ndcZ, float viewDepth, int radius, uint inde
             ivec2 p = px + ivec2(dx, dy);
             if (p.x < 0 || p.y < 0 || p.x >= g_d.imageWidth || p.y >= g_d.imageHeight)
                 continue;
-            pcAccumPixel(p.y * g_d.imageWidth + p.x, viewDepth, R, G, B, threshFactor);
+            pcAccumPixel(view, p.y * g_d.imageWidth + p.x, viewDepth, R, G, B,
+                         threshFactor);
         }
     }
 }

@@ -13,15 +13,24 @@
 //        PointCloudDispatch struct read through a pushed address — the whole
 //        pipeline binds zero descriptor sets.
 //
+// SINGLE-PASS MULTI-VIEW: one dispatch per cloud covers EVERY view. The point
+// streams — the pass's dominant memory traffic — are read and decoded once,
+// then the point is projected and written once per view; in stereo/XR that
+// halves the stream reads, the decode ALU and the per-batch prologue instead
+// of running the whole pass twice. The pushed address is the (cloud, view 0)
+// dispatch struct; views > 0 sit SV_PC_DISPATCH_STRIDE apart behind it and
+// only their view-varying members (matrices, target pointers) are read.
+//
 // The including shader must declare BEFORE including this file:
 //   #version 460
 //   #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 //   #extension GL_EXT_buffer_reference2 : require
 //   #extension GL_EXT_scalar_block_layout : require
 // and define, after the include:
-//   void pcProcessPoint(ivec2 px, float ndcZ, float viewDepth, int radius,
-//                       uint index);
-// then call pcMain() from main(). g_d holds the dispatch data.
+//   void pcProcessPoint(uint view, ivec2 px, float ndcZ, float viewDepth,
+//                       int radius, uint index);
+// then call pcMain() from main(). g_d holds the view-0 dispatch data; the
+// g_view* arrays hold the per-view state (write targets by view index).
 
 #include "pointcloud_types.h"
 
@@ -50,8 +59,25 @@ layout(push_constant, scalar) uniform PcPush {
 };
 
 // Loaded once at the top of pcMain; read by the shared code and the
-// pass-specific pcProcessPoint.
+// pass-specific pcProcessPoint. g_d is the VIEW-0 struct — its view-varying
+// members (mvp/modelView/proj, target pointers) are only valid for view 0;
+// everything else (streams, image size, clip planes, cloudID, splat/HQS
+// parameters) is identical across views by construction (prepare() varies
+// only the camera and the target offsets per view).
 PointCloudDispatch g_d;
+
+// Per-view state filled by the pcMain prologue (indices < g_viewCount).
+// The write-target addresses live here rather than in pcProcessPoint's
+// signature so each pass constructs its restrict reference in the callee,
+// same as before (glslang decorates pointer-typed argument temporaries
+// AliasedPointer, which would defeat the restrict).
+uint g_viewCount;
+mat4 g_viewMvp[SV_PC_MAX_VIEWS];
+bool g_viewVisible[SV_PC_MAX_VIEWS];
+float g_viewSplatScale[SV_PC_MAX_VIEWS];
+uint64_t g_viewFramebuffer[SV_PC_MAX_VIEWS];
+uint64_t g_viewHqsDepth[SV_PC_MAX_VIEWS];
+uint64_t g_viewHqsAccum[SV_PC_MAX_VIEWS];
 
 // ── Constants (Schütz 10/20/30-bit quantisation) ─────────────────────────────
 #define STEPS_30BIT 1073741824.0 // 2^30
@@ -106,15 +132,17 @@ bool pcIntersectsFrustum(mat4 m, vec3 bmin, vec3 bmax) {
 
 // ── Precision level (Schütz getPrecisionLevel, verbatim thresholds) ───────────
 // Projects the batch bounding sphere to screen pixels and picks how many
-// packed-coordinate tiers each point read decodes.
-int pcPrecisionLevel(vec3 bmin, vec3 bmax) {
+// packed-coordinate tiers each point read decodes. Per-view matrices are
+// parameters (multi-view: the merged decode uses the MOST precise level any
+// visible view asks for).
+int pcPrecisionLevel(mat4 modelView, mat4 proj, vec3 bmin, vec3 bmax) {
     vec3 center = (bmin + bmax) * 0.5;
     float radius = distance(bmin, bmax);
 
-    vec4 viewCenter = g_d.modelView * vec4(center, 1.0);
+    vec4 viewCenter = modelView * vec4(center, 1.0);
     vec4 viewEdge = viewCenter + vec4(radius, 0.0, 0.0, 0.0);
-    vec4 projCenter = g_d.proj * viewCenter;
-    vec4 projEdge = g_d.proj * viewEdge;
+    vec4 projCenter = proj * viewCenter;
+    vec4 projEdge = proj * viewEdge;
     if (projCenter.w <= 0.0)
         return 0;
 
@@ -144,9 +172,10 @@ float pcBatchSpacing(vec3 boxSize, int numPoints) {
 }
 
 // ── Per-point callback the including pass defines ─────────────────────────────
-void pcProcessPoint(ivec2 px, float ndcZ, float viewDepth, int radius, uint index);
+void pcProcessPoint(uint view, ivec2 px, float ndcZ, float viewDepth, int radius,
+                    uint index);
 
-// ── Shared main: one workgroup per batch ──────────────────────────────────────
+// ── Shared main: one workgroup per batch, all views ───────────────────────────
 void pcMain() {
     g_d = PcDispatchRef(pc.dispatchData).d;
 
@@ -157,22 +186,55 @@ void pcMain() {
     vec3 bmax = vec3(batch.maxX, batch.maxY, batch.maxZ);
     vec3 boxSize = bmax - bmin;
 
-    // One AABB test replaces up to kComputeBatchSize per-point clip tests.
-    if (!pcIntersectsFrustum(g_d.mvp, bmin, bmax))
-        return;
+    // View-invariant part of the per-point radius formula (the per-view rest
+    // is radius_px = splatScale_v / clip.w, folded below).
+    float worldSpacing =
+        g_d.splatMaxRadius > 0 ? pcBatchSpacing(boxSize, batch.numPoints) : 0.0;
 
-    int level = pcPrecisionLevel(bmin, bmax);
+    // Per-view prologue: cull, precision level, splat scale, write targets.
+    // One AABB test per view replaces up to kComputeBatchSize per-point clip
+    // tests; the decode level is the MOST precise any visible view needs
+    // (stereo eyes almost always agree).
+    g_viewCount = min(pc.viewCount, SV_PC_MAX_VIEWS);
+    int level = 4;
+    bool anyVisible = false;
+    for (uint v = 0u; v < g_viewCount; ++v) {
+        mat4 mvp, modelView, proj;
+        if (v == 0u) {
+            mvp = g_d.mvp;
+            modelView = g_d.modelView;
+            proj = g_d.proj;
+            g_viewFramebuffer[v] = g_d.framebuffer;
+            g_viewHqsDepth[v] = g_d.hqsDepth;
+            g_viewHqsAccum[v] = g_d.hqsAccum;
+        } else {
+            restrict PcDispatchRef dv = PcDispatchRef(
+                pc.dispatchData + uint64_t(v) * uint64_t(SV_PC_DISPATCH_STRIDE));
+            mvp = dv.d.mvp;
+            modelView = dv.d.modelView;
+            proj = dv.d.proj;
+            g_viewFramebuffer[v] = dv.d.framebuffer;
+            g_viewHqsDepth[v] = dv.d.hqsDepth;
+            g_viewHqsAccum[v] = dv.d.hqsAccum;
+        }
+        g_viewMvp[v] = mvp;
+        g_viewSplatScale[v] = 0.0;
+        g_viewVisible[v] = pcIntersectsFrustum(mvp, bmin, bmax);
+        if (!g_viewVisible[v])
+            continue;
+        anyVisible = true;
+        level = min(level, pcPrecisionLevel(modelView, proj, bmin, bmax));
 
-    // Everything of the per-point radius formula that does not depend on the
-    // point's own depth: radius_px = splatScale / clip.w. proj[1][1] carries
-    // the house Y-flip, hence abs() (the GL reference had it positive).
-    float splatScale = 0.0;
-    if (g_d.splatMaxRadius > 0) {
-        float worldSpacing = pcBatchSpacing(boxSize, batch.numPoints);
-        float modelScale = length(vec3(g_d.modelView[0]));
-        float pxPerUnit = abs(g_d.proj[1][1]) * float(g_d.imageHeight) * 0.5;
-        splatScale = 0.5 * worldSpacing * modelScale * pxPerUnit;
+        // proj[1][1] carries the house Y-flip, hence abs() (the GL reference
+        // had it positive).
+        if (g_d.splatMaxRadius > 0) {
+            float modelScale = length(vec3(modelView[0]));
+            float pxPerUnit = abs(proj[1][1]) * float(g_d.imageHeight) * 0.5;
+            g_viewSplatScale[v] = 0.5 * worldSpacing * modelScale * pxPerUnit;
+        }
     }
+    if (!anyVisible)
+        return;
 
     // restrict on the locals too: glslang otherwise decorates the pointer
     // VARIABLES AliasedPointer even when the block type is restrict.
@@ -213,7 +275,8 @@ void pcMain() {
             point = vec3(float(X), float(Y), float(Z)) * (boxSize / STEPS_10BIT) + bmin;
         }
 
-        // User section/clip planes (cloud-local space, like the decoded point).
+        // User section/clip planes (cloud-local space, like the decoded
+        // point — view-invariant, so tested once per point).
         bool clipped = false;
         for (int cp = 0; cp < g_d.clipPlaneCount; ++cp) {
             if (dot(g_d.clipPlanes[cp].xyz, point) + g_d.clipPlanes[cp].w < 0.0) {
@@ -224,24 +287,33 @@ void pcMain() {
         if (clipped)
             continue;
 
-        // Project; Vulkan NDC containment (z in [0,1] — C.2).
-        vec4 clip = g_d.mvp * vec4(point, 1.0);
-        if (clip.w <= 0.0)
-            continue;
-        vec3 ndc = clip.xyz / clip.w;
-        if (ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0 ||
-            ndc.z < 0.0 || ndc.z > 1.0)
-            continue;
+        // Project the decoded point once per view; a point outside one eye's
+        // frustum can still land in the other, so per-view rejects skip the
+        // VIEW, not the point.
+        for (uint v = 0u; v < g_viewCount; ++v) {
+            if (!g_viewVisible[v])
+                continue;
 
-        // Framebuffer pixel. The house projections bake the Y-flip, so NDC y
-        // already increases downward like the buffer rows — same formula as
-        // GL, now in framebuffer orientation.
-        ivec2 px = ivec2((ndc.xy * 0.5 + 0.5) * imageSize);
+            // Vulkan NDC containment (z in [0,1] — C.2).
+            vec4 clip = g_viewMvp[v] * vec4(point, 1.0);
+            if (clip.w <= 0.0)
+                continue;
+            vec3 ndc = clip.xyz / clip.w;
+            if (ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0 ||
+                ndc.z < 0.0 || ndc.z > 1.0)
+                continue;
 
-        int splatRadius = 0;
-        if (g_d.splatMaxRadius > 0)
-            splatRadius = clamp(int(splatScale / clip.w), 0, g_d.splatMaxRadius);
+            // Framebuffer pixel. The house projections bake the Y-flip, so
+            // NDC y already increases downward like the buffer rows — same
+            // formula as GL, now in framebuffer orientation.
+            ivec2 px = ivec2((ndc.xy * 0.5 + 0.5) * imageSize);
 
-        pcProcessPoint(px, ndc.z, clip.w, splatRadius, index);
+            int splatRadius = 0;
+            if (g_d.splatMaxRadius > 0)
+                splatRadius =
+                    clamp(int(g_viewSplatScale[v] / clip.w), 0, g_d.splatMaxRadius);
+
+            pcProcessPoint(v, px, ndc.z, clip.w, splatRadius, index);
+        }
     }
 }
