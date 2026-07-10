@@ -161,6 +161,8 @@ reference. This is the single biggest gap.
   clouds that fit. Re-implement LOD selection feeding the compute path.
   **Note:** the SLPK/I3S plan delivers this via the I3S node-tree streamer —
   see `docs/SLPK_ROADMAP.md` (Phase S3) before building a standalone octree.
+  **Research & staged design (in-shader density LOD → CLOD reduction pass →
+  hierarchical/out-of-core via the I3S streamer): `docs/POINTCLOUD_LOD.md`.**
 - ⚡ See G for the deferred compute-path perf items.
 
 ---
