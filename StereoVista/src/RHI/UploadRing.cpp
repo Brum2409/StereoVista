@@ -97,6 +97,28 @@ void UploadRing::flush(VkCommandBuffer cmd) {
     for (const PendingImageCopy& c : pendingImages_)
         buffer_.flush(c.srcOffset, c.size);
 
+    // WAR guard, queue-local half. Some buffer destinations are rewritten IN
+    // PLACE while the previous frame still reads them — the Morton-resort and
+    // I3S-recolor streams overwrite live cloud ranges whose reader is the
+    // point-cloud compute. When that compute recorded INLINE on this queue
+    // (async compute off, or the previous frame before a toggle), nothing else
+    // orders those dispatch reads before these copies; the Renderer's
+    // compute-timeline wait only covers the async-queue case. Execution-only
+    // dependency — WAR needs no availability/visibility — and compute is the
+    // only stage that reads in-place-rewritten ranges (see the class comment);
+    // image destinations are fresh by the stageImage contract.
+    if (!pending_.empty()) {
+        VkMemoryBarrier2 warBarrier{};
+        warBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
+        warBarrier.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+        warBarrier.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+        VkDependencyInfo warDep{};
+        warDep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        warDep.memoryBarrierCount = 1;
+        warDep.pMemoryBarriers = &warBarrier;
+        vkCmdPipelineBarrier2(cmd, &warDep);
+    }
+
     // One vkCmdCopyBuffer2 per consecutive run of same-destination copies
     // (a stream chunk's five section copies collapse into one call).
     std::vector<VkBufferCopy2> regions;

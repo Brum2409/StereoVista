@@ -23,6 +23,14 @@ class Texture;
 // ring — they hand CPU chunks over (PointCloudStream) and the main-thread
 // pump (PointCloudLoader::updateStreaming) stages them.
 //
+// In-place rewrites: a buffer destination may be rewritten while the previous
+// frame still READS it ONLY if those reads are compute-shader reads (the
+// point-cloud Morton-resort / recolor streams). flush() opens with a
+// compute->copy execution barrier for readers on the recording queue, and the
+// Renderer's compute-timeline wait guards the async-compute queue. Ranges the
+// previous frame reads at any OTHER stage must not be rewritten — write to
+// fresh memory instead (the I3S mesh pools double-buffer for this reason).
+//
 // Space accounting uses monotonically increasing virtual offsets (physical =
 // virtual % capacity); an allocation never straddles the wrap point (the
 // tail run is padded away). A full ring makes stage() return false — callers
@@ -70,7 +78,9 @@ public:
 
     // Records all queued copies (buffer regions batched per destination
     // buffer; image regions batched per destination image between its layout
-    // transitions) plus one transfer->everything barrier. Called once per
+    // transitions) between a compute->copy execution barrier (WAR: in-place
+    // rewrites vs the previous frame's dispatch reads on this queue — see the
+    // class comment) and one transfer->everything barrier. Called once per
     // frame by the Renderer at the top of the frame command buffer; no-op
     // when nothing is staged.
     void flush(VkCommandBuffer cmd);

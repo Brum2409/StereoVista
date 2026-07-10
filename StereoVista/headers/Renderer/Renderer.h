@@ -79,7 +79,10 @@ namespace renderer {
 //   graphics batch 1  [ring flush | aux | shadow]
 //       waits  computeTimeline >= prev   @ALL_TRANSFER   (WAR: streamed
 //              copies may rewrite cloud ranges the previous frame's compute
-//              still reads — resort-in-place)
+//              still reads — resort-in-place. This wait covers the ASYNC
+//              queue's dispatches; when the previous frame recorded them
+//              INLINE on this queue, the compute->copy execution barrier at
+//              the top of UploadRing::flush is the guard instead)
 //       signals uploadTimeline = N       @ALL_TRANSFER   (fires when the
 //              flush copies retire, NOT when shadow finishes)
 //   compute           [dispatch copy | clears | rasterize/HQS | lookup]
