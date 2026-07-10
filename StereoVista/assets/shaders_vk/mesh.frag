@@ -296,8 +296,17 @@ void main() {
     MaterialData mat = uMaterials[uPush.materialIndex];
 
     vec3 albedo = mat.baseColor.rgb;
-    if (mat.albedoTexture != SV_INVALID_TEXTURE)
-        albedo = sampleTex(mat.albedoTexture, vUV).rgb; // sRGB view -> linear
+    float alpha = mat.baseColor.a;
+    if (mat.albedoTexture != SV_INVALID_TEXTURE) {
+        vec4 texel = sampleTex(mat.albedoTexture, vUV); // sRGB view -> linear
+        albedo = texel.rgb;
+        alpha *= texel.a;
+    }
+    // Cutout transparency (glTF alphaMode MASK / I3S mask+blend materials —
+    // vegetation, fences): kill the fragment before any lighting or shadow
+    // taps run. Opaque materials (flags == 0) never reach the discard.
+    if ((mat.flags & SV_MATERIAL_ALPHA_MASK) != 0u && alpha < mat.alphaCutoff)
+        discard;
     albedo *= uPush.tint; // per-draw tint (BrushTool color variation)
 
     float metallic = mat.metallic;
@@ -315,6 +324,13 @@ void main() {
         ao = sampleTex(mat.aoTexture, vUV).r;
 
     vec3 N = normalize(vNormal);
+    // Two-sided draws (cull mode NONE) shade back faces with the flipped
+    // geometric normal — otherwise the back side always fails dot(N,L) and
+    // renders ambient-black. No-op for closed meshes drawn with culling
+    // (only front faces survive) and for the tangent frame below (B flips
+    // with N, keeping the basis consistent).
+    if (!gl_FrontFacing)
+        N = -N;
     if (mat.normalTexture != SV_INVALID_TEXTURE) {
         vec3 T = normalize(vTangent.xyz - dot(vTangent.xyz, N) * N);
         vec3 B = cross(N, T) * vTangent.w;

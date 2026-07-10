@@ -5,12 +5,16 @@
 #include "Renderer/GpuTypes.h"
 #include "Renderer/MaterialSystem.h"
 
+#include <assimp/GltfMaterial.h> // AI_MATKEY_GLTF_ALPHAMODE / _ALPHACUTOFF
 #include <assimp/Importer.hpp>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
 
+#include <glm/gtc/matrix_inverse.hpp>
+
 #include <stb_image.h>
 
+#include <algorithm>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -188,34 +192,66 @@ uint32_t loadFirstTexture(ImportContext& ctx, const aiMaterial* material,
     if (material->GetTexture(type, 0, &path) != AI_SUCCESS)
         return kNoTexture;
     const std::string refPath = path.C_Str();
-    if (!refPath.empty() && refPath[0] == '*')
+    // Embedded textures are referenced either as "*N" indices or by name
+    // (FBX embeds under the original filename) — resolve against the scene's
+    // embedded table first, only then search the filesystem.
+    if (!refPath.empty() &&
+        (refPath[0] == '*' || ctx.aiScene_->GetEmbeddedTexture(refPath.c_str())))
         return loadEmbeddedTexture(ctx, refPath, srgb);
     return loadTextureFile(ctx, refPath, srgb, flipVertically);
 }
 
-ModelMesh processMesh(ImportContext& ctx, const aiMesh* mesh, size_t meshIndex) {
+// aiMatrix4x4 is row-major; glm is column-major.
+glm::mat4 toGlm(const aiMatrix4x4& m) {
+    return glm::mat4(m.a1, m.b1, m.c1, m.d1,  // column 0
+                     m.a2, m.b2, m.c2, m.d2,
+                     m.a3, m.b3, m.c3, m.d3,
+                     m.a4, m.b4, m.c4, m.d4);
+}
+
+ModelMesh processMesh(ImportContext& ctx, const aiMesh* mesh, size_t meshIndex,
+                      const glm::mat4& nodeTransform) {
     renderer::MeshData data;
     data.vertices.reserve(mesh->mNumVertices);
+
+    // Bake the accumulated node transform into the vertices (one DrawItem per
+    // mesh keeps the render side flat). Directions use the inverse-transpose
+    // so non-uniform node scales don't shear the normals; a mirroring
+    // transform (negative determinant) flips the winding, undone below by
+    // reversing each triangle.
+    const glm::mat3 linear(nodeTransform);
+    const glm::mat3 normalMat = glm::inverseTranspose(linear);
+    const bool mirrored = glm::determinant(linear) < 0.0f;
 
     ModelMesh out;
     for (unsigned int i = 0; i < mesh->mNumVertices; ++i) {
         renderer::Vertex vertex;
-        vertex.position = { mesh->mVertices[i].x, mesh->mVertices[i].y,
-                            mesh->mVertices[i].z };
-        if (mesh->HasNormals())
-            vertex.normal = { mesh->mNormals[i].x, mesh->mNormals[i].y,
-                              mesh->mNormals[i].z };
+        vertex.position = glm::vec3(
+            nodeTransform * glm::vec4(mesh->mVertices[i].x, mesh->mVertices[i].y,
+                                      mesh->mVertices[i].z, 1.0f));
+        if (mesh->HasNormals()) {
+            const glm::vec3 n = normalMat * glm::vec3(mesh->mNormals[i].x,
+                                                      mesh->mNormals[i].y,
+                                                      mesh->mNormals[i].z);
+            const float len = glm::length(n);
+            if (len > 1e-12f)
+                vertex.normal = n / len;
+        }
         if (mesh->mTextureCoords[0])
             vertex.uv = { mesh->mTextureCoords[0][i].x, mesh->mTextureCoords[0][i].y };
         if (mesh->mTangents && mesh->mBitangents) {
-            const glm::vec3 tangent(mesh->mTangents[i].x, mesh->mTangents[i].y,
-                                    mesh->mTangents[i].z);
-            const glm::vec3 bitangent(mesh->mBitangents[i].x, mesh->mBitangents[i].y,
-                                      mesh->mBitangents[i].z);
+            const glm::vec3 tangent =
+                linear * glm::vec3(mesh->mTangents[i].x, mesh->mTangents[i].y,
+                                   mesh->mTangents[i].z);
+            const glm::vec3 bitangent =
+                linear * glm::vec3(mesh->mBitangents[i].x, mesh->mBitangents[i].y,
+                                   mesh->mBitangents[i].z);
             const float sign =
                 glm::dot(glm::cross(vertex.normal, tangent), bitangent) < 0.0f ? -1.0f
                                                                                : 1.0f;
-            vertex.tangent = glm::vec4(tangent, sign);
+            const float len = glm::length(tangent);
+            vertex.tangent = glm::vec4(
+                len > 1e-12f ? tangent / len : glm::vec3(1.0f, 0.0f, 0.0f), sign);
         }
         out.boundsMin = glm::min(out.boundsMin, vertex.position);
         out.boundsMax = glm::max(out.boundsMax, vertex.position);
@@ -224,6 +260,12 @@ ModelMesh processMesh(ImportContext& ctx, const aiMesh* mesh, size_t meshIndex) 
 
     for (unsigned int f = 0; f < mesh->mNumFaces; ++f) {
         const aiFace& face = mesh->mFaces[f];
+        if (mirrored && face.mNumIndices == 3) {
+            data.indices.push_back(face.mIndices[0]);
+            data.indices.push_back(face.mIndices[2]);
+            data.indices.push_back(face.mIndices[1]);
+            continue;
+        }
         for (unsigned int j = 0; j < face.mNumIndices; ++j)
             data.indices.push_back(face.mIndices[j]);
     }
@@ -243,31 +285,69 @@ ModelMesh processMesh(ImportContext& ctx, const aiMesh* mesh, size_t meshIndex) 
     material.metallicTexture = kNoTexture;
     material.roughnessTexture = kNoTexture;
     material.aoTexture = kNoTexture;
+    material.alphaCutoff = 0.5f; // glTF default; unused while the flag is off
 
     if (mesh->mMaterialIndex < ctx.aiScene_->mNumMaterials) {
         const aiMaterial* ai = ctx.aiScene_->mMaterials[mesh->mMaterialIndex];
 
+        // PBR base color (carries alpha) wins over the legacy diffuse color.
+        aiColor4D base(1.0f, 1.0f, 1.0f, 1.0f);
         aiColor3D diffuse(1.0f, 1.0f, 1.0f);
-        if (ai->Get(AI_MATKEY_COLOR_DIFFUSE, diffuse) == AI_SUCCESS)
+        if (ai->Get(AI_MATKEY_BASE_COLOR, base) == AI_SUCCESS)
+            material.baseColor = glm::vec4(base.r, base.g, base.b, base.a);
+        else if (ai->Get(AI_MATKEY_COLOR_DIFFUSE, diffuse) == AI_SUCCESS)
             material.baseColor = glm::vec4(diffuse.r, diffuse.g, diffuse.b, 1.0f);
 
-        // Color maps are flipped like the GL loader (its GL-orientation
-        // default); normal maps are not (its flipUVs default = false).
+        // Every map is flipped the same way (GL-orientation load): mixing
+        // flipped color maps with unflipped normal maps — the GL loader's
+        // accident — sampled the two at different texels of the same UV.
         material.albedoTexture =
-            loadFirstTexture(ctx, ai, aiTextureType_DIFFUSE, true, true);
+            loadFirstTexture(ctx, ai, aiTextureType_BASE_COLOR, true, true);
+        if (material.albedoTexture == kNoTexture)
+            material.albedoTexture =
+                loadFirstTexture(ctx, ai, aiTextureType_DIFFUSE, true, true);
         material.normalTexture =
-            loadFirstTexture(ctx, ai, aiTextureType_NORMALS, false, false);
+            loadFirstTexture(ctx, ai, aiTextureType_NORMALS, false, true);
         if (material.normalTexture == kNoTexture) // .obj convention
             material.normalTexture =
-                loadFirstTexture(ctx, ai, aiTextureType_HEIGHT, false, false);
+                loadFirstTexture(ctx, ai, aiTextureType_HEIGHT, false, true);
         material.metallicTexture =
             loadFirstTexture(ctx, ai, aiTextureType_METALNESS, false, true);
         material.roughnessTexture =
             loadFirstTexture(ctx, ai, aiTextureType_DIFFUSE_ROUGHNESS, false, true);
         material.aoTexture =
             loadFirstTexture(ctx, ai, aiTextureType_AMBIENT_OCCLUSION, false, true);
+
+        // Metallic/roughness FACTORS multiply the maps in the shader, so a
+        // missing factor must default to 1 when a map exists (glTF semantics)
+        // — the old fixed 0.0 metallic zeroed every metalness texture.
+        float metallic = 0.0f;
+        if (ai->Get(AI_MATKEY_METALLIC_FACTOR, metallic) != AI_SUCCESS)
+            metallic = material.metallicTexture != kNoTexture ? 1.0f : 0.0f;
+        material.metallic = metallic;
+        float roughness = 0.5f;
+        if (ai->Get(AI_MATKEY_ROUGHNESS_FACTOR, roughness) != AI_SUCCESS)
+            roughness = material.roughnessTexture != kNoTexture ? 1.0f : 0.5f;
+        material.roughness = roughness;
+
+        // The material model's emissive is scalar (emitted = albedo *
+        // emissive); fold an authored emissive color to its max channel.
+        aiColor3D emissive(0.0f, 0.0f, 0.0f);
+        if (ai->Get(AI_MATKEY_COLOR_EMISSIVE, emissive) == AI_SUCCESS)
+            material.emissive = std::max(emissive.r, std::max(emissive.g, emissive.b));
+
+        // glTF cutout transparency (MASK) -> alpha-mask discard in mesh.frag.
+        aiString alphaMode;
+        if (ai->Get(AI_MATKEY_GLTF_ALPHAMODE, alphaMode) == AI_SUCCESS &&
+            std::strcmp(alphaMode.C_Str(), "MASK") == 0) {
+            material.flags |= SV_MATERIAL_ALPHA_MASK;
+            float cutoff = 0.5f;
+            ai->Get(AI_MATKEY_GLTF_ALPHACUTOFF, cutoff);
+            material.alphaCutoff = cutoff;
+        }
     }
-    // GL parity: textured models sample the map INSTEAD of the color.
+    // GL parity: textured models sample the map INSTEAD of the color (alpha
+    // included — the map's alpha drives the mask test).
     if (material.albedoTexture != kNoTexture)
         material.baseColor = glm::vec4(1.0f);
 
@@ -276,15 +356,22 @@ ModelMesh processMesh(ImportContext& ctx, const aiMesh* mesh, size_t meshIndex) 
     return out;
 }
 
-void processNode(ImportContext& ctx, const aiNode* node, Model& model) {
+void processNode(ImportContext& ctx, const aiNode* node, Model& model,
+                 const glm::mat4& parentTransform) {
+    // Accumulate the node hierarchy's transforms and bake them into each
+    // mesh. The old loader dropped aiNode::mTransformation entirely, so any
+    // format with a real node hierarchy (FBX, glTF, DAE) imported with every
+    // part collapsed onto the model origin.
+    const glm::mat4 transform = parentTransform * toGlm(node->mTransformation);
     for (unsigned int i = 0; i < node->mNumMeshes; ++i) {
         const aiMesh* mesh = ctx.aiScene_->mMeshes[node->mMeshes[i]];
         if (mesh->mNumVertices == 0 || mesh->mNumFaces == 0)
             continue;
-        model.meshes.push_back(processMesh(ctx, mesh, model.meshes.size()));
+        model.meshes.push_back(
+            processMesh(ctx, mesh, model.meshes.size(), transform));
     }
     for (unsigned int i = 0; i < node->mNumChildren; ++i)
-        processNode(ctx, node->mChildren[i], model);
+        processNode(ctx, node->mChildren[i], model, transform);
 }
 
 } // namespace
@@ -321,7 +408,7 @@ bool importModelFile(const std::string& path, rhi::Device& device,
     const std::string filename =
         (lastSlash != std::string::npos) ? path.substr(lastSlash + 1) : path;
     out.name = filename.substr(0, filename.find_last_of('.'));
-    processNode(ctx, aiScene_->mRootNode, out);
+    processNode(ctx, aiScene_->mRootNode, out, glm::mat4(1.0f));
 
     if (out.meshes.empty()) {
         std::cerr << "ERROR: '" << path << "' contained no drawable meshes\n";

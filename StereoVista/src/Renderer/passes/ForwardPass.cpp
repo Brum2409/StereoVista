@@ -21,6 +21,11 @@ void ForwardPass::init(rhi::Device& device, rhi::ShaderCompiler& shaderCompiler,
             .setViewMask(viewMask)
             .setDepth(true, true) // reverse-Z GREATER default
             .setPolygonMode(mode)
+            // Cull mode is per-draw (DrawItem::twoSided — GL-parity models and
+            // doubleSided I3S materials draw both faces, closed meshes cull
+            // back). Dynamic cull mode is core Vulkan 1.3, so one pipeline
+            // serves both instead of a cull-mode twin.
+            .addDynamicState(VK_DYNAMIC_STATE_CULL_MODE)
             .addVertexBinding(MeshBuffer::vertexBinding())
             .externalSetLayout(0, frameSetLayout)
             .externalSetLayout(1, materialSetLayout)
@@ -46,7 +51,18 @@ void ForwardPass::record(VkCommandBuffer cmd, VkDescriptorSet frameSet,
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_.layout(),
                             0, 2, sets, 0, nullptr);
 
+    // Dynamic cull mode has no default — it must be set before the first draw
+    // (and re-armed after a pipeline switch for clarity). Track it so runs of
+    // same-sidedness draws cost one vkCmdSetCullMode, not one per draw.
+    VkCullModeFlags currentCull = VK_CULL_MODE_FLAG_BITS_MAX_ENUM;
+
     auto recordDraw = [&](const DrawItem& draw) {
+        const VkCullModeFlags cull =
+            draw.twoSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
+        if (cull != currentCull) {
+            vkCmdSetCullMode(cmd, cull);
+            currentCull = cull;
+        }
         gpu::DrawPush push{};
         push.model = draw.model;
         push.normalMatCol0 = glm::vec4(draw.normalMatrix[0], 0.0f);
@@ -73,6 +89,7 @@ void ForwardPass::record(VkCommandBuffer cmd, VkDescriptorSet frameSet,
     }
     if (anyWire) {
         wirePipeline_.bind(cmd);
+        currentCull = VK_CULL_MODE_FLAG_BITS_MAX_ENUM; // re-arm after the switch
         for (const DrawItem& draw : submission.draws)
             if (draw.mesh && draw.wireframe)
                 recordDraw(draw);

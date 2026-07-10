@@ -34,6 +34,16 @@
 #define SV_FRAME_SUN_ENABLED 2u
 #define SV_FRAME_SOFT_SHADOWS 4u // PCSS contact hardening (else fixed-width PCF)
 
+// MaterialData.flags bits
+// Cutout transparency (glTF alphaMode MASK / I3S vegetation): mesh.frag
+// discards fragments whose albedo alpha < alphaCutoff before any lighting.
+#define SV_MATERIAL_ALPHA_MASK 1u
+// Geometry is authored double-sided (I3S doubleSided / cullFace none). The
+// CPU draw path mirrors this in DrawItem::twoSided (dynamic cull mode); the
+// bit rides here as well so a future ray-tracing mode can decide hit-facing
+// per material without a CPU side table.
+#define SV_MATERIAL_TWO_SIDED 2u
+
 // One multiview view (mono = view 0 only; stereo fills both in Phase 7).
 struct ViewData {          // 144 bytes
     mat4 viewProj;
@@ -96,7 +106,8 @@ struct PointLightData {    // 48 bytes
 // hasTexture-as-float model, playbook C.8). Albedo textures are sRGB-format
 // views (hardware decode, C.6); the data textures are UNORM.
 struct MaterialData {      // 64 bytes
-    vec4 baseColor;        // rgb flat albedo when albedoTexture is invalid
+    vec4 baseColor;        // rgb flat albedo when albedoTexture is invalid; a
+                           //   multiplies the texture alpha (alpha-mask test)
     float metallic;        // factor, multiplied with metallicTexture.b
     float roughness;       // factor, multiplied with roughnessTexture.g
     float emissive;        // emitted = albedo * emissive
@@ -106,9 +117,9 @@ struct MaterialData {      // 64 bytes
     uint metallicTexture;
     uint roughnessTexture;
     uint aoTexture;        // .r
+    uint flags;            // SV_MATERIAL_* bits
+    float alphaCutoff;     // SV_MATERIAL_ALPHA_MASK discard threshold
     uint pad0;
-    uint pad1;
-    uint pad2;
 };
 
 // Per-draw push constants (128 bytes — exactly the core minimum; do not grow).

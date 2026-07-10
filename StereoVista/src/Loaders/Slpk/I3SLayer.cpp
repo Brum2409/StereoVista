@@ -271,6 +271,11 @@ MaterialDesc parseMaterialDefinition17(const json& m) {
     MaterialDesc desc;
     desc.doubleSided = getB(m, "doubleSided", false);
     desc.alphaCutoff = static_cast<float>(getD(m, "alphaCutoff", 0.25));
+    const std::string alphaMode = getS(m, "alphaMode", "opaque");
+    if (alphaMode == "mask")
+        desc.alphaMode = MaterialDesc::AlphaMode::Mask;
+    else if (alphaMode == "blend")
+        desc.alphaMode = MaterialDesc::AlphaMode::Blend;
     desc.normalTexture = parseTextureRef(m, "normalTexture");
     desc.occlusionTexture = parseTextureRef(m, "occlusionTexture");
     desc.emissiveTexture = parseTextureRef(m, "emissiveTexture");
@@ -1040,8 +1045,10 @@ bool I3SLayer::parse16SharedResource(const SlpkArchive& archive,
             if (getVec3(p, "diffuse", diffuse))
                 desc.baseColor = glm::vec4(glm::vec3(diffuse), 1.0f);
             const double transparency = getD(p, "transparency", 0.0);
-            if (transparency > 0.0 && transparency <= 1.0)
+            if (transparency > 0.0 && transparency <= 1.0) {
                 desc.baseColor.a = static_cast<float>(1.0 - transparency);
+                desc.alphaMode = MaterialDesc::AlphaMode::Blend;
+            }
             desc.doubleSided = getS(p, "cullFace", "none") == "none";
         }
     }

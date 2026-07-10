@@ -54,6 +54,13 @@ public:
     // enabled — gates the line-mode (wireframe) debug pipelines.
     bool fillModeNonSolidEnabled() const { return fillModeNonSolid_; }
 
+    // True when VK_KHR_acceleration_structure + VK_KHR_ray_query were
+    // available and enabled at device creation (docs/TODO.md §H: the planned
+    // ray-traced shadows/AO/GI mode). Gates the extra AS-build-input usage on
+    // mesh buffers today so the future BLAS builds can consume the SAME
+    // vertex/index buffers without recreating them.
+    bool rayTracingSupported() const { return rayTracingSupported_; }
+
     // Records into a transient command buffer, submits on the graphics queue
     // and blocks until completion. For setup/upload work only, never per-frame.
     void immediateSubmit(const std::function<void(VkCommandBuffer)>& record) const;
@@ -94,6 +101,7 @@ private:
     VkCommandPool immediatePool_ = VK_NULL_HANDLE;
     VkPipelineCache pipelineCache_ = VK_NULL_HANDLE;
     bool fillModeNonSolid_ = false;
+    bool rayTracingSupported_ = false;
 };
 
 } // namespace rhi

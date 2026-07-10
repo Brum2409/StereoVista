@@ -279,7 +279,13 @@ uint32_t Renderer::buildFrameData(const FrameSubmission& submission,
         frame.views[v].cameraPos = glm::vec4(cam.position, 1.0f);
     }
 
-    frame.sunDirection = glm::vec4(glm::normalize(submission.sun.direction), 0.0f);
+    // Guard the normalize: a zero direction (transient panel input) would put
+    // NaNs into the whole lighting path.
+    const glm::vec3 sunDir =
+        glm::dot(submission.sun.direction, submission.sun.direction) > 1e-12f
+            ? glm::normalize(submission.sun.direction)
+            : glm::vec3(0.0f, -1.0f, 0.0f);
+    frame.sunDirection = glm::vec4(sunDir, 0.0f);
     frame.sunColor = glm::vec4(submission.sun.color, submission.sun.intensity);
     frame.ambientColor = glm::vec4(glm::vec3(submission.ambient), 0.0f);
 

@@ -396,6 +396,7 @@ private:
         uint32_t materialIndex = 0;
         uint32_t textureIndex = 0; // renderer::kInvalidTexture when untextured
         bool ownsMaterial = false; // false = shared per-definition entry
+        bool twoSided = false;     // material doubleSided -> DrawItem::twoSided
         uint64_t gpuBytes = 0;
         uint32_t indexCount = 0;
     };

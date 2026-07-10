@@ -131,7 +131,10 @@ std::vector<int> ShadowPass::prepare(const FrameSubmission& submission,
     float sceneRadius = glm::length(sceneMax - sceneMin) * 0.5f;
     sceneRadius = std::max(sceneRadius, 1.0f);
 
-    const glm::vec3 lightDir = glm::normalize(submission.sun.direction);
+    const glm::vec3 lightDir =
+        glm::dot(submission.sun.direction, submission.sun.direction) > 1e-12f
+            ? glm::normalize(submission.sun.direction)
+            : glm::vec3(0.0f, -1.0f, 0.0f); // matches buildFrameData's guard
     const float lightDistance = sceneRadius * 2.0f;
     const glm::vec3 lightPos = sceneCenter - lightDir * lightDistance;
 

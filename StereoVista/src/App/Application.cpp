@@ -1148,6 +1148,11 @@ void Application::buildFrameSubmission(renderer::FrameSubmission& submission) co
             draw.model = modelMatrix;
             draw.normalMatrix = normalMatrix;
             draw.materialIndex = mesh.materialIndex;
+            // GL parity: the GL renderer never enabled GL_CULL_FACE for the
+            // scene, so imported files with open surfaces or inconsistent
+            // winding rendered both faces. Keep that for models; mesh.frag
+            // flips the normal on back faces so both sides light correctly.
+            draw.twoSided = true;
 
             // World bounding sphere from the local AABB corners (feeds the sun
             // shadow frustum fit).
