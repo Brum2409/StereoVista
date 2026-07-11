@@ -37,6 +37,12 @@ public:
 
 private:
     void drawMenuBar(Services& services);
+    // One 3D viewport as a real dockable window (the primary owns the central
+    // node by default; extra viewports float until docked): displays the
+    // renderer's offscreen viewport texture and reports size + input state
+    // back through Services::onViewportPanel(index, ...). Always drawn (not
+    // gated by the F1 master toggle — it IS the application content).
+    void drawViewportPanel(Services& services, unsigned int index);
     void drawAboutWindow(Services& services);
     // Build the default dock layout into the given dockspace node.
     void buildDefaultLayout(unsigned int dockspaceId, float sizeX, float sizeY);

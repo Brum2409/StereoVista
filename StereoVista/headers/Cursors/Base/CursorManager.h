@@ -31,24 +31,26 @@ public:
   // Initialize all cursor types
   void initialize();
 
-  // Update the shared 3D cursor from the latest depth readback. `depth` is
+  // Update the shared 3D cursor from the latest depth readback. Coordinates
+  // are 3D-VIEWPORT-LOCAL (the docked viewport image, or the full framebuffer
+  // on the classic fullscreen path): mousePx is the mouse in render-target
+  // pixels, viewportPx the render-target size (the depth readback's extent
+  // space). mouseInViewport=false while the GUI owns the mouse (hovering a
+  // panel / outside the viewport image) — the OS cursor is restored and the
+  // pick is skipped, keeping the last cursor state. hostWindow is the OS
+  // window hosting the 3D view (OS-cursor show/hide only). `depth` is
   // Renderer::depthSamples() (one frame stale — same class as the GL
   // glReadPixels path); proj/view are the CURRENT camera matrices (used only
   // for the background-plane fallback, like the GL version).
-  void updateCursorPosition(GLFWwindow *window, const glm::mat4 &projection,
-                            const glm::mat4 &view, const Camera &camera,
+  void updateCursorPosition(GLFWwindow *hostWindow, const glm::vec2 &mousePx,
+                            const glm::vec2 &viewportPx, bool mouseInViewport,
+                            const glm::mat4 &projection, const glm::mat4 &view,
+                            const Camera &camera,
                             const renderer::DepthReadback &depth,
                             bool forceRecalculate);
 
   // Reset frame calculation flag (call at start of each frame)
   void resetFrameCalculationFlag();
-
-  // Define the sub-rectangle of the render target the scene is drawn into, so
-  // mouse picking maps correctly when the 3D viewport doesn't fill the window.
-  // Vulkan-era coordinates are top-left origin (originY = top). Defaults (all
-  // zero / unset) reproduce full-window behavior.
-  void setViewport(int originX, int originYTop, int width, int height,
-                   int leftInset, int topInset);
 
   // Append all visible cursors to the overlay draw list.
   void renderCursors(renderer::OverlayDrawList &list, const Camera &camera);
@@ -164,19 +166,11 @@ private:
   glm::vec4 m_orbitCenterColor;
   float m_orbitCenterSphereRadius;
 
-  // Window dimensions (framebuffer pixels, refreshed every update)
-  int m_windowWidth;
-  int m_windowHeight;
+  // 3D-viewport size (render-target pixels, refreshed every update)
+  float m_viewportW;
+  float m_viewportH;
 
-  // Scene-region sub-rectangle within the render target (see setViewport).
-  int m_vpOriginX = 0;
-  int m_vpOriginYTop = 0;
-  int m_vpWidth = 0;
-  int m_vpHeight = 0;
-  int m_vpLeftInset = 0;
-  int m_vpTopInset = 0;
-
-  // Mouse position
+  // Mouse position (viewport-local render-target pixels)
   float m_lastX;
   float m_lastY;
 

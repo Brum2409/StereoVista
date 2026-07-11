@@ -19,14 +19,17 @@ namespace renderer {
 // Schütz compute point-cloud rasterizer (Phase 5) — the Vulkan rewrite of
 // Engine::ComputePointCloudRenderer.
 //
-// Standard path per frame (per-view sections of the per-pixel buffers):
+// Standard path per frame (per-view sections of the per-pixel buffers; a
+// VIEW is one (viewport, eye) pair — multiple docked viewports and stereo
+// eyes are the same mechanism):
 //   clear 64-bit framebuffer -> rasterize dispatches (one workgroup per
 //   batch, SINGLE-PASS MULTI-VIEW: each point is read and decoded once, then
-//   projected + atomicMin'd (dist24|cloudID|index) once per eye — stereo/XR
-//   does not rerun the geometry phase) -> colour lookup dispatch per view ->
-//   fullscreen resolve drawn INSIDE the scene pass after the opaque meshes
-//   (writes gl_FragDepth; reverse-Z GREATER composites points against mesh
-//   depth and updates the depth attachment).
+//   projected + atomicMin'd (dist24|cloudID|index) once per (viewport, eye)
+//   — neither stereo/XR nor extra viewports rerun the geometry phase) ->
+//   colour lookup dispatch per view -> fullscreen resolve drawn INSIDE each
+//   viewport's scene pass after the opaque meshes (writes gl_FragDepth;
+//   reverse-Z GREATER composites points against mesh depth and updates the
+//   depth attachment).
 //
 // HQS path swaps the middle for depth (atomicMin linear eye depth) ->
 // colour accumulate (atomicAdd within the relative depth window) -> HQS
@@ -70,11 +73,23 @@ public:
     void shutdown();
     void onSwapchainRecreated();
 
+    // One docked viewport's contribution to the frame: target extent + its
+    // per-eye cameras (kMaxViews entries). extent {0,0} (or views == null)
+    // skips the viewport for the frame — its GUI tab is hidden.
+    struct ViewportInput {
+        VkExtent2D extent{ 0, 0 };
+        const ViewCamera* views = nullptr;
+    };
+
     // Builds this frame's dispatch list into the slot's staging buffer
-    // (recordCompute copies it device-local before the dispatches).
-    // No-op frame (no visible clouds) leaves the pass inactive.
+    // (recordCompute copies it device-local before the dispatches). ONE flat
+    // view list covers every (viewport, eye): viewportCount * viewCount <=
+    // SV_PC_MAX_VIEWS, each view with its own extent + per-pixel sections.
+    // No-op frame (no visible clouds / no visible viewport) leaves the pass
+    // inactive.
     void prepare(const FrameSubmission& submission, uint32_t frameSlot,
-                 VkExtent2D extent, uint32_t viewCount);
+                 const ViewportInput* viewports, uint32_t viewportCount,
+                 uint32_t viewCount);
 
     bool active() const { return active_; }
 
@@ -85,11 +100,13 @@ public:
     // illegal on a compute-only family); the internal copy/clear->compute and
     // compute->compute barriers are recorded either way.
     void recordCompute(VkCommandBuffer cmd, bool asyncQueue);
-    // Fullscreen composite; call inside the scene pass after opaque geometry.
-    void recordResolve(VkCommandBuffer cmd) const;
+    // Fullscreen composite for ONE viewport (multiview across its eyes); call
+    // inside that viewport's scene pass after opaque geometry. No-op for
+    // viewports skipped by prepare().
+    void recordResolve(VkCommandBuffer cmd, uint32_t viewportIndex) const;
 
 private:
-    void ensureTargets(uint32_t viewCount);
+    void ensureTargets(VkDeviceSize totalPixels);
 
     rhi::Device* device_ = nullptr;
 
@@ -100,10 +117,10 @@ private:
     rhi::Pipeline resolvePipeline_;
     rhi::Pipeline hqsResolvePipeline_;
 
-    // Pass-owned per-pixel buffers, pixelsPerView_ * viewCount entries each
-    // (view-major sections). Created lazily on the first frame with clouds so
-    // mesh-only scenes never pay the VRAM; the HQS pair additionally waits
-    // for the first HQS frame.
+    // Pass-owned per-pixel buffers, one section per flat (viewport, eye) view
+    // (view-major; sections differ in size when viewports do). Created lazily
+    // on the first frame with clouds so mesh-only scenes never pay the VRAM;
+    // the HQS pair additionally waits for the first HQS frame.
     rhi::Buffer framebuffer_; // uint64 (dist24|cloudID|index), sentinel ~0
     rhi::Buffer colorbuffer_; // uint packed RGBA8 (lookup output)
     rhi::Buffer hqsDepth_;    // uint nearest linear depth bits, sentinel ~0
@@ -125,18 +142,34 @@ private:
                                           // strides to the sibling views
         uint32_t numBatches = 0;
     };
+    // One flat (viewport, eye) view: extent, camera, and its section of the
+    // per-pixel buffers (element offset — byte scaling depends on the buffer).
+    struct FlatView {
+        uint32_t viewport = 0;
+        VkExtent2D extent{ 0, 0 };
+        const ViewCamera* camera = nullptr;
+        VkDeviceSize pixelOffset = 0;
+        uint32_t pixels = 0;
+    };
+    // Per-viewport fullscreen-resolve state (multiview across that viewport's
+    // eyes); inactive when the viewport was skipped this frame.
+    struct ResolveRecord {
+        bool active = false;
+        gpu::PointCloudResolvePush push{};
+        gpu::PointCloudHqsResolvePush hqsPush{};
+    };
     std::vector<DispatchRecord> dispatches_; // one per cloud (all views)
-    std::vector<gpu::PointCloudLookupPush> lookupPushes_; // one per view
+    std::vector<FlatView> flatViews_;        // scratch, rebuilt per frame
+    std::vector<gpu::PointCloudLookupPush> lookupPushes_; // one per flat view
     std::vector<gpu::PointCloudDispatch> hostData_; // scratch, reused per frame
+    ResolveRecord resolves_[kMaxViewports];
     bool active_ = false;
     bool hqsActive_ = false;
-    uint32_t pixelsPerView_ = 0;
-    uint32_t viewCount_ = 1;
+    uint32_t viewCount_ = 1;  // eyes per viewport
+    uint32_t totalViews_ = 0; // flat views this frame (<= SV_PC_MAX_VIEWS)
     // Staging -> device dispatch-data copy recorded by recordCompute().
     uint32_t preparedSlot_ = 0;
     VkDeviceSize dispatchCopyBytes_ = 0;
-    gpu::PointCloudResolvePush resolvePush_{};
-    gpu::PointCloudHqsResolvePush hqsResolvePush_{};
 
     uint32_t maxGroupsX_ = 65535;
     bool warnedCloudCount_ = false;

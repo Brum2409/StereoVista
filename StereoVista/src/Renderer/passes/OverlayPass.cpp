@@ -67,17 +67,22 @@ void OverlayPass::prepare(uint32_t frameSlot, const OverlayDrawList& list,
     }
     slot.vertices.upload(list.vertices().data(), vertexBytes);
 
-    if (!slot.viewParams.valid()) {
+    // One entry per (viewport, eye) view — the record() viewIndex selects it.
+    // Unused tail entries repeat the last provided view (harmless: no batch
+    // ever records with their index).
+    constexpr uint32_t kMaxOverlayViews = kMaxViews * kMaxViewports;
+    if (!slot.viewParams.valid() ||
+        slot.viewParams.size() < sizeof(gpu::OverlayViewParams) * kMaxOverlayViews) {
         rhi::BufferDesc desc{};
-        desc.size = sizeof(gpu::OverlayViewParams) * kMaxViews;
+        desc.size = sizeof(gpu::OverlayViewParams) * kMaxOverlayViews;
         desc.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
         desc.memory = rhi::MemoryUsage::HostUpload;
         desc.debugName = "overlay view params";
         slot.viewParams.create(*device_, desc);
     }
-    gpu::OverlayViewParams params[kMaxViews]{};
-    for (uint32_t v = 0; v < kMaxViews; ++v) {
+    gpu::OverlayViewParams params[kMaxOverlayViews]{};
+    for (uint32_t v = 0; v < kMaxOverlayViews; ++v) {
         const OverlayViewInfo& info = views[std::min(v, viewCount - 1)];
         params[v].viewProj = info.viewProj;
         params[v].viewportPx = glm::vec4(info.viewportPx.x, info.viewportPx.y,

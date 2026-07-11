@@ -78,9 +78,17 @@ public:
     virtual void setSelection(int model, int mesh = -1) = 0;
 
     // ── Input / viewport state ──────────────────────────────────────────────
-    virtual glm::vec2 mousePos()      const = 0;   // pixels, window space
+    // The 3D view is a dockable GUI window since the viewport rework, so all
+    // pointer coordinates are 3D-VIEWPORT-LOCAL render-target pixels (identical
+    // to window pixels on the classic fullscreen path).
+    virtual glm::vec2 mousePos()      const = 0;   // render-target pixels
     virtual int       keyMods()       const = 0;   // current GLFW_MOD_* bitmask
-    virtual glm::vec2 viewportSize()  const = 0;   // 3D viewport, pixels
+    virtual glm::vec2 viewportSize()  const = 0;   // render-target size, pixels
+    // Where the 3D view sits on screen (ImGui screen coordinates): for HUD
+    // drawing over the viewport via ImGui draw lists (labels, readouts). NDC
+    // from viewProj() maps into exactly this rectangle.
+    virtual glm::vec2 viewportScreenPos()  const = 0;
+    virtual glm::vec2 viewportScreenSize() const = 0;
     // proj*view for this frame's camera (for world->screen label projection).
     virtual glm::mat4 viewProj()      const = 0;
 

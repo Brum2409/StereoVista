@@ -19,6 +19,7 @@
 
 #include <glm/glm.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -44,10 +45,14 @@ namespace renderer {
 //     -> PointCloudPass resolve (depth-composited fullscreen draw)
 //     -> SkyboxPass (background, depth-tested)     [multiview scene target]
 //     -> depth-picking rect copies (scene depth -> per-slot readback)
-//     -> TonemapPass + OverlayPass in one backbuffer pass (scene depth
+//     -> TonemapPass + OverlayPass in ONE per-eye resolve pass (scene depth
 //        attached: overlays depth-test post-tonemap, matching GL where
-//        tonemap lived in the mesh shader under the overlays)
-//     -> ImGui in its own backbuffer pass (no depth)
+//        tonemap lived in the mesh shader under the overlays). Target: the
+//        backbuffer on the classic fullscreen path, or the offscreen
+//        VIEWPORT TEXTURE when the GUI docks the scene as a window
+//        (setViewportOutput) — same pass either way, only the target changes
+//     -> ImGui in its own backbuffer pass (no depth; on the docked path this
+//        is the only backbuffer content and samples the viewport texture)
 //     -> optional screenshot copy -> present.
 //
 // recordFrame only sequences the passes and owns the frame-graph barriers
@@ -60,6 +65,16 @@ namespace renderer {
 // == 1; quad-buffer stereo (Phase 7) raises it to 2 and resolves both layers
 // to a stereo swapchain — nothing in the scene pass changes. Do not write
 // single-view assumptions into passes or shaders.
+//
+// MULTI-VIEWPORT: setViewportOutputs configures up to kMaxViewports docked
+// GUI viewports, each with its own extent, per-eye cameras and targets. The
+// frame then runs the scene passes ONCE PER VIEWPORT (each still a single
+// multiview pass over its eyes) while sharing everything camera-independent:
+// upload flush, shadow maps, materials, and ONE point-cloud geometry pass
+// that decodes each point once and projects it per (viewport, eye). Extents
+// differ per viewport, which is exactly why the viewports are separate
+// passes and not more multiview layers — common-extent layers would pay the
+// largest panel's fill for every panel.
 //
 // DESCRIPTORS: set 0 is ONE shared per-frame set (layout below) written once
 // per frame and bound by every scene pipeline (via externalSetLayout); set 1
@@ -177,6 +192,48 @@ public:
     uint32_t viewCount() const { return viewCount_; }
     const FrameStats& frameStats() const { return frameStats_; }
 
+    // ---- Docked-viewport output (scene-in-GUI-windows, up to kMaxViewports) ----
+    // When enabled (count > 0), EACH viewport renders the scene through its
+    // own per-eye cameras into its own layered HDR target, and the per-eye
+    // tonemap+overlay resolve lands in that viewport's offscreen LDR texture
+    // (swapchain format, sized extents[v]) which the GUI displays as an ImGui
+    // image in a dockable window; the backbuffer then carries ONLY the GUI.
+    // Shadow maps, uploads and materials are shared across viewports, and the
+    // point-cloud geometry pass projects every (viewport, eye) in ONE
+    // dispatch (decode once — see PointCloudPass). count == 0 restores the
+    // classic single-target fullscreen path (XR mirror).
+    // Device-idle when anything changed — call at a frame boundary, and only
+    // once a panel resize has settled. Mutually exclusive with XR (beginXR
+    // force-disables it; the app re-applies its config after endXR). No-op
+    // when nothing changed, so calling every frame is free.
+    // STEREO: each texture carries one layer per swapchain layer. Quad-buffer
+    // resolves each full-panel eye into its own layer (per-eye depth-tested
+    // overlays), and the per-layer GUI pass remaps every viewport image to
+    // the matching eye — stereo viewports inside a zero-parallax GUI. Side-
+    // by-side squishes both eyes into the single layer as on the classic path.
+    void setViewportOutputs(const VkExtent2D* extents, uint32_t count);
+    bool viewportOutputActive() const { return viewportOutput_; }
+    // Docked viewports currently configured (0 on the classic/XR path).
+    uint32_t viewportOutputCount() const { return viewportOutput_ ? viewportCount_ : 0; }
+    // ImGui texture handle for a viewport image (ImTextureID is the
+    // VkDescriptorSet from ImGui_ImplVulkan_AddTexture; the GUI always binds
+    // the layer-0 / left-eye set — recordFrame remaps per swapchain layer);
+    // null when off / out of range.
+    void* viewportTextureId(uint32_t viewport) const {
+        return viewport < kMaxViewports ? viewports_[viewport].guiImguiSets[0]
+                                        : nullptr;
+    }
+    VkExtent2D viewportExtent(uint32_t viewport) const {
+        return viewport < viewportCount_ ? viewports_[viewport].extent
+                                         : VkExtent2D{ 0, 0 };
+    }
+    // The extent a viewport's scene rendering / depth picking uses: the window
+    // on the classic path, that viewport's texture when docked, the HMD eye in
+    // XR. Out-of-range indices clamp to the last active viewport.
+    VkExtent2D sceneExtent(uint32_t viewport = 0) const {
+        return viewports_[std::min(viewport, viewportCount_ - 1)].extent;
+    }
+
     // ---- Async compute (see the class comment) ----
     // Enabled by default whenever the device exposes a distinct compute
     // queue; the setter is the debug-panel toggle and may flip every frame.
@@ -273,8 +330,21 @@ private:
 
     void createFrameContexts();
     void destroyFrameContexts();
-    void createSceneTarget();
-    void destroySceneDepthLayerViews();
+    // (Re)create every active viewport's layered HDR scene target at its
+    // current extent (and destroy targets of viewports beyond the count).
+    void createSceneTargets();
+    void destroySceneTargets();
+    void destroySceneDepthLayerViews(uint32_t viewport);
+    // Rebuild everything that follows the scene extents (targets + point-cloud
+    // per-pixel buffers) and drop stale depth picks. Shared by the swapchain
+    // resize and the docked-viewport reconfigure (device idle at both sites).
+    void onSceneExtentChanged();
+    // Per-viewport GUI textures (one layer per swapchain layer) + their
+    // per-layer ImGui descriptors. releaseImguiSets=false at shutdown, where
+    // the ImGui backend may already be gone (the sets then die with the app's
+    // descriptor pool).
+    void createGuiTargets();
+    void destroyGuiTargets(bool releaseImguiSets);
     void createFrameSetLayout();
     // Rebuilds the view-count-dependent GPU state (layered scene target +
     // multiview scene-pass pipelines + dropped depth samples). Shared by
@@ -286,9 +356,16 @@ private:
     // this slot's previous submission, publish its completed depth pick, and
     // reclaim retired upload-ring space.
     void beginFrameSlot(FrameContext& frame);
-    // Clamp submission.depthQueries to the scene extent, size the slot readback,
-    // and arm frame.pendingDepth for this frame's copy (view 0).
-    void armDepthPick(FrameContext& frame, const FrameSubmission& submission);
+    // Which viewports render this frame: active AND (visible OR never yet
+    // rendered — a fresh GUI texture must be drawn once before the GUI may
+    // sample it, whatever its tab state).
+    void buildRenderViewportMask(const FrameSubmission& submission,
+                                 bool outRender[kMaxViewports]) const;
+    // Clamp submission.depthQueries to the PICK viewport's extent, size the
+    // slot readback, and arm frame.pendingDepth for this frame's copy (that
+    // viewport's view 0). Skipped when the pick viewport isn't rendered.
+    void armDepthPick(FrameContext& frame, const FrameSubmission& submission,
+                      const bool renderViewport[kMaxViewports]);
     // First graphics batch (uploads -> aux -> shadow), recorded into
     // frame.preCommandBuffer. The caller owns vkBeginCommandBuffer/End.
     void recordPreScene(VkCommandBuffer cmd, const FrameSubmission& submission,
@@ -299,13 +376,16 @@ private:
     // compute (if any) records inline in the scene batch.
     bool recordAsyncCompute(FrameContext& frame);
     // Scene recording for the second graphics batch ([inline point-cloud
-    // compute when !asyncCompute] -> scene target barriers -> multiview scene
-    // pass -> depth-pick copies). Leaves sceneColor_ in
-    // COLOR_ATTACHMENT_OPTIMAL and sceneDepth_ in DEPTH_ATTACHMENT_OPTIMAL. The
-    // caller owns vkBeginCommandBuffer/End and the post-scene resolve.
+    // compute when !asyncCompute, ONCE for all viewports] -> per rendered
+    // viewport: scene target barriers -> multiview scene pass -> depth-pick
+    // copies (pick viewport only)). Leaves each rendered viewport's sceneColor
+    // in COLOR_ATTACHMENT_OPTIMAL and sceneDepth in DEPTH_ATTACHMENT_OPTIMAL.
+    // frameSets carries one per-frame set per viewport (its FrameData slice).
+    // The caller owns vkBeginCommandBuffer/End and the post-scene resolve.
     void recordScene(VkCommandBuffer cmd, FrameContext& frame,
-                     const FrameSubmission& submission, VkDescriptorSet frameSet,
-                     bool asyncCompute);
+                     const FrameSubmission& submission,
+                     const VkDescriptorSet* frameSets,
+                     const bool renderViewport[kMaxViewports], bool asyncCompute);
     void recordFrameXR(FrameContext& frame, const XrEyeTarget eyes[2], bool eyeSrgb,
                        uint32_t windowImageIndex, bool haveWindow, bool doMirror,
                        const FrameSubmission& submission, VkDescriptorSet frameSet,
@@ -320,29 +400,34 @@ private:
     void submitFrame(FrameContext& frame, bool computeActive, bool waitAcquire,
                      VkSemaphore renderFinished);
 
-    // One backbuffer-resolve target per eye, derived from viewCount_ + the
-    // swapchain layer count: mono = 1 full-window eye; quad-buffer stereo = 2
-    // full-window eyes into the 2 swapchain layers; side-by-side = 2 half-window
-    // eyes into the single (mono) backbuffer layer.
+    // One resolve target per eye of ONE viewport (extent = that viewport's),
+    // derived from viewCount_ + the swapchain layer count: mono = 1 full-rect
+    // eye; quad-buffer stereo = 2 full-rect eyes into the 2 target layers;
+    // side-by-side = 2 half-rect eyes into the single (mono) target layer.
     struct EyeResolve {
-        VkRect2D rect;             // on-screen destination (framebuffer px)
+        VkRect2D rect;             // destination rect in the target (px)
         uint32_t sceneLayer;       // scene-target array layer (eye) to sample
-        uint32_t backbufferLayer;  // swapchain image layer to render into
+        uint32_t backbufferLayer;  // target image layer to render into
         bool overlayDepthTest;     // true = per-eye scene depth; false = overlays on top
     };
-    void buildEyeLayout(EyeResolve out[kMaxViews], uint32_t& outCount) const;
-    // Fills the frame UBO/SSBO staging structs from the submission; returns
-    // the number of point-shadow slots ShadowPass assigned.
+    void buildEyeLayout(VkExtent2D extent, EyeResolve out[kMaxViews],
+                        uint32_t& outCount) const;
+    // Fills the frame UBO/SSBO staging structs from the submission (viewport-0
+    // cameras — uploadFrameBuffers patches the sibling viewports' views into
+    // their UBO slices); returns the number of point-shadow slots assigned.
     uint32_t buildFrameData(const FrameSubmission& submission, gpu::FrameData& frame,
                             std::vector<gpu::PointLightData>& lights) const;
     void uploadFrameBuffers(FrameContext& frame, const gpu::FrameData& frameData,
-                            const std::vector<gpu::PointLightData>& lights);
+                            const std::vector<gpu::PointLightData>& lights,
+                            const FrameSubmission& submission);
     VkDescriptorSet writeFrameSet(FrameContext& frame,
-                                  const std::vector<gpu::PointLightData>& lights);
+                                  const std::vector<gpu::PointLightData>& lights,
+                                  VkDeviceSize frameUboOffset);
     void recordFrame(FrameContext& frame, uint32_t imageIndex,
-                     const FrameSubmission& submission, VkDescriptorSet frameSet,
-                     bool asyncCompute, ImDrawData* uiDrawData,
-                     bool captureThisFrame);
+                     const FrameSubmission& submission,
+                     const VkDescriptorSet* frameSets,
+                     const bool renderViewport[kMaxViewports], bool asyncCompute,
+                     ImDrawData* uiDrawData, bool captureThisFrame);
     void pollScreenshot(bool blockUntilDone);
     void finishScreenshot();
 
@@ -373,17 +458,41 @@ private:
     rhi::UploadRing uploadRing_;
     static constexpr VkDeviceSize kUploadRingBytes = 64ull << 20;
 
-    // Layered HDR scene target (color + depth), one layer per view.
-    rhi::Texture sceneColor_;
-    rhi::Texture sceneDepth_;
-    // Single-layer depth views (one per view) for the per-eye backbuffer resolve
-    // attachment; the multiview scene pass uses sceneDepth_.view() (the array view).
-    VkImageView sceneDepthLayerViews_[kMaxViews]{};
-    VkExtent2D sceneExtent_{};
-    // When non-zero, createSceneTarget sizes the scene target to this instead of
+    // One renderable viewport: its layered HDR scene target (color + depth,
+    // one layer per view/eye) plus, in docked mode, the LDR GUI texture the
+    // GUI samples (one layer per swapchain layer) with its per-layer views +
+    // ImGui descriptor sets. The classic fullscreen path and XR use exactly
+    // viewport 0 with no GUI texture.
+    struct ViewportTarget {
+        VkExtent2D extent{ 0, 0 }; // scene render extent
+        rhi::Texture sceneColor;
+        rhi::Texture sceneDepth;
+        // Single-layer depth views (one per view) for the per-eye resolve
+        // attachment; the multiview scene pass uses sceneDepth.view() (array).
+        VkImageView sceneDepthLayerViews[kMaxViews]{};
+        // Docked-mode GUI texture (absent on the classic/XR path).
+        rhi::Texture guiColor;
+        uint32_t guiLayers = 0;
+        VkImageView guiLayerViews[kMaxViews]{};
+        VkDescriptorSet guiImguiSets[kMaxViews]{};
+        // False until the first frame that rendered this viewport: forces one
+        // render even when its GUI tab is hidden, so the GUI never samples an
+        // UNDEFINED-layout image. Reset when the GUI texture is (re)created.
+        bool everRendered = false;
+    };
+    ViewportTarget viewports_[kMaxViewports];
+    uint32_t viewportCount_ = 1; // renderable viewports (1 on classic/XR path)
+    bool viewportOutput_ = false; // docked mode (GUI textures exist)
+    // Extents requested by setViewportOutputs; createSceneTargets sizes the
+    // docked scene targets from these (classic path: the swapchain extent).
+    VkExtent2D viewportExtentWant_[kMaxViewports]{};
+    // When non-zero, createSceneTargets sizes viewport 0 to this instead of
     // the swapchain extent (Phase 7b: the HMD eye resolution while in XR).
     VkExtent2D sceneExtentOverride_{ 0, 0 };
     bool xrActive_ = false;
+    // FrameData UBO slice stride: one aligned FrameData per viewport in each
+    // slot's frameUbo (only views[] differs between the slices).
+    VkDeviceSize frameUboStride_ = 0;
     static constexpr VkFormat kSceneColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
     static constexpr VkFormat kSceneDepthFormat = VK_FORMAT_D32_SFLOAT;
 

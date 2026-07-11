@@ -121,7 +121,10 @@ void Scene::computeWorldBounds() {
         }
     }
     for (const std::unique_ptr<I3SSceneLayer>& layer : i3sLayers) {
-        if (!layer || !layer->visible || layer->nodeBoxes.empty())
+        // Inspector-only layer types draw nothing — their (possibly planetary)
+        // bounds must not stretch the sun-shadow fit over the real scene.
+        if (!layer || !layer->visible || layer->nodeBoxes.empty() ||
+            !layer->rendersAnything())
             continue;
         minB = glm::min(minB, layer->boundsMin);
         maxB = glm::max(maxB, layer->boundsMax);

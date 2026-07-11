@@ -7,8 +7,7 @@
 
 #include <GLFW/glfw3.h>
 
-#include "imgui/imgui.h"
-
+#include <algorithm>
 #include <cmath>
 
 namespace Cursor {
@@ -40,7 +39,7 @@ CursorManager::CursorManager()
       m_backgroundCursorPosition(0.0f), m_hasBackgroundCursorPosition(false),
       m_showOrbitCenter(false), m_alwaysShowOrbitCenter(false),
       m_orbitCenterColor(0.0f, 1.0f, 0.0f, 0.7f), m_orbitCenterSphereRadius(0.2f),
-      m_windowWidth(1920), m_windowHeight(1080), m_lastX(0.0f), m_lastY(0.0f),
+      m_viewportW(1920.0f), m_viewportH(1080.0f), m_lastX(0.0f), m_lastY(0.0f),
       m_cursorInsideWindow(true), m_positionLocked(false) {
   m_sphereCursor = std::make_unique<SphereCursor>();
   m_fragmentCursor = std::make_unique<FragmentCursor>();
@@ -55,7 +54,10 @@ void CursorManager::initialize() {
   m_planeCursor->initialize();
 }
 
-void CursorManager::updateCursorPosition(GLFWwindow *window,
+void CursorManager::updateCursorPosition(GLFWwindow *hostWindow,
+                                         const glm::vec2 &mousePx,
+                                         const glm::vec2 &viewportPx,
+                                         bool mouseInViewport,
                                          const glm::mat4 &projection,
                                          const glm::mat4 &view,
                                          const Camera &camera,
@@ -65,9 +67,10 @@ void CursorManager::updateCursorPosition(GLFWwindow *window,
   if (m_cursorPositionCalculatedThisFrame && !forceRecalculate)
     return;
 
-  // ImGui owns the mouse (hovering a panel): show the OS cursor, do nothing.
-  if (ImGui::GetIO().WantCaptureMouse) {
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+  // The GUI owns the mouse (hovering a panel / outside the docked viewport
+  // image): show the OS cursor, keep the last cursor state.
+  if (!mouseInViewport) {
+    glfwSetInputMode(hostWindow, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
     return;
   }
   if (!m_cursorInsideWindow)
@@ -98,31 +101,18 @@ void CursorManager::updateCursorPosition(GLFWwindow *window,
   if (camera.IsAnimating)
     return;
 
-  // Current mouse position (window pixels). The actual geometry pick uses the
-  // renderer's depth readback rect (queued last frame); the current mouse is
-  // used only for the region bounds test, the background fallback ray, and the
-  // last-depth cache.
-  double xpos = 0.0, ypos = 0.0;
-  glfwGetCursorPos(window, &xpos, &ypos);
-  m_lastX = static_cast<float>(xpos);
-  m_lastY = static_cast<float>(ypos);
+  // Current mouse position (viewport-local render-target pixels). The actual
+  // geometry pick uses the renderer's depth readback rect (queued last frame);
+  // the current mouse is used only for the bounds test, the background
+  // fallback ray, and the last-depth cache.
+  m_lastX = mousePx.x;
+  m_lastY = mousePx.y;
+  m_viewportW = std::max(viewportPx.x, 1.0f);
+  m_viewportH = std::max(viewportPx.y, 1.0f);
 
-  int winW = 0, winH = 0;
-  glfwGetWindowSize(window, &winW, &winH);
-  if (winW > 0)
-    m_windowWidth = winW;
-  if (winH > 0)
-    m_windowHeight = winH;
-
-  // Resolve the scene-region sub-rectangle (falls back to the full window).
-  const int vpW = (m_vpWidth > 0) ? m_vpWidth : m_windowWidth;
-  const int vpH = (m_vpHeight > 0) ? m_vpHeight : m_windowHeight;
-  const float rx = m_lastX - static_cast<float>(m_vpLeftInset);
-  const float ryTop = m_lastY - static_cast<float>(m_vpTopInset);
-
-  // Outside the scene region (over a docked panel / letterbox): invalidate.
-  if (rx < 0.0f || rx >= static_cast<float>(vpW) || ryTop < 0.0f ||
-      ryTop >= static_cast<float>(vpH)) {
+  // Outside the render target (the image edge during a resize): invalidate.
+  if (m_lastX < 0.0f || m_lastX >= m_viewportW || m_lastY < 0.0f ||
+      m_lastY >= m_viewportH) {
     m_cursorPositionValid = false;
     m_sphereCursor->setPositionValid(false);
     m_fragmentCursor->setPositionValid(false);
@@ -135,10 +125,10 @@ void CursorManager::updateCursorPosition(GLFWwindow *window,
                                 m_fragmentCursor->isVisible() ||
                                 m_planeCursor->isVisible();
 
-  // NDC of the current mouse within the scene region (Vulkan convention:
+  // NDC of the current mouse within the viewport (Vulkan convention:
   // top -> -1), reused by the cache re-projection and background fallback.
-  const float ndcX = (rx / static_cast<float>(vpW)) * 2.0f - 1.0f;
-  const float ndcY = (ryTop / static_cast<float>(vpH)) * 2.0f - 1.0f;
+  const float ndcX = (m_lastX / m_viewportW) * 2.0f - 1.0f;
+  const float ndcY = (m_lastY / m_viewportH) * 2.0f - 1.0f;
   const glm::mat4 currentInvVP = glm::inverse(projection * view);
 
   // --- Geometry pick from the renderer's depth readback (one frame stale) ---
@@ -212,7 +202,7 @@ void CursorManager::updateCursorPosition(GLFWwindow *window,
       m_cursorPositionCalculatedThisFrame = true;
       return;
     }
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
+    glfwSetInputMode(hostWindow, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
   } else {
     m_cursorPositionValid = false;
     m_sphereCursor->setPositionValid(false);
@@ -227,7 +217,7 @@ void CursorManager::updateCursorPosition(GLFWwindow *window,
       m_cursorPositionCalculatedThisFrame = true;
       return;
     }
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    glfwSetInputMode(hostWindow, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
   }
 
   m_cursorPositionCalculatedThisFrame = true;
@@ -290,14 +280,9 @@ void CursorManager::renderOrbitCenter(renderer::OverlayDrawList &list,
 glm::vec3
 CursorManager::calculateBackgroundCursorPosition(const glm::mat4 &projection,
                                                  const glm::mat4 &view) {
-  const int vpW = (m_vpWidth > 0) ? m_vpWidth : m_windowWidth;
-  const int vpH = (m_vpHeight > 0) ? m_vpHeight : m_windowHeight;
-  const float mouseX = m_lastX - static_cast<float>(m_vpLeftInset);
-  const float mouseY = m_lastY - static_cast<float>(m_vpTopInset);
-
   // NDC (Vulkan convention: top -> -1; the projection carries the Y-flip).
-  const float x = (mouseX / static_cast<float>(vpW)) * 2.0f - 1.0f;
-  const float y = (mouseY / static_cast<float>(vpH)) * 2.0f - 1.0f;
+  const float x = (m_lastX / m_viewportW) * 2.0f - 1.0f;
+  const float y = (m_lastY / m_viewportH) * 2.0f - 1.0f;
 
   // Reverse-Z: near plane -> 1, far plane -> 0. Mix the two ray hits to land a
   // point mid-frustum along the mouse ray.
@@ -308,16 +293,6 @@ CursorManager::calculateBackgroundCursorPosition(const glm::mat4 &projection,
   farWorld /= farWorld.w;
 
   return glm::mix(glm::vec3(nearWorld), glm::vec3(farWorld), 0.5f);
-}
-
-void CursorManager::setViewport(int originX, int originYTop, int width,
-                                int height, int leftInset, int topInset) {
-  m_vpOriginX = originX;
-  m_vpOriginYTop = originYTop;
-  m_vpWidth = width;
-  m_vpHeight = height;
-  m_vpLeftInset = leftInset;
-  m_vpTopInset = topInset;
 }
 
 } // namespace Cursor

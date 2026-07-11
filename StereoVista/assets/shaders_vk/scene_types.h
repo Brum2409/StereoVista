@@ -19,6 +19,11 @@
 // ============================================================================
 
 #define SV_MAX_VIEWS 2
+// Dockable 3D viewports the renderer can output at once (each renders up to
+// SV_MAX_VIEWS eye views into its own targets). Raising this must also raise
+// SV_PC_MAX_VIEWS (pointcloud_types.h) — the point-cloud geometry dispatch
+// projects every (viewport, eye) in one pass; GpuTypes.h asserts the product.
+#define SV_MAX_VIEWPORTS 4
 #define SV_MAX_POINT_LIGHTS 16
 #define SV_MAX_SHADOWED_POINT_LIGHTS 4
 #define SV_POINT_SHADOW_RESOLUTION 1024

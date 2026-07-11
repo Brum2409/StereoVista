@@ -56,11 +56,12 @@ void drawDaylightSection(Services& services, scene::I3SSceneLayer& layer) {
     ImGui::SameLine();
     if (ImGui::SmallButton("Now")) {
         const std::time_t now = std::time(nullptr);
-        if (const std::tm* utc = std::gmtime(&now)) {
-            dl.year = utc->tm_year + 1900;
-            dl.month = utc->tm_mon + 1;
-            dl.day = utc->tm_mday;
-            dl.localHour = float(utc->tm_hour) + float(utc->tm_min) / 60.0f +
+        std::tm utc{};
+        if (gmtime_s(&utc, &now) == 0) {
+            dl.year = utc.tm_year + 1900;
+            dl.month = utc.tm_mon + 1;
+            dl.day = utc.tm_mday;
+            dl.localHour = float(utc.tm_hour) + float(utc.tm_min) / 60.0f +
                            dl.utcOffsetHours;
             while (dl.localHour < 0.0f)
                 dl.localHour += 24.0f;
@@ -177,7 +178,7 @@ void drawInspectorSection(Services& services, scene::I3SSceneLayer& layer) {
 
     // Hover pick: the depth cursor under the mouse -> deepest drawn node.
     layer.hoverNode = -1;
-    if (layer.hoverInfo && !ImGui::GetIO().WantCaptureMouse) {
+    if (layer.hoverInfo && services.viewportHovered()) {
         glm::vec3 world;
         if (services.pluginContext().cursorWorldPos(world))
             layer.hoverNode = layer.pickNodeAt(world);
@@ -273,6 +274,11 @@ void drawLayerInspector(Services& services, scene::I3SSceneLayer& layer,
     // ---- summary ----
     ImGui::Text("%s  v%s  (%s)", info.typeString.c_str(), info.version.c_str(),
                 info.profile.empty() ? "-" : info.profile.c_str());
+    if (!layer.rendersAnything())
+        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f),
+                           "\"%s\" layers are not renderable yet — node "
+                           "tree/bounds inspector only.",
+                           info.typeString.c_str());
     if (info.sr.isGeographic())
         ImGui::Text("CRS: WGS84 (wkid %d), geographic", info.sr.wkid);
     else

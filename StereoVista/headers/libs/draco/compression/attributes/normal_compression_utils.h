@@ -243,8 +243,10 @@ class OctahedronToolBox {
     ut = ut + ut - corner_point_t;
     if (sign_s * sign_t >= 0) {
       uint32_t temp = us;
-      us = -ut;
-      ut = -temp;
+      // Local patch: (0 - x) instead of unary minus on unsigned, which MSVC
+      // /sdl elevates to error C4146. Two's-complement result is identical.
+      us = 0 - ut;
+      ut = 0 - temp;
     } else {
       std::swap(us, ut);
     }

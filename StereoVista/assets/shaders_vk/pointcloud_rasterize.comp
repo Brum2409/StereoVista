@@ -37,7 +37,7 @@ layout(buffer_reference, scalar, buffer_reference_align = 8) restrict coherent b
 // argument temporaries AliasedPointer, which would defeat the restrict.
 void pcWritePixel(uint view, ivec2 p, uint64_t entry) {
     restrict PcFramebuffer fb = PcFramebuffer(g_viewFramebuffer[view]);
-    int idx = p.y * g_d.imageWidth + p.x;
+    int idx = p.y * g_viewImageSize[view].x + p.x;
     if (entry < fb.px[idx])
         atomicMin(fb.px[idx], entry);
 }
@@ -51,11 +51,10 @@ void pcProcessPoint(uint view, ivec2 px, float ndcZ, float viewDepth, int radius
     uint hi = (dist24 << 8) | (g_d.cloudID & 0xFFu);
     uint64_t entry = (uint64_t(hi) << 32) | uint64_t(index);
 
+    ivec2 imageSize = g_viewImageSize[view];
     if (radius <= 0) {
         // Single-pixel fast path (splatting off / far points).
-        pcWritePixel(view,
-                     clamp(px, ivec2(0), ivec2(g_d.imageWidth - 1, g_d.imageHeight - 1)),
-                     entry);
+        pcWritePixel(view, clamp(px, ivec2(0), imageSize - 1), entry);
         return;
     }
 
@@ -68,7 +67,7 @@ void pcProcessPoint(uint view, ivec2 px, float ndcZ, float viewDepth, int radius
             if (dx * dx + dy * dy > r2)
                 continue;
             ivec2 p = px + ivec2(dx, dy);
-            if (p.x < 0 || p.y < 0 || p.x >= g_d.imageWidth || p.y >= g_d.imageHeight)
+            if (p.x < 0 || p.y < 0 || p.x >= imageSize.x || p.y >= imageSize.y)
                 continue;
             pcWritePixel(view, p, entry);
         }

@@ -6,6 +6,7 @@
 
 #include <glm/glm.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <vector>
@@ -28,6 +29,12 @@ struct ViewCamera {
     glm::mat4 view{ 1.0f };
     glm::mat4 proj{ 1.0f }; // from the renderer::projection factories ONLY
     glm::vec3 position{ 0.0f };
+};
+
+// Per-eye cameras of one docked viewport (mono duplicates view 0), for the
+// viewports beyond the primary — see FrameSubmission's multi-viewport block.
+struct ViewportCameras {
+    ViewCamera views[kMaxViews];
 };
 
 struct DrawItem {
@@ -173,7 +180,23 @@ struct SkyState {
 };
 
 struct FrameSubmission {
+    // Per-eye cameras of the PRIMARY viewport (viewport 0). The sun shadow
+    // fallback fit and the I3S node selection reference views[0]; XR overwrites
+    // both entries with the HMD eye poses.
     ViewCamera views[kMaxViews];
+
+    // ---- Multi-viewport (dockable GUI viewports, Renderer::setViewportOutputs)
+    // Viewports 1..viewportCount-1 take their per-eye cameras from
+    // extraViewports[i-1]; all viewports share the draw list, lights, sky and
+    // settings — only the cameras (and the target extents, configured on the
+    // renderer) differ. viewportHidden[v] skips v's scene rendering for the
+    // frame (its GUI tab is not visible) without touching any GPU state.
+    uint32_t viewportCount = 1;
+    ViewportCameras extraViewports[kMaxViewports > 1 ? kMaxViewports - 1 : 1];
+    bool viewportHidden[kMaxViewports] = {};
+    // The viewport the depthQueries below sample (the one under the mouse).
+    uint32_t depthPickViewport = 0;
+
     std::vector<DrawItem> draws;
     SunState sun;
     std::vector<PointLightState> pointLights; // beyond kMaxPointLights ignored
@@ -205,5 +228,14 @@ struct FrameSubmission {
     // here so ImGui can sample it later in the same frame.
     std::function<void(VkCommandBuffer)> recordAux;
 };
+
+// The per-eye camera array of viewport `viewport` (0 = the primary views[]).
+// Out-of-range indices clamp to the highest camera the submission filled, so
+// renderer-side viewport counts may briefly exceed the submission's during a
+// config transition without reading garbage.
+inline const ViewCamera* viewportViews(const FrameSubmission& s, uint32_t viewport) {
+    viewport = std::min(viewport, std::max(s.viewportCount, 1u) - 1u);
+    return viewport == 0 ? s.views : s.extraViewports[viewport - 1].views;
+}
 
 } // namespace renderer

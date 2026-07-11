@@ -17,6 +17,7 @@ class Services;
 
 // Window titles — shared by the panels (Begin) and the dock-layout builder.
 namespace Windows {
+inline constexpr const char* Viewport    = "Viewport";
 inline constexpr const char* Scene       = "Scene";
 inline constexpr const char* Inspector   = "Inspector";
 inline constexpr const char* Settings    = "Settings";

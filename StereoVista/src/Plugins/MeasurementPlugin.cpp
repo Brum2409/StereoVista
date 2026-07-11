@@ -46,9 +46,10 @@ void MeasurementPlugin::onRenderMenu(PluginContext& /*ctx*/) {
 // ── ImGui: value labels (always) + settings window ──────────────────────────
 void MeasurementPlugin::onRenderUI(PluginContext& ctx) {
     // Value labels over the 3D view are independent of the settings window.
-    const ImGuiViewport* vp = ImGui::GetMainViewport();
-    m_tool.drawLabels(ctx.viewProj(), glm::vec2(vp->Pos.x, vp->Pos.y),
-                      glm::vec2(vp->Size.x, vp->Size.y));
+    // The context reports where the view sits on screen (the docked viewport
+    // image, or the whole window on the classic fullscreen path).
+    m_tool.drawLabels(ctx.viewProj(), ctx.viewportScreenPos(),
+                      ctx.viewportScreenSize());
 
     if (!m_windowOpen) return;
     if (ImGui::Begin("Measure", &m_windowOpen)) {

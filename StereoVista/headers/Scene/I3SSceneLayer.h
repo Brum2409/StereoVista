@@ -187,6 +187,12 @@ public:
     bool rendersPoints() const {
         return info.type == i3s::LayerType::PointCloud;
     }
+    // False for recognized-but-unrenderable types (feature-symbol "Point",
+    // BSL "Building"): they open for the inspector only and must not drive
+    // camera framing or the scene world bounds.
+    bool rendersAnything() const {
+        return rendersGeometry() || rendersPoints();
+    }
 
     // ---- point-cloud rendering (M3) ----------------------------------------
     // One PointCloudGpu pool per layer; resident nodes own fixed 2048-point

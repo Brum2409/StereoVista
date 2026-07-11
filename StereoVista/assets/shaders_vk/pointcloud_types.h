@@ -25,10 +25,13 @@
 // cloudID packs into 8 bits of the 64-bit framebuffer entry.
 #define SV_PC_MAX_CLOUDS 256
 // Upper bound on the views ONE geometry dispatch projects (single-pass
-// multi-view: decode once, write every eye). Must equal the renderer's
-// SV_MAX_VIEWS — static_asserted in GpuTypes.h; scene_types.h is deliberately
-// not included here (see the header comment).
-#define SV_PC_MAX_VIEWS 2
+// multi-view: decode once, write every view). A view is one (viewport, eye)
+// pair since the multi-viewport rework, so this must equal the renderer's
+// SV_MAX_VIEWS * SV_MAX_VIEWPORTS — static_asserted in GpuTypes.h;
+// scene_types.h is deliberately not included here (see the header comment).
+// The per-frame cost scales with the REAL view count (the g_view* loops run
+// pc.viewCount iterations); this cap only sizes the per-invocation arrays.
+#define SV_PC_MAX_VIEWS 8
 // sizeof(PointCloudDispatch). GLSL has no sizeof, but the geometry shaders
 // stride from the pushed view-0 struct to its view siblings with this;
 // GpuTypes.h static_asserts it against the real C++ sizeof.
@@ -44,14 +47,16 @@ struct PointCloudBatch {   // 32 bytes
 };
 
 // One (cloud, view) entry of the frame's dispatch array (cloud-major,
-// view-minor). Built per frame by renderer::PointCloudPass into a HostUpload
-// staging buffer and copied into a DEVICE-LOCAL array at the top of the frame
-// — the geometry workgroups and the per-pixel lookup dereference it, so these
-// reads must hit VRAM/L2, never host memory across PCIe. The geometry passes
-// are single-pass multi-view: ONE dispatch per cloud receives the view-0
-// address, reads the decode-invariant fields + view 0 from it, and strides
-// SV_PC_DISPATCH_STRIDE to the sibling views for their matrices and targets;
-// the lookup pass still reads one struct per (cloud, view).
+// view-minor; a view is one (viewport, eye) pair). Built per frame by
+// renderer::PointCloudPass into a HostUpload staging buffer and copied into a
+// DEVICE-LOCAL array at the top of the frame — the geometry workgroups and
+// the per-pixel lookup dereference it, so these reads must hit VRAM/L2,
+// never host memory across PCIe. The geometry passes are single-pass
+// multi-view: ONE dispatch per cloud receives the view-0 address, reads the
+// decode-invariant fields + view 0 from it, and strides
+// SV_PC_DISPATCH_STRIDE to the sibling views for their matrices, targets and
+// image sizes (viewports differ in extent); the lookup pass still reads one
+// struct per (cloud, view).
 // sizeof is padded to 400 (multiple of 16) so the mat4/vec4 members of every
 // array element sit on 16-byte addresses (aligned vector loads).
 struct PointCloudDispatch { // 400 bytes

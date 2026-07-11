@@ -57,8 +57,10 @@ public:
     explicit MainPluginContext(Application& app) : app_(app) {}
 
     scene::Scene&      scene() override           { return app_.scene_; }
-    const Camera&      camera() const override    { return app_.camera_; }
-    glm::vec3          cameraPosition() const override { return app_.camera_.Position; }
+    // Camera of the ACTIVE viewport — plugin picking/interaction follows the
+    // viewport the mouse is over, like every other input path.
+    const Camera&      camera() const override    { return app_.activeCamera(); }
+    glm::vec3          cameraPosition() const override { return app_.activeCamera().Position; }
     core::UndoManager& undo() override            { return app_.undo_; }
 
     renderer::OverlayDrawList& overlay() override { return app_.overlay_; }
@@ -88,16 +90,13 @@ public:
         app_.selection_.mesh = mesh;
     }
 
-    glm::vec2 mousePos() const override {
-        double cx = 0.0, cy = 0.0;
-        glfwGetCursorPos(app_.window_.handle(), &cx, &cy);
-        return glm::vec2(float(cx), float(cy));
-    }
+    // 3D-viewport-local input (docked viewport image or the full framebuffer
+    // on the classic fullscreen path) — see Application::updateSceneInput.
+    glm::vec2 mousePos() const override { return app_.sceneInput_.mousePx; }
     int keyMods() const override { return app_.currentMods(); }
-    glm::vec2 viewportSize() const override {
-        const VkExtent2D extent = app_.swapchain_.extent();
-        return glm::vec2(float(extent.width), float(extent.height));
-    }
+    glm::vec2 viewportSize() const override { return app_.sceneInput_.sizePx; }
+    glm::vec2 viewportScreenPos() const override { return app_.sceneInput_.screenPos; }
+    glm::vec2 viewportScreenSize() const override { return app_.sceneInput_.screenSize; }
     glm::mat4 viewProj() const override {
         glm::mat4 view(1.0f), proj(1.0f);
         app_.cameraMatrices(view, proj);
@@ -132,6 +131,50 @@ public:
     Tools::ClipPlaneTool&   clipTool() override      { return app_.clipPlaneTool_; }
     Plugins::PluginManager& plugins() override       { return app_.pluginManager_; }
     Plugins::PluginContext& pluginContext() override { return *app_.pluginContext_; }
+
+    // ---- Docked 3D viewports ----
+    uint32_t viewportPanelCount() const override {
+        return static_cast<uint32_t>(app_.viewports_.size());
+    }
+    const char* viewportPanelName(uint32_t index) const override {
+        return index < app_.viewports_.size() ? app_.viewports_[index].name.c_str()
+                                              : "Viewport";
+    }
+    Gui::ViewportDisplay viewportDisplay(uint32_t index) const override {
+        Gui::ViewportDisplay d;
+        d.active = app_.renderer_.viewportOutputActive();
+        if (index < app_.renderer_.viewportOutputCount()) {
+            d.textureId = app_.renderer_.viewportTextureId(index);
+            const VkExtent2D extent = app_.renderer_.viewportExtent(index);
+            d.width = extent.width;
+            d.height = extent.height;
+        }
+        return d;
+    }
+    void onViewportPanel(uint32_t index, const Gui::ViewportPanelState& state) override {
+        if (index < app_.viewports_.size())
+            app_.viewports_[index].ui = state;
+    }
+    bool canAddViewport() const override {
+        return app_.viewports_.size() < renderer::kMaxViewports &&
+               app_.renderer_.viewportOutputActive();
+    }
+    void addViewport() override { app_.addViewport(); }
+    void closeViewport(uint32_t index) override {
+        // Never the primary; the entry is erased at the next frame boundary
+        // (reconcileViewportOutput), where the renderer reconfigures device-idle.
+        if (index > 0 && index < app_.viewports_.size())
+            app_.viewports_[index].open = false;
+    }
+    bool viewportHovered() const override {
+        if (app_.renderer_.viewportOutputActive()) {
+            for (const Application::AppViewport& vp : app_.viewports_)
+                if (vp.ui.shown && vp.ui.hovered)
+                    return true;
+            return false;
+        }
+        return !ImGui::GetIO().WantCaptureMouse;
+    }
 
     Gui::FrameDiagnostics diagnostics() const override {
         Gui::FrameDiagnostics d;
@@ -335,7 +378,7 @@ public:
         }
         const glm::vec3 local = (lo.x > hi.x) ? glm::vec3(0.0f) : (lo + hi) * 0.5f;
         const glm::vec3 world = glm::vec3(m.modelMatrix() * glm::vec4(local, 1.0f));
-        app_.camera_.StartCenteringAnimation(world);
+        app_.activeCamera().StartCenteringAnimation(world);
     }
 
     renderer::gpu::MaterialData* materialForMesh(int model, int mesh) override {
@@ -454,6 +497,13 @@ void Application::init() {
     // context above).
     guiServices_ = std::make_unique<MainGuiServices>(*this);
 
+    // The primary viewport entry (always present; never closable). Its camera
+    // is camera_ — see viewportCamera(). Extra viewports come from the View menu.
+    AppViewport primary;
+    primary.id = 0;
+    primary.name = "Viewport";
+    viewports_.push_back(std::move(primary));
+
     // Tools record through the app-owned undo stack.
     clipPlaneTool_.setUndoManager(&undo_);
 
@@ -503,59 +553,77 @@ void Application::loadScene() {
 }
 
 void Application::beginNavCapture() {
-    GLFWwindow* window = window_.handle();
-    // Disabled cursor = unbounded relative motion; record the baseline AFTER
-    // disabling so the first frame's delta is zero (no view snap).
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-    glfwGetCursorPos(window, &lastMouseX_, &lastMouseY_);
+    // Capture on the OS window hosting the 3D view (the main window, or the
+    // ImGui-backend window when the Viewport panel is dragged out). Disabled
+    // cursor = unbounded relative motion; record the baseline AFTER disabling
+    // so the first frame's delta is zero (no view snap).
+    navWindow_ = sceneInput_.hostWindow ? sceneInput_.hostWindow : window_.handle();
+    glfwSetInputMode(navWindow_, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    glfwGetCursorPos(navWindow_, &lastMouseX_, &lastMouseY_);
 }
 
 void Application::endNavCapture() {
-    glfwSetInputMode(window_.handle(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    if (navWindow_)
+        glfwSetInputMode(navWindow_, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    navWindow_ = nullptr;
 }
 
 void Application::startOrbit() {
-    if (camera_.IsAnimating)
+    // The viewport under the mouse owns the interaction (activeViewport_ is
+    // frozen by updateSceneInput for the whole drag).
+    Camera& cam = activeCamera();
+    if (cam.IsAnimating)
         return;
     orbiting_ = true;
     if (cursorManager_.isCursorPositionValid()) {
         const glm::vec3 cursor = cursorManager_.getCursorPosition();
         if (settings_.camera.orbitAroundCursor) {
-            camera_.UpdateCursorInfo(cursor, true);
-            camera_.StartOrbiting(true); // orbit about the 3D cursor point
+            cam.UpdateCursorInfo(cursor, true);
+            cam.StartOrbiting(true); // orbit about the 3D cursor point
         } else {
             // Standard orbit: pivot at the cursor's depth in front of the eye.
-            const float depth = glm::length(cursor - camera_.Position);
-            camera_.SetOrbitPointDirectly(camera_.Position + camera_.Front * depth);
-            camera_.StartOrbiting();
+            const float depth = glm::length(cursor - cam.Position);
+            cam.SetOrbitPointDirectly(cam.Position + cam.Front * depth);
+            cam.StartOrbiting();
         }
         cursorManager_.setCapturedCursorPosition(cursor);
     } else {
-        camera_.SetOrbitPointDirectly(camera_.Position +
-                                      camera_.Front * camera_.OrbitDistance);
-        camera_.StartOrbiting();
+        cam.SetOrbitPointDirectly(cam.Position + cam.Front * cam.OrbitDistance);
+        cam.StartOrbiting();
     }
     beginNavCapture();
 }
 
 void Application::updateCamera(float dt) {
-    GLFWwindow* window = window_.handle();
     ImGuiIO& io = ImGui::GetIO();
 
-    // Push the tunable navigation feel onto the Camera each frame (the panels
-    // edit settings_, not the Camera directly).
-    camera_.zoomToCursor = settings_.camera.zoomToCursor;
-    camera_.orbitAroundCursor = settings_.camera.orbitAroundCursor;
-    camera_.MouseSensitivity = settings_.camera.sensitivity;
-    camera_.speedFactor = settings_.camera.speedFactor;
-    camera_.useSmoothScrolling = settings_.camera.useSmoothScrolling;
-    camera_.scrollMomentum = settings_.camera.scrollMomentum;
-    camera_.scrollDeceleration = settings_.camera.scrollDeceleration;
-    camera_.maxScrollVelocity = settings_.camera.maxScrollVelocity;
+    // Push the tunable navigation feel onto EVERY viewport camera each frame
+    // (the panels edit settings_, not the Cameras directly).
+    for (size_t v = 0; v < viewports_.size(); ++v) {
+        Camera& cam = viewportCamera(v);
+        cam.zoomToCursor = settings_.camera.zoomToCursor;
+        cam.orbitAroundCursor = settings_.camera.orbitAroundCursor;
+        cam.MouseSensitivity = settings_.camera.sensitivity;
+        cam.speedFactor = settings_.camera.speedFactor;
+        cam.useSmoothScrolling = settings_.camera.useSmoothScrolling;
+        cam.scrollMomentum = settings_.camera.scrollMomentum;
+        cam.scrollDeceleration = settings_.camera.scrollDeceleration;
+        cam.maxScrollVelocity = settings_.camera.maxScrollVelocity;
+    }
 
-    const bool lmb = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
-    const bool mmb = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS;
-    const bool rmb = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+    // Interactions target the viewport under the mouse (frozen while a drag
+    // runs — updateSceneInput never retargets mid-drag).
+    Camera& camera = activeCamera();
+
+    // Buttons through ImGui's aggregated io (fed by callbacks on the main
+    // window AND every backend-owned OS window) so interaction keeps working
+    // when the Viewport panel is dragged into its own window. `hovered` is
+    // this frame's "pointer over the 3D view" — the gate for STARTING any
+    // scene interaction; active drags run to release regardless.
+    const bool lmb = io.MouseDown[ImGuiMouseButton_Left];
+    const bool rmb = io.MouseDown[ImGuiMouseButton_Right];
+    const bool mmb = io.MouseDown[ImGuiMouseButton_Middle];
+    const bool hovered = sceneInput_.hovered;
     const int mods = currentMods();
     const bool shiftHeld = (mods & GLFW_MOD_SHIFT) != 0;
     const bool lmbPress = lmb && !prevLmb_;
@@ -569,7 +637,7 @@ void Application::updateCamera(float dt) {
     if (gizmoDragging_) {
         const Plugins::PickRay ray = mouseRayCurrent();
         if (lmb) {
-            gizmo_.updateDrag(ray.origin, ray.direction, camera_.Position, shiftHeld);
+            gizmo_.updateDrag(ray.origin, ray.direction, camera.Position, shiftHeld);
             if (gizmoTargetPlane_)
                 clipPlaneTool_.syncActiveNormalFromGizmo(); // rotate -> plane normal
         } else {
@@ -579,21 +647,21 @@ void Application::updateCamera(float dt) {
             gizmoDragging_ = false;
         }
         gizmoTookLmb = true;
-    } else if (gizmo_.hasTarget() && !io.WantCaptureMouse && !navActive()) {
+    } else if (gizmo_.hasTarget() && hovered && !navActive()) {
         const Plugins::PickRay ray = mouseRayCurrent();
         if (lmbPress) {
             const Tools::TransformGizmo::Handle h =
-                gizmo_.hitTest(ray.origin, ray.direction, camera_.Position);
+                gizmo_.hitTest(ray.origin, ray.direction, camera.Position);
             if (h != Tools::TransformGizmo::Handle::None) {
                 if (gizmoTargetPlane_) clipPlaneTool_.captureGizmoUndo();
                 else beginGizmoUndo();
-                gizmo_.beginDrag(h, ray.origin, ray.direction, camera_.Position);
+                gizmo_.beginDrag(h, ray.origin, ray.direction, camera.Position);
                 gizmoDragging_ = true;
                 gizmoTookLmb = true;
             }
         }
         if (!gizmoDragging_)
-            gizmo_.updateHover(ray.origin, ray.direction, camera_.Position);
+            gizmo_.updateHover(ray.origin, ray.direction, camera.Position);
     } else if (!gizmo_.hasTarget()) {
         gizmo_.clearInteractionPoint();
     }
@@ -607,11 +675,11 @@ void Application::updateCamera(float dt) {
             if (now == prev)
                 return;
             if (now) { // press
-                owned = !suppressPress && !navActive() && !io.WantCaptureMouse &&
+                owned = !suppressPress && !navActive() && hovered &&
                         pluginManager_.dispatchMouseButton(*pluginContext_, button,
                                                            GLFW_PRESS, mods);
             } else {   // release
-                if (owned || (!navActive() && !io.WantCaptureMouse))
+                if (owned || (!navActive() && hovered))
                     pluginManager_.dispatchMouseButton(*pluginContext_, button,
                                                        GLFW_RELEASE, mods);
                 owned = false;
@@ -623,13 +691,11 @@ void Application::updateCamera(float dt) {
     }
 
     // ---- Camera nav + click-to-select (skips the LMB the gizmo/plugin took) ----
-    if (!navActive() && !gizmoDragging_ && !io.WantCaptureMouse) {
+    if (!navActive() && !gizmoDragging_ && hovered) {
         if (lmb && !lmbOwned_ && !gizmoTookLmb) {
             // Capture a click candidate: a left press that releases without
             // dragging becomes a selection at the 3D cursor's world point.
-            double cx = 0.0, cy = 0.0;
-            glfwGetCursorPos(window, &cx, &cy);
-            lmbPressPos_ = glm::vec2(float(cx), float(cy));
+            lmbPressPos_ = sceneInput_.mousePx;
             lmbDragDist_ = 0.0f;
             lmbClickCandidate_ = true;
             clickCursorValid_ = cursorManager_.isCursorPositionValid();
@@ -637,7 +703,7 @@ void Application::updateCamera(float dt) {
                 clickCursorValid_ ? cursorManager_.getCursorPosition() : glm::vec3(0.0f);
             startOrbit();
         } else if (mmb && !mmbOwned_) {
-            camera_.StartPanning();
+            camera.StartPanning();
             panning_ = true;
             beginNavCapture();
         } else if (rmb && !rmbOwned_) {
@@ -648,26 +714,27 @@ void Application::updateCamera(float dt) {
         // End the active drag when its button releases; otherwise apply the
         // relative motion to the camera.
         if (orbiting_ && !lmb) {
-            camera_.StopOrbiting();
+            camera.StopOrbiting();
             orbiting_ = false;
             endNavCapture();
-            // A left click that barely moved selects the object under it. (While
-            // measuring, the MeasurementPlugin consumes the press, so no orbit
-            // candidate is started and this never runs.)
-            if (lmbClickCandidate_ && lmbDragDist_ < kClickThresholdPx &&
-                !io.WantCaptureMouse)
+            // A left click that barely moved selects the object under it — the
+            // press started on the 3D view, so no GUI re-check on release.
+            // (While measuring, the MeasurementPlugin consumes the press, so no
+            // orbit candidate is started and this never runs.)
+            if (lmbClickCandidate_ && lmbDragDist_ < kClickThresholdPx)
                 performSelectionClick();
             lmbClickCandidate_ = false;
         } else if (panning_ && !mmb) {
-            camera_.StopPanning();
+            camera.StopPanning();
             panning_ = false;
             endNavCapture();
         } else if (rmbLooking_ && !rmb) {
             rmbLooking_ = false;
             endNavCapture();
         } else {
+            // Relative motion from the window that owns the capture.
             double cx = 0.0, cy = 0.0;
-            glfwGetCursorPos(window, &cx, &cy);
+            glfwGetCursorPos(navWindow_ ? navWindow_ : window_.handle(), &cx, &cy);
             const float dx = float(cx - lastMouseX_);
             const float dy = float(cy - lastMouseY_);
             lastMouseX_ = cx;
@@ -675,7 +742,7 @@ void Application::updateCamera(float dt) {
             if (orbiting_)
                 lmbDragDist_ += std::abs(dx) + std::abs(dy);
             // Camera yoffset is +up; screen dy is +down.
-            camera_.ProcessMouseMovement(dx, -dy);
+            camera.ProcessMouseMovement(dx, -dy);
         }
     }
 
@@ -687,63 +754,74 @@ void Application::updateCamera(float dt) {
     // Scroll zoom (toward the 3D/background cursor when enabled). ImGui's GLFW
     // backend accumulates the wheel into io.MouseWheel each frame. Plugins get
     // first refusal (a tool may scrub a value); the camera zooms otherwise.
-    if (!io.WantCaptureMouse && io.MouseWheel != 0.0f) {
+    // Gated on the 3D view being hovered — panels keep their own scrolling.
+    if (hovered && io.MouseWheel != 0.0f) {
         const bool consumed =
             pluginContext_ && pluginManager_.dispatchScroll(*pluginContext_, 0.0,
                                                             double(io.MouseWheel));
         if (!consumed)
-            camera_.ProcessMouseScroll(io.MouseWheel,
-                                       cursorManager_.getBackgroundCursorPosition(),
-                                       cursorManager_.hasBackgroundCursorPosition());
+            camera.ProcessMouseScroll(io.MouseWheel,
+                                      cursorManager_.getBackgroundCursorPosition(),
+                                      cursorManager_.hasBackgroundCursorPosition());
     }
-    camera_.UpdateScrolling(dt);
-    camera_.UpdateAnimation(dt);
+    // Every camera keeps integrating: scroll momentum finishes after the mouse
+    // leaves a viewport, and a fly-to animation keeps running in a viewport
+    // that is no longer the active one.
+    for (size_t v = 0; v < viewports_.size(); ++v) {
+        viewportCamera(v).UpdateScrolling(dt);
+        viewportCamera(v).UpdateAnimation(dt);
+    }
 
     // Keyboard fly (WASDQE + Shift boost). Suppressed while a text field owns
-    // the keyboard.
+    // the keyboard. Keys come from ImGui's aggregated state (fed by every OS
+    // window the backend owns), so shortcuts keep working when the keyboard
+    // focus sits on a dragged-out Viewport window.
     if (!io.WantCaptureKeyboard) {
-        camera_.MovementSpeed =
-            settings_.camera.speed *
-            (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ? 4.0f : 1.0f);
-        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) camera_.ProcessKeyboard(FORWARD, dt);
-        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) camera_.ProcessKeyboard(BACKWARD, dt);
-        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) camera_.ProcessKeyboard(LEFT, dt);
-        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) camera_.ProcessKeyboard(RIGHT, dt);
-        if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) camera_.ProcessKeyboard(UP, dt);
-        if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) camera_.ProcessKeyboard(DOWN, dt);
+        // Fly the ACTIVE viewport's camera (the one the mouse is over).
+        camera.MovementSpeed =
+            settings_.camera.speed * (io.KeyShift ? 4.0f : 1.0f);
+        if (ImGui::IsKeyDown(ImGuiKey_W)) camera.ProcessKeyboard(FORWARD, dt);
+        if (ImGui::IsKeyDown(ImGuiKey_S)) camera.ProcessKeyboard(BACKWARD, dt);
+        if (ImGui::IsKeyDown(ImGuiKey_A)) camera.ProcessKeyboard(LEFT, dt);
+        if (ImGui::IsKeyDown(ImGuiKey_D)) camera.ProcessKeyboard(RIGHT, dt);
+        if (ImGui::IsKeyDown(ImGuiKey_E)) camera.ProcessKeyboard(UP, dt);
+        if (ImGui::IsKeyDown(ImGuiKey_Q)) camera.ProcessKeyboard(DOWN, dt);
 
         // Escape clears the current selection (edge-triggered).
-        const bool escape = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
+        const bool escape = ImGui::IsKeyDown(ImGuiKey_Escape);
         if (escape && !prevEscape_)
             selection_ = Selection{};
         prevEscape_ = escape;
 
-        // F1 toggles GUI panel visibility (edge-triggered; the menu bar stays).
-        const bool f1 = glfwGetKey(window, GLFW_KEY_F1) == GLFW_PRESS;
+        // F1 toggles GUI panel visibility (edge-triggered; the menu bar and the
+        // viewport stay — hiding the panels grows the viewport to the window).
+        const bool f1 = ImGui::IsKeyDown(ImGuiKey_F1);
         if (f1 && !prevF1_)
             guiSystem_.toggleGuiVisible();
         prevF1_ = f1;
 
         // Dispatch action keys to plugins (edge-triggered): the MeasurementPlugin
         // uses Enter (finish), Delete (cancel), Backspace (undo last point).
+        // Plugins keep receiving GLFW keycodes (their public contract).
         if (pluginContext_) {
-            auto keyEdge = [&](int key, bool& prev) {
-                const bool down = glfwGetKey(window, key) == GLFW_PRESS;
+            auto keyEdge = [&](ImGuiKey key, int glfwKey, bool& prev) {
+                const bool down = ImGui::IsKeyDown(key);
                 if (down && !prev)
-                    pluginManager_.dispatchKey(*pluginContext_, key, 0, GLFW_PRESS, mods);
+                    pluginManager_.dispatchKey(*pluginContext_, glfwKey, 0,
+                                               GLFW_PRESS, mods);
                 prev = down;
             };
-            keyEdge(GLFW_KEY_ENTER, prevEnter_);
-            keyEdge(GLFW_KEY_KP_ENTER, prevKpEnter_);
-            keyEdge(GLFW_KEY_DELETE, prevDelete_);
-            keyEdge(GLFW_KEY_BACKSPACE, prevBackspace_);
+            keyEdge(ImGuiKey_Enter, GLFW_KEY_ENTER, prevEnter_);
+            keyEdge(ImGuiKey_KeypadEnter, GLFW_KEY_KP_ENTER, prevKpEnter_);
+            keyEdge(ImGuiKey_Delete, GLFW_KEY_DELETE, prevDelete_);
+            keyEdge(ImGuiKey_Backspace, GLFW_KEY_BACKSPACE, prevBackspace_);
         }
 
         // Transform-gizmo mode: 1 / 2 / 3 while a model is selected.
         if (gizmo_.hasTarget()) {
-            const bool k1 = glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS;
-            const bool k2 = glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS;
-            const bool k3 = glfwGetKey(window, GLFW_KEY_3) == GLFW_PRESS;
+            const bool k1 = ImGui::IsKeyDown(ImGuiKey_1);
+            const bool k2 = ImGui::IsKeyDown(ImGuiKey_2);
+            const bool k3 = ImGui::IsKeyDown(ImGuiKey_3);
             if (k1 && !prevKey1_) gizmo_.setMode(Tools::TransformGizmo::Mode::Translate);
             if (k2 && !prevKey2_) gizmo_.setMode(Tools::TransformGizmo::Mode::Rotate);
             if (k3 && !prevKey3_) gizmo_.setMode(Tools::TransformGizmo::Mode::Scale);
@@ -752,13 +830,13 @@ void Application::updateCamera(float dt) {
 
         // Undo / redo: Ctrl+Z, Ctrl+Y (or Ctrl+Shift+Z for redo).
         const bool ctrl = (mods & GLFW_MOD_CONTROL) != 0;
-        const bool zHeld = ctrl && glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS;
+        const bool zHeld = ctrl && ImGui::IsKeyDown(ImGuiKey_Z);
         if (zHeld && !prevUndoKey_) {
             if (mods & GLFW_MOD_SHIFT) undo_.redo();
             else undo_.undo();
         }
         prevUndoKey_ = zHeld;
-        const bool yHeld = ctrl && glfwGetKey(window, GLFW_KEY_Y) == GLFW_PRESS;
+        const bool yHeld = ctrl && ImGui::IsKeyDown(ImGuiKey_Y);
         if (yHeld && !prevRedoKey_) undo_.redo();
         prevRedoKey_ = yHeld;
     } else {
@@ -767,18 +845,25 @@ void Application::updateCamera(float dt) {
     }
 }
 
-uint32_t Application::viewCameras(renderer::ViewCamera out[renderer::kMaxViews]) const {
-    const VkExtent2D extent = swapchain_.extent();
+uint32_t Application::viewCameras(renderer::ViewCamera out[renderer::kMaxViews],
+                                  size_t viewportIndex) const {
+    // Aspect of THIS viewport's render target: its docked panel, the full
+    // window on the classic path, or the HMD eye in XR (where the eye
+    // projections overwrite these anyway). Each viewport renders through its
+    // own camera; the stereo tunables are shared.
+    const VkExtent2D extent =
+        renderer_.sceneExtent(static_cast<uint32_t>(viewportIndex));
     const float aspect =
         extent.height ? float(extent.width) / float(extent.height) : 1.0f;
+    const Camera& cam = viewportCamera(viewportIndex);
 
     const float fovDeg = settings_.camera.fovDeg;
     const float nearPlane = settings_.camera.nearPlane;
     const float farPlane = settings_.camera.farPlane;
 
     if (stereoMode_ == StereoMode::Off) {
-        out[0].position = camera_.Position;
-        out[0].view = camera_.GetViewMatrix();
+        out[0].position = cam.Position;
+        out[0].view = cam.GetViewMatrix();
         out[0].proj = renderer::perspective(glm::radians(fovDeg), aspect,
                                             nearPlane, farPlane);
         out[1] = out[0];
@@ -792,10 +877,10 @@ uint32_t Application::viewCameras(renderer::ViewCamera out[renderer::kMaxViews])
     const float wHalf = hHalf * aspect;
     const float halfSep = settings_.stereo.separation * 0.5f;
     const float conv = std::max(settings_.stereo.convergence, 1e-3f);
-    const glm::vec3 pos = camera_.Position;
-    const glm::vec3 right = camera_.Right;
-    const glm::vec3 front = camera_.Front;
-    const glm::vec3 up = camera_.Up;
+    const glm::vec3 pos = cam.Position;
+    const glm::vec3 right = cam.Right;
+    const glm::vec3 front = cam.Front;
+    const glm::vec3 up = cam.Up;
 
     auto buildEye = [&](float dir) {
         renderer::ViewCamera cam;
@@ -816,10 +901,44 @@ uint32_t Application::viewCameras(renderer::ViewCamera out[renderer::kMaxViews])
 }
 
 void Application::cameraMatrices(glm::mat4& view, glm::mat4& proj) const {
+    // Interaction matrices follow the ACTIVE viewport (mouse rays, cursor
+    // reconstruction, plugin viewProj all line up with what that panel shows).
     renderer::ViewCamera cams[renderer::kMaxViews];
-    viewCameras(cams);
+    viewCameras(cams, activeViewport_);
     view = cams[0].view;
     proj = cams[0].proj;
+}
+
+Camera& Application::viewportCamera(size_t index) {
+    if (index == 0 || index >= viewports_.size())
+        return camera_;
+    return viewports_[index].camera;
+}
+
+const Camera& Application::viewportCamera(size_t index) const {
+    if (index == 0 || index >= viewports_.size())
+        return camera_;
+    return viewports_[index].camera;
+}
+
+void Application::addViewport() {
+    if (viewports_.size() >= renderer::kMaxViewports)
+        return;
+    // Smallest unused id -> a stable window name ("Viewport 2".."Viewport 4")
+    // that never collides with a still-open sibling.
+    int id = 1;
+    for (bool taken = true; taken; ++id) {
+        taken = false;
+        for (const AppViewport& vp : viewports_)
+            taken = taken || vp.id == id;
+        if (!taken)
+            break;
+    }
+    AppViewport vp;
+    vp.id = id;
+    vp.name = "Viewport " + std::to_string(id + 1);
+    vp.camera = activeCamera(); // start where the user is looking
+    viewports_.push_back(std::move(vp));
 }
 
 void Application::applyStereoMode(StereoMode mode) {
@@ -1057,37 +1176,33 @@ rhi::PresentResult Application::renderXRFrame(renderer::FrameSubmission& submiss
 void Application::updateCursorAndOverlay(renderer::FrameSubmission& submission,
                                          const glm::mat4& view,
                                          const glm::mat4& proj) {
-    GLFWwindow* window = window_.handle();
-    const VkExtent2D extent = swapchain_.extent();
+    // Everything picks in render-target pixels via sceneInput_ (the hovered
+    // docked viewport image, or the full framebuffer on the classic path).
+    const VkExtent2D extent = renderer_.sceneExtent(activeViewport_);
 
     cursorManager_.resetFrameCalculationFlag();
     submission.depthQueries.clear();
 
     // While a camera drag owns the mouse (OS cursor disabled) or a gizmo drag is
     // active, freeze the 3D cursor — the pick would fight the gizmo grab point.
-    // Side-by-side squishes each eye into a half-window, so the full-window
+    // Side-by-side squishes each eye into a half-target, so the full-target
     // depth pick can't line up; freeze it there too (quad-buffer / mono are
-    // full-window and pick normally).
+    // full-target and pick normally).
     if (!navActive() && !gizmoDragging_ && stereoMode_ != StereoMode::SideBySide) {
-        double cx = 0.0, cy = 0.0;
-        glfwGetCursorPos(window, &cx, &cy);
-        // glfwGetCursorPos is in window (screen) coords; the depth buffer is in
-        // framebuffer pixels. Scale in case of HiDPI content scaling.
-        int winW = 0, winH = 0;
-        glfwGetWindowSize(window, &winW, &winH);
-        const double sx = winW > 0 ? double(extent.width) / winW : 1.0;
-        const double sy = winH > 0 ? double(extent.height) / winH : 1.0;
-        const int px = int(cx * sx);
-        const int py = int(cy * sy);
-        if (px >= 0 && py >= 0 && px < int(extent.width) && py < int(extent.height)) {
+        const int px = int(sceneInput_.mousePx.x);
+        const int py = int(sceneInput_.mousePx.y);
+        if (sceneInput_.hovered && px >= 0 && py >= 0 &&
+            px < int(extent.width) && py < int(extent.height)) {
             renderer::DepthQueryRect rect;
             rect.origin = glm::ivec2(px, py);
             rect.size = glm::ivec2(1, 1);
             submission.depthQueries.push_back(rect);
         }
-        cursorManager_.updateCursorPosition(window, proj, view, camera_,
-                                            renderer_.depthSamples(),
-                                            /*forceRecalculate=*/true);
+        cursorManager_.updateCursorPosition(
+            sceneInput_.hostWindow ? sceneInput_.hostWindow : window_.handle(),
+            sceneInput_.mousePx, sceneInput_.sizePx, sceneInput_.hovered,
+            proj, view, activeCamera(), renderer_.depthSamples(),
+            /*forceRecalculate=*/true);
     }
 
     // Auto-convergence samples the scene depth at the screen centre. Queried
@@ -1109,18 +1224,18 @@ void Application::updateCursorAndOverlay(renderer::FrameSubmission& submission,
     // Rebuild the overlay geometry (cursors + orbit centre) for this frame.
     overlay_.clear();
     if (settings_.cursor.show)
-        cursorManager_.renderCursors(overlay_, camera_);
+        cursorManager_.renderCursors(overlay_, activeCamera());
     // The orbit-centre marker shows during an orbit (or always, if the user
     // pinned it on).
     cursorManager_.setShowOrbitCenter(orbiting_ ||
                                       cursorManager_.isAlwaysShowOrbitCenter());
-    cursorManager_.renderOrbitCenter(overlay_, camera_.OrbitPoint);
+    cursorManager_.renderOrbitCenter(overlay_, activeCamera().OrbitPoint);
 
     // Selection outline + transform gizmo + clip planes + plugin annotations
     // (incl. the MeasurementPlugin) share the same overlay list.
     appendSelectionOverlay();
     if (gizmo_.hasTarget())
-        gizmo_.appendTo(overlay_, proj, camera_.Position);
+        gizmo_.appendTo(overlay_, proj, activeCamera().Position);
     clipPlaneTool_.appendTo(overlay_); // section-plane quads + normal arrows
     appendI3SOverlays();               // SLPK inspector bounding volumes
     if (pluginContext_)
@@ -1128,14 +1243,27 @@ void Application::updateCursorAndOverlay(renderer::FrameSubmission& submission,
 
     submission.overlay = &overlay_;
     if (settings_.cursor.show)
-        cursorManager_.fillFragmentCursorState(submission.fragmentCursor, camera_);
+        cursorManager_.fillFragmentCursorState(submission.fragmentCursor,
+                                               activeCamera());
     else
         submission.fragmentCursor = renderer::FragmentCursorState{};
 }
 
 void Application::buildFrameSubmission(renderer::FrameSubmission& submission) const {
     // Mono fills view 0 (view 1 duplicated); stereo builds the two eye cameras.
-    viewCameras(submission.views);
+    // Every docked viewport contributes its own camera set; a viewport whose
+    // panel wasn't drawn this GUI frame (hidden tab) is flagged so the
+    // renderer skips its scene passes entirely.
+    viewCameras(submission.views, 0);
+    submission.viewportCount =
+        std::min(static_cast<uint32_t>(viewports_.size()), renderer::kMaxViewports);
+    const bool docked = renderer_.viewportOutputActive();
+    for (uint32_t v = 0; v < submission.viewportCount; ++v) {
+        if (v > 0)
+            viewCameras(submission.extraViewports[v - 1].views, v);
+        submission.viewportHidden[v] = docked && !viewports_[v].ui.shown;
+    }
+    submission.depthPickViewport = activeViewport_;
 
     submission.draws.clear();
     submission.draws.reserve(scene_.models.size() * 2);
@@ -1233,10 +1361,15 @@ void Application::buildFrameSubmission(renderer::FrameSubmission& submission) co
     // (re)built above — the layers append to both. The traversal mutates
     // per-layer selection state (hysteresis, load requests) — reached through
     // the unique_ptr, which is why this stays legal in a const method. XR
-    // reuses the desktop camera for selection.
+    // reuses the desktop camera for selection. The traversal runs once per
+    // frame against the PRIMARY camera; SSE uses the TALLEST render target so
+    // node detail never degrades in the biggest viewport showing the layer.
+    uint32_t sseHeight = 0;
+    for (uint32_t v = 0; v < std::max(renderer_.viewportOutputCount(), 1u); ++v)
+        sseHeight = std::max(sseHeight, renderer_.sceneExtent(v).height);
     for (const std::unique_ptr<scene::I3SSceneLayer>& layer : scene_.i3sLayers)
         if (layer)
-            layer->submitDraws(submission, swapchain_.extent().height);
+            layer->submitDraws(submission, sseHeight);
 
     // Global wireframe toggle (M4): flag every draw — scene models and the
     // I3S layers alike (per-layer wireframe is set in the layers' emitDraw).
@@ -1252,6 +1385,115 @@ void Application::buildFrameSubmission(renderer::FrameSubmission& submission) co
     const int planeCount = clipPlaneTool_.collectEnabledPlanes(packedPlanes);
     for (int i = 0; i < planeCount; ++i)
         submission.clipPlanes.push_back(packedPlanes[i]);
+}
+
+void Application::reconcileViewportOutput() {
+    // Docked whenever the desktop owns the window — every stereo mode
+    // included (quad-buffer resolves per-eye into the layered viewport
+    // textures; the renderer remaps the GUI images per swapchain layer). XR
+    // keeps the classic fullscreen path (the window is a mirror/GUI surface).
+    const bool want = !xrRunning();
+    if (!want) {
+        renderer_.setViewportOutputs(nullptr, 0);
+        for (AppViewport& vp : viewports_)
+            vp.sizeWant = { 0, 0 };
+        return;
+    }
+
+    // Erase viewports whose close button was clicked last GUI frame (never
+    // the primary). Safe here: setViewportOutputs waits for the device before
+    // reconfiguring, and ImGui has not started the next frame yet.
+    viewports_.erase(std::remove_if(viewports_.begin() + 1, viewports_.end(),
+                                    [](const AppViewport& vp) { return !vp.open; }),
+                     viewports_.end());
+    if (activeViewport_ >= viewports_.size())
+        activeViewport_ = 0;
+
+    // Per-viewport desired texture size: the panel's content region as
+    // reported by the last GUI frame. Before a viewport's first report (or
+    // while its tab is hidden) keep the current target; a brand-new viewport
+    // falls back to a default until its window reports real bounds.
+    // Apply a config change (count / first-enable) immediately; apply a pure
+    // resize only when the size has settled (same report on two consecutive
+    // frames) — a splitter drag thus stretches the displayed image and costs
+    // ONE device-idle rebuild when it ends, not one per frame.
+    VkExtent2D apply[renderer::kMaxViewports]{};
+    const uint32_t count = std::min(static_cast<uint32_t>(viewports_.size()),
+                                    renderer::kMaxViewports);
+    for (uint32_t i = 0; i < count; ++i) {
+        AppViewport& vp = viewports_[i];
+        const bool configured = i < renderer_.viewportOutputCount();
+        const VkExtent2D current =
+            configured ? renderer_.viewportExtent(i) : VkExtent2D{ 0, 0 };
+
+        VkExtent2D target = current;
+        if (vp.ui.shown)
+            target = { uint32_t(std::max(vp.ui.sizeX, 1.0f)),
+                       uint32_t(std::max(vp.ui.sizeY, 1.0f)) };
+        else if (!configured)
+            target = (i == 0) ? swapchain_.extent() : VkExtent2D{ 960, 540 };
+
+        const bool settled = target.width == vp.sizeWant.width &&
+                             target.height == vp.sizeWant.height;
+        vp.sizeWant = target;
+        apply[i] = (!configured || settled) ? target : current;
+    }
+    renderer_.setViewportOutputs(apply, count); // no-ops when nothing changed
+}
+
+void Application::updateSceneInput() {
+    if (renderer_.viewportOutputActive()) {
+        // The hovered viewport becomes the interaction target. Never retarget
+        // while a drag owns the mouse — the drag finishes against the camera
+        // and pick space it started in.
+        if (!navActive() && !gizmoDragging_) {
+            for (size_t i = 0; i < viewports_.size(); ++i) {
+                if (viewports_[i].ui.shown && viewports_[i].ui.hovered) {
+                    activeViewport_ = static_cast<uint32_t>(i);
+                    break;
+                }
+            }
+        }
+        if (activeViewport_ >= viewports_.size())
+            activeViewport_ = 0;
+
+        const Gui::ViewportPanelState& ui = viewports_[activeViewport_].ui;
+        const VkExtent2D extent = renderer_.viewportExtent(activeViewport_);
+        sceneInput_.hovered = ui.shown && ui.hovered;
+        sceneInput_.mousePx = glm::vec2(ui.mouseX, ui.mouseY);
+        sceneInput_.sizePx =
+            glm::vec2(float(std::max(extent.width, 1u)),
+                      float(std::max(extent.height, 1u)));
+        sceneInput_.screenPos = glm::vec2(ui.screenX, ui.screenY);
+        sceneInput_.screenSize = glm::vec2(std::max(ui.screenW, 1.0f),
+                                           std::max(ui.screenH, 1.0f));
+        sceneInput_.hostWindow =
+            ui.hostWindow ? static_cast<GLFWwindow*>(ui.hostWindow)
+                          : window_.handle();
+        return;
+    }
+    activeViewport_ = 0;
+
+    // Classic fullscreen path (XR mirror): the scene fills the framebuffer
+    // under the GUI; the pointer owns the 3D view wherever no GUI window
+    // captures the mouse.
+    ImGuiIO& io = ImGui::GetIO();
+    const VkExtent2D extent = swapchain_.extent();
+    double cx = 0.0, cy = 0.0;
+    glfwGetCursorPos(window_.handle(), &cx, &cy);
+    // Window coords -> framebuffer pixels (HiDPI content scaling).
+    int winW = 0, winH = 0;
+    glfwGetWindowSize(window_.handle(), &winW, &winH);
+    const double sx = winW > 0 ? double(extent.width) / winW : 1.0;
+    const double sy = winH > 0 ? double(extent.height) / winH : 1.0;
+    sceneInput_.hovered = !io.WantCaptureMouse;
+    sceneInput_.mousePx = glm::vec2(float(cx * sx), float(cy * sy));
+    sceneInput_.sizePx = glm::vec2(float(std::max(extent.width, 1u)),
+                                   float(std::max(extent.height, 1u)));
+    const ImGuiViewport* mainVp = ImGui::GetMainViewport();
+    sceneInput_.screenPos = glm::vec2(mainVp->Pos.x, mainVp->Pos.y);
+    sceneInput_.screenSize = glm::vec2(mainVp->Size.x, mainVp->Size.y);
+    sceneInput_.hostWindow = window_.handle();
 }
 
 void Application::initImGui() {
@@ -1274,6 +1516,10 @@ void Application::initImGui() {
     window_.framebufferSize(fbWidth, fbHeight);
     UpdateGuiScale(fbWidth, fbHeight);
     InitializeImGuiWithFonts(window_.handle(), true);
+
+    // A floating (undocked) Viewport window must not be dragged around by a
+    // camera orbit that starts on its body — windows move by title bar only.
+    ImGui::GetIO().ConfigWindowsMoveFromTitleBarOnly = true;
 
     // The backend copies InitInfo by value but keeps pColorAttachmentFormats
     // as a raw pointer and dereferences it again whenever a dragged-out
@@ -1353,6 +1599,11 @@ void Application::run() {
         else if (!vrEnabled_ && xrRunning())
             leaveXR();
 
+        // Docked-viewport reconcile AFTER the stereo/XR reconciles (it derives
+        // from their final state) and BEFORE ImGui::NewFrame — the previous
+        // frame's draw data must never reference a destroyed viewport texture.
+        reconcileViewportOutput();
+
         // Font atlas rebuilds must happen outside NewFrame/Render, with the
         // GPU idle (the texture may still be bound by an in-flight frame).
         if (g_GuiScale.needsRescale || g_GuiScale.needsFontRebuild) {
@@ -1365,6 +1616,10 @@ void Application::run() {
         ImGui::NewFrame();
         buildUi();
         ImGui::Render();
+
+        // Effective 3D-view input for this frame — after the GUI built (the
+        // Viewport panel just reported its rect/hover), before any interaction.
+        updateSceneInput();
 
         updateCamera(dt);
         if (pluginContext_)
@@ -1575,14 +1830,25 @@ void Application::pumpSlpkLoads() {
         if (!layer->info.sr.isGeographic() && layer->info.sr.wkid == 0)
             pushToast("Unknown CRS — layer loads in its own local space",
                       Plugins::ToastLevel::Warning);
-        pushToast(layer->name + ": " + std::to_string(layer->tree.nodes.size()) +
-                      " nodes, " + std::to_string(layer->tree.levelCount) +
-                      " levels (v" + layer->info.version + ")",
-                  Plugins::ToastLevel::Success);
+        // Inspector-only layer types (feature-symbol "Point", BSL "Building")
+        // draw nothing: warn instead of celebrating, and never auto-frame —
+        // framing bounds no draw will ever fill flings the camera into space
+        // (a global Point layer spans the planet).
+        const bool renderable = layer->rendersAnything();
+        if (renderable)
+            pushToast(layer->name + ": " + std::to_string(layer->tree.nodes.size()) +
+                          " nodes, " + std::to_string(layer->tree.levelCount) +
+                          " levels (v" + layer->info.version + ")",
+                      Plugins::ToastLevel::Success);
+        else
+            pushToast(layer->name + ": layerType \"" + layer->info.typeString +
+                          "\" has no renderer yet — node tree/bounds inspector only",
+                      Plugins::ToastLevel::Warning);
         scene_.i3sLayers.push_back(std::move(layer));
         scene_.i3sLayers.back()->startStreaming(); // M1: spawn decode workers
         scene_.computeWorldBounds();
-        frameI3SLayer(scene_.i3sLayers.size() - 1);
+        if (renderable)
+            frameI3SLayer(scene_.i3sLayers.size() - 1);
     }
 }
 
@@ -1628,14 +1894,15 @@ void Application::frameI3SLayer(size_t index) {
     const float distance = radius / std::tan(fovRad * 0.5f) * 1.15f;
     const glm::vec3 viewDir = glm::normalize(glm::vec3(0.55f, 0.45f, 0.9f));
 
-    Camera::CameraState state = camera_.GetState();
+    Camera& cam = activeCamera(); // frame the layer in the viewport in use
+    Camera::CameraState state = cam.GetState();
     state.position = center + viewDir * distance;
     const glm::vec3 f = glm::normalize(center - state.position);
     const glm::vec3 r = glm::normalize(glm::cross(f, glm::vec3(0.0f, 1.0f, 0.0f)));
     const glm::vec3 u = glm::normalize(glm::cross(r, f));
     state.orientation = glm::normalize(glm::quat_cast(glm::mat3(r, u, -f)));
-    camera_.SetState(state);
-    camera_.SetOrbitPointDirectly(center);
+    cam.SetState(state);
+    cam.SetOrbitPointDirectly(center);
 
     // City-scale layers outgrow the default clip range and fly speed; widen
     // them (never shrink a user's larger setting).
@@ -1863,21 +2130,24 @@ void Application::drawToasts() {
 }
 
 Plugins::PickRay Application::mouseRayCurrent() const {
-    double cx = 0.0, cy = 0.0;
-    glfwGetCursorPos(window_.handle(), &cx, &cy);
-    return rayThroughPixel(glm::vec2(float(cx), float(cy)));
+    return rayThroughPixel(sceneInput_.mousePx);
 }
 
-Plugins::PickRay Application::rayThroughPixel(glm::vec2 windowPixel) const {
+Plugins::PickRay Application::rayThroughPixel(glm::vec2 viewportPixel) const {
     glm::mat4 view(1.0f), proj(1.0f);
     cameraMatrices(view, proj);
     const glm::mat4 invViewProj = glm::inverse(proj * view);
 
-    int winW = 0, winH = 0;
-    glfwGetWindowSize(window_.handle(), &winW, &winH);
-    const float u = winW > 0 ? windowPixel.x / float(winW) : 0.0f;
-    const float v = winH > 0 ? windowPixel.y / float(winH) : 0.0f;
-    // Window pixels are top-left origin; the Y-flip is baked into proj, so
+    // ImGui reports (-FLT_MAX,-FLT_MAX) when there is no mouse this frame —
+    // fall back to the viewport centre so the ray math never produces NaNs.
+    if (!std::isfinite(viewportPixel.x) || !std::isfinite(viewportPixel.y))
+        viewportPixel = sceneInput_.sizePx * 0.5f;
+
+    const float u = sceneInput_.sizePx.x > 0.0f
+                        ? viewportPixel.x / sceneInput_.sizePx.x : 0.0f;
+    const float v = sceneInput_.sizePx.y > 0.0f
+                        ? viewportPixel.y / sceneInput_.sizePx.y : 0.0f;
+    // Viewport pixels are top-left origin; the Y-flip is baked into proj, so
     // ndc.y = v*2-1 matches the depth-pick reconstruction convention. Reverse-Z
     // puts the near plane at depth 1 and the far plane at 0.
     const float ndcX = u * 2.0f - 1.0f;
@@ -1894,17 +2164,13 @@ Plugins::PickRay Application::rayThroughPixel(glm::vec2 windowPixel) const {
 }
 
 int Application::currentMods() const {
-    GLFWwindow* w = window_.handle();
+    // ImGui aggregates modifiers across the main window and every backend-
+    // owned OS window (a dragged-out Viewport panel included).
+    const ImGuiIO& io = ImGui::GetIO();
     int mods = 0;
-    if (glfwGetKey(w, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
-        glfwGetKey(w, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS)
-        mods |= GLFW_MOD_SHIFT;
-    if (glfwGetKey(w, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
-        glfwGetKey(w, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS)
-        mods |= GLFW_MOD_CONTROL;
-    if (glfwGetKey(w, GLFW_KEY_LEFT_ALT) == GLFW_PRESS ||
-        glfwGetKey(w, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS)
-        mods |= GLFW_MOD_ALT;
+    if (io.KeyShift) mods |= GLFW_MOD_SHIFT;
+    if (io.KeyCtrl)  mods |= GLFW_MOD_CONTROL;
+    if (io.KeyAlt)   mods |= GLFW_MOD_ALT;
     return mods;
 }
 

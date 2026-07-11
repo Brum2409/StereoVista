@@ -56,8 +56,14 @@ void Renderer::init(rhi::Device& device, rhi::Swapchain& swapchain,
     VK_CHECK(vkCreateSemaphore(device_->device(), &semInfo, nullptr, &computeTimeline_));
     VK_CHECK(vkCreateSemaphore(device_->device(), &semInfo, nullptr, &uploadTimeline_));
 
+    // One aligned FrameData slice per viewport in each slot's frame UBO (the
+    // slices differ only in views[] — see uploadFrameBuffers).
+    const VkDeviceSize uboAlign =
+        device.properties().limits.minUniformBufferOffsetAlignment;
+    frameUboStride_ = (sizeof(gpu::FrameData) + uboAlign - 1) & ~(uboAlign - 1);
+
     createFrameContexts();
-    createSceneTarget();
+    createSceneTargets();
 
     uploadRing_.create(device, kUploadRingBytes, "streaming upload ring");
 
@@ -121,7 +127,7 @@ void Renderer::createFrameContexts() {
         frame.descriptors.init(*device_, 64);
 
         rhi::BufferDesc uboDesc{};
-        uboDesc.size = sizeof(gpu::FrameData);
+        uboDesc.size = frameUboStride_ * kMaxViewports; // one slice per viewport
         uboDesc.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
         uboDesc.memory = rhi::MemoryUsage::HostUpload;
         uboDesc.debugName = "frame data";
@@ -143,60 +149,187 @@ void Renderer::createFrameContexts() {
     }
 }
 
-void Renderer::destroySceneDepthLayerViews() {
-    for (VkImageView& view : sceneDepthLayerViews_) {
+void Renderer::destroySceneDepthLayerViews(uint32_t viewport) {
+    for (VkImageView& view : viewports_[viewport].sceneDepthLayerViews) {
         if (view != VK_NULL_HANDLE)
             vkDestroyImageView(device_->device(), view, nullptr);
         view = VK_NULL_HANDLE;
     }
 }
 
-void Renderer::createSceneTarget() {
-    // The old per-layer views point at the depth image that create() is about
-    // to free — drop them first.
-    destroySceneDepthLayerViews();
-    // In XR the scene target follows the HMD eye resolution, not the window.
-    sceneExtent_ = (sceneExtentOverride_.width && sceneExtentOverride_.height)
-                       ? sceneExtentOverride_
-                       : swapchain_->extent();
+void Renderer::createSceneTargets() {
+    for (uint32_t v = 0; v < kMaxViewports; ++v) {
+        ViewportTarget& vp = viewports_[v];
+        // The old per-layer views point at the depth image create() is about
+        // to free — drop them first. Viewports beyond the count just release.
+        destroySceneDepthLayerViews(v);
+        vp.sceneColor.destroy();
+        vp.sceneDepth.destroy();
+        if (v >= viewportCount_) {
+            vp.extent = { 0, 0 };
+            continue;
+        }
 
-    rhi::TextureDesc colorDesc{};
-    colorDesc.format = kSceneColorFormat;
-    colorDesc.extent = sceneExtent_;
-    colorDesc.arrayLayers = viewCount_;
-    colorDesc.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-                      VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-    // 2D_ARRAY view even at 1 layer: multiview attachments address layers by
-    // view index, and mono must not be a special case.
-    colorDesc.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
-    colorDesc.debugName = "scene color (HDR)";
-    sceneColor_.create(*device_, colorDesc);
+        // XR: the (single) scene target follows the HMD eye resolution.
+        // Docked: each viewport follows its requested panel extent. Classic:
+        // the window.
+        vp.extent = (sceneExtentOverride_.width && sceneExtentOverride_.height)
+                        ? sceneExtentOverride_
+                    : viewportOutput_ ? viewportExtentWant_[v]
+                                      : swapchain_->extent();
+        vp.extent.width = std::max(vp.extent.width, 1u);
+        vp.extent.height = std::max(vp.extent.height, 1u);
 
-    rhi::TextureDesc depthDesc = colorDesc;
-    depthDesc.format = kSceneDepthFormat;
-    // TRANSFER_SRC: depth-picking rect copies (Phase 6).
-    depthDesc.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
-                      VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-    depthDesc.debugName = "scene depth";
-    sceneDepth_.create(*device_, depthDesc);
+        rhi::TextureDesc colorDesc{};
+        colorDesc.format = kSceneColorFormat;
+        colorDesc.extent = vp.extent;
+        colorDesc.arrayLayers = viewCount_;
+        colorDesc.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                          VK_IMAGE_USAGE_SAMPLED_BIT |
+                          VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        // 2D_ARRAY view even at 1 layer: multiview attachments address layers
+        // by view index, and mono must not be a special case.
+        colorDesc.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+        colorDesc.debugName = "scene color (HDR)";
+        vp.sceneColor.create(*device_, colorDesc);
 
-    // Per-eye single-layer depth views for the backbuffer resolve attachment.
-    for (uint32_t v = 0; v < viewCount_; ++v)
-        sceneDepthLayerViews_[v] =
-            sceneDepth_.createLayerView(VK_IMAGE_VIEW_TYPE_2D, v, 1, "scene depth layer");
+        rhi::TextureDesc depthDesc = colorDesc;
+        depthDesc.format = kSceneDepthFormat;
+        // TRANSFER_SRC: depth-picking rect copies (Phase 6).
+        depthDesc.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                          VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        depthDesc.debugName = "scene depth";
+        vp.sceneDepth.create(*device_, depthDesc);
+
+        // Per-eye single-layer depth views for the resolve attachment.
+        for (uint32_t e = 0; e < viewCount_; ++e)
+            vp.sceneDepthLayerViews[e] = vp.sceneDepth.createLayerView(
+                VK_IMAGE_VIEW_TYPE_2D, e, 1, "scene depth layer");
+    }
 }
 
-void Renderer::buildEyeLayout(EyeResolve out[kMaxViews], uint32_t& outCount) const {
-    const uint32_t w = sceneExtent_.width;
-    const uint32_t h = sceneExtent_.height;
+void Renderer::destroySceneTargets() {
+    for (uint32_t v = 0; v < kMaxViewports; ++v) {
+        destroySceneDepthLayerViews(v);
+        viewports_[v].sceneColor.destroy();
+        viewports_[v].sceneDepth.destroy();
+        viewports_[v].extent = { 0, 0 };
+    }
+}
+
+void Renderer::onSceneExtentChanged() {
+    createSceneTargets();
+    // Size-dependent point-cloud buffers follow the scene targets (device is
+    // idle here; the next prepare() recreates them at the new extents).
+    pointCloudPass_.onSwapchainRecreated();
+    // The published depth samples referenced the old extent; drop them so
+    // picking never reconstructs from a stale rectangle set.
+    depthResult_ = DepthReadback{};
+    for (FrameContext& frame : frames_)
+        frame.pendingDepth = DepthReadback{};
+}
+
+void Renderer::createGuiTargets() {
+    // Same format as the swapchain, so the tonemap/overlay pipelines (built
+    // against tonemapTargetFormat_) render into them unchanged and the GUI's
+    // copy to the backbuffer is value-preserving. One layer per swapchain
+    // layer: quad-buffer stereo resolves each eye into its own layer, and the
+    // per-layer GUI pass shows the matching eye in every viewport image (the
+    // GUI itself stays at zero parallax).
+    const uint32_t layers = std::max(swapchain_->layers(), 1u);
+    for (uint32_t v = 0; v < viewportCount_; ++v) {
+        ViewportTarget& vp = viewports_[v];
+        vp.guiLayers = layers;
+        rhi::TextureDesc desc{};
+        desc.format = tonemapTargetFormat_;
+        desc.extent = viewportExtentWant_[v];
+        desc.arrayLayers = layers;
+        desc.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        desc.debugName = "viewport color (GUI image)";
+        vp.guiColor.create(*device_, desc);
+        for (uint32_t layer = 0; layer < layers; ++layer) {
+            vp.guiLayerViews[layer] = vp.guiColor.createLayerView(
+                VK_IMAGE_VIEW_TYPE_2D, layer, 1, "viewport color layer");
+            vp.guiImguiSets[layer] = ImGui_ImplVulkan_AddTexture(
+                tonemapPass_.sampler(), vp.guiLayerViews[layer],
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        }
+        // Fresh image (UNDEFINED): force one render before the GUI samples it.
+        vp.everRendered = false;
+    }
+}
+
+void Renderer::destroyGuiTargets(bool releaseImguiSets) {
+    for (ViewportTarget& vp : viewports_) {
+        for (VkDescriptorSet& set : vp.guiImguiSets) {
+            if (set != VK_NULL_HANDLE && releaseImguiSets)
+                ImGui_ImplVulkan_RemoveTexture(set);
+            set = VK_NULL_HANDLE;
+        }
+        for (VkImageView& view : vp.guiLayerViews) {
+            if (view != VK_NULL_HANDLE)
+                vkDestroyImageView(device_->device(), view, nullptr);
+            view = VK_NULL_HANDLE;
+        }
+        vp.guiColor.destroy();
+        vp.guiLayers = 0;
+        vp.everRendered = false;
+    }
+}
+
+void Renderer::setViewportOutputs(const VkExtent2D* extents, uint32_t count) {
+    // XR owns the scene target (HMD eye resolution); the app re-applies its
+    // desktop config after endXR.
+    if (xrActive_)
+        return;
+    count = std::min(count, kMaxViewports);
+    const bool enable = count > 0 && extents != nullptr;
+    const uint32_t newCount = enable ? count : 1;
+
+    // Desired per-viewport extents (>= 1 px); the classic path is exactly one
+    // viewport at the swapchain extent with no GUI texture.
+    VkExtent2D want[kMaxViewports]{};
+    for (uint32_t v = 0; v < newCount; ++v) {
+        want[v] = enable ? extents[v] : swapchain_->extent();
+        want[v].width = std::max(want[v].width, 1u);
+        want[v].height = std::max(want[v].height, 1u);
+    }
+
+    const uint32_t guiLayersWanted = std::max(swapchain_->layers(), 1u);
+    bool same = (enable == viewportOutput_) && (newCount == viewportCount_);
+    for (uint32_t v = 0; same && v < newCount; ++v)
+        same = want[v].width == viewports_[v].extent.width &&
+               want[v].height == viewports_[v].extent.height &&
+               (!enable || viewports_[v].guiLayers == guiLayersWanted);
+    if (same)
+        return; // called every frame — the no-op path must stay free
+
+    device_->waitIdle(); // rare: a config change or a settled panel resize
+    viewportOutput_ = enable;
+    viewportCount_ = newCount;
+    for (uint32_t v = 0; v < kMaxViewports; ++v)
+        viewportExtentWant_[v] = (v < newCount) ? want[v] : VkExtent2D{ 0, 0 };
+    destroyGuiTargets(true);
+    if (enable)
+        createGuiTargets();
+    onSceneExtentChanged();
+}
+
+void Renderer::buildEyeLayout(VkExtent2D extent, EyeResolve out[kMaxViews],
+                              uint32_t& outCount) const {
+    const uint32_t w = extent.width;
+    const uint32_t h = extent.height;
     if (viewCount_ < 2) {
         out[0] = { { { 0, 0 }, { w, h } }, 0, 0, true };
         outCount = 1;
         return;
     }
     outCount = 2;
+    // The docked-viewport texture mirrors the swapchain's layer count, so this
+    // layout applies to both targets: backbufferLayer doubles as the viewport-
+    // texture layer when docked.
     if (swapchain_->layers() >= 2) {
-        // Quad-buffer: each full-window eye resolves into its own swapchain
+        // Quad-buffer: each full-window eye resolves into its own target
         // layer with its own scene depth (correct per-eye occlusion).
         out[0] = { { { 0, 0 }, { w, h } }, 0, 0, true };
         out[1] = { { { 0, 0 }, { w, h } }, 1, 1, true };
@@ -211,10 +344,10 @@ void Renderer::buildEyeLayout(EyeResolve out[kMaxViews], uint32_t& outCount) con
 }
 
 void Renderer::rebuildViewDependentState() {
-    // Rebuild the view-count-dependent GPU state: the layered scene target and
+    // Rebuild the view-count-dependent GPU state: the layered scene targets and
     // the multiview scene-pass pipelines. The backbuffer tonemap/overlay
     // pipelines stay non-multiview, so they are untouched.
-    createSceneTarget();
+    createSceneTargets();
     const uint32_t viewMask = (1u << viewCount_) - 1u;
     forwardPass_.init(*device_, *shaderCompiler_, kSceneColorFormat, kSceneDepthFormat,
                       viewMask, frameSetLayout_, materials_.setLayout());
@@ -243,6 +376,15 @@ void Renderer::setViewCount(uint32_t count) {
 
 void Renderer::beginXR(VkExtent2D eyeExtent) {
     device_->waitIdle();
+    // XR takes over the scene target: drop the docked-viewport output (the
+    // app re-applies its desktop config after endXR).
+    if (viewportOutput_) {
+        viewportOutput_ = false;
+        viewportCount_ = 1;
+        for (VkExtent2D& want : viewportExtentWant_)
+            want = { 0, 0 };
+        destroyGuiTargets(true);
+    }
     xrActive_ = true;
     sceneExtentOverride_ = eyeExtent; // scene target follows the HMD, not the window
     viewCount_ = 2;                   // both eyes, single multiview pass
@@ -358,8 +500,27 @@ uint32_t Renderer::buildFrameData(const FrameSubmission& submission,
 }
 
 void Renderer::uploadFrameBuffers(FrameContext& frame, const gpu::FrameData& frameData,
-                                  const std::vector<gpu::PointLightData>& lights) {
-    frame.frameUbo.upload(&frameData, sizeof(frameData));
+                                  const std::vector<gpu::PointLightData>& lights,
+                                  const FrameSubmission& submission) {
+    // One FrameData slice per viewport: identical except views[], which holds
+    // that viewport's per-eye cameras — the scene shaders then run unchanged
+    // (they index views[gl_ViewIndex]) whichever viewport's set is bound.
+    frame.frameUbo.upload(&frameData, sizeof(frameData), 0);
+    if (viewportCount_ > 1) {
+        gpu::FrameData viewportData = frameData;
+        for (uint32_t v = 1; v < viewportCount_; ++v) {
+            const ViewCamera* cams = viewportViews(submission, v);
+            for (uint32_t e = 0; e < kMaxViews; ++e) {
+                const ViewCamera& cam = cams[std::min(e, uint32_t(viewCount_ - 1))];
+                const glm::mat4 viewProj = cam.proj * cam.view;
+                viewportData.views[e].viewProj = viewProj;
+                viewportData.views[e].invViewProj = glm::inverse(viewProj);
+                viewportData.views[e].cameraPos = glm::vec4(cam.position, 1.0f);
+            }
+            frame.frameUbo.upload(&viewportData, sizeof(viewportData),
+                                  v * frameUboStride_);
+        }
+    }
     if (!lights.empty())
         frame.lightsBuffer.upload(lights.data(),
                                   lights.size() * sizeof(gpu::PointLightData));
@@ -384,11 +545,12 @@ void Renderer::uploadFrameBuffers(FrameContext& frame, const gpu::FrameData& fra
 }
 
 VkDescriptorSet Renderer::writeFrameSet(FrameContext& frame,
-                                        const std::vector<gpu::PointLightData>& lights) {
+                                        const std::vector<gpu::PointLightData>& lights,
+                                        VkDeviceSize frameUboOffset) {
     VkDescriptorSet set = frame.descriptors.allocate(frameSetLayout_);
     rhi::DescriptorWriter{}
-        .writeBuffer(0, frame.frameUbo.handle(), 0, sizeof(gpu::FrameData),
-                     VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+        .writeBuffer(0, frame.frameUbo.handle(), frameUboOffset,
+                     sizeof(gpu::FrameData), VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
         .writeBuffer(1, frame.lightsBuffer.handle(), 0,
                      std::max<VkDeviceSize>(lights.size(), 1) *
                          sizeof(gpu::PointLightData),
@@ -459,16 +621,34 @@ uint64_t Renderer::completedFrameValue() const {
     return completed;
 }
 
-void Renderer::armDepthPick(FrameContext& frame, const FrameSubmission& submission) {
-    // Clamp the requested rects to the scene extent and size the slot's readback.
+void Renderer::buildRenderViewportMask(const FrameSubmission& submission,
+                                       bool outRender[kMaxViewports]) const {
+    for (uint32_t v = 0; v < kMaxViewports; ++v) {
+        const bool hidden = v < submission.viewportCount && submission.viewportHidden[v];
+        outRender[v] = v < viewportCount_ &&
+                       (!hidden || !viewports_[v].everRendered);
+    }
+}
+
+void Renderer::armDepthPick(FrameContext& frame, const FrameSubmission& submission,
+                            const bool renderViewport[kMaxViewports]) {
+    // The pick samples ONE viewport's depth (the one under the mouse). A
+    // viewport skipped this frame keeps last frame's depth — don't pick from
+    // it (recordScene records the copy only for rendered viewports).
+    const uint32_t pickVp = std::min(submission.depthPickViewport, viewportCount_ - 1);
+    if (!renderViewport[pickVp])
+        return;
+    const VkExtent2D pickExtent = viewports_[pickVp].extent;
+
+    // Clamp the requested rects to the pick extent and size the slot's readback.
     std::vector<DepthQueryRect> depthRects;
     depthRects.reserve(submission.depthQueries.size());
     size_t texels = 0;
     for (const DepthQueryRect& req : submission.depthQueries) {
         DepthQueryRect rect = req;
         rect.origin = glm::max(rect.origin, glm::ivec2(0));
-        rect.size.x = std::min(rect.size.x, int(sceneExtent_.width) - rect.origin.x);
-        rect.size.y = std::min(rect.size.y, int(sceneExtent_.height) - rect.origin.y);
+        rect.size.x = std::min(rect.size.x, int(pickExtent.width) - rect.origin.x);
+        rect.size.y = std::min(rect.size.y, int(pickExtent.height) - rect.origin.y);
         if (rect.size.x <= 0 || rect.size.y <= 0)
             continue;
         texels += size_t(rect.size.x) * rect.size.y;
@@ -488,8 +668,8 @@ void Renderer::armDepthPick(FrameContext& frame, const FrameSubmission& submissi
     }
     frame.pendingDepth.valid = true;
     frame.pendingDepth.rects = std::move(depthRects);
-    frame.pendingDepth.extent = sceneExtent_;
-    const ViewCamera& cam0 = submission.views[0];
+    frame.pendingDepth.extent = pickExtent;
+    const ViewCamera& cam0 = viewportViews(submission, pickVp)[0];
     frame.pendingDepth.invViewProj = glm::inverse(cam0.proj * cam0.view);
     frame.pendingDepth.cameraPos = cam0.position;
 }
@@ -683,36 +863,59 @@ rhi::PresentResult Renderer::renderFrame(const FrameSubmission& submission,
     gpu::FrameData frameData{};
     std::vector<gpu::PointLightData> lights;
     const uint32_t shadowedLightCount = buildFrameData(submission, frameData, lights);
-    uploadFrameBuffers(frame, frameData, lights);
-    VkDescriptorSet frameSet = writeFrameSet(frame, lights);
+    uploadFrameBuffers(frame, frameData, lights, submission);
+    // One per-frame set per viewport, differing only in the FrameData slice
+    // (viewport cameras); the shadow pass and XR use frameSets[0].
+    VkDescriptorSet frameSets[kMaxViewports]{};
+    for (uint32_t v = 0; v < viewportCount_; ++v)
+        frameSets[v] = writeFrameSet(frame, lights, v * frameUboStride_);
+
+    // Which viewports render this frame (hidden GUI tabs are skipped, except
+    // for a never-yet-rendered fresh target).
+    bool renderViewport[kMaxViewports]{};
+    buildRenderViewportMask(submission, renderViewport);
 
     // Point-cloud dispatch data for this frame (host upload; safe — this
-    // slot's previous submission has retired).
-    pointCloudPass_.prepare(submission, frameSlot_, sceneExtent_, viewCount_);
+    // slot's previous submission has retired). ONE flat view list covers
+    // every rendered (viewport, eye) pair.
+    PointCloudPass::ViewportInput pcViewports[kMaxViewports]{};
+    for (uint32_t v = 0; v < viewportCount_; ++v) {
+        pcViewports[v].extent =
+            renderViewport[v] ? viewports_[v].extent : VkExtent2D{ 0, 0 };
+        pcViewports[v].views = viewportViews(submission, v);
+    }
+    pointCloudPass_.prepare(submission, frameSlot_, pcViewports, viewportCount_,
+                            viewCount_);
 
-    // Overlay geometry for this frame (same slot-safety argument).
+    // Overlay geometry for this frame (same slot-safety argument): one view
+    // entry per (viewport, eye), indexed viewport * kMaxViews + eye.
     if (submission.overlay && !submission.overlay->empty()) {
-        EyeResolve eyes[kMaxViews];
-        uint32_t eyeCount = 0;
-        buildEyeLayout(eyes, eyeCount);
-        OverlayViewInfo views[kMaxViews];
-        for (uint32_t v = 0; v < kMaxViews; ++v) {
-            const ViewCamera& cam =
-                submission.views[std::min(v, uint32_t(viewCount_ - 1))];
-            views[v].viewProj = cam.proj * cam.view;
-            // Per-eye px sizing uses the ON-SCREEN rect (a half-width in
-            // side-by-side) so overlay line widths / marker sizes stay in
-            // real pixels.
-            const VkExtent2D ext = (v < eyeCount) ? eyes[v].rect.extent : sceneExtent_;
-            views[v].viewportPx = glm::vec2(float(ext.width), float(ext.height));
-            views[v].cameraPos = cam.position;
+        OverlayViewInfo views[kMaxViewports * kMaxViews];
+        for (uint32_t v = 0; v < viewportCount_; ++v) {
+            EyeResolve eyes[kMaxViews];
+            uint32_t eyeCount = 0;
+            buildEyeLayout(viewports_[v].extent, eyes, eyeCount);
+            const ViewCamera* cams = viewportViews(submission, v);
+            for (uint32_t e = 0; e < kMaxViews; ++e) {
+                OverlayViewInfo& info = views[v * kMaxViews + e];
+                const ViewCamera& cam = cams[std::min(e, uint32_t(viewCount_ - 1))];
+                info.viewProj = cam.proj * cam.view;
+                // Per-eye px sizing uses the ON-SCREEN rect (a half-width in
+                // side-by-side) so overlay line widths / marker sizes stay in
+                // real pixels.
+                const VkExtent2D ext =
+                    (e < eyeCount) ? eyes[e].rect.extent : viewports_[v].extent;
+                info.viewportPx = glm::vec2(float(ext.width), float(ext.height));
+                info.cameraPos = cam.position;
+            }
         }
-        overlayPass_.prepare(frameSlot_, *submission.overlay, views, kMaxViews);
+        overlayPass_.prepare(frameSlot_, *submission.overlay, views,
+                             viewportCount_ * kMaxViews);
     } else {
         overlayPass_.prepare(frameSlot_, OverlayDrawList{}, nullptr, 0);
     }
 
-    armDepthPick(frame, submission);
+    armDepthPick(frame, submission, renderViewport);
 
     // Record the three command buffers: uploads+shadow, the async compute
     // batch (when this frame takes the async path), then scene+backbuffer.
@@ -721,12 +924,13 @@ rhi::PresentResult Renderer::renderFrame(const FrameSubmission& submission,
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         VK_CHECK(vkBeginCommandBuffer(frame.preCommandBuffer, &beginInfo));
-        recordPreScene(frame.preCommandBuffer, submission, frameSet, shadowedLightCount);
+        recordPreScene(frame.preCommandBuffer, submission, frameSets[0],
+                       shadowedLightCount);
         VK_CHECK(vkEndCommandBuffer(frame.preCommandBuffer));
     }
     const bool asyncCompute = recordAsyncCompute(frame);
-    recordFrame(frame, imageIndex, submission, frameSet, asyncCompute,
-                uiDrawData, captureThisFrame);
+    recordFrame(frame, imageIndex, submission, frameSets, renderViewport,
+                asyncCompute, uiDrawData, captureThisFrame);
 
     submitFrame(frame, asyncCompute, /*waitAcquire=*/true,
                 swapchain_->renderFinishedSemaphore(imageIndex));
@@ -767,10 +971,13 @@ rhi::PresentResult Renderer::renderFrameXR(const FrameSubmission& submission,
     gpu::FrameData frameData{};
     std::vector<gpu::PointLightData> lights;
     const uint32_t shadowedLightCount = buildFrameData(submission, frameData, lights);
-    uploadFrameBuffers(frame, frameData, lights);
-    VkDescriptorSet frameSet = writeFrameSet(frame, lights);
+    uploadFrameBuffers(frame, frameData, lights, submission);
+    VkDescriptorSet frameSet = writeFrameSet(frame, lights, 0);
 
-    pointCloudPass_.prepare(submission, frameSlot_, sceneExtent_, viewCount_);
+    // XR is always exactly viewport 0 at the HMD eye extent.
+    const VkExtent2D eyeExtent = viewports_[0].extent;
+    PointCloudPass::ViewportInput pcViewport{ eyeExtent, submission.views };
+    pointCloudPass_.prepare(submission, frameSlot_, &pcViewport, 1, viewCount_);
 
     // Overlay geometry: both eyes are full eye-resolution viewports.
     if (submission.overlay && !submission.overlay->empty()) {
@@ -780,7 +987,7 @@ rhi::PresentResult Renderer::renderFrameXR(const FrameSubmission& submission,
                 submission.views[std::min(v, uint32_t(viewCount_ - 1))];
             views[v].viewProj = cam.proj * cam.view;
             views[v].viewportPx =
-                glm::vec2(float(sceneExtent_.width), float(sceneExtent_.height));
+                glm::vec2(float(eyeExtent.width), float(eyeExtent.height));
             views[v].cameraPos = cam.position;
         }
         overlayPass_.prepare(frameSlot_, *submission.overlay, views, kMaxViews);
@@ -788,7 +995,8 @@ rhi::PresentResult Renderer::renderFrameXR(const FrameSubmission& submission,
         overlayPass_.prepare(frameSlot_, OverlayDrawList{}, nullptr, 0);
     }
 
-    armDepthPick(frame, submission);
+    const bool renderViewport[kMaxViewports] = { true };
+    armDepthPick(frame, submission, renderViewport);
 
     {
         VkCommandBufferBeginInfo beginInfo{};
@@ -847,156 +1055,176 @@ bool Renderer::recordAsyncCompute(FrameContext& frame) {
 }
 
 void Renderer::recordScene(VkCommandBuffer cmd, FrameContext& frame,
-                           const FrameSubmission& submission, VkDescriptorSet frameSet,
+                           const FrameSubmission& submission,
+                           const VkDescriptorSet* frameSets,
+                           const bool renderViewport[kMaxViewports],
                            bool asyncCompute) {
     // ---- Pass 1b: point-cloud compute (Schütz rasterize / HQS) ----
+    // Recorded ONCE for all viewports: the dispatches carry every rendered
+    // (viewport, eye) view's section, so the point streams are decoded once
+    // per frame however many viewports show them.
     // Async path: already recorded into the slot's compute command buffer
     // (recordAsyncCompute) and ordered against this batch by the compute
     // timeline. Fallback: record it inline, exactly where the single-queue
     // frame always had it — clears + dispatches + queue-scoped barriers; the
-    // fullscreen resolve joins the scene pass below either way. No-op when
+    // fullscreen resolves join the scene passes below either way. No-op when
     // the frame has no visible clouds.
     if (!asyncCompute)
         pointCloudPass_.recordCompute(cmd, /*asyncQueue=*/false);
 
-    // Scene target: previous contents are irrelevant (UNDEFINED discard).
-    {
-        VkImageMemoryBarrier2 barriers[2] = {
-            rhi::imageBarrier(sceneColor_.image(), VK_IMAGE_ASPECT_COLOR_BIT,
-                              VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
-                              VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                              VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                              VK_IMAGE_LAYOUT_UNDEFINED,
-                              VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL),
-            rhi::imageBarrier(sceneDepth_.image(), VK_IMAGE_ASPECT_DEPTH_BIT,
-                              VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
-                              VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
-                                  VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                              VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
-                                  VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                              VK_IMAGE_LAYOUT_UNDEFINED,
-                              VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL),
-        };
-        rhi::cmdBarrier(cmd, barriers, 2);
-    }
+    // One multiview scene pass per rendered viewport. Camera-independent work
+    // (uploads, shadows, the compute above) already ran once; from here each
+    // viewport only pays its own raster cost.
+    const uint32_t pickViewport =
+        std::min(submission.depthPickViewport, viewportCount_ - 1);
+    for (uint32_t v = 0; v < viewportCount_; ++v) {
+        if (!renderViewport[v])
+            continue;
+        ViewportTarget& vp = viewports_[v];
 
-    // ---- Pass 2+3: forward PBR then skybox, one multiview scene pass ----
-    {
-        VkRenderingAttachmentInfo color{};
-        color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-        color.imageView = sceneColor_.view();
-        color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        color.clearValue.color.float32[0] = 0.0f;
-        color.clearValue.color.float32[1] = 0.0f;
-        color.clearValue.color.float32[2] = 0.0f;
-        color.clearValue.color.float32[3] = 1.0f;
-
-        VkRenderingAttachmentInfo depth{};
-        depth.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-        depth.imageView = sceneDepth_.view();
-        depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-        depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        // STORE since Phase 6: the depth-picking copies and the backbuffer
-        // overlay pass both consume the scene depth after this pass.
-        depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        depth.clearValue.depthStencil.depth = 0.0f; // reverse-Z far
-
-        VkRenderingInfo rendering{};
-        rendering.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
-        rendering.renderArea.extent = sceneExtent_;
-        rendering.layerCount = 1;
-        rendering.viewMask = (1u << viewCount_) - 1u;
-        rendering.colorAttachmentCount = 1;
-        rendering.pColorAttachments = &color;
-        rendering.pDepthAttachment = &depth;
-        vkCmdBeginRendering(cmd, &rendering);
-
-        VkViewport viewport{};
-        viewport.width = static_cast<float>(sceneExtent_.width);
-        viewport.height = static_cast<float>(sceneExtent_.height);
-        viewport.maxDepth = 1.0f;
-        vkCmdSetViewport(cmd, 0, 1, &viewport);
-        VkRect2D scissor{};
-        scissor.extent = sceneExtent_;
-        vkCmdSetScissor(cmd, 0, 1, &scissor);
-
-        forwardPass_.record(cmd, frameSet, materials_.set(), submission);
-        // Point clouds composite against the mesh depth (reverse-Z GREATER,
-        // depth write) BEFORE the skybox so background pixels stay cheap.
-        pointCloudPass_.recordResolve(cmd);
-        skyboxPass_.record(cmd, frameSet, submission.sky);
-
-        vkCmdEndRendering(cmd);
-    }
-
-    // ---- Pass 3b: depth-picking rect copies (scene depth -> readback) ----
-    if (frame.pendingDepth.valid) {
-        rhi::cmdImageBarrier(cmd, rhi::imageBarrier(
-            sceneDepth_.image(), VK_IMAGE_ASPECT_DEPTH_BIT,
-            VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-            VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-            VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
-            VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL));
-
-        std::vector<VkBufferImageCopy2> regions;
-        regions.reserve(frame.pendingDepth.rects.size());
-        VkDeviceSize offset = 0;
-        for (const DepthQueryRect& rect : frame.pendingDepth.rects) {
-            VkBufferImageCopy2 region{};
-            region.sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2;
-            region.bufferOffset = offset;
-            region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-            region.imageSubresource.baseArrayLayer = 0; // view 0
-            region.imageSubresource.layerCount = 1;
-            region.imageOffset = { rect.origin.x, rect.origin.y, 0 };
-            region.imageExtent = { uint32_t(rect.size.x), uint32_t(rect.size.y), 1 };
-            regions.push_back(region);
-            offset += VkDeviceSize(rect.size.x) * rect.size.y * sizeof(float);
+        // Scene target: previous contents are irrelevant (UNDEFINED discard).
+        {
+            VkImageMemoryBarrier2 barriers[2] = {
+                rhi::imageBarrier(vp.sceneColor.image(), VK_IMAGE_ASPECT_COLOR_BIT,
+                                  VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
+                                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                  VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                                  VK_IMAGE_LAYOUT_UNDEFINED,
+                                  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL),
+                rhi::imageBarrier(vp.sceneDepth.image(), VK_IMAGE_ASPECT_DEPTH_BIT,
+                                  VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
+                                  VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+                                      VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                                  VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                                      VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                                  VK_IMAGE_LAYOUT_UNDEFINED,
+                                  VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL),
+            };
+            rhi::cmdBarrier(cmd, barriers, 2);
         }
-        VkCopyImageToBufferInfo2 copy{};
-        copy.sType = VK_STRUCTURE_TYPE_COPY_IMAGE_TO_BUFFER_INFO_2;
-        copy.srcImage = sceneDepth_.image();
-        copy.srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        copy.dstBuffer = frame.depthReadback.handle();
-        copy.regionCount = static_cast<uint32_t>(regions.size());
-        copy.pRegions = regions.data();
-        vkCmdCopyImageToBuffer2(cmd, &copy);
 
-        VkBufferMemoryBarrier2 hostRead = rhi::bufferBarrier(
-            frame.depthReadback.handle(),
-            VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-            VK_PIPELINE_STAGE_2_HOST_BIT, VK_ACCESS_2_HOST_READ_BIT);
-        VkImageMemoryBarrier2 backToDepth = rhi::imageBarrier(
-            sceneDepth_.image(), VK_IMAGE_ASPECT_DEPTH_BIT,
-            VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
-            VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+        // ---- Pass 2+3: forward PBR then skybox, one multiview scene pass ----
+        {
+            VkRenderingAttachmentInfo color{};
+            color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+            color.imageView = vp.sceneColor.view();
+            color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+            color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            color.clearValue.color.float32[0] = 0.0f;
+            color.clearValue.color.float32[1] = 0.0f;
+            color.clearValue.color.float32[2] = 0.0f;
+            color.clearValue.color.float32[3] = 1.0f;
+
+            VkRenderingAttachmentInfo depth{};
+            depth.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+            depth.imageView = vp.sceneDepth.view();
+            depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+            depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+            // STORE since Phase 6: the depth-picking copies and the resolve
+            // pass's overlays both consume the scene depth after this pass.
+            depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            depth.clearValue.depthStencil.depth = 0.0f; // reverse-Z far
+
+            VkRenderingInfo rendering{};
+            rendering.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+            rendering.renderArea.extent = vp.extent;
+            rendering.layerCount = 1;
+            rendering.viewMask = (1u << viewCount_) - 1u;
+            rendering.colorAttachmentCount = 1;
+            rendering.pColorAttachments = &color;
+            rendering.pDepthAttachment = &depth;
+            vkCmdBeginRendering(cmd, &rendering);
+
+            VkViewport viewport{};
+            viewport.width = static_cast<float>(vp.extent.width);
+            viewport.height = static_cast<float>(vp.extent.height);
+            viewport.maxDepth = 1.0f;
+            vkCmdSetViewport(cmd, 0, 1, &viewport);
+            VkRect2D scissor{};
+            scissor.extent = vp.extent;
+            vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+            forwardPass_.record(cmd, frameSets[v], materials_.set(), submission);
+            // Point clouds composite against the mesh depth (reverse-Z GREATER,
+            // depth write) BEFORE the skybox so background pixels stay cheap.
+            pointCloudPass_.recordResolve(cmd, v);
+            skyboxPass_.record(cmd, frameSets[v], submission.sky);
+
+            vkCmdEndRendering(cmd);
+        }
+
+        // ---- Pass 3b: depth-picking rect copies (pick viewport only) ----
+        if (frame.pendingDepth.valid && v == pickViewport) {
+            rhi::cmdImageBarrier(cmd, rhi::imageBarrier(
+                vp.sceneDepth.image(), VK_IMAGE_ASPECT_DEPTH_BIT,
                 VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-            VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-            VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
-        rhi::cmdBarrier(cmd, &backToDepth, 1, &hostRead, 1);
-    } else {
-        // No copy this frame — still order the scene pass's depth writes
-        // against the overlay pass's depth tests below.
-        rhi::cmdImageBarrier(cmd, rhi::imageBarrier(
-            sceneDepth_.image(), VK_IMAGE_ASPECT_DEPTH_BIT,
-            VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-            VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-            VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+                VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
+                VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL));
+
+            std::vector<VkBufferImageCopy2> regions;
+            regions.reserve(frame.pendingDepth.rects.size());
+            VkDeviceSize offset = 0;
+            for (const DepthQueryRect& rect : frame.pendingDepth.rects) {
+                VkBufferImageCopy2 region{};
+                region.sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2;
+                region.bufferOffset = offset;
+                region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+                region.imageSubresource.baseArrayLayer = 0; // view 0
+                region.imageSubresource.layerCount = 1;
+                region.imageOffset = { rect.origin.x, rect.origin.y, 0 };
+                region.imageExtent = { uint32_t(rect.size.x), uint32_t(rect.size.y), 1 };
+                regions.push_back(region);
+                offset += VkDeviceSize(rect.size.x) * rect.size.y * sizeof(float);
+            }
+            VkCopyImageToBufferInfo2 copy{};
+            copy.sType = VK_STRUCTURE_TYPE_COPY_IMAGE_TO_BUFFER_INFO_2;
+            copy.srcImage = vp.sceneDepth.image();
+            copy.srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            copy.dstBuffer = frame.depthReadback.handle();
+            copy.regionCount = static_cast<uint32_t>(regions.size());
+            copy.pRegions = regions.data();
+            vkCmdCopyImageToBuffer2(cmd, &copy);
+
+            VkBufferMemoryBarrier2 hostRead = rhi::bufferBarrier(
+                frame.depthReadback.handle(),
+                VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                VK_PIPELINE_STAGE_2_HOST_BIT, VK_ACCESS_2_HOST_READ_BIT);
+            VkImageMemoryBarrier2 backToDepth = rhi::imageBarrier(
+                vp.sceneDepth.image(), VK_IMAGE_ASPECT_DEPTH_BIT,
+                VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
+                VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+                    VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                    VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
+            rhi::cmdBarrier(cmd, &backToDepth, 1, &hostRead, 1);
+        } else {
+            // No copy for this viewport — still order the scene pass's depth
+            // writes against the resolve pass's overlay depth tests.
+            rhi::cmdImageBarrier(cmd, rhi::imageBarrier(
+                vp.sceneDepth.image(), VK_IMAGE_ASPECT_DEPTH_BIT,
                 VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-            VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-            VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-            VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL));
+                VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+                    VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                    VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL));
+        }
+
+        vp.everRendered = true;
     }
 }
 
 void Renderer::recordFrame(FrameContext& frame, uint32_t imageIndex,
-                           const FrameSubmission& submission, VkDescriptorSet frameSet,
+                           const FrameSubmission& submission,
+                           const VkDescriptorSet* frameSets,
+                           const bool renderViewport[kMaxViewports],
                            bool asyncCompute, ImDrawData* uiDrawData,
                            bool captureThisFrame) {
     VkCommandBuffer cmd = frame.commandBuffer;
@@ -1005,38 +1233,60 @@ void Renderer::recordFrame(FrameContext& frame, uint32_t imageIndex,
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     VK_CHECK(vkBeginCommandBuffer(cmd, &beginInfo));
 
-    // Scene passes ([inline point-cloud compute] -> multiview scene pass ->
-    // depth-pick copies), then the backbuffer resolve below. Uploads + shadow
-    // ride the preceding batch (frame.preCommandBuffer); queue-scoped
-    // barriers still order the two batches on the graphics queue.
-    recordScene(cmd, frame, submission, frameSet, asyncCompute);
+    // Scene passes ([inline point-cloud compute, once] -> per-viewport
+    // multiview scene pass -> depth-pick copies), then the per-viewport
+    // resolves below. Uploads + shadow ride the preceding batch
+    // (frame.preCommandBuffer); queue-scoped barriers still order the two
+    // batches on the graphics queue.
+    recordScene(cmd, frame, submission, frameSets, renderViewport, asyncCompute);
 
-    // ---- Pass 4: per-eye tonemap + overlay resolve into the backbuffer, then
-    //      ImGui. Mono = 1 full-window eye; quad-buffer stereo = 2 full-window
-    //      eyes into the 2 swapchain layers (correct per-eye occlusion);
-    //      side-by-side = 2 half-window eyes squished into the single backbuffer
-    //      layer (overlays on top, since the full-res depth can't line up with
-    //      the squished image). Scene depth is attached in every case (the
-    //      tonemap/overlay pipelines declare the format). ----
+    // ---- Pass 4: per-eye tonemap + overlay resolve, per viewport. ----
+    // Classic path: exactly one viewport, resolved straight into the
+    // backbuffer. Mono = 1 full-window eye; quad-buffer stereo = 2 full-window
+    // eyes into the 2 swapchain layers (correct per-eye occlusion);
+    // side-by-side = 2 half-window eyes squished into the single backbuffer
+    // layer (overlays on top, since the full-res depth can't line up with the
+    // squished image). Scene depth is attached in every case (the
+    // tonemap/overlay pipelines declare the format).
+    // Docked path: the SAME resolve renders into each viewport's offscreen
+    // texture the GUI samples as an ImGui image (no extra pass — only the
+    // target changes per viewport), and the backbuffer carries only the GUI.
     VkImage backbuffer = swapchain_->image(imageIndex);
-    {
+    const bool toViewport = viewportOutput_;
+    for (uint32_t v = 0; v < viewportCount_; ++v) {
+        if (!renderViewport[v])
+            continue;
+        ViewportTarget& vp = viewports_[v];
+
         VkImageMemoryBarrier2 barriers[2] = {
             // Scene color (all layers): attachment -> sampled by the tonemap.
-            rhi::imageBarrier(sceneColor_.image(), VK_IMAGE_ASPECT_COLOR_BIT,
+            rhi::imageBarrier(vp.sceneColor.image(), VK_IMAGE_ASPECT_COLOR_BIT,
                               VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                               VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                               VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                               VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                               VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
-            // Backbuffer (all layers): fresh attachment (chained to the acquire
-            // semaphore at COLOR_ATTACHMENT_OUTPUT).
-            rhi::imageBarrier(backbuffer, VK_IMAGE_ASPECT_COLOR_BIT,
-                              VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
-                              VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                              VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                              VK_IMAGE_LAYOUT_UNDEFINED,
-                              VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL),
+            // Resolve target: fresh attachment (previous contents discarded).
+            // Backbuffer: chained to the acquire semaphore at
+            // COLOR_ATTACHMENT_OUTPUT. Viewport texture: the srcStage
+            // FRAGMENT_SHADER execution dependency orders the discard after
+            // every prior UI submission that sampled it (frames overlap by
+            // kFramesInFlight; same queue, so submission-order barriers cover
+            // the backend's secondary-window draws too).
+            toViewport
+                ? rhi::imageBarrier(vp.guiColor.image(), VK_IMAGE_ASPECT_COLOR_BIT,
+                                    VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
+                                    VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                    VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                                    VK_IMAGE_LAYOUT_UNDEFINED,
+                                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+                : rhi::imageBarrier(backbuffer, VK_IMAGE_ASPECT_COLOR_BIT,
+                                    VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
+                                    VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                    VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                                    VK_IMAGE_LAYOUT_UNDEFINED,
+                                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL),
         };
         rhi::cmdBarrier(cmd, barriers, 2);
 
@@ -1044,20 +1294,22 @@ void Renderer::recordFrame(FrameContext& frame, uint32_t imageIndex,
         // the tonemap push constant, so both eyes share this set.
         VkDescriptorSet sceneSet = frame.descriptors.allocate(tonemapPass_.sceneSetLayout());
         rhi::DescriptorWriter{}
-            .writeImage(0, sceneColor_.view(), tonemapPass_.sampler(),
+            .writeImage(0, vp.sceneColor.view(), tonemapPass_.sampler(),
                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
             .flush(device_->device(), sceneSet);
 
         EyeResolve eyes[kMaxViews];
         uint32_t eyeCount = 0;
-        buildEyeLayout(eyes, eyeCount);
+        buildEyeLayout(vp.extent, eyes, eyeCount);
         for (uint32_t e = 0; e < eyeCount; ++e) {
             const EyeResolve& eye = eyes[e];
 
             VkRenderingAttachmentInfo color{};
             color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-            color.imageView = swapchain_->imageView(imageIndex, eye.backbufferLayer);
+            color.imageView = toViewport
+                                  ? vp.guiLayerViews[eye.backbufferLayer]
+                                  : swapchain_->imageView(imageIndex, eye.backbufferLayer);
             color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
             // The fullscreen tonemap overwrites every pixel of this eye's rect;
             // overlays blend on top within the same pass.
@@ -1066,7 +1318,7 @@ void Renderer::recordFrame(FrameContext& frame, uint32_t imageIndex,
 
             VkRenderingAttachmentInfo depth{};
             depth.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-            depth.imageView = sceneDepthLayerViews_[eye.sceneLayer];
+            depth.imageView = vp.sceneDepthLayerViews[eye.sceneLayer];
             depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
             depth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
             depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
@@ -1092,15 +1344,51 @@ void Renderer::recordFrame(FrameContext& frame, uint32_t imageIndex,
             tonemapPass_.record(cmd, sceneSet, tonemapSettings_, eye.sceneLayer,
                                 glm::vec2(eye.rect.offset.x, eye.rect.offset.y),
                                 glm::vec2(eye.rect.extent.width, eye.rect.extent.height));
-            overlayPass_.record(cmd, eye.sceneLayer, /*forceOnTop=*/!eye.overlayDepthTest);
+            // Overlay view params are per (viewport, eye).
+            overlayPass_.record(cmd, v * kMaxViews + eye.sceneLayer,
+                                /*forceOnTop=*/!eye.overlayDepthTest);
 
             vkCmdEndRendering(cmd);
         }
     }
 
     // ---- Pass 5: ImGui on the backbuffer (no depth). Drawn once per swapchain
-    //      layer so a stereo HUD lands on both eyes at zero parallax. ----
-    if (uiDrawData) {
+    //      layer so a stereo HUD lands on both eyes at zero parallax. Docked
+    //      path: the backbuffer only now enters the frame (fresh attachment,
+    //      cleared by loadOp — the dockspace covers it, the clear is the
+    //      letterbox color) and the viewport texture moves to sampled for the
+    //      GUI's image widget. ----
+    if (toViewport) {
+        VkImageMemoryBarrier2 barriers[kMaxViewports + 1];
+        uint32_t barrierCount = 0;
+        // Each rendered viewport texture (all layers): eye resolves -> sampled
+        // by this frame's GUI pass (and, for a dragged-out panel, the
+        // backend's later secondary-window submits on this queue). Skipped
+        // viewports already sit in SHADER_READ_ONLY from their last frame.
+        for (uint32_t v = 0; v < viewportCount_; ++v) {
+            if (!renderViewport[v])
+                continue;
+            barriers[barrierCount++] =
+                rhi::imageBarrier(viewports_[v].guiColor.image(),
+                                  VK_IMAGE_ASPECT_COLOR_BIT,
+                                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                  VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                                  VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                  VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                                  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        }
+        // Backbuffer (all layers): fresh attachment, chained to the
+        // acquire semaphore at COLOR_ATTACHMENT_OUTPUT.
+        barriers[barrierCount++] =
+            rhi::imageBarrier(backbuffer, VK_IMAGE_ASPECT_COLOR_BIT,
+                              VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
+                              VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                              VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                              VK_IMAGE_LAYOUT_UNDEFINED,
+                              VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        rhi::cmdBarrier(cmd, barriers, barrierCount);
+    } else if (uiDrawData) {
         // Dynamic rendering has no implicit pass-to-pass dependency: order
         // the tonemap/overlay writes against ImGui's blended writes (all layers).
         rhi::cmdImageBarrier(cmd, rhi::imageBarrier(
@@ -1112,14 +1400,48 @@ void Renderer::recordFrame(FrameContext& frame, uint32_t imageIndex,
                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL));
+    }
+
+    if (uiDrawData || toViewport) {
+        // Quad-buffer + docked viewports: the GUI is identical on both layers
+        // EXCEPT the viewport images, which must show that layer's eye. The
+        // draw data is recorded once against the layer-0 (left-eye) sets, so
+        // remap each viewport's ImTextureID to the current layer's set before
+        // recording.
+        auto remapViewportImage = [&](VkDescriptorSet from, VkDescriptorSet to) {
+            if (!uiDrawData || from == to || from == VK_NULL_HANDLE)
+                return;
+            for (int list = 0; list < uiDrawData->CmdListsCount; ++list)
+                for (ImDrawCmd& drawCmd : uiDrawData->CmdLists[list]->CmdBuffer)
+                    if (drawCmd.TextureId == reinterpret_cast<ImTextureID>(from))
+                        drawCmd.TextureId = reinterpret_cast<ImTextureID>(to);
+        };
+        auto remapAllViewportImages = [&](uint32_t fromLayer, uint32_t toLayer) {
+            for (uint32_t v = 0; v < viewportCount_; ++v) {
+                const ViewportTarget& vp = viewports_[v];
+                if (fromLayer < vp.guiLayers && toLayer < vp.guiLayers)
+                    remapViewportImage(vp.guiImguiSets[fromLayer],
+                                       vp.guiImguiSets[toLayer]);
+            }
+        };
 
         for (uint32_t layer = 0; layer < swapchain_->layers(); ++layer) {
+            if (toViewport && layer > 0)
+                remapAllViewportImages(layer - 1, layer);
+
             VkRenderingAttachmentInfo color{};
             color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
             color.imageView = swapchain_->imageView(imageIndex, layer);
             color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-            color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            // Docked path: nothing rendered the backbuffer before the GUI —
+            // clear it here (visible only where no GUI window covers it).
+            color.loadOp = toViewport ? VK_ATTACHMENT_LOAD_OP_CLEAR
+                                      : VK_ATTACHMENT_LOAD_OP_LOAD;
             color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            color.clearValue.color.float32[0] = 0.03f;
+            color.clearValue.color.float32[1] = 0.03f;
+            color.clearValue.color.float32[2] = 0.035f;
+            color.clearValue.color.float32[3] = 1.0f;
 
             VkRenderingInfo rendering{};
             rendering.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
@@ -1130,9 +1452,14 @@ void Renderer::recordFrame(FrameContext& frame, uint32_t imageIndex,
             vkCmdBeginRendering(cmd, &rendering);
             // Each call cycles the backend's UI vertex-buffer ring, so the two
             // layer draws use independent buffers (ring sized for this in initImGui).
-            ImGui_ImplVulkan_RenderDrawData(uiDrawData, cmd);
+            if (uiDrawData)
+                ImGui_ImplVulkan_RenderDrawData(uiDrawData, cmd);
             vkCmdEndRendering(cmd);
         }
+        // Restore the left-eye bindings: the backend replays the same draw
+        // data for dragged-out OS windows after this frame is submitted.
+        if (toViewport && swapchain_->layers() > 1)
+            remapAllViewportImages(swapchain_->layers() - 1, 0);
     }
 
     // ---- Optional screenshot copy, then hand the image to the presenter ----
@@ -1191,12 +1518,16 @@ void Renderer::recordFrameXR(FrameContext& frame, const XrEyeTarget eyes[2], boo
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     VK_CHECK(vkBeginCommandBuffer(cmd, &beginInfo));
 
-    // Same multiview scene pass as the desktop path (already 2-view).
-    recordScene(cmd, frame, submission, frameSet, asyncCompute);
+    // Same multiview scene pass as the desktop path (already 2-view); XR is
+    // always exactly viewport 0 at the HMD eye extent.
+    ViewportTarget& vp0 = viewports_[0];
+    const VkDescriptorSet frameSets[kMaxViewports] = { frameSet };
+    const bool renderViewport[kMaxViewports] = { true };
+    recordScene(cmd, frame, submission, frameSets, renderViewport, asyncCompute);
 
     // Scene color (all layers): attachment -> sampled by the eye resolves.
     rhi::cmdImageBarrier(cmd, rhi::imageBarrier(
-        sceneColor_.image(), VK_IMAGE_ASPECT_COLOR_BIT,
+        vp0.sceneColor.image(), VK_IMAGE_ASPECT_COLOR_BIT,
         VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
         VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
@@ -1207,12 +1538,12 @@ void Renderer::recordFrameXR(FrameContext& frame, const XrEyeTarget eyes[2], boo
     // the tonemap push constant, so both eyes and the mirror share this set.
     VkDescriptorSet sceneSet = frame.descriptors.allocate(tonemapPass_.sceneSetLayout());
     rhi::DescriptorWriter{}
-        .writeImage(0, sceneColor_.view(), tonemapPass_.sampler(),
+        .writeImage(0, vp0.sceneColor.view(), tonemapPass_.sampler(),
                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                     VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
         .flush(device_->device(), sceneSet);
 
-    const VkRect2D eyeRect{ { 0, 0 }, sceneExtent_ };
+    const VkRect2D eyeRect{ { 0, 0 }, vp0.extent };
 
     // ---- Two HMD eyes: resolve each scene layer into its swapchain image ----
     for (uint32_t e = 0; e < 2; ++e) {
@@ -1235,7 +1566,7 @@ void Renderer::recordFrameXR(FrameContext& frame, const XrEyeTarget eyes[2], boo
 
         VkRenderingAttachmentInfo depth{};
         depth.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-        depth.imageView = sceneDepthLayerViews_[e]; // per-eye scene depth
+        depth.imageView = vp0.sceneDepthLayerViews[e]; // per-eye scene depth
         depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
         depth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
         depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
@@ -1250,15 +1581,15 @@ void Renderer::recordFrameXR(FrameContext& frame, const XrEyeTarget eyes[2], boo
         vkCmdBeginRendering(cmd, &rendering);
 
         VkViewport viewport{};
-        viewport.width = float(sceneExtent_.width);
-        viewport.height = float(sceneExtent_.height);
+        viewport.width = float(vp0.extent.width);
+        viewport.height = float(vp0.extent.height);
         viewport.maxDepth = 1.0f;
         vkCmdSetViewport(cmd, 0, 1, &viewport);
         vkCmdSetScissor(cmd, 0, 1, &eyeRect);
 
         // Output LINEAR into an sRGB eye target (hardware encodes) else encode here.
         tonemapPass_.record(cmd, sceneSet, tonemapSettings_, e, glm::vec2(0.0f),
-                            glm::vec2(sceneExtent_.width, sceneExtent_.height),
+                            glm::vec2(vp0.extent.width, vp0.extent.height),
                             /*encodeSrgb=*/!eyeSrgb);
         overlayPass_.record(cmd, e, /*forceOnTop=*/false); // per-eye depth occlusion
 
@@ -1431,10 +1762,6 @@ void Renderer::finishScreenshot() {
 }
 
 void Renderer::onSwapchainRecreated() {
-    createSceneTarget();
-    // Size-dependent point-cloud buffers follow the scene target (device is
-    // idle here; the next prepare() recreates them at the new extent).
-    pointCloudPass_.onSwapchainRecreated();
     // Deterministic surface-format selection keeps this stable; guard anyway
     // so a format flip rebuilds the affected pipelines instead of misrendering.
     if (swapchain_->format() != tonemapTargetFormat_) {
@@ -1444,11 +1771,15 @@ void Renderer::onSwapchainRecreated() {
         overlayPass_.init(*device_, *shaderCompiler_, tonemapTargetFormat_,
                           kSceneDepthFormat, 0, kFramesInFlight);
     }
-    // The published depth samples referenced the old extent; drop them so
-    // picking never reconstructs from a stale rectangle set.
-    depthResult_ = DepthReadback{};
-    for (FrameContext& frame : frames_)
-        frame.pendingDepth = DepthReadback{};
+    // The viewport textures follow the swapchain's format AND layer count (a
+    // stereo-mode flip changes layers); the device is idle here (recreate).
+    if (viewportOutput_ &&
+        (viewports_[0].guiColor.format() != tonemapTargetFormat_ ||
+         viewports_[0].guiLayers != std::max(swapchain_->layers(), 1u))) {
+        destroyGuiTargets(true);
+        createGuiTargets();
+    }
+    onSceneExtentChanged();
 }
 
 void Renderer::destroyFrameContexts() {
@@ -1499,9 +1830,10 @@ void Renderer::shutdown() {
     frameSetLayout_ = VK_NULL_HANDLE;
     materials_.shutdown();
     uploadRing_.destroy();
-    destroySceneDepthLayerViews();
-    sceneColor_.destroy();
-    sceneDepth_.destroy();
+    // The ImGui backend is torn down before the renderer; the viewport image
+    // sets die with the application's descriptor pool, not via RemoveTexture.
+    destroyGuiTargets(/*releaseImguiSets=*/false);
+    destroySceneTargets();
     destroyFrameContexts();
     if (frameTimeline_ != VK_NULL_HANDLE)
         vkDestroySemaphore(device_->device(), frameTimeline_, nullptr);

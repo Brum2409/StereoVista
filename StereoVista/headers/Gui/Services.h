@@ -64,6 +64,30 @@ struct FrameDiagnostics {
     bool asyncComputeActive = false;
 };
 
+// What one Viewport panel displays: the renderer's offscreen viewport texture
+// as an ImGui image. Plain data (textureId is the ImTextureID); active=false
+// means the classic fullscreen path is in use (XR) and the panels are skipped
+// — the scene then shows through the dockspace's passthru central node.
+struct ViewportDisplay {
+    void* textureId = nullptr;      // ImTextureID; null until the target exists
+    unsigned width = 0, height = 0; // texture size in pixels
+    bool active = false;            // docked-viewport mode (draw the panel)
+};
+
+// What one Viewport panel reports back each GUI frame: desired size + input
+// state, all in coordinates the app can act on without knowing ImGui layout.
+struct ViewportPanelState {
+    bool  shown = false;            // panel visible with a >=1px content region
+    float sizeX = 0.0f, sizeY = 0.0f;   // content region = desired texture size
+    float mouseX = 0.0f, mouseY = 0.0f; // mouse in TEXTURE pixels (may be out of
+                                        // range — consumers bound-check)
+    float screenX = 0.0f, screenY = 0.0f; // image top-left, ImGui screen coords
+    float screenW = 0.0f, screenH = 0.0f; // image display size on screen
+    bool  hovered = false;          // image hovered, no other window on top
+    bool  focused = false;
+    void* hostWindow = nullptr;     // GLFWwindow* of the OS window hosting it
+};
+
 // Live streaming progress for one point cloud (mirror of
 // Engine::PointCloudLoader::StreamProgress, minus the loader header).
 struct PointCloudProgress {
@@ -90,6 +114,28 @@ public:
     virtual Tools::ClipPlaneTool&   clipTool() = 0;
     virtual Plugins::PluginManager& plugins() = 0;
     virtual Plugins::PluginContext& pluginContext() = 0;
+
+    // ── Docked 3D viewports ─────────────────────────────────────────────────
+    // The GuiSystem draws one Viewport window per index in
+    // [0, viewportPanelCount()) from viewportDisplay(i) and reports each
+    // panel's geometry/input back through onViewportPanel(i, ...) every frame
+    // (a default-constructed state when a panel was not drawn). Window titles
+    // come from viewportPanelName(i) and are STABLE per viewport (they are the
+    // ImGui window identity, which imgui.ini docking keys on).
+    virtual uint32_t        viewportPanelCount() const = 0;
+    virtual const char*     viewportPanelName(uint32_t index) const = 0;
+    virtual ViewportDisplay viewportDisplay(uint32_t index) const = 0;
+    virtual void onViewportPanel(uint32_t index, const ViewportPanelState& state) = 0;
+    // View menu: add a viewport (up to the renderer cap) / close a secondary
+    // one (index 0 — the primary — is never closable). The close is deferred
+    // to the next frame boundary, where the renderer reconfigures device-idle.
+    virtual bool canAddViewport() const = 0;
+    virtual void addViewport() = 0;
+    virtual void closeViewport(uint32_t index) = 0;
+    // Mouse is over any 3D view (docked: a viewport image; classic
+    // fullscreen: anywhere no GUI window owns the mouse). For hover-driven
+    // panel features like the scene-layer hover pick.
+    virtual bool viewportHovered() const = 0;
 
     // ── Diagnostics / device info ────────────────────────────────────────────
     virtual FrameDiagnostics diagnostics() const = 0;

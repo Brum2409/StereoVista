@@ -95,7 +95,11 @@ typename std::make_unsigned<IntTypeT>::type ConvertSignedIntToSymbol(
   if (val >= 0) {
     return static_cast<UnsignedType>(val) << 1;
   }
-  val = -(val + 1);  // Map -1 to 0, -2 to -1, etc..
+  // Map -1 to 0, -2 to 1, etc. Local patch: written as (-1 - val) instead of
+  // -(val + 1) because MSVC /sdl elevates C4146 (unary minus on unsigned) to
+  // an error when this template is instantiated with an unsigned IntTypeT
+  // (this branch is unreachable there, but still compiled).
+  val = -1 - val;
   UnsignedType ret = static_cast<UnsignedType>(val);
   ret <<= 1;
   ret |= 1;

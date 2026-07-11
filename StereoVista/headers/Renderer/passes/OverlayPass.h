@@ -76,7 +76,7 @@ private:
 
     struct SlotBuffers {
         rhi::Buffer vertices;   // OverlayVertex[] (HostUpload, grown on demand)
-        rhi::Buffer viewParams; // gpu::OverlayViewParams[kMaxViews]
+        rhi::Buffer viewParams; // gpu::OverlayViewParams[kMaxViews * kMaxViewports]
     };
     std::vector<SlotBuffers> slots_;
 

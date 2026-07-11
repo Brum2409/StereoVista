@@ -6,6 +6,7 @@
 #include "Engine/Data.h"
 #include "Engine/XRRuntimeInfo.h" // plain-data OpenXR runtime picker snapshot
 #include "Gui/GuiSystem.h"
+#include "Gui/Services.h" // Gui::ViewportPanelState (the Viewport window report)
 #include "Gui/Settings.h"
 #include "Platform/Window.h"
 #include "Plugins/PluginManager.h"
@@ -96,15 +97,41 @@ private:
     void handleDroppedFiles();         // route window drag-drop by extension
     void handleResize();
     void loadScene();
+    // ---- Docked viewports (GUI rework; up to renderer::kMaxViewports) ----
+    // Reconcile the renderer's offscreen viewport outputs with the desired
+    // config at a frame boundary (before ImGui::NewFrame — the last frame's
+    // draw data must never reference a destroyed viewport texture). Docked
+    // whenever the desktop owns the window (any stereo mode); XR keeps the
+    // classic fullscreen path. Closed viewports are erased here; a panel
+    // resize is applied only once the reported size has settled (equal on two
+    // consecutive frames), so a splitter drag stretches the image instead of
+    // rebuilding render targets every frame.
+    void reconcileViewportOutput();
+    // View menu: append a viewport (camera seeded from the active one).
+    void addViewport();
+    // The camera of viewport `index` (0 = the primary camera_) / of the
+    // viewport the mouse is over (nav, picking and rays route to it).
+    Camera& viewportCamera(size_t index);
+    const Camera& viewportCamera(size_t index) const;
+    Camera& activeCamera() { return viewportCamera(activeViewport_); }
+    const Camera& activeCamera() const { return viewportCamera(activeViewport_); }
+    // Derive this frame's effective 3D-view input (sceneInput_) after the GUI
+    // built: from the hovered Viewport panel's report when docked, from the
+    // raw window mouse + swapchain extent on the classic fullscreen path.
+    // Also retargets activeViewport_ to the hovered viewport (never during an
+    // active drag).
+    void updateSceneInput();
     void updateCamera(float dt);
-    // Per-view cameras for this frame: mono fills view 0 (view 1 duplicated);
-    // stereo builds off-axis left/right eyes from stereoSeparation_/Convergence_
-    // (port of the GL PerspectiveProjection + offset lookAt). Returns the active
-    // view count (1 or 2).
-    uint32_t viewCameras(renderer::ViewCamera out[renderer::kMaxViews]) const;
+    // Per-view cameras of one viewport for this frame: mono fills view 0
+    // (view 1 duplicated); stereo builds off-axis left/right eyes from
+    // stereoSeparation_/Convergence_ (port of the GL PerspectiveProjection +
+    // offset lookAt). Returns the active view count (1 or 2).
+    uint32_t viewCameras(renderer::ViewCamera out[renderer::kMaxViews],
+                         size_t viewportIndex = 0) const;
     // View + projection of the interaction eye (view 0 = left eye in stereo,
-    // mono otherwise). Shared by the render submission, the cursor depth-picking
-    // reconstruction, and picking rays so all use identical matrices.
+    // mono otherwise) of the ACTIVE viewport. Shared by the cursor
+    // depth-picking reconstruction and picking rays so all use identical
+    // matrices (the render submission builds every viewport's via viewCameras).
     void cameraMatrices(glm::mat4& view, glm::mat4& proj) const;
     // Applies a stereo-mode change (swapchain layers + renderer view count +
     // swapchain recreate); auto-downgrades QuadBuffer to SideBySide when the
@@ -162,11 +189,11 @@ private:
     // undo entry for the whole drag at drag end (no-op if nothing changed).
     void beginGizmoUndo();
     void finishGizmoUndo();
-    // World-space ray under the current OS cursor / through a window pixel
-    // (top-left origin), using this frame's view + projection.
+    // World-space ray under the mouse / through a 3D-viewport pixel (render-
+    // target pixels, top-left origin), using this frame's view + projection.
     Plugins::PickRay mouseRayCurrent() const;
-    Plugins::PickRay rayThroughPixel(glm::vec2 windowPixel) const;
-    int currentMods() const; // GLFW_MOD_* bitmask from the polled modifier keys
+    Plugins::PickRay rayThroughPixel(glm::vec2 viewportPixel) const;
+    int currentMods() const; // GLFW_MOD_* bitmask from ImGui's modifier state
 
     Platform::Window window_;
     rhi::Device device_;
@@ -238,12 +265,48 @@ private:
     StereoMode vrSavedStereoMode_ = StereoMode::Off;
     VkPresentModeKHR vrSavedPresentMode_ = VK_PRESENT_MODE_FIFO_KHR;
 
+    // ---- Docked viewports (scene rendered offscreen, shown as GUI windows) ----
+    // One entry per viewport window. Index 0 is the primary (its camera is
+    // camera_ below); secondary viewports own their cameras. `name` is the
+    // stable ImGui window identity (imgui.ini docking keys on it), derived
+    // from `id` — a persistent per-viewport slot that survives siblings
+    // closing (vector indices shift, ids do not).
+    struct AppViewport {
+        int id = 0;
+        std::string name;
+        Camera camera{ glm::vec3(3.0f, 3.0f, 7.0f) }; // unused for index 0
+        // What this Viewport panel reported this GUI frame (via MainGuiServices).
+        Gui::ViewportPanelState ui;
+        // Last frame's desired texture size — a resize is applied only when the
+        // report repeats (settle test), so splitter drags don't rebuild per frame.
+        VkExtent2D sizeWant{ 0, 0 };
+        bool open = true; // false = close requested; erased at reconcile
+    };
+    std::vector<AppViewport> viewports_;
+    // The viewport the mouse is over (last one hovered; frozen during drags):
+    // navigation, picking rays, the 3D cursor and depth queries target it.
+    uint32_t activeViewport_ = 0;
+    // This frame's effective 3D-view input, derived in updateSceneInput():
+    // every interaction consumer (camera nav, picking rays, depth queries,
+    // cursor, plugins) reads the 3D view through this — never raw window
+    // coordinates — so docked and classic fullscreen paths behave identically.
+    struct SceneInput {
+        bool hovered = false;         // pointer over the 3D view; nav may start
+        glm::vec2 mousePx{ 0.0f };    // mouse in render-target pixels
+        glm::vec2 sizePx{ 1.0f };     // render-target size
+        glm::vec2 screenPos{ 0.0f };  // view rect on screen (HUD/label space)
+        glm::vec2 screenSize{ 1.0f };
+        GLFWwindow* hostWindow = nullptr; // OS window hosting the 3D view
+    };
+    SceneInput sceneInput_;
+
     // Navigation drag state (edge-detected from polled mouse buttons). While
     // any is active the OS cursor is disabled for unbounded travel and the 3D
     // cursor / depth pick is frozen.
     bool orbiting_ = false;
     bool panning_ = false;
     bool rmbLooking_ = false;
+    GLFWwindow* navWindow_ = nullptr; // window that owns the cursor capture
     double lastMouseX_ = 0.0;
     double lastMouseY_ = 0.0;
     double lastFrameTime_ = 0.0;

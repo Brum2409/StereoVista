@@ -60,10 +60,11 @@ layout(push_constant, scalar) uniform PcPush {
 
 // Loaded once at the top of pcMain; read by the shared code and the
 // pass-specific pcProcessPoint. g_d is the VIEW-0 struct — its view-varying
-// members (mvp/modelView/proj, target pointers) are only valid for view 0;
-// everything else (streams, image size, clip planes, cloudID, splat/HQS
+// members (mvp/modelView/proj, target pointers, image size) are only valid
+// for view 0; everything else (streams, clip planes, cloudID, splat/HQS
 // parameters) is identical across views by construction (prepare() varies
-// only the camera and the target offsets per view).
+// only the camera, the target offsets and the extent per view — views are
+// (viewport, eye) pairs and viewports differ in extent).
 PointCloudDispatch g_d;
 
 // Per-view state filled by the pcMain prologue (indices < g_viewCount).
@@ -75,6 +76,7 @@ uint g_viewCount;
 mat4 g_viewMvp[SV_PC_MAX_VIEWS];
 bool g_viewVisible[SV_PC_MAX_VIEWS];
 float g_viewSplatScale[SV_PC_MAX_VIEWS];
+ivec2 g_viewImageSize[SV_PC_MAX_VIEWS];
 uint64_t g_viewFramebuffer[SV_PC_MAX_VIEWS];
 uint64_t g_viewHqsDepth[SV_PC_MAX_VIEWS];
 uint64_t g_viewHqsAccum[SV_PC_MAX_VIEWS];
@@ -132,10 +134,11 @@ bool pcIntersectsFrustum(mat4 m, vec3 bmin, vec3 bmax) {
 
 // ── Precision level (Schütz getPrecisionLevel, verbatim thresholds) ───────────
 // Projects the batch bounding sphere to screen pixels and picks how many
-// packed-coordinate tiers each point read decodes. Per-view matrices are
-// parameters (multi-view: the merged decode uses the MOST precise level any
-// visible view asks for).
-int pcPrecisionLevel(mat4 modelView, mat4 proj, vec3 bmin, vec3 bmax) {
+// packed-coordinate tiers each point read decodes. Per-view matrices and
+// image size are parameters (multi-view: the merged decode uses the MOST
+// precise level any visible view asks for).
+int pcPrecisionLevel(mat4 modelView, mat4 proj, ivec2 imageSizeI, vec3 bmin,
+                     vec3 bmax) {
     vec3 center = (bmin + bmax) * 0.5;
     float radius = distance(bmin, bmax);
 
@@ -148,7 +151,7 @@ int pcPrecisionLevel(mat4 modelView, mat4 proj, vec3 bmin, vec3 bmax) {
 
     projCenter.xy /= projCenter.w;
     projEdge.xy /= projEdge.w;
-    vec2 imageSize = vec2(float(g_d.imageWidth), float(g_d.imageHeight));
+    vec2 imageSize = vec2(imageSizeI);
     float pixelSize = distance(projEdge.xy * imageSize, projCenter.xy * imageSize) * 0.5;
 
     if (pixelSize < 100.0) return 4;
@@ -242,6 +245,7 @@ void pcMain() {
             mvp = g_d.mvp;
             modelView = g_d.modelView;
             proj = g_d.proj;
+            g_viewImageSize[v] = ivec2(g_d.imageWidth, g_d.imageHeight);
             g_viewFramebuffer[v] = g_d.framebuffer;
             g_viewHqsDepth[v] = g_d.hqsDepth;
             g_viewHqsAccum[v] = g_d.hqsAccum;
@@ -251,6 +255,7 @@ void pcMain() {
             mvp = dv.d.mvp;
             modelView = dv.d.modelView;
             proj = dv.d.proj;
+            g_viewImageSize[v] = ivec2(dv.d.imageWidth, dv.d.imageHeight);
             g_viewFramebuffer[v] = dv.d.framebuffer;
             g_viewHqsDepth[v] = dv.d.hqsDepth;
             g_viewHqsAccum[v] = dv.d.hqsAccum;
@@ -261,13 +266,14 @@ void pcMain() {
         if (!g_viewVisible[v])
             continue;
         anyVisible = true;
-        level = min(level, pcPrecisionLevel(modelView, proj, bmin, bmax));
+        level = min(level, pcPrecisionLevel(modelView, proj, g_viewImageSize[v],
+                                            bmin, bmax));
 
         // proj[1][1] carries the house Y-flip, hence abs() (the GL reference
         // had it positive).
         if (g_d.splatMaxRadius > 0 || lodOn) {
             float modelScale = length(vec3(modelView[0]));
-            float pxPerUnit = abs(proj[1][1]) * float(g_d.imageHeight) * 0.5;
+            float pxPerUnit = abs(proj[1][1]) * float(g_viewImageSize[v].y) * 0.5;
             // Screen-space spacing of neighbouring points at clip w = 1.
             float spacingPxAtW1 = worldSpacing * modelScale * pxPerUnit;
             if (g_d.splatMaxRadius > 0)
@@ -315,7 +321,6 @@ void pcMain() {
     restrict PcUints xyz4b = PcUints(g_d.xyz4b);
     restrict PcUints xyz8b = PcUints(g_d.xyz8b);
     restrict PcUints xyz12b = PcUints(g_d.xyz12b);
-    vec2 imageSize = vec2(float(g_d.imageWidth), float(g_d.imageHeight));
 
     // Strided point loop: thread T handles ordinals T, T+128, ... (coalesced
     // reads at full density; at reduced density ordinal e maps to the point
@@ -387,10 +392,11 @@ void pcMain() {
                 ndc.z < 0.0 || ndc.z > 1.0)
                 continue;
 
-            // Framebuffer pixel. The house projections bake the Y-flip, so
-            // NDC y already increases downward like the buffer rows — same
-            // formula as GL, now in framebuffer orientation.
-            ivec2 px = ivec2((ndc.xy * 0.5 + 0.5) * imageSize);
+            // Framebuffer pixel (this view's extent — viewports differ). The
+            // house projections bake the Y-flip, so NDC y already increases
+            // downward like the buffer rows — same formula as GL, now in
+            // framebuffer orientation.
+            ivec2 px = ivec2((ndc.xy * 0.5 + 0.5) * vec2(g_viewImageSize[v]));
 
             int splatRadius = 0;
             if (g_d.splatMaxRadius > 0)

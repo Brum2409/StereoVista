@@ -111,9 +111,7 @@ void PointCloudPass::init(rhi::Device& device, rhi::ShaderCompiler& shaderCompil
     maxGroupsX_ = device.properties().limits.maxComputeWorkGroupCount[0];
 }
 
-void PointCloudPass::ensureTargets(uint32_t viewCount) {
-    const VkDeviceSize totalPixels =
-        VkDeviceSize(pixelsPerView_) * std::max(viewCount, 1u);
+void PointCloudPass::ensureTargets(VkDeviceSize totalPixels) {
     const VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                                      VK_BUFFER_USAGE_TRANSFER_DST_BIT |
                                      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
@@ -154,10 +152,14 @@ void PointCloudPass::ensureTargets(uint32_t viewCount) {
 }
 
 void PointCloudPass::prepare(const FrameSubmission& submission, uint32_t frameSlot,
-                             VkExtent2D extent, uint32_t viewCount) {
+                             const ViewportInput* viewports, uint32_t viewportCount,
+                             uint32_t viewCount) {
     active_ = false;
     dispatches_.clear();
+    lookupPushes_.clear();
     dispatchCopyBytes_ = 0;
+    for (ResolveRecord& record : resolves_)
+        record = ResolveRecord{};
 
     std::vector<const PointCloudDrawItem*> clouds;
     clouds.reserve(submission.pointClouds.size());
@@ -181,14 +183,37 @@ void PointCloudPass::prepare(const FrameSubmission& submission, uint32_t frameSl
         clouds.resize(SV_PC_MAX_CLOUDS);
     }
 
+    // Flatten (viewport, eye) into ONE view list with per-view extents and
+    // per-pixel-buffer sections (element-offset prefix sums). Skipped
+    // viewports (hidden GUI tab: extent {0,0}) contribute no views at all —
+    // the geometry dispatches never project into them this frame.
     viewCount_ = std::max(viewCount, 1u);
-    pixelsPerView_ = extent.width * extent.height;
-    if (pixelsPerView_ == 0)
-        return;
+    flatViews_.clear();
+    VkDeviceSize totalPixels = 0;
+    const uint32_t vpCount = std::min(viewportCount, kMaxViewports);
+    for (uint32_t vp = 0; vp < vpCount; ++vp) {
+        const ViewportInput& input = viewports[vp];
+        const uint32_t pixels = input.extent.width * input.extent.height;
+        if (pixels == 0 || !input.views)
+            continue;
+        for (uint32_t e = 0; e < viewCount_; ++e) {
+            FlatView view;
+            view.viewport = vp;
+            view.extent = input.extent;
+            view.camera = &input.views[std::min(e, kMaxViews - 1)];
+            view.pixelOffset = totalPixels;
+            view.pixels = pixels;
+            flatViews_.push_back(view);
+            totalPixels += pixels;
+        }
+    }
+    totalViews_ = static_cast<uint32_t>(flatViews_.size());
+    if (totalViews_ == 0 || totalViews_ > SV_PC_MAX_VIEWS)
+        return; // > cap is unreachable (kMaxViewports * kMaxViews == the cap)
 
     const PointCloudSettings& settings = submission.pointCloudSettings;
     hqsActive_ = settings.hqs;
-    ensureTargets(viewCount_);
+    ensureTargets(totalPixels);
 
     const int clipCount =
         static_cast<int>(std::min<size_t>(submission.clipPlanes.size(), SV_PC_CLIP_PLANES));
@@ -209,7 +234,7 @@ void PointCloudPass::prepare(const FrameSubmission& submission, uint32_t frameSl
 
     std::vector<gpu::PointCloudDispatch>& hostData = hostData_;
     hostData.clear();
-    hostData.reserve(clouds.size() * viewCount_);
+    hostData.reserve(clouds.size() * totalViews_);
 
     for (size_t ci = 0; ci < clouds.size(); ++ci) {
         const PointCloudDrawItem& item = *clouds[ci];
@@ -224,8 +249,8 @@ void PointCloudPass::prepare(const FrameSubmission& submission, uint32_t frameSl
                 localClip[i] = mt * submission.clipPlanes[i];
         }
 
-        for (uint32_t v = 0; v < viewCount_; ++v) {
-            const ViewCamera& cam = submission.views[std::min(v, kMaxViews - 1)];
+        for (const FlatView& view : flatViews_) {
+            const ViewCamera& cam = *view.camera;
             gpu::PointCloudDispatch d{};
             d.mvp = cam.proj * cam.view * item.model;
             d.modelView = cam.view * item.model;
@@ -237,12 +262,12 @@ void PointCloudPass::prepare(const FrameSubmission& submission, uint32_t frameSl
             d.xyz8b = item.addresses.xyz8b;
             d.xyz12b = item.addresses.xyz12b;
             d.rgba = item.addresses.rgba;
-            d.framebuffer = fbBase + VkDeviceSize(v) * pixelsPerView_ * sizeof(uint64_t);
-            d.colorbuffer = colorBase + VkDeviceSize(v) * pixelsPerView_ * sizeof(uint32_t);
-            d.hqsDepth = hqsDepthBase + VkDeviceSize(v) * pixelsPerView_ * sizeof(uint32_t);
-            d.hqsAccum = hqsAccumBase + VkDeviceSize(v) * pixelsPerView_ * 4 * sizeof(uint32_t);
-            d.imageWidth = static_cast<int>(extent.width);
-            d.imageHeight = static_cast<int>(extent.height);
+            d.framebuffer = fbBase + view.pixelOffset * sizeof(uint64_t);
+            d.colorbuffer = colorBase + view.pixelOffset * sizeof(uint32_t);
+            d.hqsDepth = hqsDepthBase + view.pixelOffset * sizeof(uint32_t);
+            d.hqsAccum = hqsAccumBase + view.pixelOffset * 4 * sizeof(uint32_t);
+            d.imageWidth = static_cast<int>(view.extent.width);
+            d.imageHeight = static_cast<int>(view.extent.height);
             d.pointsPerThread = item.pointsPerThread;
             d.cloudID = cloudID;
             d.splatMaxRadius = splatMaxRadius;
@@ -297,47 +322,58 @@ void PointCloudPass::prepare(const FrameSubmission& submission, uint32_t frameSl
     for (size_t ci = 0; ci < clouds.size(); ++ci) {
         DispatchRecord record;
         record.dispatchData =
-            dispatchBase + ci * viewCount_ * sizeof(gpu::PointCloudDispatch);
+            dispatchBase + ci * totalViews_ * sizeof(gpu::PointCloudDispatch);
         record.numBatches = clouds[ci]->numBatches;
         dispatches_.push_back(record);
     }
 
-    lookupPushes_.clear();
-    resolvePush_ = {};
-    hqsResolvePush_ = {};
-    if (hqsActive_) {
-        hqsResolvePush_.hqsDepth = hqsDepthBase;
-        hqsResolvePush_.hqsAccum = hqsAccumBase;
-        for (uint32_t v = 0; v < kMaxViews; ++v) {
-            const ViewCamera& cam = submission.views[std::min(v, kMaxViews - 1)];
-            // Window depth of linear eye depth d: -proj[2][2] + proj[3][2]/d.
-            hqsResolvePush_.projAB[v] =
-                glm::vec4(cam.proj[2][2], cam.proj[3][2], 0.0f, 0.0f);
-        }
-        hqsResolvePush_.imageWidth = static_cast<int>(extent.width);
-        hqsResolvePush_.imageHeight = static_cast<int>(extent.height);
-        hqsResolvePush_.pixelsPerView = pixelsPerView_;
-    } else {
-        // One lookup dispatch per view; the shader walks the dispatch array
-        // by cloudID (cloud-major layout: stride = viewCount structs).
-        for (uint32_t v = 0; v < viewCount_; ++v) {
+    // Per-view lookup pushes and per-viewport resolve pushes. A viewport's
+    // eyes are CONSECUTIVE equal-sized flat views, so its resolve gets the
+    // first eye's section as base + that viewport's pixel count — the shader
+    // then offsets by gl_ViewIndex * pixelsPerView exactly as before.
+    for (uint32_t fv = 0; fv < totalViews_; ++fv) {
+        const FlatView& view = flatViews_[fv];
+        const bool viewportFirstEye = (fv % viewCount_) == 0;
+
+        if (!hqsActive_) {
+            // One lookup dispatch per view; the shader walks the dispatch
+            // array by cloudID (cloud-major layout: stride = totalViews).
             gpu::PointCloudLookupPush lookup{};
-            lookup.framebuffer =
-                fbBase + VkDeviceSize(v) * pixelsPerView_ * sizeof(uint64_t);
-            lookup.colorbuffer =
-                colorBase + VkDeviceSize(v) * pixelsPerView_ * sizeof(uint32_t);
-            lookup.dispatchBase = dispatchBase + v * sizeof(gpu::PointCloudDispatch);
+            lookup.framebuffer = fbBase + view.pixelOffset * sizeof(uint64_t);
+            lookup.colorbuffer = colorBase + view.pixelOffset * sizeof(uint32_t);
+            lookup.dispatchBase = dispatchBase + fv * sizeof(gpu::PointCloudDispatch);
             lookup.cloudStrideBytes =
-                viewCount_ * static_cast<uint32_t>(sizeof(gpu::PointCloudDispatch));
-            lookup.pixelCount = pixelsPerView_;
+                totalViews_ * static_cast<uint32_t>(sizeof(gpu::PointCloudDispatch));
+            lookup.pixelCount = view.pixels;
             lookupPushes_.push_back(lookup);
         }
 
-        resolvePush_.framebuffer = fbBase;
-        resolvePush_.colorbuffer = colorBase;
-        resolvePush_.imageWidth = static_cast<int>(extent.width);
-        resolvePush_.imageHeight = static_cast<int>(extent.height);
-        resolvePush_.pixelsPerView = pixelsPerView_;
+        if (!viewportFirstEye)
+            continue;
+        ResolveRecord& resolve = resolves_[view.viewport];
+        resolve.active = true;
+        if (hqsActive_) {
+            resolve.hqsPush.hqsDepth =
+                hqsDepthBase + view.pixelOffset * sizeof(uint32_t);
+            resolve.hqsPush.hqsAccum =
+                hqsAccumBase + view.pixelOffset * 4 * sizeof(uint32_t);
+            for (uint32_t e = 0; e < kMaxViews; ++e) {
+                const ViewCamera& cam =
+                    *flatViews_[fv + std::min(e, viewCount_ - 1)].camera;
+                // Window depth of linear eye depth d: -proj[2][2] + proj[3][2]/d.
+                resolve.hqsPush.projAB[e] =
+                    glm::vec4(cam.proj[2][2], cam.proj[3][2], 0.0f, 0.0f);
+            }
+            resolve.hqsPush.imageWidth = static_cast<int>(view.extent.width);
+            resolve.hqsPush.imageHeight = static_cast<int>(view.extent.height);
+            resolve.hqsPush.pixelsPerView = view.pixels;
+        } else {
+            resolve.push.framebuffer = fbBase + view.pixelOffset * sizeof(uint64_t);
+            resolve.push.colorbuffer = colorBase + view.pixelOffset * sizeof(uint32_t);
+            resolve.push.imageWidth = static_cast<int>(view.extent.width);
+            resolve.push.imageHeight = static_cast<int>(view.extent.height);
+            resolve.push.pixelsPerView = view.pixels;
+        }
     }
 
     active_ = true;
@@ -397,7 +433,7 @@ void PointCloudPass::recordCompute(VkCommandBuffer cmd, bool asyncQueue) {
                       VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
 
     // One workgroup per batch covering EVERY view (the shader decodes each
-    // point once and projects it per eye), chunked against
+    // point once and projects it per (viewport, eye)), chunked against
     // maxComputeWorkGroupCount[0].
     auto dispatchGeometry = [&](const rhi::Pipeline& pipeline) {
         pipeline.bind(cmd);
@@ -406,7 +442,7 @@ void PointCloudPass::recordCompute(VkCommandBuffer cmd, bool asyncQueue) {
                 gpu::PointCloudComputePush push{};
                 push.dispatchData = record.dispatchData;
                 push.baseBatch = base;
-                push.viewCount = viewCount_;
+                push.viewCount = totalViews_;
                 pipeline.pushConstants(cmd, &push, sizeof(push));
                 vkCmdDispatch(cmd, std::min(record.numBatches - base, maxGroupsX_), 1, 1);
             }
@@ -435,13 +471,14 @@ void PointCloudPass::recordCompute(VkCommandBuffer cmd, bool asyncQueue) {
         // its owning cloud (cloudID -> dispatch-array pointer walk in the
         // shader) — the GL app needed a fullscreen dispatch per cloud here.
         // 2D grid (shader flattens row-major) so the group count stays under
-        // maxComputeWorkGroupCount[0] even for 8K-class targets.
+        // maxComputeWorkGroupCount[0] even for 8K-class targets. Group counts
+        // are per view: viewports differ in extent.
         lookupPipeline_.bind(cmd);
-        const uint32_t groups = (pixelsPerView_ + SV_PC_LOOKUP_WORKGROUP - 1) /
-                                SV_PC_LOOKUP_WORKGROUP;
-        const uint32_t groupsX = std::min(groups, maxGroupsX_);
-        const uint32_t groupsY = (groups + groupsX - 1) / groupsX;
         for (const gpu::PointCloudLookupPush& push : lookupPushes_) {
+            const uint32_t groups = (push.pixelCount + SV_PC_LOOKUP_WORKGROUP - 1) /
+                                    SV_PC_LOOKUP_WORKGROUP;
+            const uint32_t groupsX = std::min(std::max(groups, 1u), maxGroupsX_);
+            const uint32_t groupsY = (groups + groupsX - 1) / groupsX;
             lookupPipeline_.pushConstants(cmd, &push, sizeof(push));
             vkCmdDispatch(cmd, groupsX, groupsY, 1);
         }
@@ -459,16 +496,19 @@ void PointCloudPass::recordCompute(VkCommandBuffer cmd, bool asyncQueue) {
     endLabel(cmd);
 }
 
-void PointCloudPass::recordResolve(VkCommandBuffer cmd) const {
-    if (!active_)
+void PointCloudPass::recordResolve(VkCommandBuffer cmd, uint32_t viewportIndex) const {
+    if (!active_ || viewportIndex >= kMaxViewports ||
+        !resolves_[viewportIndex].active)
         return;
+    const ResolveRecord& resolve = resolves_[viewportIndex];
     beginLabel(cmd, "pointcloud resolve");
     if (hqsActive_) {
         hqsResolvePipeline_.bind(cmd);
-        hqsResolvePipeline_.pushConstants(cmd, &hqsResolvePush_, sizeof(hqsResolvePush_));
+        hqsResolvePipeline_.pushConstants(cmd, &resolve.hqsPush,
+                                          sizeof(resolve.hqsPush));
     } else {
         resolvePipeline_.bind(cmd);
-        resolvePipeline_.pushConstants(cmd, &resolvePush_, sizeof(resolvePush_));
+        resolvePipeline_.pushConstants(cmd, &resolve.push, sizeof(resolve.push));
     }
     vkCmdDraw(cmd, 3, 1, 0, 0);
     endLabel(cmd);

@@ -261,6 +261,12 @@ void MeasurementTool::drawLabels(const glm::mat4& viewProj,
                                  const glm::vec2& viewportSize) const {
     if (!showLabels) return;
     ImDrawList* dl = ImGui::GetForegroundDrawList();
+    // The 3D view may be a docked window: clip labels to its on-screen rect so
+    // they never bleed over neighbouring panels.
+    dl->PushClipRect(ImVec2(viewportPos.x, viewportPos.y),
+                     ImVec2(viewportPos.x + viewportSize.x,
+                            viewportPos.y + viewportSize.y),
+                     true);
 
     auto project = [&](const glm::vec3& world, ImVec2& out) -> bool {
         const glm::vec4 clip = viewProj * glm::vec4(world, 1.0f);
@@ -323,6 +329,8 @@ void MeasurementTool::drawLabels(const glm::mat4& viewProj,
     for (const Engine::Measurement& m : m_measurements)
         if (m.visible) measure(m);
     if (m_hasActive) measure(m_active);
+
+    dl->PopClipRect();
 }
 
 } // namespace Tools

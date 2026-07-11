@@ -50,9 +50,10 @@ void pcProcessPoint(uint view, ivec2 px, float ndcZ, float viewDepth, int radius
     uint B = (color >> 16) & 0xFFu;
     float threshFactor = 1.0 + g_d.hqsThreshold;
 
+    ivec2 imageSize = g_viewImageSize[view];
     if (radius <= 0) {
-        ivec2 p = clamp(px, ivec2(0), ivec2(g_d.imageWidth - 1, g_d.imageHeight - 1));
-        pcAccumPixel(view, p.y * g_d.imageWidth + p.x, viewDepth, R, G, B, threshFactor);
+        ivec2 p = clamp(px, ivec2(0), imageSize - 1);
+        pcAccumPixel(view, p.y * imageSize.x + p.x, viewDepth, R, G, B, threshFactor);
         return;
     }
     int r2 = radius * radius;
@@ -61,9 +62,9 @@ void pcProcessPoint(uint view, ivec2 px, float ndcZ, float viewDepth, int radius
             if (dx * dx + dy * dy > r2)
                 continue;
             ivec2 p = px + ivec2(dx, dy);
-            if (p.x < 0 || p.y < 0 || p.x >= g_d.imageWidth || p.y >= g_d.imageHeight)
+            if (p.x < 0 || p.y < 0 || p.x >= imageSize.x || p.y >= imageSize.y)
                 continue;
-            pcAccumPixel(view, p.y * g_d.imageWidth + p.x, viewDepth, R, G, B,
+            pcAccumPixel(view, p.y * imageSize.x + p.x, viewDepth, R, G, B,
                          threshFactor);
         }
     }

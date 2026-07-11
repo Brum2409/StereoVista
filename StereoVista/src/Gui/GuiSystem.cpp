@@ -30,9 +30,11 @@ void GuiSystem::draw(Services& services) {
     // area, so the dockspace below fits under it.
     drawMenuBar(services);
 
-    // Dockspace over the remaining work area. PassthruCentralNode keeps the
-    // central (undocked) region transparent and click-through, so the 3D scene
-    // is visible and camera navigation still works there.
+    // Dockspace over the remaining work area. The 3D scene lives in the
+    // Viewport window docked into the central node. PassthruCentralNode keeps
+    // an EMPTY central node transparent and click-through — the fallback for
+    // the classic fullscreen path (XR mirror), where the scene still renders
+    // under the GUI on the backbuffer.
     const ImGuiID dockId = ImGui::GetID("StereoVistaDockspace");
     const bool freshProfile = (ImGui::DockBuilderGetNode(dockId) == nullptr);
     ImGui::DockSpaceOverViewport(dockId, viewport,
@@ -45,6 +47,20 @@ void GuiSystem::draw(Services& services) {
         resetLayout_ = false;
     }
     layoutInitialized_ = true;
+
+    // The 3D viewport windows. Drawn BEFORE the panels so same-frame consumers
+    // (the scene-layer hover pick) see fresh input state, and NOT gated by the
+    // F1 master toggle — hiding the side panels collapses their dock nodes and
+    // the viewports grow to (nearly) the whole window. Skipped on the classic
+    // fullscreen path, where the scene shows through the passthru node.
+    const unsigned int viewportCount = services.viewportPanelCount();
+    if (services.viewportDisplay(0).active) {
+        for (unsigned int i = 0; i < viewportCount; ++i)
+            drawViewportPanel(services, i);
+    } else {
+        for (unsigned int i = 0; i < viewportCount; ++i)
+            services.onViewportPanel(i, ViewportPanelState{});
+    }
 
     // The About window and plugin windows are gated by the master toggle too.
     if (guiVisible_) {
@@ -128,6 +144,16 @@ void GuiSystem::drawMenuBar(Services& services) {
         ImGui::MenuItem("Show GUI panels", "F1", &guiVisible_);
 
         ImGui::Separator();
+        // Extra 3D viewports, each with its own camera (stereo-capable like
+        // the primary). New ones float — dock them wherever they belong.
+        ImGui::BeginDisabled(!services.canAddViewport());
+        if (ImGui::MenuItem("Add Viewport"))
+            services.addViewport();
+        ImGui::EndDisabled();
+        if (!services.canAddViewport())
+            menuHint("Maximum number of viewports reached.");
+
+        ImGui::Separator();
         if (ImGui::MenuItem("Reset Layout"))
             resetLayout_ = true;
         ImGui::EndMenu();
@@ -145,6 +171,69 @@ void GuiSystem::drawMenuBar(Services& services) {
     }
 
     ImGui::EndMainMenuBar();
+}
+
+void GuiSystem::drawViewportPanel(Services& services, unsigned int index) {
+    const ViewportDisplay display = services.viewportDisplay(index);
+    ViewportPanelState state{};
+
+    // Zero padding: the scene image IS the window. The PRIMARY viewport has
+    // no close button (it is the application content, not an optional panel);
+    // secondary viewports close back into it.
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    if (index == 0) {
+        ImGui::SetNextWindowSize(ImVec2(1280.0f, 720.0f), ImGuiCond_FirstUseEver);
+    } else {
+        // Extra viewports first appear floating (offset per index so they
+        // don't stack exactly); the user docks them wherever they belong.
+        const ImGuiViewport* main = ImGui::GetMainViewport();
+        ImGui::SetNextWindowSize(ImVec2(960.0f, 540.0f), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos(ImVec2(main->WorkPos.x + 120.0f + 40.0f * index,
+                                       main->WorkPos.y + 120.0f + 40.0f * index),
+                                ImGuiCond_FirstUseEver);
+    }
+    bool keepOpen = true;
+    const bool open = ImGui::Begin(services.viewportPanelName(index),
+                                   index > 0 ? &keepOpen : nullptr,
+                                   ImGuiWindowFlags_NoScrollbar |
+                                       ImGuiWindowFlags_NoScrollWithMouse |
+                                       ImGuiWindowFlags_NoCollapse);
+    if (open && display.textureId && display.width > 0 && display.height > 0) {
+        const ImVec2 avail = ImGui::GetContentRegionAvail();
+        if (avail.x >= 1.0f && avail.y >= 1.0f) {
+            const ImVec2 imagePos = ImGui::GetCursorScreenPos();
+            // Stretch the current texture into the whole content region. While
+            // a resize drag is in flight this shows the old size stretched for
+            // a frame or two, until the size settles and the app rebuilds the
+            // render target at the new resolution.
+            ImGui::Image(reinterpret_cast<ImTextureID>(display.textureId), avail);
+
+            state.shown = true;
+            state.sizeX = avail.x;
+            state.sizeY = avail.y;
+            state.screenX = imagePos.x;
+            state.screenY = imagePos.y;
+            state.screenW = avail.x;
+            state.screenH = avail.y;
+            // Mouse in TEXTURE pixels, scaled through the display rect so
+            // picking stays aligned with what is actually rendered even while
+            // the displayed image is a stretched old size.
+            const ImVec2 mouse = ImGui::GetIO().MousePos;
+            state.mouseX = (mouse.x - imagePos.x) * (float(display.width) / avail.x);
+            state.mouseY = (mouse.y - imagePos.y) * (float(display.height) / avail.y);
+            state.hovered = ImGui::IsItemHovered();
+            state.focused = ImGui::IsWindowFocused();
+            // The GLFW window hosting this panel (the main window, or the
+            // backend-owned OS window when the panel is dragged out) — camera
+            // capture and OS-cursor show/hide must target it.
+            state.hostWindow = ImGui::GetWindowViewport()->PlatformHandle;
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleVar();
+    services.onViewportPanel(index, state);
+    if (!keepOpen)
+        services.closeViewport(index);
 }
 
 void GuiSystem::drawAboutWindow(Services& services) {
@@ -176,7 +265,8 @@ void GuiSystem::buildDefaultLayout(unsigned int dockspaceId, float sizeX,
 
     // Reserve a left column (hierarchy over inspector) and a right column
     // (tabbed settings/cursor/clouds/clip over a diagnostics strip); the
-    // remaining centre stays the passthru scene view.
+    // remaining centre hosts the Viewport window (or stays the passthru scene
+    // view on the classic fullscreen path).
     ImGuiID center = dockId;
     ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.20f,
                                                nullptr, &center);
@@ -187,6 +277,8 @@ void GuiSystem::buildDefaultLayout(unsigned int dockspaceId, float sizeX,
     ImGuiID rightBottom = ImGui::DockBuilderSplitNode(right, ImGuiDir_Down, 0.35f,
                                                       nullptr, &right);
 
+    // The viewport owns the central node; panels dock around it.
+    ImGui::DockBuilderDockWindow(Windows::Viewport, center);
     ImGui::DockBuilderDockWindow(Windows::Scene, left);
     ImGui::DockBuilderDockWindow(Windows::Inspector, leftBottom);
     ImGui::DockBuilderDockWindow(Windows::Settings, right);

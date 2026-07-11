@@ -1,0 +1,2442 @@
+ ▐▛███▜▌   Claude Code v2.1.202
+▝▜█████▛▘  Fable 5 · Claude Pro
+  ▘▘ ▝▝    ~\Downloads\Stereo Demo
+
+
+❯ /clear                                                                        
+
+❯ We are prepearing for a major GUI remake. Currently the GUI is just an        
+  overlay over the viewport. BUt we want to                                     
+    elevate the programm to a proffesional level. SO the GUI should not just    
+  overrender the viewport ut the viewport                                       
+    should basicly be its own GUI window(so nothing of the viewport is          
+  rendering under the normal GUI, we may later                                  
+    still want to add an overlay over the viewport though just to keep that in  
+  mind, but not the main GUI like settings,                                     
+    scene hierachry, inspectir ect WHEN DOCKED!). Please implemnt that change   
+  and make sure its holding up well and is                                      
+    future proof                                                                
+
+● I'll start by exploring the current rendering and GUI architecture to
+  understand how the viewport and ImGui are currently wired, then implement the
+  dockspace + viewport-as-window change.
+
+  Searched for 3 patterns, read 2 files, listed 2 directories (ctrl+o to expand)
+
+● Now reading the Renderer implementation to understand the backbuffer resolve
+  and where a viewport-texture path would slot in.
+
+  Searched for 3 patterns, read 6 files (ctrl+o to expand)
+
+● Good — setViewport/SetCursorInsideWindow are GL-era vestiges with no callers,
+  so I can reshape the cursor-pick input path cleanly. Let me read the remaining
+  GUI headers and the TonemapPass interface.
+
+  Searched for 2 patterns, read 7 files (ctrl+o to expand)
+
+❯ When rewrite something from the GL app make sure to remake it vulkan          
+  based(native vulkan) and if possible improve it and fix old bugs. Do not      
+  stale copy it if its flawed or non vulkan optimized                           
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● All pieces confirmed. Now implementing — starting with the renderer's
+  offscreen viewport-output mode.
+
+● Update(StereoVista\headers\Renderer\Renderer.h)
+  ⎿  Added 21 lines
+      177      uint32_t viewCount() const { return viewCount_; }
+      178      const FrameStats& frameStats() const { return frameStats_;
+            }
+      179  
+      180 +    // ---- Docked-viewport output (scene-in-a-GUI-window) ---
+          +-                                                             
+      181 +    // When enabled, the per-eye tonemap+overlay resolve rende
+          +rs into an                                                    
+      182 +    // offscreen LDR "viewport" texture (swapchain format, siz
+          +ed `extent`) that                                             
+      183 +    // the GUI displays as an ImGui image in a dockable window
+          +; the backbuffer                                              
+      184 +    // then carries ONLY the GUI. The scene target is rebuilt 
+          +at `extent`                                                   
+      185 +    // (device-idle — call at a frame boundary, and only once 
+          +a panel resize                                                
+      186 +    // has settled). Mutually exclusive with XR (beginXR force
+          +-disables it; the                                             
+      187 +    // app re-applies its mode after endXR). No-op when nothin
+          +g changed.                                                    
+      188 +    // Quad-buffer stereo keeps the classic backbuffer path (p
+          +er-eye swapchain                                              
+      189 +    // layers cannot live inside a mono GUI image) — the app n
+          +ever enables this                                             
+      190 +    // while that mode is active.                             
+      191 +    void setViewportOutput(bool enabled, VkExtent2D extent);  
+      192 +    bool viewportOutputActive() const { return viewportOutput_
+          +; }                                                           
+      193 +    // ImGui texture handle for the viewport image (ImTextureI
+          +D is the                                                      
+      194 +    // VkDescriptorSet from ImGui_ImplVulkan_AddTexture); null
+          + when off.                                                    
+      195 +    void* viewportTextureId() const { return viewportImguiSet_
+          +; }                                                           
+      196 +    VkExtent2D viewportExtent() const { return viewportExtent_
+          +; }                                                           
+      197 +    // The extent scene rendering / depth picking currently us
+          +e: the window on                                              
+      198 +    // the classic path, the viewport texture when docked, the
+          + HMD eye in XR.                                               
+      199 +    VkExtent2D sceneExtent() const { return sceneExtent_; }   
+      200 +                                                              
+      201      // ---- Async compute (see the class comment) ----
+      202      // Enabled by default whenever the device exposes a distin
+           ct compute
+      203      // queue; the setter is the debug-panel toggle and may fli
+           p every frame.
+
+● Update(StereoVista\headers\Renderer\Renderer.h)  ⎿  Added 9 lines
+      296      void destroyFrameContexts();
+      297      void createSceneTarget();
+      298      void destroySceneDepthLayerViews();
+      299 +    // Rebuild everything that follows the scene extent (targe
+          +t + point-cloud                                               
+      300 +    // per-pixel buffers) and drop stale depth picks. Shared b
+          +y the swapchain                                               
+      301 +    // resize and the docked-viewport resize (device idle at b
+          +oth call sites).                                              
+      302 +    void onSceneExtentChanged();                              
+      303 +    // Viewport texture + its ImGui descriptor. releaseImguiSe
+          +t=false at                                                    
+      304 +    // shutdown, where the ImGui backend may already be gone (
+          +the set then dies                                             
+      305 +    // with the application's descriptor pool).               
+      306 +    void createViewportTarget();                              
+      307 +    void destroyViewportTarget(bool releaseImguiSet);         
+      308      void createFrameSetLayout();
+      309      // Rebuilds the view-count-dependent GPU state (layered sc
+           ene target +
+      310      // multiview scene-pass pipelines + dropped depth samples)
+           . Shared by
+
+● Update(StereoVista\headers\Renderer\Renderer.h)
+  ⎿  Added 6 lines
+      414      // the swapchain extent (Phase 7b: the HMD eye resolution 
+           while in XR).
+      415      VkExtent2D sceneExtentOverride_{ 0, 0 };
+      416      bool xrActive_ = false;
+      417 +    // Docked-viewport output (see setViewportOutput): the LDR
+          + resolve target                                               
+      418 +    // the GUI samples, its size, and the ImGui descriptor set
+          + displaying it.                                               
+      419 +    bool viewportOutput_ = false;                             
+      420 +    rhi::Texture viewportColor_;                              
+      421 +    VkExtent2D viewportExtent_{ 0, 0 };                       
+      422 +    VkDescriptorSet viewportImguiSet_ = VK_NULL_HANDLE;       
+      423      static constexpr VkFormat kSceneColorFormat = VK_FORMAT_R1
+           6G16B16A16_SFLOAT;
+      424      static constexpr VkFormat kSceneDepthFormat = VK_FORMAT_D3
+           2_SFLOAT;
+      425  
+
+● Update(StereoVista\src\Renderer\Renderer.cpp)
+  ⎿  Added 60 lines, removed 1 line
+      186              sceneDepth_.createLayerView(VK_IMAGE_VIEW_TYPE_2D,
+            v, 1, "scene depth layer");
+      187  }
+      188  
+      189 +void Renderer::onSceneExtentChanged() {                       
+      190 +    createSceneTarget();                                      
+      191 +    // Size-dependent point-cloud buffers follow the scene tar
+          +get (device is                                                
+      192 +    // idle here; the next prepare() recreates them at the new
+          + extent).                                                     
+      193 +    pointCloudPass_.onSwapchainRecreated();                   
+      194 +    // The published depth samples referenced the old extent; 
+          +drop them so                                                  
+      195 +    // picking never reconstructs from a stale rectangle set. 
+      196 +    depthResult_ = DepthReadback{};                           
+      197 +    for (FrameContext& frame : frames_)                       
+      198 +        frame.pendingDepth = DepthReadback{};                 
+      199 +}                                                             
+      200 +                                                              
+      201 +void Renderer::createViewportTarget() {                       
+      202 +    // Same format as the swapchain, so the tonemap/overlay pi
+          +pelines (built                                                
+      203 +    // against tonemapTargetFormat_) render into it unchanged 
+          +and the GUI's                                                 
+      204 +    // copy to the backbuffer is value-preserving.            
+      205 +    rhi::TextureDesc desc{};                                  
+      206 +    desc.format = tonemapTargetFormat_;                       
+      207 +    desc.extent = viewportExtent_;                            
+      208 +    desc.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAG
+          +E_USAGE_SAMPLED_BIT;                                          
+      209 +    desc.debugName = "viewport color (GUI image)";            
+      210 +    viewportColor_.create(*device_, desc);                    
+      211 +    viewportImguiSet_ = ImGui_ImplVulkan_AddTexture(          
+      212 +        tonemapPass_.sampler(), viewportColor_.view(),        
+      213 +        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);            
+      214 +}                                                             
+      215 +                                                              
+      216 +void Renderer::destroyViewportTarget(bool releaseImguiSet) {  
+      217 +    if (viewportImguiSet_ != VK_NULL_HANDLE && releaseImguiSet
+          +)                                                             
+      218 +        ImGui_ImplVulkan_RemoveTexture(viewportImguiSet_);    
+      219 +    viewportImguiSet_ = VK_NULL_HANDLE;                       
+      220 +    viewportColor_.destroy();                                 
+      221 +}                                                             
+      222 +                                                              
+      223 +void Renderer::setViewportOutput(bool enabled, VkExtent2D exte
+          +nt) {                                                         
+      224 +    // XR owns the scene target (HMD eye resolution); the app 
+          +re-applies its                                                
+      225 +    // desktop mode after endXR.                              
+      226 +    if (xrActive_)                                            
+      227 +        return;                                               
+      228 +    extent.width = std::max(extent.width, 1u);                
+      229 +    extent.height = std::max(extent.height, 1u);              
+      230 +    const bool sameExtent = extent.width == viewportExtent_.wi
+          +dth &&                                                        
+      231 +                            extent.height == viewportExtent_.h
+          +eight;                                                        
+      232 +    if (enabled == viewportOutput_ && (!enabled || sameExtent)
+          +)                                                             
+      233 +        return;                                               
+      234 +                                                              
+      235 +    device_->waitIdle(); // rare: a mode flip or a settled pan
+          +el resize                                                     
+      236 +    viewportOutput_ = enabled;                                
+      237 +    viewportExtent_ = enabled ? extent : VkExtent2D{ 0, 0 };  
+      238 +    sceneExtentOverride_ = viewportExtent_; // scene target fo
+          +llows the panel                                               
+      239 +    destroyViewportTarget(true);                              
+      240 +    if (enabled)                                              
+      241 +        createViewportTarget();                               
+      242 +    onSceneExtentChanged();                                   
+      243 +}                                                             
+      244 +                                                              
+      245  void Renderer::buildEyeLayout(EyeResolve out[kMaxViews], uint3
+           2_t& outCount) const {
+      246      const uint32_t w = sceneExtent_.width;
+      247      const uint32_t h = sceneExtent_.height;
+     ...
+      251          return;
+      252      }
+      253      outCount = 2;
+      198 -    if (swapchain_->layers() >= 2) {                          
+      254 +    // The docked-viewport texture is always single-layer, so 
+          +stereo resolves                                               
+      255 +    // side-by-side into it; quad-buffer (2 swapchain layers) 
+          +never runs docked.                                            
+      256 +    const uint32_t targetLayers = viewportOutput_ ? 1u : swapc
+          +hain_->layers();                                              
+      257 +    if (targetLayers >= 2) {                                  
+      258          // Quad-buffer: each full-window eye resolves into its
+            own swapchain
+      259          // layer with its own scene depth (correct per-eye occ
+           lusion).
+      260          out[0] = { { { 0, 0 }, { w, h } }, 0, 0, true };
+
+❯ VERY IMPORTANT THAT WE DO NOT LOOSE PERFORMANCE BECAUSE OF THIS!!!            
+
+● Update(StereoVista\src\Renderer\Renderer.cpp)
+  ⎿  Added 34 lines, removed 16 lines
+      1070      // barriers still order the two batches on the graphics q
+            ueue.
+      1071      recordScene(cmd, frame, submission, frameSet, asyncComput
+            e);
+      1072  
+      1073 -    // ---- Pass 4: per-eye tonemap + overlay resolve into th
+           -e backbuffer, then                                           
+      1074 -    //      ImGui. Mono = 1 full-window eye; quad-buffer ster
+           -eo = 2 full-window                                           
+      1075 -    //      eyes into the 2 swapchain layers (correct per-eye
+           - occlusion);                                                 
+      1076 -    //      side-by-side = 2 half-window eyes squished into t
+           -he single backbuffer                                         
+      1077 -    //      layer (overlays on top, since the full-res depth 
+           -can't line up with                                           
+      1078 -    //      the squished image). Scene depth is attached in e
+           -very case (the                                               
+      1079 -    //      tonemap/overlay pipelines declare the format). --
+           ---                                                           
+      1073 +    // ---- Pass 4: per-eye tonemap + overlay resolve, then I
+           +mGui. ----                                                   
+      1074 +    // Classic path: resolve straight into the backbuffer. Mo
+           +no = 1 full-window                                           
+      1075 +    // eye; quad-buffer stereo = 2 full-window eyes into the 
+           +2 swapchain layers                                           
+      1076 +    // (correct per-eye occlusion); side-by-side = 2 half-win
+           +dow eyes squished                                            
+      1077 +    // into the single backbuffer layer (overlays on top, sin
+           +ce the full-res                                              
+      1078 +    // depth can't line up with the squished image). Scene de
+           +pth is attached in                                           
+      1079 +    // every case (the tonemap/overlay pipelines declare the 
+           +format).                                                     
+      1080 +    // Docked-viewport path: the SAME resolve renders into th
+           +e offscreen                                                  
+      1081 +    // viewport texture the GUI samples as an ImGui image (no
+           + extra pass — the                                            
+      1082 +    // target simply changes), and the backbuffer carries onl
+           +y the GUI.                                                   
+      1083      VkImage backbuffer = swapchain_->image(imageIndex);
+      1084 +    const bool toViewport = viewportOutput_;                 
+      1085      {
+      1086          VkImageMemoryBarrier2 barriers[2] = {
+      1087              // Scene color (all layers): attachment -> sample
+            d by the tonemap.
+     ...
+      1092                                VK_ACCESS_2_SHADER_SAMPLED_READ
+            _BIT,
+      1093                                VK_IMAGE_LAYOUT_COLOR_ATTACHMEN
+            T_OPTIMAL,
+      1094                                VK_IMAGE_LAYOUT_SHADER_READ_ONL
+            Y_OPTIMAL),
+      1091 -            // Backbuffer (all layers): fresh attachment (cha
+           -ined to the acquire                                          
+      1092 -            // semaphore at COLOR_ATTACHMENT_OUTPUT).        
+      1093 -            rhi::imageBarrier(backbuffer, VK_IMAGE_ASPECT_COL
+           -OR_BIT,                                                      
+      1094 -                              VK_PIPELINE_STAGE_2_COLOR_ATTAC
+           -HMENT_OUTPUT_BIT, 0,                                         
+      1095 -                              VK_PIPELINE_STAGE_2_COLOR_ATTAC
+           -HMENT_OUTPUT_BIT,                                            
+      1096 -                              VK_ACCESS_2_COLOR_ATTACHMENT_WR
+           -ITE_BIT,                                                     
+      1097 -                              VK_IMAGE_LAYOUT_UNDEFINED,     
+      1098 -                              VK_IMAGE_LAYOUT_COLOR_ATTACHMEN
+           -T_OPTIMAL),                                                  
+      1095 +            // Resolve target: fresh attachment (previous con
+           +tents discarded).                                            
+      1096 +            // Backbuffer: chained to the acquire semaphore a
+           +t                                                            
+      1097 +            // COLOR_ATTACHMENT_OUTPUT. Viewport texture: the
+           + srcStage                                                    
+      1098 +            // FRAGMENT_SHADER execution dependency orders th
+           +e discard after                                              
+      1099 +            // every prior UI submission that sampled it (fra
+           +mes overlap by                                               
+      1100 +            // kFramesInFlight; same queue, so submission-ord
+           +er barriers cover                                            
+      1101 +            // the backend's secondary-window draws too).    
+      1102 +            toViewport                                       
+      1103 +                ? rhi::imageBarrier(viewportColor_.image(), V
+           +K_IMAGE_ASPECT_COLOR_BIT,                                    
+      1104 +                                    VK_PIPELINE_STAGE_2_FRAGM
+           +ENT_SHADER_BIT, 0,                                           
+      1105 +                                    VK_PIPELINE_STAGE_2_COLOR
+           +_ATTACHMENT_OUTPUT_BIT,                                      
+      1106 +                                    VK_ACCESS_2_COLOR_ATTACHM
+           +ENT_WRITE_BIT,                                               
+      1107 +                                    VK_IMAGE_LAYOUT_UNDEFINED
+           +,                                                            
+      1108 +                                    VK_IMAGE_LAYOUT_COLOR_ATT
+           +ACHMENT_OPTIMAL)                                             
+      1109 +                : rhi::imageBarrier(backbuffer, VK_IMAGE_ASPE
+           +CT_COLOR_BIT,                                                
+      1110 +                                    VK_PIPELINE_STAGE_2_COLOR
+           +_ATTACHMENT_OUTPUT_BIT, 0,                                   
+      1111 +                                    VK_PIPELINE_STAGE_2_COLOR
+           +_ATTACHMENT_OUTPUT_BIT,                                      
+      1112 +                                    VK_ACCESS_2_COLOR_ATTACHM
+           +ENT_WRITE_BIT,                                               
+      1113 +                                    VK_IMAGE_LAYOUT_UNDEFINED
+           +,                                                            
+      1114 +                                    VK_IMAGE_LAYOUT_COLOR_ATT
+           +ACHMENT_OPTIMAL),                                            
+      1115          };
+      1116          rhi::cmdBarrier(cmd, barriers, 2);
+      1117  
+     ...
+      1132  
+      1133              VkRenderingAttachmentInfo color{};
+      1134              color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHM
+            ENT_INFO;
+      1119 -            color.imageView = swapchain_->imageView(imageInde
+           -x, eye.backbufferLayer);                                     
+      1135 +            color.imageView = toViewport                     
+      1136 +                                  ? viewportColor_.view()    
+      1137 +                                  : swapchain_->imageView(ima
+           +geIndex, eye.backbufferLayer);                               
+      1138              color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHM
+            ENT_OPTIMAL;
+      1139              // The fullscreen tonemap overwrites every pixel 
+            of this eye's rect;
+      1140              // overlays blend on top within the same pass.
+
+❯ And it works with stereo ect                                                  
+
+❯ quad buffer stereo                                                            
+
+● Update(StereoVista\src\Renderer\Renderer.cpp)
+  ⎿  Added 5 lines, removed 5 lines
+      251          return;
+      252      }
+      253      outCount = 2;
+      254 -    // The docked-viewport texture is always single-layer, so 
+          -stereo resolves                                               
+      255 -    // side-by-side into it; quad-buffer (2 swapchain layers) 
+          -never runs docked.                                            
+      256 -    const uint32_t targetLayers = viewportOutput_ ? 1u : swapc
+          -hain_->layers();                                              
+      257 -    if (targetLayers >= 2) {                                  
+      258 -        // Quad-buffer: each full-window eye resolves into its
+          - own swapchain                                                
+      254 +    // The docked-viewport texture mirrors the swapchain's lay
+          +er count, so this                                             
+      255 +    // layout applies to both targets: backbufferLayer doubles
+          + as the viewport-                                             
+      256 +    // texture layer when docked.                             
+      257 +    if (swapchain_->layers() >= 2) {                          
+      258 +        // Quad-buffer: each full-window eye resolves into its
+          + own target                                                   
+      259          // layer with its own scene depth (correct per-eye occ
+           lusion).
+      260          out[0] = { { { 0, 0 }, { w, h } }, 0, 0, true };
+      261          out[1] = { { { 0, 0 }, { w, h } }, 1, 1, true };
+
+● Update(StereoVista\src\Renderer\Renderer.cpp)
+  ⎿  Added 27 lines, removed 9 lines
+      201  void Renderer::createViewportTarget() {
+      202      // Same format as the swapchain, so the tonemap/overlay pi
+           pelines (built
+      203      // against tonemapTargetFormat_) render into it unchanged 
+           and the GUI's
+      204 -    // copy to the backbuffer is value-preserving.            
+      204 +    // copy to the backbuffer is value-preserving. One layer p
+          +er swapchain                                                  
+      205 +    // layer: quad-buffer stereo resolves each eye into its ow
+          +n layer, and the                                              
+      206 +    // per-layer GUI pass shows the matching eye in the viewpo
+          +rt image (the                                                 
+      207 +    // GUI itself stays at zero parallax).                    
+      208 +    viewportLayers_ = std::max(swapchain_->layers(), 1u);     
+      209      rhi::TextureDesc desc{};
+      210      desc.format = tonemapTargetFormat_;
+      211      desc.extent = viewportExtent_;
+      212 +    desc.arrayLayers = viewportLayers_;                       
+      213      desc.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAG
+           E_USAGE_SAMPLED_BIT;
+      214      desc.debugName = "viewport color (GUI image)";
+      215      viewportColor_.create(*device_, desc);
+      211 -    viewportImguiSet_ = ImGui_ImplVulkan_AddTexture(          
+      212 -        tonemapPass_.sampler(), viewportColor_.view(),        
+      213 -        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);            
+      216 +    for (uint32_t layer = 0; layer < viewportLayers_; ++layer)
+          + {                                                            
+      217 +        viewportLayerViews_[layer] = viewportColor_.createLaye
+          +rView(                                                        
+      218 +            VK_IMAGE_VIEW_TYPE_2D, layer, 1, "viewport color l
+          +ayer");                                                       
+      219 +        viewportImguiSets_[layer] = ImGui_ImplVulkan_AddTextur
+          +e(                                                            
+      220 +            tonemapPass_.sampler(), viewportLayerViews_[layer]
+          +,                                                             
+      221 +            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);        
+      222 +    }                                                         
+      223  }
+      224  
+      216 -void Renderer::destroyViewportTarget(bool releaseImguiSet) {  
+      217 -    if (viewportImguiSet_ != VK_NULL_HANDLE && releaseImguiSet
+          -)                                                             
+      218 -        ImGui_ImplVulkan_RemoveTexture(viewportImguiSet_);    
+      219 -    viewportImguiSet_ = VK_NULL_HANDLE;                       
+      225 +void Renderer::destroyViewportTarget(bool releaseImguiSets) { 
+      226 +    for (VkDescriptorSet& set : viewportImguiSets_) {         
+      227 +        if (set != VK_NULL_HANDLE && releaseImguiSets)        
+      228 +            ImGui_ImplVulkan_RemoveTexture(set);              
+      229 +        set = VK_NULL_HANDLE;                                 
+      230 +    }                                                         
+      231 +    for (VkImageView& view : viewportLayerViews_) {           
+      232 +        if (view != VK_NULL_HANDLE)                           
+      233 +            vkDestroyImageView(device_->device(), view, nullpt
+          +r);                                                           
+      234 +        view = VK_NULL_HANDLE;                                
+      235 +    }                                                         
+      236      viewportColor_.destroy();
+      237 +    viewportLayers_ = 0;                                      
+      238  }
+      239  
+      240  void Renderer::setViewportOutput(bool enabled, VkExtent2D exte
+           nt) {
+     ...
+      246      extent.height = std::max(extent.height, 1u);
+      247      const bool sameExtent = extent.width == viewportExtent_.wi
+           dth &&
+      248                              extent.height == viewportExtent_.h
+           eight;
+      232 -    if (enabled == viewportOutput_ && (!enabled || sameExtent)
+          -)                                                             
+      249 +    const bool sameLayers = viewportLayers_ == std::max(swapch
+          +ain_->layers(), 1u);                                          
+      250 +    if (enabled == viewportOutput_ && (!enabled || (sameExtent
+          + && sameLayers)))                                             
+      251          return;
+      252  
+      253      device_->waitIdle(); // rare: a mode flip or a settled pan
+           el resize
+
+● Now update the Renderer.h members and comments to match the layered design:
+
+● Update(StereoVista\headers\Renderer\Renderer.h)
+  ⎿  Added 9 lines, removed 5 lines
+      185      // (device-idle — call at a frame boundary, and only once 
+           a panel resize
+      186      // has settled). Mutually exclusive with XR (beginXR force
+           -disables it; the
+      187      // app re-applies its mode after endXR). No-op when nothin
+           g changed.
+      188 -    // Quad-buffer stereo keeps the classic backbuffer path (p
+          -er-eye swapchain                                              
+      189 -    // layers cannot live inside a mono GUI image) — the app n
+          -ever enables this                                             
+      190 -    // while that mode is active.                             
+      188 +    // STEREO: the texture carries one layer per swapchain lay
+          +er. Quad-buffer                                               
+      189 +    // resolves each full-panel eye into its own layer (per-ey
+          +e depth-tested                                                
+      190 +    // overlays), and the per-layer GUI pass remaps the viewpo
+          +rt image to the                                               
+      191 +    // matching eye — a stereo viewport inside a zero-parallax
+          + GUI. Side-by-                                                
+      192 +    // side squishes both eyes into the single layer as on the
+          + classic path.                                                
+      193      void setViewportOutput(bool enabled, VkExtent2D extent);
+      194      bool viewportOutputActive() const { return viewportOutput_
+           ; }
+      195      // ImGui texture handle for the viewport image (ImTextureI
+           D is the
+      194 -    // VkDescriptorSet from ImGui_ImplVulkan_AddTexture); null
+          - when off.                                                    
+      195 -    void* viewportTextureId() const { return viewportImguiSet_
+          -; }                                                           
+      196 +    // VkDescriptorSet from ImGui_ImplVulkan_AddTexture; the G
+          +UI always binds                                               
+      197 +    // the layer-0 / left-eye set — recordFrame remaps per swa
+          +pchain layer);                                                
+      198 +    // null when off.                                         
+      199 +    void* viewportTextureId() const { return viewportImguiSets
+          +_[0]; }                                                       
+      200      VkExtent2D viewportExtent() const { return viewportExtent_
+           ; }
+      201      // The extent scene rendering / depth picking currently us
+           e: the window on
+      202      // the classic path, the viewport texture when docked, the
+            HMD eye in XR.
+
+● Update(StereoVista\headers\Renderer\Renderer.h)
+  ⎿  Added 4 lines, removed 4 lines
+      304      // per-pixel buffers) and drop stale depth picks. Shared b
+           y the swapchain
+      305      // resize and the docked-viewport resize (device idle at b
+           oth call sites).
+      306      void onSceneExtentChanged();
+      307 -    // Viewport texture + its ImGui descriptor. releaseImguiSe
+          -t=false at                                                    
+      308 -    // shutdown, where the ImGui backend may already be gone (
+          -the set then dies                                             
+      309 -    // with the application's descriptor pool).               
+      307 +    // Viewport texture (one layer per swapchain layer) + its 
+          +per-layer ImGui                                               
+      308 +    // descriptors. releaseImguiSets=false at shutdown, where 
+          +the ImGui backend                                             
+      309 +    // may already be gone (the sets then die with the app's d
+          +escriptor pool).                                              
+      310      void createViewportTarget();
+      311 -    void destroyViewportTarget(bool releaseImguiSet);         
+      311 +    void destroyViewportTarget(bool releaseImguiSets);        
+      312      void createFrameSetLayout();
+      313      // Rebuilds the view-count-dependent GPU state (layered sc
+           ene target +
+      314      // multiview scene-pass pipelines + dropped depth samples)
+           . Shared by
+
+● Update(StereoVista\headers\Renderer\Renderer.h)
+  ⎿  Added 5 lines, removed 2 lines
+      419      VkExtent2D sceneExtentOverride_{ 0, 0 };
+      420      bool xrActive_ = false;
+      421      // Docked-viewport output (see setViewportOutput): the LDR
+            resolve target
+      422 -    // the GUI samples, its size, and the ImGui descriptor set
+          - displaying it.                                               
+      422 +    // the GUI samples (one layer per swapchain layer), its pe
+          +r-layer views +                                               
+      423 +    // ImGui descriptor sets, and its size.                   
+      424      bool viewportOutput_ = false;
+      425      rhi::Texture viewportColor_;
+      426      VkExtent2D viewportExtent_{ 0, 0 };
+      426 -    VkDescriptorSet viewportImguiSet_ = VK_NULL_HANDLE;       
+      427 +    uint32_t viewportLayers_ = 0;                             
+      428 +    VkImageView viewportLayerViews_[kMaxViews]{};             
+      429 +    VkDescriptorSet viewportImguiSets_[kMaxViews]{};          
+      430      static constexpr VkFormat kSceneColorFormat = VK_FORMAT_R1
+           6G16B16A16_SFLOAT;
+      431      static constexpr VkFormat kSceneDepthFormat = VK_FORMAT_D3
+           2_SFLOAT;
+      432  
+
+● Update(StereoVista\src\Renderer\Renderer.cpp)
+  ⎿  Added 1 line, removed 1 line
+      1151              VkRenderingAttachmentInfo color{};
+      1152              color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHM
+            ENT_INFO;
+      1153              color.imageView = toViewport
+      1154 -                                  ? viewportColor_.view()    
+      1154 +                                  ? viewportLayerViews_[eye.b
+           +ackbufferLayer]                                              
+      1155                                    : swapchain_->imageView(ima
+            geIndex, eye.backbufferLayer);
+      1156              color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHM
+            ENT_OPTIMAL;
+      1157              // The fullscreen tonemap overwrites every pixel 
+            of this eye's rect;
+
+● Update(StereoVista\src\Renderer\Renderer.cpp)
+  ⎿  Added 63 lines, removed 4 lines
+      1194      }
+      1195  
+      1196      // ---- Pass 5: ImGui on the backbuffer (no depth). Drawn
+             once per swapchain
+      1197 -    //      layer so a stereo HUD lands on both eyes at zero 
+           -parallax. ----                                               
+      1198 -    if (uiDrawData) {                                        
+      1197 +    //      layer so a stereo HUD lands on both eyes at zero 
+           +parallax. Docked                                             
+      1198 +    //      path: the backbuffer only now enters the frame (f
+           +resh attachment,                                             
+      1199 +    //      cleared by loadOp — the dockspace covers it, the 
+           +clear is the                                                 
+      1200 +    //      letterbox color) and the viewport texture moves t
+           +o sampled for the                                            
+      1201 +    //      GUI's image widget. ----                         
+      1202 +    if (toViewport) {                                        
+      1203 +        VkImageMemoryBarrier2 barriers[2] = {                
+      1204 +            // Viewport texture (all layers): eye resolves ->
+           + sampled by this                                             
+      1205 +            // frame's GUI pass (and, for a dragged-out panel
+           +, the backend's                                              
+      1206 +            // later secondary-window submits on this queue).
+      1207 +            rhi::imageBarrier(viewportColor_.image(), VK_IMAG
+           +E_ASPECT_COLOR_BIT,                                          
+      1208 +                              VK_PIPELINE_STAGE_2_COLOR_ATTAC
+           +HMENT_OUTPUT_BIT,                                            
+      1209 +                              VK_ACCESS_2_COLOR_ATTACHMENT_WR
+           +ITE_BIT,                                                     
+      1210 +                              VK_PIPELINE_STAGE_2_FRAGMENT_SH
+           +ADER_BIT,                                                    
+      1211 +                              VK_ACCESS_2_SHADER_SAMPLED_READ
+           +_BIT,                                                        
+      1212 +                              VK_IMAGE_LAYOUT_COLOR_ATTACHMEN
+           +T_OPTIMAL,                                                   
+      1213 +                              VK_IMAGE_LAYOUT_SHADER_READ_ONL
+           +Y_OPTIMAL),                                                  
+      1214 +            // Backbuffer (all layers): fresh attachment, cha
+           +ined to the                                                  
+      1215 +            // acquire semaphore at COLOR_ATTACHMENT_OUTPUT. 
+      1216 +            rhi::imageBarrier(backbuffer, VK_IMAGE_ASPECT_COL
+           +OR_BIT,                                                      
+      1217 +                              VK_PIPELINE_STAGE_2_COLOR_ATTAC
+           +HMENT_OUTPUT_BIT, 0,                                         
+      1218 +                              VK_PIPELINE_STAGE_2_COLOR_ATTAC
+           +HMENT_OUTPUT_BIT,                                            
+      1219 +                              VK_ACCESS_2_COLOR_ATTACHMENT_WR
+           +ITE_BIT,                                                     
+      1220 +                              VK_IMAGE_LAYOUT_UNDEFINED,     
+      1221 +                              VK_IMAGE_LAYOUT_COLOR_ATTACHMEN
+           +T_OPTIMAL),                                                  
+      1222 +        };                                                   
+      1223 +        rhi::cmdBarrier(cmd, barriers, 2);                   
+      1224 +    } else if (uiDrawData) {                                 
+      1225          // Dynamic rendering has no implicit pass-to-pass dep
+            endency: order
+      1226          // the tonemap/overlay writes against ImGui's blended
+             writes (all layers).
+      1227          rhi::cmdImageBarrier(cmd, rhi::imageBarrier(
+     ...
+      1233                  VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+      1234              VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+      1235              VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL));
+      1236 +    }                                                        
+      1237  
+      1238 +    if (uiDrawData || toViewport) {                          
+      1239 +        // Quad-buffer + docked viewport: the GUI is identica
+           +l on both layers                                             
+      1240 +        // EXCEPT the viewport image, which must show that la
+           +yer's eye. The                                               
+      1241 +        // draw data is recorded once against the layer-0 (le
+           +ft-eye) set, so                                              
+      1242 +        // remap that ImTextureID to the current layer's set 
+           +before recording.                                            
+      1243 +        auto remapViewportImage = [&](VkDescriptorSet from, V
+           +kDescriptorSet to) {                                         
+      1244 +            if (!uiDrawData || from == to || from == VK_NULL_
+           +HANDLE)                                                      
+      1245 +                return;                                      
+      1246 +            for (int list = 0; list < uiDrawData->CmdListsCou
+           +nt; ++list)                                                  
+      1247 +                for (ImDrawCmd& drawCmd : uiDrawData->CmdList
+           +s[list]->CmdBuffer)                                          
+      1248 +                    if (drawCmd.TextureId == reinterpret_cast
+           +<ImTextureID>(from))                                         
+      1249 +                        drawCmd.TextureId = reinterpret_cast<
+           +ImTextureID>(to);                                            
+      1250 +        };                                                   
+      1251 +                                                             
+      1252          for (uint32_t layer = 0; layer < swapchain_->layers()
+            ; ++layer) {
+      1253 +            if (toViewport && layer < viewportLayers_ && laye
+           +r > 0)                                                       
+      1254 +                remapViewportImage(viewportImguiSets_[layer -
+           + 1],                                                         
+      1255 +                                   viewportImguiSets_[layer])
+           +;                                                            
+      1256 +                                                             
+      1257              VkRenderingAttachmentInfo color{};
+      1258              color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHM
+            ENT_INFO;
+      1259              color.imageView = swapchain_->imageView(imageInde
+            x, layer);
+      1260              color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHM
+            ENT_OPTIMAL;
+      1216 -            color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;       
+      1261 +            // Docked path: nothing rendered the backbuffer b
+           +efore the GUI —                                              
+      1262 +            // clear it here (visible only where no GUI windo
+           +w covers it).                                                
+      1263 +            color.loadOp = toViewport ? VK_ATTACHMENT_LOAD_OP
+           +_CLEAR                                                       
+      1264 +                                      : VK_ATTACHMENT_LOAD_OP
+           +_LOAD;                                                       
+      1265              color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+      1266 +            color.clearValue.color.float32[0] = 0.03f;       
+      1267 +            color.clearValue.color.float32[1] = 0.03f;       
+      1268 +            color.clearValue.color.float32[2] = 0.035f;      
+      1269 +            color.clearValue.color.float32[3] = 1.0f;        
+      1270  
+      1271              VkRenderingInfo rendering{};
+      1272              rendering.sType = VK_STRUCTURE_TYPE_RENDERING_INF
+            O;
+     ...
+      1277              vkCmdBeginRendering(cmd, &rendering);
+      1278              // Each call cycles the backend's UI vertex-buffe
+            r ring, so the two
+      1279              // layer draws use independent buffers (ring size
+            d for this in initImGui).
+      1228 -            ImGui_ImplVulkan_RenderDrawData(uiDrawData, cmd);
+      1280 +            if (uiDrawData)                                  
+      1281 +                ImGui_ImplVulkan_RenderDrawData(uiDrawData, c
+           +md);                                                         
+      1282              vkCmdEndRendering(cmd);
+      1283          }
+      1284 +        // Restore the left-eye binding: the backend replays 
+           +the same draw data                                           
+      1285 +        // for dragged-out OS windows after this frame is sub
+           +mitted.                                                      
+      1286 +        if (toViewport && swapchain_->layers() > 1 && viewpor
+           +tLayers_ > 1)                                                
+      1287 +            remapViewportImage(                              
+      1288 +                viewportImguiSets_[std::min(swapchain_->layer
+           +s(), viewportLayers_) - 1],                                  
+      1289 +                viewportImguiSets_[0]);                      
+      1290      }
+      1291  
+      1292      // ---- Optional screenshot copy, then hand the image to 
+            the presenter ----
+
+● Update(StereoVista\src\Renderer\Renderer.cpp)
+  ⎿  Added 9 lines, removed 9 lines
+      1585  }
+      1586  
+      1587  void Renderer::onSwapchainRecreated() {
+      1588 -    createSceneTarget();                                     
+      1589 -    // Size-dependent point-cloud buffers follow the scene ta
+           -rget (device is                                              
+      1590 -    // idle here; the next prepare() recreates them at the ne
+           -w extent).                                                   
+      1591 -    pointCloudPass_.onSwapchainRecreated();                  
+      1588      // Deterministic surface-format selection keeps this stab
+            le; guard anyway
+      1589      // so a format flip rebuilds the affected pipelines inste
+            ad of misrendering.
+      1590      if (swapchain_->format() != tonemapTargetFormat_) {
+     ...
+      1594          overlayPass_.init(*device_, *shaderCompiler_, tonemap
+            TargetFormat_,
+      1595                            kSceneDepthFormat, 0, kFramesInFlig
+            ht);
+      1596      }
+      1601 -    // The published depth samples referenced the old extent;
+           - drop them so                                                
+      1602 -    // picking never reconstructs from a stale rectangle set.
+      1603 -    depthResult_ = DepthReadback{};                          
+      1604 -    for (FrameContext& frame : frames_)                      
+      1605 -        frame.pendingDepth = DepthReadback{};                
+      1597 +    // The viewport texture follows the swapchain's format AN
+           +D layer count (a                                             
+      1598 +    // stereo-mode flip changes layers); the device is idle h
+           +ere (recreate).                                              
+      1599 +    if (viewportOutput_ &&                                   
+      1600 +        (viewportColor_.format() != tonemapTargetFormat_ ||  
+      1601 +         viewportLayers_ != std::max(swapchain_->layers(), 1u
+           +))) {                                                        
+      1602 +        destroyViewportTarget(true);                         
+      1603 +        createViewportTarget();                              
+      1604 +    }                                                        
+      1605 +    onSceneExtentChanged();                                  
+      1606  }
+      1607  
+      1608  void Renderer::destroyFrameContexts() {
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Update(StereoVista\src\Renderer\Renderer.cpp)  ⎿  Added 7 lines
+      320  
+      321  void Renderer::beginXR(VkExtent2D eyeExtent) {
+      322      device_->waitIdle();
+      323 +    // XR takes over the scene target: drop the docked-viewpor
+          +t output (the                                                 
+      324 +    // app re-applies its desktop mode after endXR).          
+      325 +    if (viewportOutput_) {                                    
+      326 +        viewportOutput_ = false;                              
+      327 +        viewportExtent_ = { 0, 0 };                           
+      328 +        destroyViewportTarget(true);                          
+      329 +    }                                                         
+      330      xrActive_ = true;
+      331      sceneExtentOverride_ = eyeExtent; // scene target follows 
+           the HMD, not the window
+      332      viewCount_ = 2;                   // both eyes, single mul
+           tiview pass
+
+● Update(StereoVista\src\Renderer\Renderer.cpp)
+  ⎿  Added 3 lines
+      1660      frameSetLayout_ = VK_NULL_HANDLE;
+      1661      materials_.shutdown();
+      1662      uploadRing_.destroy();
+      1663 +    // The ImGui backend is torn down before the renderer; th
+           +e viewport image                                             
+      1664 +    // sets die with the application's descriptor pool, not v
+           +ia RemoveTexture.                                            
+      1665 +    destroyViewportTarget(/*releaseImguiSets=*/false);       
+      1666      destroySceneDepthLayerViews();
+      1667      sceneColor_.destroy();
+      1668      sceneDepth_.destroy();
+
+● Renderer done. Now the GUI service contract — Services.h:
+
+● Update(StereoVista\headers\Gui\Services.h)
+  ⎿  Added 24 lines
+      64      bool asyncComputeActive = false;
+      65  };
+      66  
+      67 +// What the Viewport panel displays: the renderer's offscreen v
+         +iewport texture                                                
+      68 +// as an ImGui image. Plain data (textureId is the ImTextureID)
+         +; active=false                                                 
+      69 +// means the classic fullscreen path is in use (XR) and the pan
+         +el is skipped —                                                
+      70 +// the scene then shows through the dockspace's passthru centra
+         +l node.                                                        
+      71 +struct ViewportDisplay {                                       
+      72 +    void* textureId = nullptr;      // ImTextureID; null until 
+         +the target exists                                              
+      73 +    unsigned width = 0, height = 0; // texture size in pixels  
+      74 +    bool active = false;            // docked-viewport mode (dr
+         +aw the panel)                                                  
+      75 +};                                                             
+      76 +                                                               
+      77 +// What the Viewport panel reports back each GUI frame: desired
+         + size + input                                                  
+      78 +// state, all in coordinates the app can act on without knowing
+         + ImGui layout.                                                 
+      79 +struct ViewportPanelState {                                    
+      80 +    bool  shown = false;            // panel visible with a >=1
+         +px content region                                              
+      81 +    float sizeX = 0.0f, sizeY = 0.0f;   // content region = des
+         +ired texture size                                              
+      82 +    float mouseX = 0.0f, mouseY = 0.0f; // mouse in TEXTURE pix
+         +els (may be out of                                             
+      83 +                                        // range — consumers bo
+         +und-check)                                                     
+      84 +    float screenX = 0.0f, screenY = 0.0f; // image top-left, Im
+         +Gui screen coords                                              
+      85 +    float screenW = 0.0f, screenH = 0.0f; // image display size
+         + on screen                                                     
+      86 +    bool  hovered = false;          // image hovered, no other 
+         +window on top                                                  
+      87 +    bool  focused = false;                                     
+      88 +    void* hostWindow = nullptr;     // GLFWwindow* of the OS wi
+         +ndow hosting it                                                
+      89 +};                                                             
+      90 +                                                               
+      91  // Live streaming progress for one point cloud (mirror of
+      92  // Engine::PointCloudLoader::StreamProgress, minus the loader h
+          eader).
+      93  struct PointCloudProgress {
+
+● Update(StereoVista\headers\Gui\Services.h)
+  ⎿  Added 11 lines
+      115      virtual Plugins::PluginManager& plugins() = 0;
+      116      virtual Plugins::PluginContext& pluginContext() = 0;
+      117  
+      118 +    // ── Docked 3D viewport ─────────────────────────────────
+          +─────────────────                                             
+      119 +    // The GuiSystem draws the Viewport window from viewportDi
+          +splay() and                                                   
+      120 +    // reports its geometry/input back through onViewportPanel
+          +() every frame                                                
+      121 +    // (a default-constructed state when the panel was not dra
+          +wn).                                                          
+      122 +    virtual ViewportDisplay viewportDisplay() const = 0;      
+      123 +    virtual void onViewportPanel(const ViewportPanelState& sta
+          +te) = 0;                                                      
+      124 +    // Mouse is over the 3D view (docked: the viewport image; 
+          +classic                                                       
+      125 +    // fullscreen: anywhere no GUI window owns the mouse). For
+          + hover-driven                                                 
+      126 +    // panel features like the scene-layer hover pick.        
+      127 +    virtual bool viewportHovered() const = 0;                 
+      128 +                                                              
+      129      // ── Diagnostics / device info ──────────────────────────
+           ──────────────────
+      130      virtual FrameDiagnostics diagnostics() const = 0;
+      131  
+
+● Update(StereoVista\headers\Gui\Panels.h)
+  ⎿  Added 1 line
+      17  
+      18  // Window titles — shared by the panels (Begin) and the dock-la
+          yout builder.
+      19  namespace Windows {
+      20 +inline constexpr const char* Viewport    = "Viewport";         
+      21  inline constexpr const char* Scene       = "Scene";
+      22  inline constexpr const char* Inspector   = "Inspector";
+      23  inline constexpr const char* Settings    = "Settings";
+
+● Update(StereoVista\headers\Gui\GuiSystem.h)
+  ⎿  Added 5 lines
+      37  
+      38  private:
+      39      void drawMenuBar(Services& services);
+      40 +    // The 3D viewport as a real dockable window (central node 
+         +by default):                                                   
+      41 +    // displays the renderer's offscreen viewport texture and r
+         +eports size +                                                  
+      42 +    // input state back through Services::onViewportPanel. Alwa
+         +ys drawn (not                                                  
+      43 +    // gated by the F1 master toggle — it IS the application co
+         +ntent).                                                        
+      44 +    void drawViewportPanel(Services& services);                
+      45      void drawAboutWindow(Services& services);
+      46      // Build the default dock layout into the given dockspace n
+          ode.
+      47      void buildDefaultLayout(unsigned int dockspaceId, float siz
+          eX, float sizeY);
+
+● Update(StereoVista\src\Gui\GuiSystem.cpp)
+  ⎿  Added 15 lines, removed 3 lines
+      30      // area, so the dockspace below fits under it.
+      31      drawMenuBar(services);
+      32  
+      33 -    // Dockspace over the remaining work area. PassthruCentralN
+         -ode keeps the                                                  
+      34 -    // central (undocked) region transparent and click-through,
+         - so the 3D scene                                               
+      35 -    // is visible and camera navigation still works there.     
+      33 +    // Dockspace over the remaining work area. The 3D scene liv
+         +es in the                                                      
+      34 +    // Viewport window docked into the central node. PassthruCe
+         +ntralNode keeps                                                
+      35 +    // an EMPTY central node transparent and click-through — th
+         +e fallback for                                                 
+      36 +    // the classic fullscreen path (XR mirror), where the scene
+         + still renders                                                 
+      37 +    // under the GUI on the backbuffer.                        
+      38      const ImGuiID dockId = ImGui::GetID("StereoVistaDockspace")
+          ;
+      39      const bool freshProfile = (ImGui::DockBuilderGetNode(dockId
+          ) == nullptr);
+      40      ImGui::DockSpaceOverViewport(dockId, viewport,
+     ...
+      48      }
+      49      layoutInitialized_ = true;
+      50  
+      51 +    // The 3D viewport window. Drawn BEFORE the panels so same-
+         +frame consumers                                                
+      52 +    // (the scene-layer hover pick) see fresh input state, and 
+         +NOT gated by the                                               
+      53 +    // F1 master toggle — hiding the side panels collapses thei
+         +r dock nodes and                                               
+      54 +    // the viewport grows to (nearly) the whole window. Skipped
+         + on the classic                                                
+      55 +    // fullscreen path, where the scene shows through the passt
+         +hru node.                                                      
+      56 +    if (services.viewportDisplay().active)                     
+      57 +        drawViewportPanel(services);                           
+      58 +    else                                                       
+      59 +        services.onViewportPanel(ViewportPanelState{});        
+      60 +                                                               
+      61      // The About window and plugin windows are gated by the mas
+          ter toggle too.
+      62      if (guiVisible_) {
+      63          if (showScene_)       drawScenePanel(services, &showSce
+          ne_);
+
+● Now the panel implementation itself plus the default layout docking:
+
+● Update(StereoVista\src\Gui\GuiSystem.cpp)
+  ⎿  Added 48 lines
+      159      ImGui::EndMainMenuBar();
+      160  }
+      161  
+      162 +void GuiSystem::drawViewportPanel(Services& services) {       
+      163 +    const ViewportDisplay display = services.viewportDisplay()
+          +;                                                             
+      164 +    ViewportPanelState state{};                               
+      165 +                                                              
+      166 +    // Zero padding: the scene image IS the window. No close b
+          +utton — the                                                   
+      167 +    // viewport is the application content, not an optional pa
+          +nel.                                                          
+      168 +    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.
+          +0f, 0.0f));                                                   
+      169 +    ImGui::SetNextWindowSize(ImVec2(1280.0f, 720.0f), ImGuiCon
+          +d_FirstUseEver);                                              
+      170 +    const bool open = ImGui::Begin(Windows::Viewport, nullptr,
+      171 +                                   ImGuiWindowFlags_NoScrollba
+          +r |                                                           
+      172 +                                       ImGuiWindowFlags_NoScro
+          +llWithMouse |                                                 
+      173 +                                       ImGuiWindowFlags_NoColl
+          +apse);                                                        
+      174 +    if (open && display.textureId && display.width > 0 && disp
+          +lay.height > 0) {                                             
+      175 +        const ImVec2 avail = ImGui::GetContentRegionAvail();  
+      176 +        if (avail.x >= 1.0f && avail.y >= 1.0f) {             
+      177 +            const ImVec2 imagePos = ImGui::GetCursorScreenPos(
+          +);                                                            
+      178 +            // Stretch the current texture into the whole cont
+          +ent region. While                                             
+      179 +            // a resize drag is in flight this shows the old s
+          +ize stretched for                                             
+      180 +            // a frame or two, until the size settles and the 
+          +app rebuilds the                                              
+      181 +            // render target at the new resolution.           
+      182 +            ImGui::Image(reinterpret_cast<ImTextureID>(display
+          +.textureId), avail);                                          
+      183 +                                                              
+      184 +            state.shown = true;                               
+      185 +            state.sizeX = avail.x;                            
+      186 +            state.sizeY = avail.y;                            
+      187 +            state.screenX = imagePos.x;                       
+      188 +            state.screenY = imagePos.y;                       
+      189 +            state.screenW = avail.x;                          
+      190 +            state.screenH = avail.y;                          
+      191 +            // Mouse in TEXTURE pixels, scaled through the dis
+          +play rect so                                                  
+      192 +            // picking stays aligned with what is actually ren
+          +dered even while                                              
+      193 +            // the displayed image is a stretched old size.   
+      194 +            const ImVec2 mouse = ImGui::GetIO().MousePos;     
+      195 +            state.mouseX = (mouse.x - imagePos.x) * (float(dis
+          +play.width) / avail.x);                                       
+      196 +            state.mouseY = (mouse.y - imagePos.y) * (float(dis
+          +play.height) / avail.y);                                      
+      197 +            state.hovered = ImGui::IsItemHovered();           
+      198 +            state.focused = ImGui::IsWindowFocused();         
+      199 +            // The GLFW window hosting this panel (the main wi
+          +ndow, or the                                                  
+      200 +            // backend-owned OS window when the panel is dragg
+          +ed out) — camera                                              
+      201 +            // capture and OS-cursor show/hide must target it.
+      202 +            state.hostWindow = ImGui::GetWindowViewport()->Pla
+          +tformHandle;                                                  
+      203 +        }                                                     
+      204 +    }                                                         
+      205 +    ImGui::End();                                             
+      206 +    ImGui::PopStyleVar();                                     
+      207 +    services.onViewportPanel(state);                          
+      208 +}                                                             
+      209 +                                                              
+      210  void GuiSystem::drawAboutWindow(Services& services) {
+      211      ImGui::SetNextWindowSize(ImVec2(420.0f, 0.0f), ImGuiCond_F
+           irstUseEver);
+      212      if (ImGui::Begin("About StereoVista", &showAbout_,
+
+● Update(StereoVista\src\Gui\GuiSystem.cpp)
+  ⎿  Added 2 lines
+      247      ImGuiID rightBottom = ImGui::DockBuilderSplitNode(right, I
+           mGuiDir_Down, 0.35f,
+      248                                                        nullptr,
+            &right);
+      249  
+      250 +    // The viewport owns the central node; panels dock around 
+          +it.                                                           
+      251 +    ImGui::DockBuilderDockWindow(Windows::Viewport, center);  
+      252      ImGui::DockBuilderDockWindow(Windows::Scene, left);
+      253      ImGui::DockBuilderDockWindow(Windows::Inspector, leftBotto
+           m);
+      254      ImGui::DockBuilderDockWindow(Windows::Settings, right);
+
+● Update(StereoVista\src\Gui\GuiSystem.cpp)
+  ⎿  Added 2 lines, removed 1 line
+      236  
+      237      // Reserve a left column (hierarchy over inspector) and a 
+           right column
+      238      // (tabbed settings/cursor/clouds/clip over a diagnostics 
+           strip); the
+      239 -    // remaining centre stays the passthru scene view.        
+      239 +    // remaining centre hosts the Viewport window (or stays th
+          +e passthru scene                                              
+      240 +    // view on the classic fullscreen path).                  
+      241      ImGuiID center = dockId;
+      242      ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDi
+           r_Left, 0.20f,
+      243                                                 nullptr, &cente
+           r);
+
+● Now the CursorManager rework — viewport-local coordinates replacing the GL-era
+  window/inset plumbing:
+
+● Update(StereoVista\headers\Cursors\Base\CursorManager.h)
+  ⎿  Added 12 lines, removed 10 lines
+      31    // Initialize all cursor types
+      32    void initialize();
+      33  
+      34 -  // Update the shared 3D cursor from the latest depth readback
+         -. `depth` is                                                   
+      34 +  // Update the shared 3D cursor from the latest depth readback
+         +. Coordinates                                                  
+      35 +  // are 3D-VIEWPORT-LOCAL (the docked viewport image, or the f
+         +ull framebuffer                                                
+      36 +  // on the classic fullscreen path): mousePx is the mouse in r
+         +ender-target                                                   
+      37 +  // pixels, viewportPx the render-target size (the depth readb
+         +ack's extent                                                   
+      38 +  // space). mouseInViewport=false while the GUI owns the mouse
+         + (hovering a                                                   
+      39 +  // panel / outside the viewport image) — the OS cursor is res
+         +tored and the                                                  
+      40 +  // pick is skipped, keeping the last cursor state. hostWindow
+         + is the OS                                                     
+      41 +  // window hosting the 3D view (OS-cursor show/hide only). `de
+         +pth` is                                                        
+      42    // Renderer::depthSamples() (one frame stale — same class as 
+          the GL
+      43    // glReadPixels path); proj/view are the CURRENT camera matri
+          ces (used only
+      44    // for the background-plane fallback, like the GL version).
+      38 -  void updateCursorPosition(GLFWwindow *window, const glm::mat4
+         - &projection,                                                  
+      39 -                            const glm::mat4 &view, const Camera
+         - &camera,                                                      
+      45 +  void updateCursorPosition(GLFWwindow *hostWindow, const glm::
+         +vec2 &mousePx,                                                 
+      46 +                            const glm::vec2 &viewportPx, bool m
+         +ouseInViewport,                                                
+      47 +                            const glm::mat4 &projection, const 
+         +glm::mat4 &view,                                               
+      48 +                            const Camera &camera,              
+      49                              const renderer::DepthReadback &dept
+          h,
+      50                              bool forceRecalculate);
+      51  
+      52    // Reset frame calculation flag (call at start of each frame)
+      53    void resetFrameCalculationFlag();
+      54  
+      46 -  // Define the sub-rectangle of the render target the scene is
+         - drawn into, so                                                
+      47 -  // mouse picking maps correctly when the 3D viewport doesn't 
+         -fill the window.                                               
+      48 -  // Vulkan-era coordinates are top-left origin (originY = top)
+         -. Defaults (all                                                
+      49 -  // zero / unset) reproduce full-window behavior.             
+      50 -  void setViewport(int originX, int originYTop, int width, int 
+         -height,                                                        
+      51 -                   int leftInset, int topInset);               
+      52 -                                                               
+      55    // Append all visible cursors to the overlay draw list.
+      56    void renderCursors(renderer::OverlayDrawList &list, const Cam
+          era &camera);
+      57  
+
+● Update(StereoVista\headers\Cursors\Base\CursorManager.h)
+  ⎿  Added 4 lines, removed 12 lines
+      166    glm::vec4 m_orbitCenterColor;
+      167    float m_orbitCenterSphereRadius;
+      168  
+      169 -  // Window dimensions (framebuffer pixels, refreshed every up
+          -date)                                                         
+      170 -  int m_windowWidth;                                          
+      171 -  int m_windowHeight;                                         
+      169 +  // 3D-viewport size (render-target pixels, refreshed every u
+          +pdate)                                                        
+      170 +  float m_viewportW;                                          
+      171 +  float m_viewportH;                                          
+      172  
+      173 -  // Scene-region sub-rectangle within the render target (see 
+          -setViewport).                                                 
+      174 -  int m_vpOriginX = 0;                                        
+      175 -  int m_vpOriginYTop = 0;                                     
+      176 -  int m_vpWidth = 0;                                          
+      177 -  int m_vpHeight = 0;                                         
+      178 -  int m_vpLeftInset = 0;                                      
+      179 -  int m_vpTopInset = 0;                                       
+      180 -                                                              
+      181 -  // Mouse position                                           
+      173 +  // Mouse position (viewport-local render-target pixels)     
+      174    float m_lastX;
+      175    float m_lastY;
+      176  
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(StereoVista\src\Cursors\Base\CursorManager.cpp)
+  ⎿  Added 1 line, removed 1 line
+      40        m_backgroundCursorPosition(0.0f), m_hasBackgroundCursorPo
+          sition(false),
+      41        m_showOrbitCenter(false), m_alwaysShowOrbitCenter(false),
+      42        m_orbitCenterColor(0.0f, 1.0f, 0.0f, 0.7f), m_orbitCenter
+          SphereRadius(0.2f),
+      43 -      m_windowWidth(1920), m_windowHeight(1080), m_lastX(0.0f),
+         - m_lastY(0.0f),                                                
+      43 +      m_viewportW(1920.0f), m_viewportH(1080.0f), m_lastX(0.0f)
+         +, m_lastY(0.0f),                                               
+      44        m_cursorInsideWindow(true), m_positionLocked(false) {
+      45    m_sphereCursor = std::make_unique<SphereCursor>();
+      46    m_fragmentCursor = std::make_unique<FragmentCursor>();
+
+● Update(StereoVista\src\Cursors\Base\CursorManager.cpp)
+  ⎿  Added 8 lines, removed 4 lines
+      55    m_planeCursor->initialize();
+      56  }
+      57  
+      58 -void CursorManager::updateCursorPosition(GLFWwindow *window,   
+      58 +void CursorManager::updateCursorPosition(GLFWwindow *hostWindow
+         +,                                                              
+      59 +                                         const glm::vec2 &mouse
+         +Px,                                                            
+      60 +                                         const glm::vec2 &viewp
+         +ortPx,                                                         
+      61 +                                         bool mouseInViewport, 
+      62                                           const glm::mat4 &proje
+          ction,
+      63                                           const glm::mat4 &view,
+      64                                           const Camera &camera,
+     ...
+      68    if (m_cursorPositionCalculatedThisFrame && !forceRecalculate)
+      69      return;
+      70  
+      68 -  // ImGui owns the mouse (hovering a panel): show the OS curso
+         -r, do nothing.                                                 
+      69 -  if (ImGui::GetIO().WantCaptureMouse) {                       
+      70 -    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL); 
+      71 +  // The GUI owns the mouse (hovering a panel / outside the doc
+         +ked viewport                                                   
+      72 +  // image): show the OS cursor, keep the last cursor state.   
+      73 +  if (!mouseInViewport) {                                      
+      74 +    glfwSetInputMode(hostWindow, GLFW_CURSOR, GLFW_CURSOR_NORMA
+         +L);                                                            
+      75      return;
+      76    }
+      77    if (!m_cursorInsideWindow)
+
+● Update(StereoVista\src\Cursors\Base\CursorManager.cpp)
+  ⎿  Added 14 lines, removed 27 lines
+      102    if (camera.IsAnimating)
+      103      return;
+      104  
+      105 -  // Current mouse position (window pixels). The actual geomet
+          -ry pick uses the                                              
+      106 -  // renderer's depth readback rect (queued last frame); the c
+          -urrent mouse is                                               
+      107 -  // used only for the region bounds test, the background fall
+          -back ray, and the                                             
+      108 -  // last-depth cache.                                        
+      109 -  double xpos = 0.0, ypos = 0.0;                              
+      110 -  glfwGetCursorPos(window, &xpos, &ypos);                     
+      111 -  m_lastX = static_cast<float>(xpos);                         
+      112 -  m_lastY = static_cast<float>(ypos);                         
+      105 +  // Current mouse position (viewport-local render-target pixe
+          +ls). The actual                                               
+      106 +  // geometry pick uses the renderer's depth readback rect (qu
+          +eued last frame);                                             
+      107 +  // the current mouse is used only for the bounds test, the b
+          +ackground                                                     
+      108 +  // fallback ray, and the last-depth cache.                  
+      109 +  m_lastX = mousePx.x;                                        
+      110 +  m_lastY = mousePx.y;                                        
+      111 +  m_viewportW = std::max(viewportPx.x, 1.0f);                 
+      112 +  m_viewportH = std::max(viewportPx.y, 1.0f);                 
+      113  
+      114 -  int winW = 0, winH = 0;                                     
+      115 -  glfwGetWindowSize(window, &winW, &winH);                    
+      116 -  if (winW > 0)                                               
+      117 -    m_windowWidth = winW;                                     
+      118 -  if (winH > 0)                                               
+      119 -    m_windowHeight = winH;                                    
+      120 -                                                              
+      121 -  // Resolve the scene-region sub-rectangle (falls back to the
+          - full window).                                                
+      122 -  const int vpW = (m_vpWidth > 0) ? m_vpWidth : m_windowWidth;
+      123 -  const int vpH = (m_vpHeight > 0) ? m_vpHeight : m_windowHeig
+          -ht;                                                           
+      124 -  const float rx = m_lastX - static_cast<float>(m_vpLeftInset)
+          -;                                                             
+      125 -  const float ryTop = m_lastY - static_cast<float>(m_vpTopInse
+          -t);                                                           
+      126 -                                                              
+      127 -  // Outside the scene region (over a docked panel / letterbox
+          -): invalidate.                                                
+      128 -  if (rx < 0.0f || rx >= static_cast<float>(vpW) || ryTop < 0.
+          -0f ||                                                         
+      129 -      ryTop >= static_cast<float>(vpH)) {                     
+      114 +  // Outside the render target (the image edge during a resize
+          +): invalidate.                                                
+      115 +  if (m_lastX < 0.0f || m_lastX >= m_viewportW || m_lastY < 0.
+          +0f ||                                                         
+      116 +      m_lastY >= m_viewportH) {                               
+      117      m_cursorPositionValid = false;
+      118      m_sphereCursor->setPositionValid(false);
+      119      m_fragmentCursor->setPositionValid(false);
+     ...
+      126                                  m_fragmentCursor->isVisible() 
+           ||
+      127                                  m_planeCursor->isVisible();
+      128  
+      142 -  // NDC of the current mouse within the scene region (Vulkan 
+          -convention:                                                   
+      129 +  // NDC of the current mouse within the viewport (Vulkan conv
+          +ention:                                                       
+      130    // top -> -1), reused by the cache re-projection and backgro
+           und fallback.
+      144 -  const float ndcX = (rx / static_cast<float>(vpW)) * 2.0f - 1
+          -.0f;                                                          
+      145 -  const float ndcY = (ryTop / static_cast<float>(vpH)) * 2.0f 
+          -- 1.0f;                                                       
+      131 +  const float ndcX = (m_lastX / m_viewportW) * 2.0f - 1.0f;   
+      132 +  const float ndcY = (m_lastY / m_viewportH) * 2.0f - 1.0f;   
+      133    const glm::mat4 currentInvVP = glm::inverse(projection * vie
+           w);
+      134  
+      135    // --- Geometry pick from the renderer's depth readback (one
+            frame stale) ---
+
+● Update(StereoVista\src\Cursors\Base\CursorManager.cpp)
+  ⎿  Added 1 line, removed 1 line
+      203        m_cursorPositionCalculatedThisFrame = true;
+      204        return;
+      205      }
+      206 -    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
+      206 +    glfwSetInputMode(hostWindow, GLFW_CURSOR, GLFW_CURSOR_HIDD
+          +EN);                                                          
+      207    } else {
+      208      m_cursorPositionValid = false;
+      209      m_sphereCursor->setPositionValid(false);
+● Update(StereoVista\src\Cursors\Base\CursorManager.cpp)
+  ⎿  Added 1 line, removed 1 line
+      218        m_cursorPositionCalculatedThisFrame = true;
+      219        return;
+      220      }
+      221 -    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+      221 +    glfwSetInputMode(hostWindow, GLFW_CURSOR, GLFW_CURSOR_NORM
+          +AL);                                                          
+      222    }
+      223  
+      224    m_cursorPositionCalculatedThisFrame = true;
+
+● Update(StereoVista\src\Cursors\Base\CursorManager.cpp)
+  ⎿  Added 2 lines, removed 7 lines
+      281  glm::vec3
+      282  CursorManager::calculateBackgroundCursorPosition(const glm::ma
+           t4 &projection,
+      283                                                   const glm::ma
+           t4 &view) {
+      284 -  const int vpW = (m_vpWidth > 0) ? m_vpWidth : m_windowWidth;
+      285 -  const int vpH = (m_vpHeight > 0) ? m_vpHeight : m_windowHeig
+          -ht;                                                           
+      286 -  const float mouseX = m_lastX - static_cast<float>(m_vpLeftIn
+          -set);                                                         
+      287 -  const float mouseY = m_lastY - static_cast<float>(m_vpTopIns
+          -et);                                                          
+      288 -                                                              
+      284    // NDC (Vulkan convention: top -> -1; the projection carries
+            the Y-flip).
+      290 -  const float x = (mouseX / static_cast<float>(vpW)) * 2.0f - 
+          -1.0f;                                                         
+      291 -  const float y = (mouseY / static_cast<float>(vpH)) * 2.0f - 
+          -1.0f;                                                         
+      285 +  const float x = (m_lastX / m_viewportW) * 2.0f - 1.0f;      
+      286 +  const float y = (m_lastY / m_viewportH) * 2.0f - 1.0f;      
+      287  
+      288    // Reverse-Z: near plane -> 1, far plane -> 0. Mix the two r
+           ay hits to land a
+      289    // point mid-frustum along the mouse ray.
+
+● Update(StereoVista\src\Cursors\Base\CursorManager.cpp)
+  ⎿  Removed 10 lines
+      296    return glm::mix(glm::vec3(nearWorld), glm::vec3(farWorld), 0
+           .5f);
+      297  }
+      298  
+      299 -void CursorManager::setViewport(int originX, int originYTop, i
+          -nt width,                                                     
+      300 -                                int height, int leftInset, int
+          - topInset) {                                                  
+      301 -  m_vpOriginX = originX;                                      
+      302 -  m_vpOriginYTop = originYTop;                                
+      303 -  m_vpWidth = width;                                          
+      304 -  m_vpHeight = height;                                        
+      305 -  m_vpLeftInset = leftInset;                                  
+      306 -  m_vpTopInset = topInset;                                    
+      307 -}                                                             
+      308 -                                                              
+      299  } // namespace Cursor
+
+● Update(StereoVista\src\Cursors\Base\CursorManager.cpp)
+  ⎿  Added 1 line, removed 2 lines
+       7  
+       8  #include <GLFW/glfw3.h>
+       9  
+      10 -#include "imgui/imgui.h"                                       
+      11 -                                                               
+      10 +#include <algorithm>                                           
+      11  #include <cmath>
+      12  
+      13  namespace Cursor {
+
+● Update(StereoVista\headers\Plugins\PluginContext.h)
+  ⎿  Added 10 lines, removed 2 lines
+      78      virtual void setSelection(int model, int mesh = -1) = 0;
+      79  
+      80      // ── Input / viewport state ──────────────────────────────
+          ────────────────
+      81 -    virtual glm::vec2 mousePos()      const = 0;   // pixels, w
+         -indow space                                                    
+      81 +    // The 3D view is a dockable GUI window since the viewport 
+         +rework, so all                                                 
+      82 +    // pointer coordinates are 3D-VIEWPORT-LOCAL render-target 
+         +pixels (identical                                              
+      83 +    // to window pixels on the classic fullscreen path).       
+      84 +    virtual glm::vec2 mousePos()      const = 0;   // render-ta
+         +rget pixels                                                    
+      85      virtual int       keyMods()       const = 0;   // current G
+          LFW_MOD_* bitmask
+      83 -    virtual glm::vec2 viewportSize()  const = 0;   // 3D viewpo
+         -rt, pixels                                                     
+      86 +    virtual glm::vec2 viewportSize()  const = 0;   // render-ta
+         +rget size, pixels                                              
+      87 +    // Where the 3D view sits on screen (ImGui screen coordinat
+         +es): for HUD                                                   
+      88 +    // drawing over the viewport via ImGui draw lists (labels, 
+         +readouts). NDC                                                 
+      89 +    // from viewProj() maps into exactly this rectangle.       
+      90 +    virtual glm::vec2 viewportScreenPos()  const = 0;          
+      91 +    virtual glm::vec2 viewportScreenSize() const = 0;          
+      92      // proj*view for this frame's camera (for world->screen lab
+          el projection).
+      93      virtual glm::mat4 viewProj()      const = 0;
+      94  
+
+● Update(StereoVista\src\Plugins\MeasurementPlugin.cpp)
+  ⎿  Added 4 lines, removed 3 lines
+      46  // ── ImGui: value labels (always) + settings window ──────────
+          ────────────────
+      47  void MeasurementPlugin::onRenderUI(PluginContext& ctx) {
+      48      // Value labels over the 3D view are independent of the set
+          tings window.
+      49 -    const ImGuiViewport* vp = ImGui::GetMainViewport();        
+      50 -    m_tool.drawLabels(ctx.viewProj(), glm::vec2(vp->Pos.x, vp->
+         -Pos.y),                                                        
+      51 -                      glm::vec2(vp->Size.x, vp->Size.y));      
+      49 +    // The context reports where the view sits on screen (the d
+         +ocked viewport                                                 
+      50 +    // image, or the whole window on the classic fullscreen pat
+         +h).                                                            
+      51 +    m_tool.drawLabels(ctx.viewProj(), ctx.viewportScreenPos(), 
+      52 +                      ctx.viewportScreenSize());               
+      53  
+      54      if (!m_windowOpen) return;
+      55      if (ImGui::Begin("Measure", &m_windowOpen)) {
+
+● Update(StereoVista\src\Tools\MeasurementTool.cpp)
+  ⎿  Added 6 lines
+      261                                   const glm::vec2& viewportSize
+           ) const {
+      262      if (!showLabels) return;
+      263      ImDrawList* dl = ImGui::GetForegroundDrawList();
+      264 +    // The 3D view may be a docked window: clip labels to its 
+          +on-screen rect so                                             
+      265 +    // they never bleed over neighbouring panels.             
+      266 +    dl->PushClipRect(ImVec2(viewportPos.x, viewportPos.y),    
+      267 +                     ImVec2(viewportPos.x + viewportSize.x,   
+      268 +                            viewportPos.y + viewportSize.y),  
+      269 +                     true);                                   
+      270  
+      271      auto project = [&](const glm::vec3& world, ImVec2& out) ->
+            bool {
+      272          const glm::vec4 clip = viewProj * glm::vec4(world, 1.0
+           f);
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(StereoVista\src\Tools\MeasurementTool.cpp)
+  ⎿  Added 2 lines
+      329      for (const Engine::Measurement& m : m_measurements)
+      330          if (m.visible) measure(m);
+      331      if (m_hasActive) measure(m_active);
+      332 +                                                              
+      333 +    dl->PopClipRect();                                        
+      334  }
+      335  
+      336  } // namespace Tools
+
+● Update(StereoVista\src\Gui\panels\SlpkPanel.cpp)
+  ⎿  Added 1 line, removed 1 line
+      178  
+      179      // Hover pick: the depth cursor under the mouse -> deepest
+            drawn node.
+      180      layer.hoverNode = -1;
+      181 -    if (layer.hoverInfo && !ImGui::GetIO().WantCaptureMouse) {
+      181 +    if (layer.hoverInfo && services.viewportHovered()) {      
+      182          glm::vec3 world;
+      183          if (services.pluginContext().cursorWorldPos(world))
+      184              layer.hoverNode = layer.pickNodeAt(world);
+
+● Update(StereoVista\headers\App\Application.h)
+  ⎿  Added 1 line
+       6  #include "Engine/Data.h"
+       7  #include "Engine/XRRuntimeInfo.h" // plain-data OpenXR runtime 
+          picker snapshot
+       8  #include "Gui/GuiSystem.h"
+       9 +#include "Gui/Services.h" // Gui::ViewportPanelState (the Viewp
+         +ort window report)                                             
+      10  #include "Gui/Settings.h"
+      11  #include "Platform/Window.h"
+      12  #include "Plugins/PluginManager.h"
+
+● Update(StereoVista\headers\App\Application.h)
+  ⎿  Added 13 lines
+       97      void handleDroppedFiles();         // route window drag-dr
+           op by extension
+       98      void handleResize();
+       99      void loadScene();
+      100 +    // ---- Docked viewport (GUI rework) ----                 
+      101 +    // Reconcile the renderer's offscreen viewport output with
+          + the desired mode                                             
+      102 +    // at a frame boundary (before ImGui::NewFrame — the last 
+          +frame's draw data                                             
+      103 +    // must never reference a destroyed viewport texture). Doc
+          +ked whenever the                                              
+      104 +    // desktop owns the window (any stereo mode); XR keeps the
+          + classic                                                      
+      105 +    // fullscreen path. A panel resize is applied only once th
+          +e reported size                                               
+      106 +    // has settled (equal on two consecutive frames), so a spl
+          +itter drag                                                    
+      107 +    // stretches the image instead of rebuilding render target
+          +s every frame.                                                
+      108 +    void reconcileViewportOutput();                           
+      109 +    // Derive this frame's effective 3D-view input (sceneInput
+          +_) after the GUI                                              
+      110 +    // built: from the Viewport panel report when docked, from
+          + the raw window                                               
+      111 +    // mouse + swapchain extent on the classic fullscreen path
+          +.                                                             
+      112 +    void updateSceneInput();                                  
+      113      void updateCamera(float dt);
+      114      // Per-view cameras for this frame: mono fills view 0 (vie
+           w 1 duplicated);
+      115      // stereo builds off-axis left/right eyes from stereoSepar
+           ation_/Convergence_
+
+● Update(StereoVista\headers\App\Application.h)
+  ⎿  Added 4 lines, removed 4 lines
+      176      // undo entry for the whole drag at drag end (no-op if not
+           hing changed).
+      177      void beginGizmoUndo();
+      178      void finishGizmoUndo();
+      179 -    // World-space ray under the current OS cursor / through a
+          - window pixel                                                 
+      180 -    // (top-left origin), using this frame's view + projection
+          -.                                                             
+      179 +    // World-space ray under the mouse / through a 3D-viewport
+          + pixel (render-                                               
+      180 +    // target pixels, top-left origin), using this frame's vie
+          +w + projection.                                               
+      181      Plugins::PickRay mouseRayCurrent() const;
+      182 -    Plugins::PickRay rayThroughPixel(glm::vec2 windowPixel) co
+          -nst;                                                          
+      183 -    int currentMods() const; // GLFW_MOD_* bitmask from the po
+          -lled modifier keys                                            
+      182 +    Plugins::PickRay rayThroughPixel(glm::vec2 viewportPixel) 
+          +const;                                                        
+      183 +    int currentMods() const; // GLFW_MOD_* bitmask from ImGui'
+          +s modifier state                                              
+      184  
+      185      Platform::Window window_;
+      186      rhi::Device device_;
+
+● Update(StereoVista\headers\App\Application.h)
+  ⎿  Added 21 lines
+      252      StereoMode vrSavedStereoMode_ = StereoMode::Off;
+      253      VkPresentModeKHR vrSavedPresentMode_ = VK_PRESENT_MODE_FIF
+           O_KHR;
+      254  
+      255 +    // ---- Docked viewport (scene rendered offscreen, shown a
+          +s a GUI window) ----                                          
+      256 +    // What the Viewport panel reported this GUI frame (via Ma
+          +inGuiServices).                                               
+      257 +    Gui::ViewportPanelState viewportUi_;                      
+      258 +    // Last frame's desired texture size — a resize is applied
+          + only when the                                                
+      259 +    // report repeats (settle test), so splitter drags don't r
+          +ebuild per frame.                                             
+      260 +    VkExtent2D viewportSizeWant_{ 0, 0 };                     
+      261 +    // This frame's effective 3D-view input, derived in update
+          +SceneInput():                                                 
+      262 +    // every interaction consumer (camera nav, picking rays, d
+          +epth queries,                                                 
+      263 +    // cursor, plugins) reads the 3D view through this — never
+          + raw window                                                   
+      264 +    // coordinates — so docked and classic fullscreen paths be
+          +have identically.                                             
+      265 +    struct SceneInput {                                       
+      266 +        bool hovered = false;         // pointer over the 3D v
+          +iew; nav may start                                            
+      267 +        glm::vec2 mousePx{ 0.0f };    // mouse in render-targe
+          +t pixels                                                      
+      268 +        glm::vec2 sizePx{ 1.0f };     // render-target size   
+      269 +        glm::vec2 screenPos{ 0.0f };  // view rect on screen (
+          +HUD/label space)                                              
+      270 +        glm::vec2 screenSize{ 1.0f };                         
+      271 +        GLFWwindow* hostWindow = nullptr; // OS window hosting
+          + the 3D view                                                  
+      272 +    };                                                        
+      273 +    SceneInput sceneInput_;                                   
+      274 +                                                              
+      275      // Navigation drag state (edge-detected from polled mouse 
+           buttons). While
+      276      // any is active the OS cursor is disabled for unbounded t
+           ravel and the 3D
+      277      // cursor / depth pick is frozen.
+      278      bool orbiting_ = false;
+      279      bool panning_ = false;
+      280      bool rmbLooking_ = false;
+      281 +    GLFWwindow* navWindow_ = nullptr; // window that owns the 
+          +cursor capture                                                
+      282      double lastMouseX_ = 0.0;
+      283      double lastMouseY_ = 0.0;
+      284      double lastFrameTime_ = 0.0;
+
+● Now the Application.cpp changes. First the plugin context and GUI services
+  facades:
+
+● Update(StereoVista\src\App\Application.cpp)
+  ⎿  Added 6 lines, removed 9 lines
+       88          app_.selection_.mesh = mesh;
+       89      }
+       90  
+       91 -    glm::vec2 mousePos() const override {                     
+       92 -        double cx = 0.0, cy = 0.0;                            
+       93 -        glfwGetCursorPos(app_.window_.handle(), &cx, &cy);    
+       94 -        return glm::vec2(float(cx), float(cy));               
+       95 -    }                                                         
+       91 +    // 3D-viewport-local input (docked viewport image or the f
+          +ull framebuffer                                               
+       92 +    // on the classic fullscreen path) — see Application::upda
+          +teSceneInput.                                                 
+       93 +    glm::vec2 mousePos() const override { return app_.sceneInp
+          +ut_.mousePx; }                                                
+       94      int keyMods() const override { return app_.currentMods(); 
+           }
+       97 -    glm::vec2 viewportSize() const override {                 
+       98 -        const VkExtent2D extent = app_.swapchain_.extent();   
+       99 -        return glm::vec2(float(extent.width), float(extent.hei
+          -ght));                                                        
+      100 -    }                                                         
+       95 +    glm::vec2 viewportSize() const override { return app_.scen
+          +eInput_.sizePx; }                                             
+       96 +    glm::vec2 viewportScreenPos() const override { return app_
+          +.sceneInput_.screenPos; }                                     
+       97 +    glm::vec2 viewportScreenSize() const override { return app
+          +_.sceneInput_.screenSize; }                                   
+       98      glm::mat4 viewProj() const override {
+       99          glm::mat4 view(1.0f), proj(1.0f);
+      100          app_.cameraMatrices(view, proj);
+
+● Update(StereoVista\src\App\Application.cpp)
+  ⎿  Added 19 lines
+      130      Plugins::PluginManager& plugins() override       { return 
+           app_.pluginManager_; }
+      131      Plugins::PluginContext& pluginContext() override { return 
+           *app_.pluginContext_; }
+      132  
+      133 +    // ---- Docked 3D viewport ----                           
+      134 +    Gui::ViewportDisplay viewportDisplay() const override {   
+      135 +        Gui::ViewportDisplay d;                               
+      136 +        d.active = app_.renderer_.viewportOutputActive();     
+      137 +        d.textureId = app_.renderer_.viewportTextureId();     
+      138 +        const VkExtent2D extent = app_.renderer_.viewportExten
+          +t();                                                          
+      139 +        d.width = extent.width;                               
+      140 +        d.height = extent.height;                             
+      141 +        return d;                                             
+      142 +    }                                                         
+      143 +    void onViewportPanel(const Gui::ViewportPanelState& state)
+          + override {                                                   
+      144 +        app_.viewportUi_ = state;                             
+      145 +    }                                                         
+      146 +    bool viewportHovered() const override {                   
+      147 +        if (app_.renderer_.viewportOutputActive())            
+      148 +            return app_.viewportUi_.shown && app_.viewportUi_.
+          +hovered;                                                      
+      149 +        return !ImGui::GetIO().WantCaptureMouse;              
+      150 +    }                                                         
+      151 +                                                              
+      152      Gui::FrameDiagnostics diagnostics() const override {
+      153          Gui::FrameDiagnostics d;
+      154          d.gpuName = app_.device_.deviceName();
+
+● Update(StereoVista\src\App\Application.cpp)  ⎿  Added 10 lines, removed 6 lines
+      519  }
+      520  
+      521  void Application::beginNavCapture() {
+      522 -    GLFWwindow* window = window_.handle();                    
+      523 -    // Disabled cursor = unbounded relative motion; record the
+          - baseline AFTER                                               
+      524 -    // disabling so the first frame's delta is zero (no view s
+          -nap).                                                         
+      525 -    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED
+          -);                                                            
+      526 -    glfwGetCursorPos(window, &lastMouseX_, &lastMouseY_);     
+      522 +    // Capture on the OS window hosting the 3D view (the main 
+          +window, or the                                                
+      523 +    // ImGui-backend window when the Viewport panel is dragged
+          + out). Disabled                                               
+      524 +    // cursor = unbounded relative motion; record the baseline
+          + AFTER disabling                                              
+      525 +    // so the first frame's delta is zero (no view snap).     
+      526 +    navWindow_ = sceneInput_.hostWindow ? sceneInput_.hostWind
+          +ow : window_.handle();                                        
+      527 +    glfwSetInputMode(navWindow_, GLFW_CURSOR, GLFW_CURSOR_DISA
+          +BLED);                                                        
+      528 +    glfwGetCursorPos(navWindow_, &lastMouseX_, &lastMouseY_); 
+      529  }
+      530  
+      531  void Application::endNavCapture() {
+      530 -    glfwSetInputMode(window_.handle(), GLFW_CURSOR, GLFW_CURSO
+          -R_NORMAL);                                                    
+      532 +    if (navWindow_)                                           
+      533 +        glfwSetInputMode(navWindow_, GLFW_CURSOR, GLFW_CURSOR_
+          +NORMAL);                                                      
+      534 +    navWindow_ = nullptr;                                     
+      535  }
+      536  
+      537  void Application::startOrbit() {
+
+● Update(StereoVista\src\App\Application.cpp)
+  ⎿  Removed 1 line
+      559  }
+      560  
+      561  void Application::updateCamera(float dt) {
+      562 -    GLFWwindow* window = window_.handle();                    
+      562      ImGuiIO& io = ImGui::GetIO();
+      563  
+      564      // Push the tunable navigation feel onto the Camera each f
+           rame (the panels
+
+● Update(StereoVista\src\App\Application.cpp)
+  ⎿  Added 9 lines, removed 3 lines
+      572      camera_.scrollDeceleration = settings_.camera.scrollDecele
+           ration;
+      573      camera_.maxScrollVelocity = settings_.camera.maxScrollVelo
+           city;
+      574  
+      575 -    const bool lmb = glfwGetMouseButton(window, GLFW_MOUSE_BUT
+          -TON_LEFT) == GLFW_PRESS;                                      
+      576 -    const bool mmb = glfwGetMouseButton(window, GLFW_MOUSE_BUT
+          -TON_MIDDLE) == GLFW_PRESS;                                    
+      577 -    const bool rmb = glfwGetMouseButton(window, GLFW_MOUSE_BUT
+          -TON_RIGHT) == GLFW_PRESS;                                     
+      575 +    // Buttons through ImGui's aggregated io (fed by callbacks
+          + on the main                                                  
+      576 +    // window AND every backend-owned OS window) so interactio
+          +n keeps working                                               
+      577 +    // when the Viewport panel is dragged into its own window.
+          + `hovered` is                                                 
+      578 +    // this frame's "pointer over the 3D view" — the gate for 
+          +STARTING any                                                  
+      579 +    // scene interaction; active drags run to release regardle
+          +ss.                                                           
+      580 +    const bool lmb = io.MouseDown[ImGuiMouseButton_Left];     
+      581 +    const bool rmb = io.MouseDown[ImGuiMouseButton_Right];    
+      582 +    const bool mmb = io.MouseDown[ImGuiMouseButton_Middle];   
+      583 +    const bool hovered = sceneInput_.hovered;                 
+      584      const int mods = currentMods();
+      585      const bool shiftHeld = (mods & GLFW_MOD_SHIFT) != 0;
+      586      const bool lmbPress = lmb && !prevLmb_;
+
+● Update(StereoVista\src\App\Application.cpp)
+  ⎿  Added 1 line, removed 1 line
+      604              gizmoDragging_ = false;
+      605          }
+      606          gizmoTookLmb = true;
+      607 -    } else if (gizmo_.hasTarget() && !io.WantCaptureMouse && !
+          -navActive()) {                                                
+      607 +    } else if (gizmo_.hasTarget() && hovered && !navActive()) 
+          +{                                                             
+      608          const Plugins::PickRay ray = mouseRayCurrent();
+      609          if (lmbPress) {
+      610              const Tools::TransformGizmo::Handle h =
+
+● Update(StereoVista\src\App\Application.cpp)
+  ⎿  Added 2 lines, removed 2 lines
+      632              if (now == prev)
+      633                  return;
+      634              if (now) { // press
+      635 -                owned = !suppressPress && !navActive() && !io.
+          -WantCaptureMouse &&                                           
+      635 +                owned = !suppressPress && !navActive() && hove
+          +red &&                                                        
+      636                          pluginManager_.dispatchMouseButton(*pl
+           uginContext_, button,
+      637                                                             GLF
+           W_PRESS, mods);
+      638              } else {   // release
+      639 -                if (owned || (!navActive() && !io.WantCaptureM
+          -ouse))                                                        
+      639 +                if (owned || (!navActive() && hovered))       
+      640                      pluginManager_.dispatchMouseButton(*plugin
+           Context_, button,
+      641                                                         GLFW_RE
+           LEASE, mods);
+      642                  owned = false;
+
+● Update(StereoVista\src\App\Application.cpp)
+  ⎿  Added 2 lines, removed 4 lines
+      648      }
+      649  
+      650      // ---- Camera nav + click-to-select (skips the LMB the gi
+           zmo/plugin took) ----
+      651 -    if (!navActive() && !gizmoDragging_ && !io.WantCaptureMous
+          -e) {                                                          
+      651 +    if (!navActive() && !gizmoDragging_ && hovered) {         
+      652          if (lmb && !lmbOwned_ && !gizmoTookLmb) {
+      653              // Capture a click candidate: a left press that re
+           leases without
+      654              // dragging becomes a selection at the 3D cursor's
+            world point.
+      655 -            double cx = 0.0, cy = 0.0;                        
+      656 -            glfwGetCursorPos(window, &cx, &cy);               
+      657 -            lmbPressPos_ = glm::vec2(float(cx), float(cy));   
+      655 +            lmbPressPos_ = sceneInput_.mousePx;               
+      656              lmbDragDist_ = 0.0f;
+      657              lmbClickCandidate_ = true;
+      658              clickCursorValid_ = cursorManager_.isCursorPositio
+           nValid();
+
+● Update(StereoVista\src\App\Application.cpp)
+  ⎿  Added 5 lines, removed 5 lines
+      674              camera_.StopOrbiting();
+      675              orbiting_ = false;
+      676              endNavCapture();
+      677 -            // A left click that barely moved selects the obje
+          -ct under it. (While                                           
+      678 -            // measuring, the MeasurementPlugin consumes the p
+          -ress, so no orbit                                             
+      679 -            // candidate is started and this never runs.)     
+      680 -            if (lmbClickCandidate_ && lmbDragDist_ < kClickThr
+          -esholdPx &&                                                   
+      681 -                !io.WantCaptureMouse)                         
+      677 +            // A left click that barely moved selects the obje
+          +ct under it — the                                             
+      678 +            // press started on the 3D view, so no GUI re-chec
+          +k on release.                                                 
+      679 +            // (While measuring, the MeasurementPlugin consume
+          +s the press, so no                                            
+      680 +            // orbit candidate is started and this never runs.
+          +)                                                             
+      681 +            if (lmbClickCandidate_ && lmbDragDist_ < kClickThr
+          +esholdPx)                                                     
+      682                  performSelectionClick();
+      683              lmbClickCandidate_ = false;
+      684          } else if (panning_ && !mmb) {
+
+● Update(StereoVista\src\App\Application.cpp)
+  ⎿  Added 2 lines, removed 1 line
+      689              rmbLooking_ = false;
+      690              endNavCapture();
+      691          } else {
+      692 +            // Relative motion from the window that owns the c
+          +apture.                                                       
+      693              double cx = 0.0, cy = 0.0;
+      693 -            glfwGetCursorPos(window, &cx, &cy);               
+      694 +            glfwGetCursorPos(navWindow_ ? navWindow_ : window_
+          +.handle(), &cx, &cy);                                         
+      695              const float dx = float(cx - lastMouseX_);
+      696              const float dy = float(cy - lastMouseY_);
+      697              lastMouseX_ = cx;
+
+● Update(StereoVista\src\App\Application.cpp)
+  ⎿  Added 2 lines, removed 1 line
+      711      // Scroll zoom (toward the 3D/background cursor when enabl
+           ed). ImGui's GLFW
+      712      // backend accumulates the wheel into io.MouseWheel each f
+           rame. Plugins get
+      713      // first refusal (a tool may scrub a value); the camera zo
+           oms otherwise.
+      714 -    if (!io.WantCaptureMouse && io.MouseWheel != 0.0f) {      
+      714 +    // Gated on the 3D view being hovered — panels keep their 
+          +own scrolling.                                                
+      715 +    if (hovered && io.MouseWheel != 0.0f) {                   
+      716          const bool consumed =
+      717              pluginContext_ && pluginManager_.dispatchScroll(*p
+           luginContext_, 0.0,
+      718                                                              do
+           uble(io.MouseWheel));
+
+● Update(StereoVista\src\App\Application.cpp)
+  ⎿  Added 28 lines, removed 24 lines
+      725      camera_.UpdateAnimation(dt);
+      726  
+      727      // Keyboard fly (WASDQE + Shift boost). Suppressed while a
+            text field owns
+      728 -    // the keyboard.                                          
+      728 +    // the keyboard. Keys come from ImGui's aggregated state (
+          +fed by every OS                                               
+      729 +    // window the backend owns), so shortcuts keep working whe
+          +n the keyboard                                                
+      730 +    // focus sits on a dragged-out Viewport window.           
+      731      if (!io.WantCaptureKeyboard) {
+      732          camera_.MovementSpeed =
+      731 -            settings_.camera.speed *                          
+      732 -            (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_P
+          -RESS ? 4.0f : 1.0f);                                          
+      733 -        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) came
+          -ra_.ProcessKeyboard(FORWARD, dt);                             
+      734 -        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) came
+          -ra_.ProcessKeyboard(BACKWARD, dt);                            
+      735 -        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) came
+          -ra_.ProcessKeyboard(LEFT, dt);                                
+      736 -        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) came
+          -ra_.ProcessKeyboard(RIGHT, dt);                               
+      737 -        if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) came
+          -ra_.ProcessKeyboard(UP, dt);                                  
+      738 -        if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) came
+          -ra_.ProcessKeyboard(DOWN, dt);                                
+      733 +            settings_.camera.speed * (io.KeyShift ? 4.0f : 1.0
+          +f);                                                           
+      734 +        if (ImGui::IsKeyDown(ImGuiKey_W)) camera_.ProcessKeybo
+          +ard(FORWARD, dt);                                             
+      735 +        if (ImGui::IsKeyDown(ImGuiKey_S)) camera_.ProcessKeybo
+          +ard(BACKWARD, dt);                                            
+      736 +        if (ImGui::IsKeyDown(ImGuiKey_A)) camera_.ProcessKeybo
+          +ard(LEFT, dt);                                                
+      737 +        if (ImGui::IsKeyDown(ImGuiKey_D)) camera_.ProcessKeybo
+          +ard(RIGHT, dt);                                               
+      738 +        if (ImGui::IsKeyDown(ImGuiKey_E)) camera_.ProcessKeybo
+          +ard(UP, dt);                                                  
+      739 +        if (ImGui::IsKeyDown(ImGuiKey_Q)) camera_.ProcessKeybo
+          +ard(DOWN, dt);                                                
+      740  
+      741          // Escape clears the current selection (edge-triggered
+           ).
+      741 -        const bool escape = glfwGetKey(window, GLFW_KEY_ESCAPE
+          -) == GLFW_PRESS;                                              
+      742 +        const bool escape = ImGui::IsKeyDown(ImGuiKey_Escape);
+      743          if (escape && !prevEscape_)
+      744              selection_ = Selection{};
+      745          prevEscape_ = escape;
+      746  
+      746 -        // F1 toggles GUI panel visibility (edge-triggered; th
+          -e menu bar stays).                                            
+      747 -        const bool f1 = glfwGetKey(window, GLFW_KEY_F1) == GLF
+          -W_PRESS;                                                      
+      747 +        // F1 toggles GUI panel visibility (edge-triggered; th
+          +e menu bar and the                                            
+      748 +        // viewport stay — hiding the panels grows the viewpor
+          +t to the window).                                             
+      749 +        const bool f1 = ImGui::IsKeyDown(ImGuiKey_F1);        
+      750          if (f1 && !prevF1_)
+      751              guiSystem_.toggleGuiVisible();
+      752          prevF1_ = f1;
+      753  
+      754          // Dispatch action keys to plugins (edge-triggered): t
+           he MeasurementPlugin
+      755          // uses Enter (finish), Delete (cancel), Backspace (un
+           do last point).
+      756 +        // Plugins keep receiving GLFW keycodes (their public 
+          +contract).                                                    
+      757          if (pluginContext_) {
+      755 -            auto keyEdge = [&](int key, bool& prev) {         
+      756 -                const bool down = glfwGetKey(window, key) == G
+          -LFW_PRESS;                                                    
+      758 +            auto keyEdge = [&](ImGuiKey key, int glfwKey, bool
+          +& prev) {                                                     
+      759 +                const bool down = ImGui::IsKeyDown(key);      
+      760                  if (down && !prev)
+      758 -                    pluginManager_.dispatchKey(*pluginContext_
+          -, key, 0, GLFW_PRESS, mods);                                  
+      761 +                    pluginManager_.dispatchKey(*pluginContext_
+          +, glfwKey, 0,                                                 
+      762 +                                               GLFW_PRESS, mod
+          +s);                                                           
+      763                  prev = down;
+      764              };
+      761 -            keyEdge(GLFW_KEY_ENTER, prevEnter_);              
+      762 -            keyEdge(GLFW_KEY_KP_ENTER, prevKpEnter_);         
+      763 -            keyEdge(GLFW_KEY_DELETE, prevDelete_);            
+      764 -            keyEdge(GLFW_KEY_BACKSPACE, prevBackspace_);      
+      765 +            keyEdge(ImGuiKey_Enter, GLFW_KEY_ENTER, prevEnter_
+          +);                                                            
+      766 +            keyEdge(ImGuiKey_KeypadEnter, GLFW_KEY_KP_ENTER, p
+          +revKpEnter_);                                                 
+      767 +            keyEdge(ImGuiKey_Delete, GLFW_KEY_DELETE, prevDele
+          +te_);                                                         
+      768 +            keyEdge(ImGuiKey_Backspace, GLFW_KEY_BACKSPACE, pr
+          +evBackspace_);                                                
+      769          }
+      770  
+      771          // Transform-gizmo mode: 1 / 2 / 3 while a model is se
+           lected.
+      772          if (gizmo_.hasTarget()) {
+      769 -            const bool k1 = glfwGetKey(window, GLFW_KEY_1) == 
+          -GLFW_PRESS;                                                   
+      770 -            const bool k2 = glfwGetKey(window, GLFW_KEY_2) == 
+          -GLFW_PRESS;                                                   
+      771 -            const bool k3 = glfwGetKey(window, GLFW_KEY_3) == 
+          -GLFW_PRESS;                                                   
+      773 +            const bool k1 = ImGui::IsKeyDown(ImGuiKey_1);     
+      774 +            const bool k2 = ImGui::IsKeyDown(ImGuiKey_2);     
+      775 +            const bool k3 = ImGui::IsKeyDown(ImGuiKey_3);     
+      776              if (k1 && !prevKey1_) gizmo_.setMode(Tools::Transf
+           ormGizmo::Mode::Translate);
+      777              if (k2 && !prevKey2_) gizmo_.setMode(Tools::Transf
+           ormGizmo::Mode::Rotate);
+      778              if (k3 && !prevKey3_) gizmo_.setMode(Tools::Transf
+           ormGizmo::Mode::Scale);
+     ...
+      781  
+      782          // Undo / redo: Ctrl+Z, Ctrl+Y (or Ctrl+Shift+Z for re
+           do).
+      783          const bool ctrl = (mods & GLFW_MOD_CONTROL) != 0;
+      780 -        const bool zHeld = ctrl && glfwGetKey(window, GLFW_KEY
+          -_Z) == GLFW_PRESS;                                            
+      784 +        const bool zHeld = ctrl && ImGui::IsKeyDown(ImGuiKey_Z
+          +);                                                            
+      785          if (zHeld && !prevUndoKey_) {
+      786              if (mods & GLFW_MOD_SHIFT) undo_.redo();
+      787              else undo_.undo();
+      788          }
+      789          prevUndoKey_ = zHeld;
+      786 -        const bool yHeld = ctrl && glfwGetKey(window, GLFW_KEY
+          -_Y) == GLFW_PRESS;                                            
+      790 +        const bool yHeld = ctrl && ImGui::IsKeyDown(ImGuiKey_Y
+          +);                                                            
+      791          if (yHeld && !prevRedoKey_) undo_.redo();
+      792          prevRedoKey_ = yHeld;
+      793      } else {
+
+● Now the camera aspect, cursor/depth-query path, ray construction, and mods:
+
+● Update(StereoVista\src\App\Application.cpp)
+  ⎿  Added 4 lines, removed 1 line
+      797  }
+      798  
+      799  uint32_t Application::viewCameras(renderer::ViewCamera out[ren
+           derer::kMaxViews]) const {
+      800 -    const VkExtent2D extent = swapchain_.extent();            
+      800 +    // Aspect of the actual render target: the docked viewport
+          + panel, the full                                              
+      801 +    // window on the classic path, or the HMD eye in XR (where
+          + the eye                                                      
+      802 +    // projections overwrite these anyway).                   
+      803 +    const VkExtent2D extent = renderer_.sceneExtent();        
+      804      const float aspect =
+      805          extent.height ? float(extent.width) / float(extent.hei
+           ght) : 1.0f;
+      806  
+
+● Update(StereoVista\src\App\Application.cpp)
+  ⎿  Added 14 lines, removed 18 lines
+      1089  void Application::updateCursorAndOverlay(renderer::FrameSubmi
+            ssion& submission,
+      1090                                           const glm::mat4& vie
+            w,
+      1091                                           const glm::mat4& pro
+            j) {
+      1092 -    GLFWwindow* window = window_.handle();                   
+      1093 -    const VkExtent2D extent = swapchain_.extent();           
+      1092 +    // Everything picks in render-target pixels via sceneInpu
+           +t_ (the docked                                               
+      1093 +    // viewport image, or the full framebuffer on the classic
+           + path).                                                      
+      1094 +    const VkExtent2D extent = renderer_.sceneExtent();       
+      1095  
+      1096      cursorManager_.resetFrameCalculationFlag();
+      1097      submission.depthQueries.clear();
+      1098  
+      1099      // While a camera drag owns the mouse (OS cursor disabled
+            ) or a gizmo drag is
+      1100      // active, freeze the 3D cursor — the pick would fight th
+            e gizmo grab point.
+      1100 -    // Side-by-side squishes each eye into a half-window, so 
+           -the full-window                                              
+      1101 +    // Side-by-side squishes each eye into a half-target, so 
+           +the full-target                                              
+      1102      // depth pick can't line up; freeze it there too (quad-bu
+            ffer / mono are
+      1102 -    // full-window and pick normally).                       
+      1103 +    // full-target and pick normally).                       
+      1104      if (!navActive() && !gizmoDragging_ && stereoMode_ != Ste
+            reoMode::SideBySide) {
+      1104 -        double cx = 0.0, cy = 0.0;                           
+      1105 -        glfwGetCursorPos(window, &cx, &cy);                  
+      1106 -        // glfwGetCursorPos is in window (screen) coords; the
+           - depth buffer is in                                          
+      1107 -        // framebuffer pixels. Scale in case of HiDPI content
+           - scaling.                                                    
+      1108 -        int winW = 0, winH = 0;                              
+      1109 -        glfwGetWindowSize(window, &winW, &winH);             
+      1110 -        const double sx = winW > 0 ? double(extent.width) / w
+           -inW : 1.0;                                                   
+      1111 -        const double sy = winH > 0 ? double(extent.height) / 
+           -winH : 1.0;                                                  
+      1112 -        const int px = int(cx * sx);                         
+      1113 -        const int py = int(cy * sy);                         
+      1114 -        if (px >= 0 && py >= 0 && px < int(extent.width) && p
+           -y < int(extent.height)) {                                    
+      1105 +        const int px = int(sceneInput_.mousePx.x);           
+      1106 +        const int py = int(sceneInput_.mousePx.y);           
+      1107 +        if (sceneInput_.hovered && px >= 0 && py >= 0 &&     
+      1108 +            px < int(extent.width) && py < int(extent.height)
+           +) {                                                          
+      1109              renderer::DepthQueryRect rect;
+      1110              rect.origin = glm::ivec2(px, py);
+      1111              rect.size = glm::ivec2(1, 1);
+      1112              submission.depthQueries.push_back(rect);
+      1113          }
+      1120 -        cursorManager_.updateCursorPosition(window, proj, vie
+           -w, camera_,                                                  
+      1121 -                                            renderer_.depthSa
+           -mples(),                                                     
+      1122 -                                            /*forceRecalculat
+           -e=*/true);                                                   
+      1114 +        cursorManager_.updateCursorPosition(                 
+      1115 +            sceneInput_.hostWindow ? sceneInput_.hostWindow :
+           + window_.handle(),                                           
+      1116 +            sceneInput_.mousePx, sceneInput_.sizePx, sceneInp
+           +ut_.hovered,                                                 
+      1117 +            proj, view, camera_, renderer_.depthSamples(),   
+      1118 +            /*forceRecalculate=*/true);                      
+      1119      }
+      1120  
+      1121      // Auto-convergence samples the scene depth at the screen
+             centre. Queried
+
+● Update(StereoVista\src\App\Application.cpp)
+  ⎿  Added 12 lines, removed 9 lines
+      1902  }
+      1903  
+      1904  Plugins::PickRay Application::mouseRayCurrent() const {
+      1905 -    double cx = 0.0, cy = 0.0;                               
+      1906 -    glfwGetCursorPos(window_.handle(), &cx, &cy);            
+      1907 -    return rayThroughPixel(glm::vec2(float(cx), float(cy))); 
+      1905 +    return rayThroughPixel(sceneInput_.mousePx);             
+      1906  }
+      1907  
+      1910 -Plugins::PickRay Application::rayThroughPixel(glm::vec2 windo
+           -wPixel) const {                                              
+      1908 +Plugins::PickRay Application::rayThroughPixel(glm::vec2 viewp
+           +ortPixel) const {                                            
+      1909      glm::mat4 view(1.0f), proj(1.0f);
+      1910      cameraMatrices(view, proj);
+      1911      const glm::mat4 invViewProj = glm::inverse(proj * view);
+      1912  
+      1915 -    int winW = 0, winH = 0;                                  
+      1916 -    glfwGetWindowSize(window_.handle(), &winW, &winH);       
+      1917 -    const float u = winW > 0 ? windowPixel.x / float(winW) : 
+           -0.0f;                                                        
+      1918 -    const float v = winH > 0 ? windowPixel.y / float(winH) : 
+           -0.0f;                                                        
+      1919 -    // Window pixels are top-left origin; the Y-flip is baked
+           - into proj, so                                               
+      1913 +    // ImGui reports (-FLT_MAX,-FLT_MAX) when there is no mou
+           +se this frame —                                              
+      1914 +    // fall back to the viewport centre so the ray math never
+           + produces NaNs.                                              
+      1915 +    if (!std::isfinite(viewportPixel.x) || !std::isfinite(vie
+           +wportPixel.y))                                               
+      1916 +        viewportPixel = sceneInput_.sizePx * 0.5f;           
+      1917 +                                                             
+      1918 +    const float u = sceneInput_.sizePx.x > 0.0f              
+      1919 +                        ? viewportPixel.x / sceneInput_.sizeP
+           +x.x : 0.0f;                                                  
+      1920 +    const float v = sceneInput_.sizePx.y > 0.0f              
+      1921 +                        ? viewportPixel.y / sceneInput_.sizeP
+           +x.y : 0.0f;                                                  
+      1922 +    // Viewport pixels are top-left origin; the Y-flip is bak
+           +ed into proj, so                                             
+      1923      // ndc.y = v*2-1 matches the depth-pick reconstruction co
+            nvention. Reverse-Z
+      1924      // puts the near plane at depth 1 and the far plane at 0.
+      1925      const float ndcX = u * 2.0f - 1.0f;
+
+● Update(StereoVista\src\App\Application.cpp)
+  ⎿  Added 6 lines, removed 10 lines
+      1936  }
+      1937  
+      1938  int Application::currentMods() const {
+      1939 -    GLFWwindow* w = window_.handle();                        
+      1939 +    // ImGui aggregates modifiers across the main window and 
+           +every backend-                                               
+      1940 +    // owned OS window (a dragged-out Viewport panel included
+           +).                                                           
+      1941 +    const ImGuiIO& io = ImGui::GetIO();                      
+      1942      int mods = 0;
+      1941 -    if (glfwGetKey(w, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||  
+      1942 -        glfwGetKey(w, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS)   
+      1943 -        mods |= GLFW_MOD_SHIFT;                              
+      1944 -    if (glfwGetKey(w, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
+      1945 -        glfwGetKey(w, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS) 
+      1946 -        mods |= GLFW_MOD_CONTROL;                            
+      1947 -    if (glfwGetKey(w, GLFW_KEY_LEFT_ALT) == GLFW_PRESS ||    
+      1948 -        glfwGetKey(w, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS)     
+      1949 -        mods |= GLFW_MOD_ALT;                                
+      1943 +    if (io.KeyShift) mods |= GLFW_MOD_SHIFT;                 
+      1944 +    if (io.KeyCtrl)  mods |= GLFW_MOD_CONTROL;               
+      1945 +    if (io.KeyAlt)   mods |= GLFW_MOD_ALT;                   
+      1946      return mods;
+      1947  }
+      1948  
+
+● Now the new reconcileViewportOutput / updateSceneInput implementations and the
+  main-loop wiring:
+
+● Update(StereoVista\src\App\Application.cpp)
+  ⎿  Added 3 lines, removed 2 lines
+      1261      // (re)built above — the layers append to both. The trave
+            rsal mutates
+      1262      // per-layer selection state (hysteresis, load requests) 
+            — reached through
+      1263      // the unique_ptr, which is why this stays legal in a con
+            st method. XR
+      1264 -    // reuses the desktop camera for selection.              
+      1264 +    // reuses the desktop camera for selection. SSE uses the 
+           +height of the                                                
+      1265 +    // actual render target (viewport panel when docked).    
+      1266      for (const std::unique_ptr<scene::I3SSceneLayer>& layer :
+             scene_.i3sLayers)
+      1267          if (layer)
+      1267 -            layer->submitDraws(submission, swapchain_.extent(
+           -).height);                                                   
+      1268 +            layer->submitDraws(submission, renderer_.sceneExt
+           +ent().height);                                               
+      1269  
+      1270      // Global wireframe toggle (M4): flag every draw — scene 
+            models and the
+      1271      // I3S layers alike (per-layer wireframe is set in the la
+            yers' emitDraw).
+
+● Update(StereoVista\src\App\Application.cpp)
+  ⎿  Added 73 lines
+      1283          submission.clipPlanes.push_back(packedPlanes[i]);
+      1284  }
+      1285  
+      1286 +void Application::reconcileViewportOutput() {                
+      1287 +    // Docked whenever the desktop owns the window — every st
+           +ereo mode                                                    
+      1288 +    // included (quad-buffer resolves per-eye into the layere
+           +d viewport                                                   
+      1289 +    // texture; the renderer remaps the GUI image per swapcha
+           +in layer). XR                                                
+      1290 +    // keeps the classic fullscreen path (the window is a mir
+           +ror/GUI surface).                                            
+      1291 +    const bool want = !xrRunning();                          
+      1292 +    if (!want) {                                             
+      1293 +        renderer_.setViewportOutput(false, {});              
+      1294 +        viewportSizeWant_ = { 0, 0 };                        
+      1295 +        return;                                              
+      1296 +    }                                                        
+      1297 +                                                             
+      1298 +    // Desired texture size: the Viewport panel's content reg
+           +ion as reported by                                           
+      1299 +    // the last GUI frame; before the first frame (or while t
+           +he panel's tab is                                            
+      1300 +    // hidden) keep the current target, falling back to the w
+           +indow size.                                                  
+      1301 +    VkExtent2D target = renderer_.viewportExtent();          
+      1302 +    if (viewportUi_.shown)                                   
+      1303 +        target = { uint32_t(std::max(viewportUi_.sizeX, 1.0f)
+           +),                                                           
+      1304 +                   uint32_t(std::max(viewportUi_.sizeY, 1.0f)
+           +) };                                                         
+      1305 +    else if (!renderer_.viewportOutputActive())              
+      1306 +        target = swapchain_.extent();                        
+      1307 +                                                             
+      1308 +    // Apply a mode flip immediately; apply a pure resize onl
+           +y when the size                                              
+      1309 +    // has settled (same report on two consecutive frames). A
+           + splitter drag                                               
+      1310 +    // thus stretches the displayed image and costs ONE devic
+           +e-idle rebuild                                               
+      1311 +    // when it ends, not one per frame.                      
+      1312 +    const bool settled = target.width == viewportSizeWant_.wi
+           +dth &&                                                       
+      1313 +                         target.height == viewportSizeWant_.h
+           +eight;                                                       
+      1314 +    viewportSizeWant_ = target;                              
+      1315 +    if (!renderer_.viewportOutputActive() || settled)        
+      1316 +        renderer_.setViewportOutput(true, target);           
+      1317 +}                                                            
+      1318 +                                                             
+      1319 +void Application::updateSceneInput() {                       
+      1320 +    if (renderer_.viewportOutputActive()) {                  
+      1321 +        const VkExtent2D extent = renderer_.viewportExtent();
+      1322 +        sceneInput_.hovered = viewportUi_.shown && viewportUi
+           +_.hovered;                                                   
+      1323 +        sceneInput_.mousePx = glm::vec2(viewportUi_.mouseX, v
+           +iewportUi_.mouseY);                                          
+      1324 +        sceneInput_.sizePx =                                 
+      1325 +            glm::vec2(float(std::max(extent.width, 1u)),     
+      1326 +                      float(std::max(extent.height, 1u)));   
+      1327 +        sceneInput_.screenPos = glm::vec2(viewportUi_.screenX
+           +, viewportUi_.screenY);                                      
+      1328 +        sceneInput_.screenSize =                             
+      1329 +            glm::vec2(std::max(viewportUi_.screenW, 1.0f),   
+      1330 +                      std::max(viewportUi_.screenH, 1.0f));  
+      1331 +        sceneInput_.hostWindow =                             
+      1332 +            viewportUi_.hostWindow ? static_cast<GLFWwindow*>
+           +(viewportUi_.hostWindow)                                     
+      1333 +                                   : window_.handle();       
+      1334 +        return;                                              
+      1335 +    }                                                        
+      1336 +                                                             
+      1337 +    // Classic fullscreen path (XR mirror): the scene fills t
+           +he framebuffer                                               
+      1338 +    // under the GUI; the pointer owns the 3D view wherever n
+           +o GUI window                                                 
+      1339 +    // captures the mouse.                                   
+      1340 +    ImGuiIO& io = ImGui::GetIO();                            
+      1341 +    const VkExtent2D extent = swapchain_.extent();           
+      1342 +    double cx = 0.0, cy = 0.0;                               
+      1343 +    glfwGetCursorPos(window_.handle(), &cx, &cy);            
+      1344 +    // Window coords -> framebuffer pixels (HiDPI content sca
+           +ling).                                                       
+      1345 +    int winW = 0, winH = 0;                                  
+      1346 +    glfwGetWindowSize(window_.handle(), &winW, &winH);       
+      1347 +    const double sx = winW > 0 ? double(extent.width) / winW 
+           +: 1.0;                                                       
+      1348 +    const double sy = winH > 0 ? double(extent.height) / winH
+           + : 1.0;                                                      
+      1349 +    sceneInput_.hovered = !io.WantCaptureMouse;              
+      1350 +    sceneInput_.mousePx = glm::vec2(float(cx * sx), float(cy 
+           +* sy));                                                      
+      1351 +    sceneInput_.sizePx = glm::vec2(float(std::max(extent.widt
+           +h, 1u)),                                                     
+      1352 +                                   float(std::max(extent.heig
+           +ht, 1u)));                                                   
+      1353 +    const ImGuiViewport* mainVp = ImGui::GetMainViewport();  
+      1354 +    sceneInput_.screenPos = glm::vec2(mainVp->Pos.x, mainVp->
+           +Pos.y);                                                      
+      1355 +    sceneInput_.screenSize = glm::vec2(mainVp->Size.x, mainVp
+           +->Size.y);                                                   
+      1356 +    sceneInput_.hostWindow = window_.handle();               
+      1357 +}                                                            
+      1358 +                                                             
+      1359  void Application::initImGui() {
+      1360      // Pool for the backend's font/user textures. FREE_DESCRI
+            PTOR_SET is a
+      1361      // backend requirement (it frees per-texture sets individ
+            ually).
+
+● Update(StereoVista\src\App\Application.cpp)
+  ⎿  Added 4 lines
+      1377      UpdateGuiScale(fbWidth, fbHeight);
+      1378      InitializeImGuiWithFonts(window_.handle(), true);
+      1379  
+      1380 +    // A floating (undocked) Viewport window must not be drag
+           +ged around by a                                              
+      1381 +    // camera orbit that starts on its body — windows move by
+           + title bar only.                                             
+      1382 +    ImGui::GetIO().ConfigWindowsMoveFromTitleBarOnly = true; 
+      1383 +                                                             
+      1384      // The backend copies InitInfo by value but keeps pColorA
+            ttachmentFormats
+      1385      // as a raw pointer and dereferences it again whenever a 
+            dragged-out
+      1386      // viewport creates its pipeline — a stack local here mea
+            ns that pipeline
+● Update(StereoVista\src\App\Application.cpp)
+  ⎿  Added 9 lines
+      1459          else if (!vrEnabled_ && xrRunning())
+      1460              leaveXR();
+      1461  
+      1462 +        // Docked-viewport reconcile AFTER the stereo/XR reco
+           +nciles (it derives                                           
+      1463 +        // from their final state) and BEFORE ImGui::NewFrame
+           + — the previous                                              
+      1464 +        // frame's draw data must never reference a destroyed
+           + viewport texture.                                           
+      1465 +        reconcileViewportOutput();                           
+      1466 +                                                             
+      1467          // Font atlas rebuilds must happen outside NewFrame/R
+            ender, with the
+      1468          // GPU idle (the texture may still be bound by an in-
+            flight frame).
+      1469          if (g_GuiScale.needsRescale || g_GuiScale.needsFontRe
+            build) {
+     ...
+      1477          buildUi();
+      1478          ImGui::Render();
+      1479  
+      1480 +        // Effective 3D-view input for this frame — after the
+           + GUI built (the                                              
+      1481 +        // Viewport panel just reported its rect/hover), befo
+           +re any interaction.                                          
+      1482 +        updateSceneInput();                                  
+      1483 +                                                             
+      1484          updateCamera(dt);
+      1485          if (pluginContext_)
+      1486              pluginManager_.update(*pluginContext_, dt);
+
+● Now let me check for leftover references and compile hazards in the modified
+  functions:
+
+  Searched for 1 pattern, ran 1 shell command (ctrl+o to expand)
+
+● Update(StereoVista\headers\Renderer\Renderer.h)
+  ⎿  Added 7 lines, removed 3 lines
+      44  //     -> PointCloudPass resolve (depth-composited fullscreen d
+          raw)
+      45  //     -> SkyboxPass (background, depth-tested)     [multiview 
+          scene target]
+      46  //     -> depth-picking rect copies (scene depth -> per-slot re
+          adback)
+      47 -//     -> TonemapPass + OverlayPass in one backbuffer pass (sce
+         -ne depth                                                       
+      47 +//     -> TonemapPass + OverlayPass in ONE per-eye resolve pass
+         + (scene depth                                                  
+      48  //        attached: overlays depth-test post-tonemap, matching 
+          GL where
+      49 -//        tonemap lived in the mesh shader under the overlays) 
+      50 -//     -> ImGui in its own backbuffer pass (no depth)          
+      49 +//        tonemap lived in the mesh shader under the overlays).
+         + Target: the                                                   
+      50 +//        backbuffer on the classic fullscreen path, or the off
+         +screen                                                         
+      51 +//        VIEWPORT TEXTURE when the GUI docks the scene as a wi
+         +ndow                                                           
+      52 +//        (setViewportOutput) — same pass either way, only the 
+         +target changes                                                 
+      53 +//     -> ImGui in its own backbuffer pass (no depth; on the do
+         +cked path this                                                 
+      54 +//        is the only backbuffer content and samples the viewpo
+         +rt texture)                                                    
+      55  //     -> optional screenshot copy -> present.
+      56  //
+      57  // recordFrame only sequences the passes and owns the frame-gra
+          ph barriers
+  ⎿  You've hit your session limit · resets 4:50pm (Europe/Vienna)
+     /upgrade to increase your usage limit.
+
+✻ Crunched for 38m 33s

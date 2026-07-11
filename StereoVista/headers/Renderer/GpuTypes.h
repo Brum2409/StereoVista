@@ -45,9 +45,10 @@ static_assert(sizeof(PointCloudDispatch) == SV_PC_DISPATCH_STRIDE,
               "geometry shaders stride the per-view structs with the define");
 static_assert(sizeof(PointCloudDispatch) % 16 == 0,
               "PointCloudDispatch stride must stay 16-aligned (vector loads)");
-static_assert(SV_PC_MAX_VIEWS == SV_MAX_VIEWS,
-              "single-pass multi-view geometry sizes its per-view arrays with "
-              "SV_PC_MAX_VIEWS; keep it equal to the renderer's view cap");
+static_assert(SV_PC_MAX_VIEWS == SV_MAX_VIEWS * SV_MAX_VIEWPORTS,
+              "single-pass multi-view geometry projects every (viewport, eye) "
+              "pair in one dispatch and sizes its per-view arrays with "
+              "SV_PC_MAX_VIEWS; keep it equal to views x viewports");
 static_assert(sizeof(PointCloudComputePush) == 16, "PointCloudComputePush layout drifted");
 static_assert(sizeof(PointCloudLookupPush) == 32, "PointCloudLookupPush layout drifted");
 static_assert(sizeof(PointCloudResolvePush) == 32, "PointCloudResolvePush layout drifted");
@@ -56,6 +57,7 @@ static_assert(sizeof(PointCloudHqsResolvePush) == 64, "PointCloudHqsResolvePush 
 } // namespace gpu
 
 inline constexpr uint32_t kMaxViews = SV_MAX_VIEWS;
+inline constexpr uint32_t kMaxViewports = SV_MAX_VIEWPORTS;
 inline constexpr uint32_t kMaxPointLights = SV_MAX_POINT_LIGHTS;
 inline constexpr uint32_t kMaxShadowedPointLights = SV_MAX_SHADOWED_POINT_LIGHTS;
 inline constexpr uint32_t kPointShadowResolution = SV_POINT_SHADOW_RESOLUTION;
