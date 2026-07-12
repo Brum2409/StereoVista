@@ -187,6 +187,16 @@ void GuiSystem::draw(Services& services) {
         // Plugin (tool) windows render inside the same ImGui frame.
         services.plugins().renderUI(services.pluginContext());
 
+        // The palette must stay reachable while a text field owns the keyboard
+        // (Application::dispatchShortcuts is skipped under WantCaptureKeyboard,
+        // so Ctrl+K would die in the Outliner search / a rename field). Route it
+        // here for exactly that case — the guards keep it from double-firing with
+        // the normal shortcut path. Pass 6's editor can generalize this to the
+        // live binding instead of the Ctrl+K default.
+        if (!paletteOpen_ && ImGui::GetIO().WantCaptureKeyboard &&
+            ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_K, ImGuiInputFlags_RouteGlobal))
+            services.commands().run("palette.open");
+
         // Command palette (Pass 4) — drawn last so its scrim dims every panel.
         Palette::draw(services, &paletteOpen_);
     }
