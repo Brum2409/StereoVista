@@ -34,6 +34,21 @@
 
 namespace Gui {
 
+namespace detail {
+// The sun as the app actually SHIPS it. renderer::SunState defaults to
+// enabled=false (the renderer's own neutral), but Application has always turned
+// it on for a fresh profile — so the struct default was not the shipped default.
+// That mattered the moment Pass 6 made `static const Settings kDefaults{}` the
+// one source of truth for resets: a literal reset would have switched the sun
+// OFF, which is not "restore defaults" by any user's reckoning. Encode the
+// shipped behaviour here instead of special-casing it in the app.
+inline renderer::SunState defaultSun() {
+    renderer::SunState sun; // renderer defaults for direction/color/intensity
+    sun.enabled = true;
+    return sun;
+}
+} // namespace detail
+
 struct Settings {
     // ── Camera & navigation ─────────────────────────────────────────────────
     struct Camera {
@@ -87,7 +102,8 @@ struct Settings {
         // Point-light shadow reach in world units (cube-map far plane).
         float pointShadowRange = 50.0f;
         float ambient     = 0.03f; // flat ambient albedo multiplier
-        renderer::SunState sun;    // enabled defaults false; Application turns it on
+        // Shipped default = ON (see detail::defaultSun above).
+        renderer::SunState sun = detail::defaultSun();
     } lighting;
 
     // ── Sky / environment ───────────────────────────────────────────────────

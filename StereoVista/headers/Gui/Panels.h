@@ -34,6 +34,10 @@ void drawScenePanel(Services& services, bool* open);
 void drawInspectorPanel(Services& services, bool* open);
 void drawSettingsPanel(Services& services, bool* open);
 void drawCursorPanel(Services& services, bool* open);
+// The 3D-cursor controls without a window — rendered by BOTH the standalone
+// 3D Cursor panel and Settings ▸ 3D Cursor (Pass 6 re-grouping, §12), so the
+// controls exist once and cannot drift apart.
+void drawCursorSettings(Services& services);
 void drawPointCloudPanel(Services& services, bool* open);
 void drawClipPlanePanel(Services& services, bool* open);
 void drawDiagnosticsPanel(Services& services, bool* open);

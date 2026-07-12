@@ -1545,6 +1545,9 @@
     <ClInclude Include="headers\Core\ImportService.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="headers\Gui\SettingsIndex.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="headers\Gui\Preferences.h">
       <Filter>Header Files</Filter>
     </ClInclude>

@@ -59,6 +59,10 @@ public:
 
     // The live bindings of a command (empty when it has none).
     const std::vector<ShortcutBinding>& bindings(const std::string& commandId) const;
+    // The command's REGISTERED defaults (empty when it has none) — the Pass-6
+    // editor offers a per-row "reset to default" next to the global
+    // resetToDefaults().
+    const std::vector<ShortcutBinding>& defaults(const std::string& commandId) const;
     void setBinding(const std::string& commandId, int slot,
                     const ShortcutBinding& binding);
     void clearBinding(const std::string& commandId, int slot);

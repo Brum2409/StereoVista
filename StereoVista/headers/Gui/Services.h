@@ -138,6 +138,11 @@ public:
     // labels (menus) and the binding editor (Settings, Pass 6).
     virtual core::CommandRegistry& commands() = 0;
     virtual core::ShortcutMap&     shortcuts() = 0;
+    // Shortcut-capture helper for the Pass-6 binding editor: the GLFW key code
+    // pressed this frame (0 = none; modifier keys are never reported). The app
+    // owns the ImGui<->GLFW key translation, so the Gui layer never includes
+    // GLFW just to rebind a key.
+    virtual int capturePressedKey() const = 0;
 
     // ── Docked 3D viewports ─────────────────────────────────────────────────
     // The GuiSystem draws one Viewport window per index in

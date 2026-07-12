@@ -101,6 +101,12 @@ ShortcutMap::bindings(const std::string& commandId) const {
     return it == bindings_.end() ? emptyBindings() : it->second;
 }
 
+const std::vector<ShortcutBinding>&
+ShortcutMap::defaults(const std::string& commandId) const {
+    const auto it = defaults_.find(commandId);
+    return it == defaults_.end() ? emptyBindings() : it->second;
+}
+
 void ShortcutMap::setBinding(const std::string& commandId, int slot,
                              const ShortcutBinding& binding) {
     if (slot < 0 || slot >= kMaxSlots)

@@ -92,8 +92,8 @@
             "score": 1.0
         },
         "view.panel.snapshots": {
-            "lastUse": 1783875653,
-            "score": 1.0
+            "lastUse": 1783877343,
+            "score": 1.99903203398076
         },
         "view.status_bar": {
             "lastUse": 1783876566,
@@ -110,8 +110,8 @@
         "autosaveSlots": 1,
         "openSceneMode": 0,
         "recentScenes": [
-            "C:\\Users\\benta\\Downloads\\Stereo Demo\\StereoVista\\snapshots\\snap_0.scene",
-            "C:\\Users\\benta\\Downloads\\Stereo Demo\\StereoVista\\office.scene"
+            "C:\\Users\\benta\\Downloads\\Stereo Demo\\StereoVista\\office.scene",
+            "C:\\Users\\benta\\Downloads\\Stereo Demo\\StereoVista\\snapshots\\snap_0.scene"
         ],
         "safetySnapshotBeforeReplace": true,
         "showWelcomeHub": false

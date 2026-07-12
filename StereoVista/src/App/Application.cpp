@@ -102,6 +102,18 @@ ImGuiKey imGuiKeyFromGlfw(int key) {
     }
 }
 
+// Reverse translation for the Pass-6 shortcut-capture UI. Done by searching the
+// forward map rather than hand-writing a second table, so the switch above stays
+// the SINGLE source of truth (a second table would silently drift).
+int glfwKeyFromImGui(ImGuiKey key) {
+    if (key == ImGuiKey_None)
+        return 0;
+    for (int glfwKey = GLFW_KEY_SPACE; glfwKey <= GLFW_KEY_LAST; ++glfwKey)
+        if (imGuiKeyFromGlfw(glfwKey) == key)
+            return glfwKey;
+    return 0;
+}
+
 } // namespace
 
 // ============================================================================
@@ -197,6 +209,24 @@ public:
 
     core::CommandRegistry& commands() override  { return app_.commands_; }
     core::ShortcutMap&     shortcuts() override { return app_.shortcuts_; }
+
+    // Shortcut capture (Pass 6): the GLFW code of the non-modifier key pressed
+    // this frame, so the Gui-layer binding editor never includes GLFW.
+    int capturePressedKey() const override {
+        for (int k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_NamedKey_END; ++k) {
+            const ImGuiKey key = static_cast<ImGuiKey>(k);
+            if (!ImGui::IsKeyPressed(key, false))
+                continue;
+            if (key == ImGuiKey_LeftCtrl || key == ImGuiKey_RightCtrl ||
+                key == ImGuiKey_LeftShift || key == ImGuiKey_RightShift ||
+                key == ImGuiKey_LeftAlt || key == ImGuiKey_RightAlt ||
+                key == ImGuiKey_LeftSuper || key == ImGuiKey_RightSuper)
+                continue; // a bare modifier is never a binding
+            if (const int glfwKey = glfwKeyFromImGui(key))
+                return glfwKey;
+        }
+        return 0;
+    }
 
     // ---- Docked 3D viewports ----
     uint32_t viewportPanelCount() const override {
@@ -827,8 +857,9 @@ void Application::init() {
     // skybox becomes the background when its faces resolve. Loaded
     // preferences win over these first-run defaults — but a persisted sky
     // mode whose source isn't available falls back to the gradient.
-    if (!prefsLoaded_)
-        settings_.lighting.sun.enabled = true;
+    // (The sun's shipped "on" default now lives in Gui::Settings itself —
+    // Gui::detail::defaultSun — so kDefaults is honest and a Pass-6 reset
+    // restores the sun instead of switching it off.)
     const bool hasCubemap = renderer_.skybox().loadCubemap("skybox");
     if (hasCubemap && !prefsLoaded_)
         settings_.sky.mode = renderer::SkyMode::Cubemap;

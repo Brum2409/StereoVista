@@ -104,12 +104,10 @@ void drawFragment(Cursor::FragmentCursor* frag) {
 // last-depth cache (also mitigates the cursor-flicker note in docs/TODO.md A2),
 // and the orbit-centre marker. Presets + the render-to-texture preview are
 // deferred with the preferences task (docs/TODO.md C4/C5).
-void drawCursorPanel(Services& services, bool* open) {
-    if (!ImGui::Begin(Windows::Cursor, open)) {
-        ImGui::End();
-        return;
-    }
-
+// The cursor CONTENT, without a window. Pass 6 re-groups this into
+// Settings ▸ 3D Cursor (§12) — both that category and the standalone 3D Cursor
+// window render THIS function, so the controls exist once and cannot drift.
+void drawCursorSettings(Services& services) {
     Settings::Cursor& cursor = services.settings().cursor;
     Cursor::CursorManager& cm = services.cursors();
 
@@ -172,7 +170,16 @@ void drawCursorPanel(Services& services, bool* open) {
     ImGui::SeparatorText("Presets");
     ImGui::TextDisabled("Cursor presets + the 3D preview thumbnail return with "
                         "the preferences/persistence task (docs/TODO.md C4/C5).");
+}
 
+// The standalone 3D Cursor window (kept: C7 docking freedom — the same controls
+// also live in Settings ▸ 3D Cursor since Pass 6).
+void drawCursorPanel(Services& services, bool* open) {
+    if (!ImGui::Begin(Windows::Cursor, open)) {
+        ImGui::End();
+        return;
+    }
+    drawCursorSettings(services);
     ImGui::End();
 }
 

@@ -954,6 +954,7 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClInclude Include="headers\Gui\Outliner.h" />
     <ClInclude Include="headers\Gui\Inspector.h" />
     <ClInclude Include="headers\Gui\Palette.h" />
+    <ClInclude Include="headers\Gui\SettingsIndex.h" />
     <ClInclude Include="headers\Gui\Preferences.h" />
   </ItemGroup>
   <ItemGroup>

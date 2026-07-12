@@ -5,6 +5,7 @@
 #include "Gui/Outliner.h"
 #include "Gui/Panels.h"
 #include "Gui/Services.h"
+#include "Gui/SettingsIndex.h"
 
 #include "imgui/IconsFontAwesome5.h"
 
@@ -120,11 +121,33 @@ void provideRecents(Services& services, std::vector<Item>& out) {
     }
 }
 
+// Settings rows (Pass 6): the ':' prefix searches the shared settings index and
+// DEEP-LINKS into the row — open Settings, select its category, flash it.
+void provideSettings(Services& services, std::vector<Item>& out) {
+    Services* svc = &services;
+    for (const SettingsIndexEntry& entry : settingsIndex()) {
+        Item item;
+        item.source = Source::Setting;
+        item.title = entry.label;
+        item.subtitle = settingsCategoryName(entry.category);
+        item.keywords = entry.keywords;
+        item.kind = UiKit::ObjectKind::Setting;
+        const SettingsCategory category = entry.category;
+        const char* label = entry.label;
+        item.activate = [svc, category, label] {
+            svc->settings().ui.panels.settings = true;
+            focusSetting(category, label);
+        };
+        out.push_back(std::move(item));
+    }
+}
+
 void registerBuiltins() {
     registerProvider(provideCommands);
     registerProvider(provideObjects);
     registerProvider(provideSnapshots);
     registerProvider(provideRecents);
+    registerProvider(provideSettings);
 }
 
 // ── Ranking ──────────────────────────────────────────────────────────────────
