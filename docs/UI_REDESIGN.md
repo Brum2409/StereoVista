@@ -633,7 +633,7 @@ Keep this truthful — it is the coordination point between passes.
 | Pass | State | Branch/PR | Notes & deviations |
 |---|---|---|---|
 | Plan | ✅ done | `StereoVista-vulkan` | Rev 4.1: adapted to the Vulkan branch (GuiSystem/Services/panels reality; scene-system port folded into P1; snapshots/shortcuts/prefs ports slotted; supersedes TODO §D) + verified against source; §5.1 window disposition map and §5.2 multi-viewport rules (per-viewport cameras, active-viewport routing) made explicit. |
-| 0 Foundation | ⬜ not started | | |
+| 0 Foundation | ✅ done (unverified on Windows — agent could not build MSVC; g++ syntax-checked) | `claude/stereo-vista-gui-pass-0-k2qhfp` | UiKit (tokens, ObjectKind styles, GL widget ports + redesign set, scored `FuzzyMatch`, `Anim01` + `reduceMotion`); CommandRegistry + frecency; menus render registry commands (File/Edit/Help fully generic, View interleaves the dynamic theme/viewport blocks — every item still runs through `run()`); rebindable shortcuts in `core::ShortcutMap` (v2 shortcuts.json; GL v1 profile files migrate on load); `Gui::Settings` ⇄ preferences.json (v3; GL file's overlapping subset migrates once) + debounced autosave; `PluginContext::preferences()` restored (returns `Gui::Settings&`, not the GL blob); status-bar shell (stats/selection/activity/FPS→Performance). **Deviations:** status bar is viewport side-bar *chrome* (BeginViewportSideBar), not a bottom dock node — always at the bottom, can't be torn off, no imgui.ini/reset-layout interference; GUI toggle moved F1→G (GL parity key, F1 freed for the §14 overlay); `edit.delete_selected` ships unbound (GL used Delete, which plugins own here for measurement-cancel); panel visibility moved into `Settings::Ui::Panels` so it persists; a minimal Settings ▸ Interface tab (theme/scale/status bar/reduce motion) landed early to expose the new prefs (P6 restyles it); imgui_sytle.h no longer includes the Vulkan/GLFW backends (moved into imgui_style.cpp) so the Gui layer can use the style API without Vulkan. |
 | 1 Outliner + scene | ⬜ not started | | |
 | 2 Inspector | ⬜ not started | | |
 | 3 History & Snapshots | ⬜ not started | | |
@@ -670,3 +670,11 @@ Keep this truthful — it is the coordination point between passes.
   routing, primary never closable — §5.2); every current window's fate is explicit
   (§5.1); Selection grows from the existing `Application::Selection` seed; History
   builds on `LambdaUndoCommand::description()` and the gizmo drag-undo pattern.
+- 2026-07-12 — Pass 0 landed (see Status Board row for the deviation list).
+  Notes for later passes: `Application::registerCommands()` is the one place
+  commands + menu grouping + default bindings live; new persisted state goes
+  through `Gui::Preferences` (one serialization line per field, missing keys
+  keep defaults); frecency is already recorded per `run()` and persisted for
+  the Pass-4 palette; the shortcuts editor (P6) edits `core::ShortcutMap`
+  (`setBinding`/`findConflict`/`resetToDefaults` are ready);
+  `ShortcutMap::normalizeKeyToLayout` must be applied to captured keys.

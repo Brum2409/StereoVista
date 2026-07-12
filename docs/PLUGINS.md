@@ -90,6 +90,10 @@ const Camera&      camera();
 glm::vec3          cameraPosition();
 core::UndoManager& undo();
 
+// Persisted user settings (Gui/Settings.h; preferences.json persistence is
+// automatic). Include Gui/Settings.h in your plugin .cpp to use it.
+Gui::Settings&     preferences();
+
 // Overlay (replaces the GL compileOverlayProgram) — append once per frame
 renderer::OverlayDrawList& overlay();
 
@@ -111,8 +115,10 @@ glm::mat4 viewProj();     // proj*view this frame (world->screen for ImGui label
 void toast(const std::string&, ToastLevel = ToastLevel::Info);
 ```
 
-There is no `preferences()` in the Vulkan context yet (a Vulkan preferences system
-returns with the GUI/SceneManager port).
+`preferences()` returns the live `Gui::Settings` (restored in UI redesign
+Pass 0) — this is the Vulkan-native settings struct, **not** the GL
+`ApplicationPreferences` blob. Reads are always safe; writes persist
+automatically (debounced save + save-on-exit to `preferences.json`).
 
 ---
 

@@ -147,14 +147,14 @@ reference. This is the single biggest gap.
 - ✳️ Port the panels as **`Gui/panels/*`** (don't rebuild one 8k-line file): Settings
   (camera / stereo / mouse+scroll / lighting / sky), 3D-cursor settings (§C),
   per-object + per-mesh material panels, sun/light controls, scene hierarchy.
-- ✳️ **Preferences persistence** (`preferences.json`): the app currently runs on
-  in-memory defaults. Re-add load-on-start / save-on-exit. When you do, define the
-  Vulkan prefs struct fresh — **don't** resurrect the whole GL `GUI::ApplicationPreferences`
-  (`GuiTypes.h`) with its dead VCT/Radiance/SpaceMouse fields.
-- ✳️ **Shortcuts** (`shortcuts.json`, GL `ShortcutManager`): remappable keybinds;
-  the new app hardcodes keys.
-- ✳️ Re-add `PluginContext::preferences()` once a prefs system exists (it was dropped
-  in the plugin rewrite).
+- ✅ **Preferences persistence** (`preferences.json`): done in UI redesign Pass 0
+  (`Gui/Preferences.h` serializes `Gui::Settings`; GL files migrate their
+  overlapping subset; the GL `ApplicationPreferences` blob stayed dead).
+- ✅ **Shortcuts** (`shortcuts.json`): done in UI redesign Pass 0
+  (`Core/Shortcuts.h` — rebindable bindings → command ids; GL profile files
+  migrate). The binding *editor UI* lands with the redesign's Settings pass.
+- ✅ `PluginContext::preferences()` restored in UI redesign Pass 0 (returns the
+  new `Gui::Settings`).
 
 ---
 

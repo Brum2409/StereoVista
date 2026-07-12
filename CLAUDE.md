@@ -76,10 +76,16 @@ StereoVista/
 │   │   └── passes/         #   Shadow / Forward / Skybox / PointCloud / Overlay / Tonemap
 │   ├── Scene/              # interim scene host (office.scene loader, primitives,
 │   │                       #   Assimp import, picking)
+│   ├── Gui/                # production GUI (docs/UI_REDESIGN.md): GuiSystem (dockspace
+│   │   └── panels/         #   shell, registry menus, status bar), UiKit (design system),
+│   │                       #   Preferences (Settings⇄json), panels/* (one window per file);
+│   │                       #   panels reach the app ONLY via the Gui::Services facade
 │   ├── Cursors/            # 3D cursor system (Base + Sphere/Plane/Fragment), GPU-free
 │   ├── Tools/              # TransformGizmo, MeasurementTool, ClipPlaneTool (overlay-drawn)
 │   ├── Plugins/            # GL-free plugin system + Examples/CrosshairPlugin, MeasurementPlugin
-│   ├── Core/               # Camera (glm), UndoManager (generic command stack)
+│   ├── Core/               # Camera (glm), UndoManager (generic command stack),
+│   │                       #   CommandRegistry (every action, one run() choke-point),
+│   │                       #   Shortcuts (rebindable key bindings -> command ids)
 │   ├── Loaders/            # PointCloudLoader (LAS/LAZ/PLY/HDF5/XYZ/PCB parsers + RHI upload)
 │   │   └── Slpk/           #   SLPK/I3S (namespace i3s::): SlpkArchive (mmap ZIP64 + hash
 │   │                       #   index), I3SLayer (1.6 / 1.7+ / PCSL node trees, materials,
@@ -271,12 +277,16 @@ Vulkan GLSL in `assets/shaders_vk/`.
 - `pipeline_cache.bin` — disk-persisted `VkPipelineCache` (driver-validated;
   gitignored; recreated if corrupt).
 - `imgui.ini` — ImGui docking layout.
+- `preferences.json` — `Gui::Settings` persistence (v3 format; UI redesign
+  Pass 0, `Gui/Preferences.h`): load-on-start, debounced save-on-change,
+  save-on-exit; missing keys keep the struct defaults; a GL-era file (no
+  root `"version"`) has its overlapping subset migrated once.
+- `shortcuts.json` — rebindable shortcut → command-id bindings (v2 format;
+  `Core/Shortcuts.h`); a GL-era profile file migrates on first load.
 - `StereoVista/screenshots/*.png` — screenshot output.
 
-> The GL-era `preferences.json` / `shortcuts.json` / `cursor_presets.json` are **not
-> yet read/written** by the Vulkan app — settings live in the debug panel with
-> in-memory defaults. Preferences/shortcuts/cursor-preset persistence returns with
-> the GUI + SceneManager port (see Migration state).
+> `cursor_presets.json` is **not yet read/written** — cursor-preset persistence
+> returns with its port (see Migration state).
 
 ---
 
@@ -302,11 +312,17 @@ Vulkan GLSL in `assets/shaders_vk/`.
   post-processing — Voxel Cone Tracing, DDGI, BVH ray-traced Radiance, Bloom, SSAO.
   These were deleted from the tree (git history is the reference); the app ships
   **Shadow Mapping only**, and the VCT/Radiance lighting-mode options are dropped.
-- **Not yet ported (tracked as a separate scope):** the full production GUI (the
-  Vulkan app currently drives everything through a debug panel), `SceneManager`
-  scene save/load/merge + hierarchy, preferences/shortcuts/cursor-preset
-  persistence, 3DConnexion SpaceMouse, camera snapshots, cursor sync, the
-  `CursorPreview3D` thumbnail, and out-of-core point-cloud LOD (`OctreePointCloudManager`).
+- **GUI/UX remake in progress (docs/UI_REDESIGN.md):** Pass 0 (Foundation)
+  landed — UiKit design system (`Gui/UiKit.h`), CommandRegistry-driven menus +
+  rebindable shortcuts (`Core/CommandRegistry.h`, `Core/Shortcuts.h`),
+  `Gui::Settings` ⇄ `preferences.json` persistence (`Gui/Preferences.h`,
+  incl. `PluginContext::preferences()`), and the status-bar shell. See the
+  plan's Status Board for per-pass state.
+- **Not yet ported (tracked as a separate scope):** the full production GUI
+  (in progress via the UI redesign passes above), `SceneManager`
+  scene save/load/merge + hierarchy, cursor-preset persistence, 3DConnexion
+  SpaceMouse, camera snapshots, cursor sync, the `CursorPreview3D` thumbnail,
+  and out-of-core point-cloud LOD (`OctreePointCloudManager`).
   Their **OpenGL sources remain in-tree but `ExcludedFromBuild`** (in `src/Gui`,
   `src/Core`, `src/Engine`, `src/Cursors`) as the behaviour reference until each is
   re-implemented on Vulkan, then deleted. See `docs/TODO.md` for
