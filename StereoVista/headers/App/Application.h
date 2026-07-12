@@ -182,6 +182,21 @@ private:
                           uint64_t groupId);
     void renameItem(const scene::SceneItemRef& ref, const std::string& name);
     void frameItems(const std::vector<scene::SceneItemRef>& refs);
+    // Frame in a SPECIFIC viewport (the Pass-8 toolbar passes its own index, so
+    // it can never drive viewport 0 by accident — §5.2).
+    void frameItemsIn(uint32_t viewport, const std::vector<scene::SceneItemRef>& refs);
+    // Standard views (Pass 8 §14): 0 top · 1 bottom · 2 front · 3 back ·
+    // 4 right · 5 left · 6 iso. Fits the selection, else the whole scene.
+    void applyStandardView(uint32_t viewport, int view);
+    // Union world bounds of refs (groups expand). False when nothing contributed.
+    // Not const: expandGroups resolves refs against the scene (it refreshes the
+    // cached indices), which needs a mutable Scene&.
+    bool itemsBounds(const std::vector<scene::SceneItemRef>& refs, glm::vec3& outLo,
+                     glm::vec3& outHi);
+    // Fit a bounding sphere into the vertical FOV along viewDir and fly there
+    // (animated unless reduce-motion is on — the old frame always snapped).
+    void flyCameraTo(uint32_t viewport, const glm::vec3& center, float radius,
+                     const glm::vec3& viewDir);
     void isolateItems(const std::vector<scene::SceneItemRef>& refs);
     void exitIsolate();
     // Esc cascade (select.clear command): exit the active tool first (clip

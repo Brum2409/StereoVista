@@ -1,7 +1,7 @@
 {
     "camera": {
         "adaptiveSpeed": true,
-        "farPlane": 13219.724609375,
+        "farPlane": 60366.5078125,
         "fovDeg": 48.1510009765625,
         "maxScrollVelocity": 4.0,
         "nearPlane": 0.009999999776482582,
@@ -9,19 +9,31 @@
         "scrollDeceleration": 2.0,
         "scrollMomentum": 0.12999999523162842,
         "sensitivity": 0.07999999821186066,
-        "speed": 100.5484390258789,
+        "speed": 459.14404296875,
         "speedFactor": 1.0,
         "useSmoothScrolling": true,
         "zoomToCursor": true
     },
     "commandFrecency": {
+        "create.cube": {
+            "lastUse": 1783882179,
+            "score": 1.0
+        },
         "edit.redo": {
             "lastUse": 1783860664,
             "score": 2.0
         },
+        "edit.snapshot_now": {
+            "lastUse": 1783882197,
+            "score": 1.0
+        },
         "edit.undo": {
             "lastUse": 1783876563,
             "score": 6.955589819481245
+        },
+        "file.import_files": {
+            "lastUse": 1783882278,
+            "score": 1.9997943003936713
         },
         "file.import_pointcloud": {
             "lastUse": 1783863439,
@@ -32,16 +44,16 @@
             "score": 1.0
         },
         "file.new_scene": {
-            "lastUse": 1783862970,
-            "score": 1.0
+            "lastUse": 1783881845,
+            "score": 1.9892421849350432
         },
         "file.open_slpk": {
             "lastUse": 1783864668,
             "score": 1.0
         },
         "file.save_scene": {
-            "lastUse": 1783863479,
-            "score": 2.999659087354864
+            "lastUse": 1783881842,
+            "score": 3.9682600564274297
         },
         "file.save_scene_as": {
             "lastUse": 1783862964,
@@ -60,49 +72,81 @@
             "score": 1.9997037830572026
         },
         "help.about": {
-            "lastUse": 1783876818,
-            "score": 1.9847723111062776
+            "lastUse": 1783882466,
+            "score": 2.9783589388079603
+        },
+        "help.shortcuts": {
+            "lastUse": 1783882459,
+            "score": 1.0
         },
         "palette.open": {
-            "lastUse": 1783877266,
-            "score": 9.997054002839386
+            "lastUse": 1783881882,
+            "score": 11.970426411630289
         },
         "select.all": {
             "lastUse": 1783876556,
             "score": 14.904213631532746
         },
-        "view.add_viewport": {
-            "lastUse": 1783860672,
+        "tool.clipplane": {
+            "lastUse": 1783881374,
+            "score": 2.999992550519428
+        },
+        "tool.stereovista.measurement": {
+            "lastUse": 1783881525,
             "score": 1.0
+        },
+        "view.add_viewport": {
+            "lastUse": 1783882331,
+            "score": 4.987189754237807
         },
         "view.center": {
-            "lastUse": 1783850051,
-            "score": 1.0
+            "lastUse": 1783882492,
+            "score": 1.9815817901901691
+        },
+        "view.frame_selected": {
+            "lastUse": 1783881945,
+            "score": 2.9999232143363175
         },
         "view.panel.cursor": {
-            "lastUse": 1783876502,
-            "score": 1.0
+            "lastUse": 1783881738,
+            "score": 1.9970040680201386
         },
         "view.panel.history": {
-            "lastUse": 1783876568,
-            "score": 1.0
+            "lastUse": 1783881570,
+            "score": 1.9971377662287968
         },
         "view.panel.inspector": {
             "lastUse": 1783876813,
+            "score": 1.0
+        },
+        "view.panel.settings": {
+            "lastUse": 1783881448,
             "score": 1.0
         },
         "view.panel.snapshots": {
             "lastUse": 1783877343,
             "score": 1.99903203398076
         },
-        "view.status_bar": {
-            "lastUse": 1783876566,
+        "view.reset_layout": {
+            "lastUse": 1783882495,
             "score": 1.0
+        },
+        "view.status_bar": {
+            "lastUse": 1783882488,
+            "score": 2.9966076341577836
+        },
+        "view.toggle_gui": {
+            "lastUse": 1783882258,
+            "score": 11.999940977228412
+        },
+        "view.wireframe": {
+            "lastUse": 1783881362,
+            "score": 3.99999770784761
         }
     },
     "cursor": {
         "show": true,
-        "type": 0
+        "type": 1
     },
     "files": {
         "autosaveEnabled": false,
@@ -110,8 +154,8 @@
         "autosaveSlots": 1,
         "openSceneMode": 0,
         "recentScenes": [
-            "C:\\Users\\benta\\Downloads\\Stereo Demo\\StereoVista\\office.scene",
-            "C:\\Users\\benta\\Downloads\\Stereo Demo\\StereoVista\\snapshots\\snap_0.scene"
+            "C:\\Users\\benta\\Downloads\\Stereo Demo\\StereoVista\\snapshots\\snap_0.scene",
+            "C:\\Users\\benta\\Downloads\\Stereo Demo\\StereoVista\\office.scene"
         ],
         "safetySnapshotBeforeReplace": true,
         "showWelcomeHub": false
@@ -140,7 +184,7 @@
     "pointCloud": {
         "downsample": 1,
         "hqs": false,
-        "hqsThreshold": 0.012199999764561653,
+        "hqsThreshold": 0.009999999776482582,
         "lodEnabled": true,
         "lodPointsPerPixel": 1.7599999904632568,
         "mortonResort": true,
@@ -180,6 +224,10 @@
     },
     "ui": {
         "guiScale": 1.2899999618530273,
+        "hints": {
+            "dismissed": [],
+            "enabled": true
+        },
         "inspector": {
             "display": true,
             "exportSection": false,
@@ -196,17 +244,17 @@
             "clipPlanes": false,
             "cursor": false,
             "diagnostics": false,
-            "history": false,
+            "history": true,
             "inspector": true,
-            "pointClouds": true,
+            "pointClouds": false,
             "scene": true,
-            "settings": true,
-            "slpk": true,
+            "settings": false,
+            "slpk": false,
             "snapshots": false
         },
         "reduceMotion": false,
         "showStatusBar": false,
-        "theme": 6
+        "theme": 0
     },
     "version": 3,
     "vr": {

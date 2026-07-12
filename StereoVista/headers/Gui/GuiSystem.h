@@ -23,6 +23,8 @@
 //  All app state flows through the Gui::Services facade passed to draw().
 // ============================================================================
 
+#include "Gui/HintEngine.h"
+
 namespace Gui {
 
 class Services;
@@ -52,6 +54,12 @@ public:
     // File ▸ Export… (Pass 7): the selection-aware exporter picker.
     void openExportDialog() { exportOpen_ = true; }
 
+    // Shortcut overlay (Pass 8): hold F1 shows it, Shift+F1 pins it.
+    bool shortcutOverlayPinned() const { return shortcutOverlayPinned_; }
+    void toggleShortcutOverlayPinned() {
+        shortcutOverlayPinned_ = !shortcutOverlayPinned_;
+    }
+
 private:
     void drawMenuBar(Services& services);
     void drawStatusBar(Services& services);
@@ -61,6 +69,15 @@ private:
     // back through Services::onViewportPanel(index, ...). Always drawn (not
     // gated by the master GUI toggle — it IS the application content).
     void drawViewportPanel(Services& services, unsigned int index);
+    // The per-viewport toolbar (Pass 8 §14). Returns true while the POINTER is
+    // owned by the toolbar, so the caller can clear ViewportPanelState::hovered
+    // before reporting it — otherwise a click on a toolbar button would ALSO
+    // start an orbit in the scene beneath it.
+    bool drawViewportToolbar(Services& services, unsigned int index, float imageX,
+                            float imageY, float imageW, float imageH);
+    // Hold-F1 (Shift+F1 pins) live keymap cheat sheet, generated from the
+    // CommandRegistry + ShortcutMap.
+    void drawShortcutOverlay(Services& services);
     void drawAboutWindow(Services& services);
     // Build the default dock layout into the given dockspace node.
     void buildDefaultLayout(unsigned int dockspaceId, float sizeX, float sizeY);
@@ -72,6 +89,11 @@ private:
     bool layoutInitialized_ = false;
     bool paletteOpen_       = false;
     bool exportOpen_        = false;
+    bool shortcutOverlayPinned_ = false;
+    // The primary viewport's image rect on screen, captured each frame — the
+    // Welcome Hub and the HintEngine anchor to it.
+    float primaryX_ = 0.0f, primaryY_ = 0.0f, primaryW_ = 0.0f, primaryH_ = 0.0f;
+    HintEngine hints_;
 };
 
 } // namespace Gui

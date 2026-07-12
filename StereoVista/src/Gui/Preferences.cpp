@@ -138,6 +138,9 @@ json toJson(const Settings& s) {
     ui["guiScale"] = s.ui.guiScale;
     ui["showStatusBar"] = s.ui.showStatusBar;
     ui["reduceMotion"] = s.ui.reduceMotion;
+    json& hints = ui["hints"];
+    hints["enabled"] = s.ui.hints.enabled;
+    hints["dismissed"] = s.ui.hints.dismissed;
     json& panels = ui["panels"];
     panels["scene"] = s.ui.panels.scene;
     panels["inspector"] = s.ui.panels.inspector;
@@ -264,6 +267,10 @@ void fromJson(const json& doc, Settings& s) {
         s.ui.guiScale = std::clamp(s.ui.guiScale, 0.5f, 2.0f);
         get(*ui, "showStatusBar", s.ui.showStatusBar);
         get(*ui, "reduceMotion", s.ui.reduceMotion);
+        if (const json* hints = section(*ui, "hints")) {
+            get(*hints, "enabled", s.ui.hints.enabled);
+            get(*hints, "dismissed", s.ui.hints.dismissed);
+        }
         if (const json* panels = section(*ui, "panels")) {
             get(*panels, "scene", s.ui.panels.scene);
             get(*panels, "inspector", s.ui.panels.inspector);

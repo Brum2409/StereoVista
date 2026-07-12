@@ -1251,8 +1251,28 @@ void Application::renameItem(const SceneItemRef& ref, const std::string& name) {
 
 // ── Frame ────────────────────────────────────────────────────────────────────
 
+// The menu / F-key path: frame in the ACTIVE viewport (§5.2).
 void Application::frameItems(const std::vector<SceneItemRef>& refs) {
-    // Union world-space bounds over every ref (groups expand to members).
+    frameItemsIn(activeViewport_, refs);
+}
+
+// Frame in a SPECIFIC viewport — the Pass-8 toolbar passes its own index, so it
+// can never drive viewport 0 by accident.
+void Application::frameItemsIn(uint32_t viewport,
+                               const std::vector<SceneItemRef>& refs) {
+    glm::vec3 lo, hi;
+    if (!itemsBounds(refs, lo, hi))
+        return;
+    const glm::vec3 center = (lo + hi) * 0.5f;
+    const float radius = std::max(glm::length(hi - lo) * 0.5f, 0.25f);
+    flyCameraTo(viewport, center, radius,
+                glm::normalize(glm::vec3(0.55f, 0.45f, 0.9f)));
+}
+
+// Union world-space bounds over every ref (groups expand to members). False when
+// nothing contributed. Shared by framing and the standard views.
+bool Application::itemsBounds(const std::vector<SceneItemRef>& refs, glm::vec3& outLo,
+                             glm::vec3& outHi) {
     glm::vec3 lo(FLT_MAX), hi(-FLT_MAX);
     auto unionPoint = [&](const glm::vec3& p) {
         lo = glm::min(lo, p);
@@ -1328,25 +1348,62 @@ void Application::frameItems(const std::vector<SceneItemRef>& refs) {
         }
     }
     if (lo.x > hi.x)
-        return;
+        return false;
+    outLo = lo;
+    outHi = hi;
+    return true;
+}
 
-    // Same fit as frameI3SLayer: bounding sphere into the vertical FOV from a
-    // pleasant 3/4 view, on the ACTIVE viewport's camera (§5.2).
-    const glm::vec3 center = (lo + hi) * 0.5f;
-    const float radius = std::max(glm::length(hi - lo) * 0.5f, 0.25f);
+// Fit a bounding sphere into the vertical FOV along `viewDir` and fly there.
+// Animated (§15 motion) unless the user asked to reduce motion, in which case it
+// snaps — the old code always snapped.
+void Application::flyCameraTo(uint32_t viewport, const glm::vec3& center,
+                              float radius, const glm::vec3& viewDir) {
     const float fovRad = glm::radians(std::max(settings_.camera.fovDeg, 10.0f));
-    const float distance = radius / std::tan(fovRad * 0.5f) * 1.15f;
-    const glm::vec3 viewDir = glm::normalize(glm::vec3(0.55f, 0.45f, 0.9f));
+    const float distance = std::max(radius, 0.25f) / std::tan(fovRad * 0.5f) * 1.15f;
 
-    Camera& cam = activeCamera();
+    Camera& cam = viewportCamera(viewport);
     Camera::CameraState st = cam.GetState();
-    st.position = center + viewDir * distance;
+    st.position = center + glm::normalize(viewDir) * distance;
     const glm::vec3 f = glm::normalize(center - st.position);
-    const glm::vec3 r = glm::normalize(glm::cross(f, glm::vec3(0.0f, 1.0f, 0.0f)));
+    // cross(f, up) degenerates looking straight down/up — pick another hint.
+    const glm::vec3 upHint = (std::abs(f.y) > 0.999f) ? glm::vec3(0.0f, 0.0f, -1.0f)
+                                                      : glm::vec3(0.0f, 1.0f, 0.0f);
+    const glm::vec3 r = glm::normalize(glm::cross(f, upHint));
     const glm::vec3 u = glm::normalize(glm::cross(r, f));
     st.orientation = glm::normalize(glm::quat_cast(glm::mat3(r, u, -f)));
-    cam.SetState(st);
+    if (settings_.ui.reduceMotion)
+        cam.SetState(st);
+    else
+        cam.StartStateAnimation(st, 0.45f);
     cam.SetOrbitPointDirectly(center);
+}
+
+// Standard views (Pass 8 §14): fit the selection when there is one, else the
+// whole scene, from a canonical direction.
+void Application::applyStandardView(uint32_t viewport, int view) {
+    // Fit the selection when there is one, else the whole scene.
+    glm::vec3 lo(FLT_MAX), hi(-FLT_MAX);
+    if (selection_.empty() || !itemsBounds(selection_.items(), lo, hi)) {
+        lo = scene_.worldBoundsMin;
+        hi = scene_.worldBoundsMax;
+    }
+    if (lo.x > hi.x)
+        return;
+
+    const glm::vec3 center = (lo + hi) * 0.5f;
+    const float radius = std::max(glm::length(hi - lo) * 0.5f, 0.25f);
+    glm::vec3 dir;
+    switch (view) {
+    case 0: dir = glm::vec3(0.0f, 1.0f, 0.0f); break;   // top
+    case 1: dir = glm::vec3(0.0f, -1.0f, 0.0f); break;  // bottom
+    case 2: dir = glm::vec3(0.0f, 0.0f, 1.0f); break;   // front
+    case 3: dir = glm::vec3(0.0f, 0.0f, -1.0f); break;  // back
+    case 4: dir = glm::vec3(1.0f, 0.0f, 0.0f); break;   // right
+    case 5: dir = glm::vec3(-1.0f, 0.0f, 0.0f); break;  // left
+    default: dir = glm::normalize(glm::vec3(0.55f, 0.45f, 0.9f)); break; // iso
+    }
+    flyCameraTo(viewport, center, radius, dir);
 }
 
 // ── Isolate ──────────────────────────────────────────────────────────────────

@@ -553,6 +553,9 @@
     <ClCompile Include="src\Gui\Exporters.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\Gui\HintEngine.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\Gui\panels\WelcomeHub.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -1558,6 +1561,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\Gui\Exporters.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Gui\HintEngine.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\Core\ToolManager.h">

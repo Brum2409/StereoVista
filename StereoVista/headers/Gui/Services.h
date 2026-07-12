@@ -67,6 +67,17 @@ struct FrameDiagnostics {
     bool asyncComputeActive = false;
 };
 
+// Cheap scene-wide counters for the status bar, the FPS popup and the hint
+// triggers (Pass 8 §14). Plain data — the Vulkan VRAM budget is read app-side.
+struct SceneStats {
+    uint32_t models = 0, meshes = 0, lights = 0, groups = 0, layers = 0, clouds = 0;
+    uint32_t ungrouped = 0; // objects sitting at the scene root (grouping hint)
+    uint64_t triangles = 0, points = 0;
+    double   cloudVramMB = 0.0;   // the part we account for exactly
+    double   vramUsedMB = 0.0;    // device-local heap usage / budget (VMA)
+    double   vramBudgetMB = 0.0;
+};
+
 // What one Viewport panel displays: the renderer's offscreen viewport texture
 // as an ImGui image. Plain data (textureId is the ImTextureID); active=false
 // means the classic fullscreen path is in use (XR) and the panels are skipped
@@ -170,8 +181,26 @@ public:
     // panel features like the scene-layer hover pick.
     virtual bool viewportHovered() const = 0;
 
+    // ── Per-viewport cameras (Pass 8 §5.2: NEVER hardcode viewport 0) ────────
+    // camera() above is the PRIMARY camera — fine for panels, wrong for the
+    // per-viewport toolbar, which must act on the viewport it is drawn in.
+    virtual uint32_t activeViewport() const = 0;      // focused, else last-hovered
+    virtual Camera&  viewportCamera(uint32_t index) = 0;
+    // Fly viewport `index`'s camera to a standard view (0 top · 1 bottom ·
+    // 2 front · 3 back · 4 right · 5 left · 6 iso), fitting the selection when
+    // there is one, else the whole scene. Animated unless reduce-motion is on.
+    virtual void applyStandardView(uint32_t index, int view) = 0;
+    // Frame refs in a SPECIFIC viewport (the toolbar's Frame button; the menu /
+    // F-key path uses frameItems, which targets the active viewport).
+    virtual void frameItemsIn(uint32_t index,
+                              const std::vector<scene::SceneItemRef>& refs) = 0;
+
     // ── Diagnostics / device info ────────────────────────────────────────────
     virtual FrameDiagnostics diagnostics() const = 0;
+    virtual SceneStats       sceneStats() const = 0;
+    // Is the (rebindable) chord bound to `commandId` currently HELD? Drives the
+    // hold-to-show F1 shortcut overlay without the Gui layer touching GLFW.
+    virtual bool shortcutHeld(const std::string& commandId) const = 0;
 
     // ── Present mode (index-based; keeps VkPresentModeKHR out of the GUI) ────
     virtual int         presentModeCount() const = 0;

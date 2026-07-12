@@ -619,6 +619,7 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClCompile Include="src\Gui\Inspector.cpp" />
     <ClCompile Include="src\Gui\Palette.cpp" />
     <ClCompile Include="src\Gui\Exporters.cpp" />
+    <ClCompile Include="src\Gui\HintEngine.cpp" />
     <ClCompile Include="src\Gui\inspectors\LayerInspector.cpp" />
     <ClCompile Include="src\Gui\panels\HistoryPanel.cpp" />
     <ClCompile Include="src\Gui\panels\SnapshotsPanel.cpp" />
@@ -960,6 +961,7 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClInclude Include="headers\Gui\Palette.h" />
     <ClInclude Include="headers\Gui\SettingsIndex.h" />
     <ClInclude Include="headers\Gui\Exporters.h" />
+    <ClInclude Include="headers\Gui\HintEngine.h" />
     <ClInclude Include="headers\Gui\Preferences.h" />
   </ItemGroup>
   <ItemGroup>

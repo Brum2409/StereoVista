@@ -312,23 +312,41 @@ Vulkan GLSL in `assets/shaders_vk/`.
   post-processing — Voxel Cone Tracing, DDGI, BVH ray-traced Radiance, Bloom, SSAO.
   These were deleted from the tree (git history is the reference); the app ships
   **Shadow Mapping only**, and the VCT/Radiance lighting-mode options are dropped.
-- **GUI/UX remake in progress (docs/UI_REDESIGN.md):** Passes 0–2 landed. **P0
-  (Foundation):** UiKit design system (`Gui/UiKit.h`), CommandRegistry-driven
-  menus + rebindable shortcuts (`Core/CommandRegistry.h`, `Core/Shortcuts.h`),
-  `Gui::Settings` ⇄ `preferences.json` persistence (`Gui/Preferences.h`,
-  incl. `PluginContext::preferences()`), and the status-bar shell. **P1 (Outliner
-  + editable scene):** stable `uint64_t` ObjectIds + `scene::SceneItemRef`/
-  `Selection` (`Scene/SceneItems.h`), `scene::SceneDocument` v1/v2/v3 load + v3
-  save/merge (`Scene/SceneDocument.h`), user groups, the Outliner tree
-  (`panels/ScenePanel.cpp` + the `Gui/Outliner.h` provider registry), and the
-  one-undo-each item-op surface on `Gui::Services`; point clouds live on
-  `scene::Scene::pointClouds`. **P2 (Inspector):** a per-kind **editor registry**
-  (`Gui/Inspector.h` + `src/Gui/Inspector.cpp`, mirroring the Outliner provider
-  registry) behind the `InspectorPanel` shell — header card, GLOBAL cards, per-kind
-  editors (Model/Mesh, PointCloud, PointLight, Sun, Environment, and the I3S
-  SceneLayer editor in `src/Gui/inspectors/LayerInspector.cpp`), multi-edit as one
-  undo gesture (`Inspector::EditRow<T>`), per-section `ResetGlyph`. See the plan's
-  Status Board for per-pass state and deviations.
+- **GUI/UX remake (docs/UI_REDESIGN.md): Passes 0–7 landed** (P8 in flight). The
+  through-line is **registries, not switches** (contract C6) — every one of these
+  is append-only, so a new object kind / tool / exporter plugs in without editing
+  existing UI files:
+
+  | Registry | Header | Feeds |
+  |---|---|---|
+  | Commands | `Core/CommandRegistry.h` | menus, palette, shortcuts, toolbar (C5: `run()` is the only way an action executes) |
+  | Shortcuts | `Core/Shortcuts.h` | rebindable bindings → command ids (editor in Settings) |
+  | Outliner rows | `Gui/Outliner.h` | the Scene tree — *and* the palette's object search |
+  | Inspector editors | `Gui/Inspector.h` | per-kind Inspector sections |
+  | Palette providers | `Gui/Palette.h` | `Ctrl+K` (commands/objects/snapshots/recents/settings) |
+  | Tools (modes) | `Core/ToolManager.h` | Tools menu, palette, status chip, Inspector Tool card, viewport toolbar |
+  | Exporters | `Gui/Exporters.h` | `File ▸ Export…` |
+  | Settings index | `Gui/SettingsIndex.h` | Settings search + the palette's `:` prefix |
+
+  **P0** UiKit + commands + shortcuts + `Gui::Settings` ⇄ `preferences.json`.
+  **P1** ObjectIds, `scene::SceneItemRef`/`Selection`, `scene::SceneDocument`
+  (v1/v2/v3 load, v3 save/merge), groups, the Outliner, one-undo-each item ops.
+  **P2** Inspector: per-kind editor registry, multi-edit as ONE undo gesture
+  (`Inspector::EditRow<T>`), per-section resets, I3S layer editor.
+  **P3** History panel (undo timeline, click-to-jump) + Snapshots (`src/App/Snapshots.cpp`)
+  + safety snapshots before destructive Replace.
+  **P4** `Ctrl+K` palette (fuzzy + command frecency, prefix filters `>` `#` `:`).
+  **P5** `core::ImportService` — ONE import entry point (menu/drop/hub/palette) with
+  content sniffing, dupe detection, auto-grouping; Welcome Hub; autosave + crash
+  recovery (`autosave/`, `session.lock`).
+  **P6** Settings: sidebar + global search + `kDefaults` reset framework (per-row /
+  per-category / Reset-All) + the shortcut editor; 3D Cursor re-grouped in.
+  **P7** `core::ToolManager` (tools are modes; `Esc` exits), the Inspector **Tool card**
+  (new additive plugin hook `onRenderInspector`), and `Gui::Exporters`. The
+  **ClipPlanes panel dissolved** into the Tool card + Outliner.
+
+  Runtime files added: `snapshots/`, `autosave/` (both gitignored). See the plan's
+  Status Board for per-pass state and the full deviation list.
 - **Not yet ported (tracked as a separate scope):** the full production GUI
   (in progress via the UI redesign passes above), `SceneManager`
   scene save/load/merge + hierarchy, cursor-preset persistence, 3DConnexion

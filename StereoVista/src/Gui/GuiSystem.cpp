@@ -16,6 +16,7 @@
 #include "imgui/imgui.h"
 #include "imgui/imgui_internal.h" // DockBuilder* / BeginViewportSideBar
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -198,15 +199,80 @@ void GuiSystem::draw(Services& services) {
             ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_K, ImGuiInputFlags_RouteGlobal))
             services.commands().run("palette.open");
 
+        // Contextual hints (Pass 8): anchored to the primary viewport image.
+        hints_.draw(services, primaryX_, primaryY_, primaryW_, primaryH_);
+
         // Command palette (Pass 4) — drawn last so its scrim dims every panel.
         Palette::draw(services, &paletteOpen_);
         // File ▸ Export… (Pass 7): renders from the exporter registry.
         Exporters::drawExportDialog(services, &exportOpen_);
     }
 
+    // Shortcut overlay (Pass 8) — OUTSIDE the master GUI toggle on purpose:
+    // someone who hid the interface with G still needs to find the keymap.
+    drawShortcutOverlay(services);
+
     // Scene-open decision modal (C8) — outside the master GUI toggle: a
     // pending open must never be stuck invisible.
     drawSceneOpenModal(services);
+}
+
+// Hold the help.shortcuts chord (F1) to show a live keymap; Shift+F1 pins it.
+// Generated from the CommandRegistry + ShortcutMap, so a rebind or a brand-new
+// command shows up here for free (§14).
+void GuiSystem::drawShortcutOverlay(Services& services) {
+    const bool held = services.shortcutHeld("help.shortcuts");
+    if (!held && !shortcutOverlayPinned_)
+        return;
+
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->WorkPos);
+    ImGui::SetNextWindowSize(viewport->WorkSize);
+    ImGui::SetNextWindowBgAlpha(0.88f);
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration |
+                             ImGuiWindowFlags_NoSavedSettings |
+                             ImGuiWindowFlags_NoFocusOnAppearing |
+                             ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove;
+    if (!shortcutOverlayPinned_)
+        flags |= ImGuiWindowFlags_NoInputs; // held: never eat the mouse
+
+    if (ImGui::Begin("##shortcutOverlay", nullptr, flags)) {
+        UiKit::PanelTitle(ICON_FA_KEYBOARD, "Keyboard shortcuts");
+        ImGui::TextDisabled(shortcutOverlayPinned_
+                                ? "Shift+F1 or Esc to close."
+                                : "Hold F1. Shift+F1 pins this open.");
+        if (shortcutOverlayPinned_ && ImGui::IsKeyPressed(ImGuiKey_Escape))
+            shortcutOverlayPinned_ = false;
+        ImGui::Separator();
+
+        // Group the BOUND commands by category — read live, so a rebind in
+        // Settings ▸ Shortcuts is reflected instantly.
+        const char* categories[] = { "File",  "Edit",  "Create", "Select",
+                                     "View",  "Tools", "Help" };
+        ImGui::Columns(3, "##shortcutCols", false);
+        for (const char* category : categories) {
+            bool headerDrawn = false;
+            services.commands().forEachInCategory(
+                category, [&](const core::Command& command) {
+                    const std::string key = services.shortcuts().label(command.id);
+                    if (key.empty())
+                        return; // unbound commands live in the palette, not here
+                    if (!headerDrawn) {
+                        UiKit::SectionHeader(category);
+                        headerDrawn = true;
+                    }
+                    ImGui::TextUnformatted(command.title.c_str());
+                    ImGui::SameLine();
+                    const float w = ImGui::CalcTextSize(key.c_str()).x;
+                    ImGui::SameLine(ImGui::GetColumnWidth() - w - UiKit::Space(4));
+                    ImGui::TextDisabled("%s", key.c_str());
+                });
+            if (headerDrawn)
+                ImGui::NextColumn();
+        }
+        ImGui::Columns(1);
+    }
+    ImGui::End();
 }
 
 void GuiSystem::drawMenuBar(Services& services) {
@@ -413,6 +479,22 @@ void GuiSystem::drawStatusBar(Services& services) {
                                          : "Opening scene layer...");
         }
 
+        // ── Stereo / VR chip (Pass 8): only when it's on ────────────────────
+        {
+            const char* stereoLabel = nullptr;
+            if (services.xrRunning() || services.vrEnabled())
+                stereoLabel = "VR";
+            else if (services.stereoMode() == 1)
+                stereoLabel = "Quad-buffer 3D";
+            else if (services.stereoMode() == 2)
+                stereoLabel = "Side-by-side";
+            if (stereoLabel) {
+                ImGui::SameLine(0.0f, UiKit::Space(7));
+                if (UiKit::Chip(stereoLabel, true))
+                    services.commands().run("view.panel.settings");
+            }
+        }
+
         // ── Autosave whisper (Pass 5 §11): quiet, never in the way ─────────
         const std::string autosave = services.autosaveStatus();
 
@@ -504,9 +586,31 @@ void GuiSystem::drawViewportPanel(Services& services, unsigned int index) {
             state.hostWindow = ImGui::GetWindowViewport()->PlatformHandle;
         }
     }
+    // Per-viewport toolbar (Pass 8 §14), drawn INSIDE the viewport window over
+    // the image. It is a child window, so ImGui routes clicks to it and keeps
+    // them off the image — but `state.hovered` was already latched from
+    // IsItemHovered() on the image above, so we must correct it here, BEFORE
+    // reporting the state. Without this, clicking a toolbar button would also
+    // start an orbit in the scene behind it (hovered is the app's gate for
+    // starting a scene interaction).
+    if (open && state.shown && guiVisible_) {
+        const bool toolbarOwnsPointer =
+            drawViewportToolbar(services, index, state.screenX, state.screenY,
+                                state.screenW, state.screenH);
+        if (toolbarOwnsPointer)
+            state.hovered = false;
+    }
+
     ImGui::End();
     ImGui::PopStyleVar();
     services.onViewportPanel(index, state);
+
+    if (index == 0) {
+        primaryX_ = state.screenX;
+        primaryY_ = state.screenY;
+        primaryW_ = state.screenW;
+        primaryH_ = state.screenH;
+    }
 
     // Welcome Hub (Pass 5): floats over the PRIMARY viewport only, and only
     // while the scene is empty. Drawn as its OWN window after the panel's
@@ -519,6 +623,104 @@ void GuiSystem::drawViewportPanel(Services& services, unsigned int index) {
 
     if (!keepOpen)
         services.closeViewport(index);
+}
+
+// The per-viewport toolbar: acts on THIS viewport's camera (§5.2 — never
+// hardcode viewport 0). Every button runs a registered command or a
+// viewport-scoped Services call (C5). Returns true while the pointer belongs to
+// the toolbar (hover, an active widget, or an open popup) so the caller can stop
+// the scene beneath it from treating the click as a pick/orbit.
+bool GuiSystem::drawViewportToolbar(Services& services, unsigned int index,
+                                    float imageX, float imageY, float imageW,
+                                    float imageH) {
+    if (imageH < 140.0f || imageW < 260.0f)
+        return false; // too small to be anything but noise (C9)
+
+    static bool popupOpen[8] = {};
+    const unsigned slot = index < 8 ? index : 7;
+
+    const float pad = UiKit::Space(3);
+    const float height = ImGui::GetFrameHeight() + pad * 2.0f;
+    const float width = std::min(imageW - UiKit::Space(5) * 2.0f,
+                                 460.0f * UiKit::Scale());
+
+    ImGui::SetCursorScreenPos(
+        ImVec2(imageX + (imageW - width) * 0.5f, imageY + UiKit::Space(4)));
+
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, UiKit::RadiusCard());
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+    ImVec4 bg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
+    bg.w = 0.88f;
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, bg);
+
+    bool owns = false;
+    if (ImGui::BeginChild("##vpToolbar", ImVec2(width, height), ImGuiChildFlags_None,
+                          ImGuiWindowFlags_NoScrollbar |
+                              ImGuiWindowFlags_NoScrollWithMouse |
+                              ImGuiWindowFlags_NoSavedSettings)) {
+        // Gizmo mode (the 1/2/3 hotkeys, as a segmented control).
+        int mode = services.gizmoMode();
+        const char* modes[] = { "Move", "Rotate", "Scale" };
+        ImGui::SetNextItemWidth(180.0f * UiKit::Scale());
+        if (UiKit::SegmentedControl("gizmo", modes, 3, &mode)) {
+            services.setGizmoMode(mode);
+            services.setGizmoEnabled(true);
+        }
+        ImGui::SameLine();
+
+        // View ▾ — standard views, on THIS viewport's camera.
+        if (UiKit::IconButton("view", ICON_FA_CUBE, "Standard views"))
+            ImGui::OpenPopup("##viewMenu");
+        if (ImGui::BeginPopup("##viewMenu")) {
+            popupOpen[slot] = true;
+            const char* names[] = { "Top",  "Bottom", "Front", "Back",
+                                    "Right", "Left",  "Isometric" };
+            for (int v = 0; v < 7; ++v)
+                if (ImGui::MenuItem(names[v]))
+                    services.applyStandardView(index, v);
+            ImGui::EndPopup();
+        } else if (!ImGui::IsPopupOpen("##viewMenu")) {
+            popupOpen[slot] = false;
+        }
+        ImGui::SameLine();
+
+        // Frame the selection in THIS viewport (not the active one).
+        if (UiKit::IconButton("frame", ICON_FA_CROSSHAIRS, "Frame selection (F)"))
+            services.frameItemsIn(index, services.selection().items());
+        ImGui::SameLine();
+
+        // Shading: the only global shading toggle that exists today.
+        bool wireframe = services.settings().render.wireframe;
+        if (UiKit::IconButton("shading", ICON_FA_IMAGE,
+                              wireframe ? "Shading: wireframe" : "Shading: solid"))
+            services.commands().run("view.wireframe");
+        ImGui::SameLine();
+
+        // Tools: the ToolManager segment (Pass 7) — every registered tool.
+        for (const core::Tool& tool : services.tools().tools()) {
+            ImGui::PushID(tool.id.c_str());
+            const bool active = tool.isActive && tool.isActive();
+            if (UiKit::Chip(tool.icon ? tool.icon : "T", active))
+                services.commands().run(tool.id);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", tool.title.c_str());
+            ImGui::PopID();
+            ImGui::SameLine();
+        }
+
+        // Hide the UI (G) — the last thing on the bar, like every 3D app.
+        if (UiKit::IconButton("hideui", ICON_FA_EYE_SLASH, "Hide interface (G)"))
+            services.commands().run("view.toggle_gui");
+
+        owns = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows |
+                                      ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) ||
+               ImGui::IsAnyItemActive() || popupOpen[slot];
+    }
+    ImGui::EndChild();
+
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+    return owns;
 }
 
 void GuiSystem::drawAboutWindow(Services& services) {

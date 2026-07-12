@@ -211,6 +211,67 @@ public:
     core::ShortcutMap&     shortcuts() override { return app_.shortcuts_; }
     core::ToolManager&     tools() override { return app_.toolManager_; }
 
+    // ── Per-viewport cameras (Pass 8 §5.2) ───────────────────────────────────
+    uint32_t activeViewport() const override { return app_.activeViewport_; }
+    Camera& viewportCamera(uint32_t index) override {
+        return app_.viewportCamera(index);
+    }
+    void applyStandardView(uint32_t index, int view) override {
+        app_.applyStandardView(index, view);
+    }
+    void frameItemsIn(uint32_t index,
+                      const std::vector<scene::SceneItemRef>& refs) override {
+        app_.frameItemsIn(index, refs);
+    }
+
+    // ── Scene stats (Pass 8): cheap counters for the status bar + hints ──────
+    Gui::SceneStats sceneStats() const override {
+        Gui::SceneStats stats;
+        const scene::Scene& scene = app_.scene_;
+        stats.models = uint32_t(scene.models.size());
+        stats.lights = uint32_t(scene.pointLights.size());
+        stats.groups = uint32_t(scene.groups.size());
+        stats.layers = uint32_t(scene.i3sLayers.size());
+        stats.clouds = uint32_t(scene.pointClouds.size());
+        for (const scene::Model& model : scene.models) {
+            stats.meshes += uint32_t(model.meshes.size());
+            for (const scene::ModelMesh& mesh : model.meshes)
+                stats.triangles += mesh.buffer.indexCount() / 3;
+            if (model.groupId == 0)
+                ++stats.ungrouped;
+        }
+        for (const Engine::PointCloud& cloud : scene.pointClouds) {
+            stats.points += cloud.totalPointCount;
+            if (cloud.groupId == 0)
+                ++stats.ungrouped;
+            if (cloud.gpu && cloud.gpu->valid())
+                stats.cloudVramMB +=
+                    double(cloud.gpu->storage.size()) / (1024.0 * 1024.0);
+        }
+        const rhi::Device::MemoryBudget budget = app_.device_.deviceLocalBudget();
+        stats.vramUsedMB = double(budget.usageBytes) / (1024.0 * 1024.0);
+        stats.vramBudgetMB = double(budget.budgetBytes) / (1024.0 * 1024.0);
+        return stats;
+    }
+
+    // Is the chord bound to `commandId` held right now? (F1 hold-to-show.) The
+    // GLFW->ImGui key mapping stays app-side, so the Gui layer never sees GLFW.
+    bool shortcutHeld(const std::string& commandId) const override {
+        const ImGuiIO& io = ImGui::GetIO();
+        for (const core::ShortcutBinding& binding :
+             app_.shortcuts_.bindings(commandId)) {
+            if (!binding.valid())
+                continue;
+            if (binding.ctrl != io.KeyCtrl || binding.alt != io.KeyAlt ||
+                binding.shift != io.KeyShift)
+                continue;
+            const ImGuiKey key = imGuiKeyFromGlfw(binding.keyCode);
+            if (key != ImGuiKey_None && ImGui::IsKeyDown(key))
+                return true;
+        }
+        return false;
+    }
+
     // Shortcut capture (Pass 6): the GLFW code of the non-modifier key pressed
     // this frame, so the Gui-layer binding editor never includes GLFW.
     int capturePressedKey() const override {
@@ -3177,6 +3238,46 @@ void Application::registerCommands() {
             c.category = "Create";
             c.keywords = "primitive add new object mesh shape";
             c.action = [this, i] { addPrimitive(i); };
+            add(std::move(c));
+        }
+    }
+    {
+        // Hold F1 = keymap cheat sheet (GuiSystem reads shortcutHeld); the
+        // COMMAND fires on Shift+F1 and pins it (§14). Registering it means the
+        // overlay is rebindable and lists itself.
+        Command c;
+        c.id = "help.shortcuts";
+        c.title = "Keyboard shortcuts (hold F1)";
+        c.category = "Help";
+        c.keywords = "keys keymap cheat sheet bindings help overlay";
+        c.checked = [this] { return guiSystem_.shortcutOverlayPinned(); };
+        c.action = [this] { guiSystem_.toggleShortcutOverlayPinned(); };
+        add(std::move(c));
+        shortcuts_.registerDefault(
+            "help.shortcuts",
+            ShortcutBinding{ GLFW_KEY_F1, /*ctrl=*/false, /*alt=*/false,
+                             /*shift=*/true }, // Shift+F1 pins
+            ShortcutBinding{ GLFW_KEY_F1 });   // plain F1: hold-to-show
+    }
+    {
+        // Standard views (Pass 8): registered so the viewport toolbar, the
+        // palette and the F1 sheet all drive the SAME code (C5). They act on the
+        // ACTIVE viewport (§5.2); the toolbar passes its own index directly.
+        static const char* kViewIds[] = { "view.std.top",   "view.std.bottom",
+                                          "view.std.front", "view.std.back",
+                                          "view.std.right", "view.std.left",
+                                          "view.std.iso" };
+        static const char* kViewNames[] = { "Top view",   "Bottom view",
+                                            "Front view", "Back view",
+                                            "Right view", "Left view",
+                                            "Isometric view" };
+        for (int v = 0; v < 7; ++v) {
+            Command c;
+            c.id = kViewIds[v];
+            c.title = kViewNames[v];
+            c.category = "View";
+            c.keywords = "camera standard axis orthographic view";
+            c.action = [this, v] { applyStandardView(activeViewport_, v); };
             add(std::move(c));
         }
     }

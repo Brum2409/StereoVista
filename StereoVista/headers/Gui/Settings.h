@@ -169,6 +169,12 @@ struct Settings {
         float guiScale = 1.0f;  // user factor on the window-derived scale (0.5–2)
         bool  showStatusBar = true;
         bool  reduceMotion = false; // disables all UiKit micro-animation (§15)
+        // Contextual hints (Pass 8 §14): rate-limited, dismissible forever,
+        // behind this master switch. Intelligence never nags.
+        struct Hints {
+            bool enabled = true;
+            std::vector<std::string> dismissed; // hint ids, never shown again
+        } hints;
         // Panel visibility (View menu toggles; defaults = the shipped layout).
         struct Panels {
             bool scene       = true;
