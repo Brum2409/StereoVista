@@ -1,7 +1,9 @@
 #include "Gui/Panels.h"
 
+#include "Core/ToolManager.h"
 #include "Gui/Inspector.h"
 #include "Gui/Services.h"
+#include "Plugins/PluginManager.h"
 #include "Scene/Scene.h"
 
 #include "imgui/IconsFontAwesome5.h"
@@ -279,6 +281,41 @@ void drawMixed(Services& services, scene::Selection& selection) {
     }
 }
 
+// Tool card (Pass 7 §13): the ACTIVE tool's options, at the top of the Inspector
+// where the user is already looking — instead of each tool owning a floating
+// window. Rendered from the ToolManager, so a tool registered next year appears
+// here with no edit to this file. Plugin tools draw via the onRenderInspector
+// hook; the app-owned clip-plane tool draws the content its dissolved panel used.
+void drawToolCard(Services& services) {
+    const core::Tool* tool = services.tools().active();
+    if (!tool)
+        return;
+
+    UiKit::BeginCard("inspectorTool");
+    UiKit::InlineIcon(tool->icon ? tool->icon : ICON_FA_WRENCH,
+                      UiKit::StyleFor(UiKit::ObjectKind::Tool).color);
+    ImGui::SameLine();
+    ImGui::TextUnformatted(tool->title.c_str());
+    ImGui::SameLine();
+    if (UiKit::IconButton("exitTool", ICON_FA_TIMES, "Exit tool (Esc)"))
+        services.tools().deactivateAll();
+    if (!tool->description.empty()) {
+        ImGui::TextDisabled("%s", tool->description.c_str());
+    }
+    ImGui::Separator();
+
+    // App-owned tool options.
+    if (tool->id == "tool.clipplane")
+        drawClipPlaneToolOptions(services);
+
+    // Plugin tools render their own options through the Pass-7 hook (only the
+    // enabled plugin draws).
+    services.plugins().renderInspector(services.pluginContext());
+
+    UiKit::EndCard();
+    ImGui::Spacing();
+}
+
 // Global (non-per-object) cards shown in per-object contexts (§8): tinted,
 // tagged GLOBAL, deep-linking into Settings.
 void drawGlobalCards(Services& services, const std::vector<Kind>& kinds) {
@@ -333,6 +370,10 @@ void drawInspectorPanel(Services& services, bool* open) {
     scene::Selection& selection = services.selection();
     const std::vector<scene::SceneItemRef>& items = selection.items();
 
+    // Tool card first — an active tool has options whether or not anything is
+    // selected (placing a measurement or a section plane needs no selection).
+    drawToolCard(services);
+
     if (items.empty()) {
         UiKit::EmptyState(ICON_FA_MOUSE_POINTER, "Nothing selected",
                           "Select an object in the viewport or the Scene panel to "
@@ -348,10 +389,7 @@ void drawInspectorPanel(Services& services, bool* open) {
         return;
     }
 
-    // Header card + tool card stub.
     drawHeader(services, selection);
-    // Tool card: options for the active tool land here once Pass 7's ToolManager
-    // and the onRenderInspector plugin hook exist. (Intentionally empty stub.)
 
     // Determine the set of selected kinds.
     std::vector<Kind> kinds;

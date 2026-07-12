@@ -222,12 +222,11 @@ std::string* nameFieldFor(scene::Scene& scene, SceneItemRef ref) {
 // ── Esc cascade ──────────────────────────────────────────────────────────────
 
 bool Application::escapeAction() {
-    // Tool first (the measurement plugin consumes Esc itself before this
-    // command runs), then the selection (§7.1).
-    if (clipPlaneTool_.isEnabled()) {
-        clipPlaneTool_.setEnabled(false);
+    // Active tool first, then the selection (§7.1). Since Pass 7 this asks the
+    // ToolManager instead of naming the clip tool, so EVERY registered tool —
+    // including ones added later — exits on Esc with no edit here (§13).
+    if (toolManager_.deactivateAll())
         return true;
-    }
     if (!selection_.empty()) {
         selection_.clear();
         return true;

@@ -2,6 +2,8 @@
 
 #include "Core/CommandRegistry.h"
 #include "Core/Shortcuts.h"
+#include "Core/ToolManager.h"
+#include "Gui/Exporters.h"
 #include "Gui/Palette.h"
 #include "Gui/Panels.h"
 #include "Gui/Services.h"
@@ -177,7 +179,6 @@ void GuiSystem::draw(Services& services) {
         if (panels.settings)    drawSettingsPanel(services, &panels.settings);
         if (panels.cursor)      drawCursorPanel(services, &panels.cursor);
         if (panels.pointClouds) drawPointCloudPanel(services, &panels.pointClouds);
-        if (panels.clipPlanes)  drawClipPlanePanel(services, &panels.clipPlanes);
         if (panels.diagnostics) drawDiagnosticsPanel(services, &panels.diagnostics);
         if (panels.slpk)        drawSlpkPanel(services, &panels.slpk);
         if (panels.history)     drawHistoryPanel(services, &panels.history);
@@ -199,6 +200,8 @@ void GuiSystem::draw(Services& services) {
 
         // Command palette (Pass 4) — drawn last so its scrim dims every panel.
         Palette::draw(services, &paletteOpen_);
+        // File ▸ Export… (Pass 7): renders from the exporter registry.
+        Exporters::drawExportDialog(services, &exportOpen_);
     }
 
     // Scene-open decision modal (C8) — outside the master GUI toggle: a
@@ -270,7 +273,6 @@ void GuiSystem::drawMenuBar(Services& services) {
         commandMenuItem(services, "view.panel.settings");
         commandMenuItem(services, "view.panel.cursor");
         commandMenuItem(services, "view.panel.pointclouds");
-        commandMenuItem(services, "view.panel.clipplanes");
         commandMenuItem(services, "view.panel.diagnostics");
         commandMenuItem(services, "view.panel.slpk");
         commandMenuItem(services, "view.panel.history");
@@ -390,6 +392,17 @@ void GuiSystem::drawStatusBar(Services& services) {
             ImGui::SameLine(0.0f, UiKit::Space(7));
             if (UiKit::Chip(ICON_FA_EYE "  Isolated - click to exit", true))
                 services.exitIsolate();
+        }
+
+        // ── Active-tool chip (Pass 7 §13): rendered from the ToolManager, so a
+        //    tool registered next year shows up here with no edit. Click exits.
+        if (const core::Tool* tool = services.tools().active()) {
+            ImGui::SameLine(0.0f, UiKit::Space(7));
+            const std::string chip =
+                std::string(tool->icon ? tool->icon : "") + "  " + tool->title +
+                " - click to exit";
+            if (UiKit::Chip(chip.c_str(), true))
+                services.tools().deactivateAll();
         }
 
         // ── Background activity ────────────────────────────────────────────
@@ -558,7 +571,6 @@ void GuiSystem::buildDefaultLayout(unsigned int dockspaceId, float sizeX,
     ImGui::DockBuilderDockWindow(Windows::Settings, right);
     ImGui::DockBuilderDockWindow(Windows::Cursor, right);
     ImGui::DockBuilderDockWindow(Windows::PointClouds, right);
-    ImGui::DockBuilderDockWindow(Windows::ClipPlanes, right);
     ImGui::DockBuilderDockWindow(Windows::Slpk, right);
     ImGui::DockBuilderDockWindow(Windows::Diagnostics, rightBottom);
 

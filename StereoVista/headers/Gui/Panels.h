@@ -39,7 +39,10 @@ void drawCursorPanel(Services& services, bool* open);
 // controls exist once and cannot drift apart.
 void drawCursorSettings(Services& services);
 void drawPointCloudPanel(Services& services, bool* open);
-void drawClipPlanePanel(Services& services, bool* open);
+// Clip-plane TOOL OPTIONS (Pass 7 §13). The standalone Clip Planes window
+// dissolved: this renders inside the Inspector's Tool card while the
+// Section-plane tool is active. The planes themselves are Outliner rows.
+void drawClipPlaneToolOptions(Services& services);
 void drawDiagnosticsPanel(Services& services, bool* open);
 // SLPK / I3S scene layers (open + inspector; docs/SLPK_IMPLEMENTATION_PLAN.md).
 void drawSlpkPanel(Services& services, bool* open);

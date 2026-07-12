@@ -209,6 +209,7 @@ public:
 
     core::CommandRegistry& commands() override  { return app_.commands_; }
     core::ShortcutMap&     shortcuts() override { return app_.shortcuts_; }
+    core::ToolManager&     tools() override { return app_.toolManager_; }
 
     // Shortcut capture (Pass 6): the GLFW code of the non-modifier key pressed
     // this frame, so the Gui-layer binding editor never includes GLFW.
@@ -821,6 +822,7 @@ void Application::init() {
     // its default binding, then overlay the user's shortcuts.json (a GL-era
     // profile file is migrated on load). From here on saving is safe.
     registerCommands();
+    registerTools(); // Pass 7: tools + their commands (plugins are loaded above)
     shortcuts_.loadFromFile(kShortcutsFile);
     prefsReady_ = true;
     prefsSnapshot_ = Gui::Preferences::snapshot(settings_, &commands_);
@@ -3152,8 +3154,6 @@ void Application::registerCommands() {
                 &Gui::Settings::Ui::Panels::cursor);
     panelToggle("view.panel.pointclouds", Gui::Windows::PointClouds,
                 &Gui::Settings::Ui::Panels::pointClouds);
-    panelToggle("view.panel.clipplanes", Gui::Windows::ClipPlanes,
-                &Gui::Settings::Ui::Panels::clipPlanes);
     panelToggle("view.panel.diagnostics", Gui::Windows::Diagnostics,
                 &Gui::Settings::Ui::Panels::diagnostics);
     panelToggle("view.panel.slpk", Gui::Windows::Slpk,
@@ -3179,6 +3179,16 @@ void Application::registerCommands() {
             c.action = [this, i] { addPrimitive(i); };
             add(std::move(c));
         }
+    }
+    {
+        // File ▸ Export… — renders from the Pass-7 exporter registry.
+        Command c;
+        c.id = "file.export";
+        c.title = "Export...";
+        c.category = "File";
+        c.keywords = "export save write screenshot point cloud scene output";
+        c.action = [this] { guiSystem_.openExportDialog(); };
+        add(std::move(c));
     }
     {
         // The palette searches commands, objects, snapshots and recents (Pass 4).

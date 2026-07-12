@@ -404,6 +404,7 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClCompile Include="src\App\SceneOps.cpp" />
     <ClCompile Include="src\App\Snapshots.cpp" />
     <ClCompile Include="src\App\ImportOps.cpp" />
+    <ClCompile Include="src\App\ToolOps.cpp" />
     <ClCompile Include="src\App\main.cpp" />
     <ClCompile Include="src\Platform\Window.cpp" />
     <ClCompile Include="src\Platform\FileMapping.cpp" />
@@ -594,6 +595,7 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClCompile Include="src\Core\CommandRegistry.cpp" />
     <ClCompile Include="src\Core\Shortcuts.cpp" />
     <ClCompile Include="src\Core\ImportService.cpp" />
+    <ClCompile Include="src\Core\ToolManager.cpp" />
     <ClCompile Include="src\Core\CursorSynchronizer.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
@@ -616,6 +618,7 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClCompile Include="src\Gui\Outliner.cpp" />
     <ClCompile Include="src\Gui\Inspector.cpp" />
     <ClCompile Include="src\Gui\Palette.cpp" />
+    <ClCompile Include="src\Gui\Exporters.cpp" />
     <ClCompile Include="src\Gui\inspectors\LayerInspector.cpp" />
     <ClCompile Include="src\Gui\panels\HistoryPanel.cpp" />
     <ClCompile Include="src\Gui\panels\SnapshotsPanel.cpp" />
@@ -756,6 +759,7 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClInclude Include="headers\Core\CommandRegistry.h" />
     <ClInclude Include="headers\Core\Shortcuts.h" />
     <ClInclude Include="headers\Core\ImportService.h" />
+    <ClInclude Include="headers\Core\ToolManager.h" />
     <ClInclude Include="headers\Cursors\CursorTypes.h" />
     <ClInclude Include="headers\Core\CursorSynchronizer.h" />
     <ClInclude Include="headers\Core\CursorSyncState.h" />
@@ -955,6 +959,7 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClInclude Include="headers\Gui\Inspector.h" />
     <ClInclude Include="headers\Gui\Palette.h" />
     <ClInclude Include="headers\Gui\SettingsIndex.h" />
+    <ClInclude Include="headers\Gui\Exporters.h" />
     <ClInclude Include="headers\Gui\Preferences.h" />
   </ItemGroup>
   <ItemGroup>

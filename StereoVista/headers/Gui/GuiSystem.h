@@ -49,6 +49,9 @@ public:
     void openPalette() { paletteOpen_ = true; }
     bool paletteOpen() const { return paletteOpen_; }
 
+    // File ▸ Export… (Pass 7): the selection-aware exporter picker.
+    void openExportDialog() { exportOpen_ = true; }
+
 private:
     void drawMenuBar(Services& services);
     void drawStatusBar(Services& services);
@@ -68,6 +71,7 @@ private:
     bool resetLayout_       = false;
     bool layoutInitialized_ = false;
     bool paletteOpen_       = false;
+    bool exportOpen_        = false;
 };
 
 } // namespace Gui

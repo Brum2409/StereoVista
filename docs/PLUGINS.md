@@ -66,6 +66,7 @@ onRegister(ctx)           once, when added to the manager (wire scene data)
 onUpdate(ctx, dt)         once per frame, before rendering
 onBuildOverlay(ctx)       once per frame — append world-space geometry to ctx.overlay()
 onRenderUI(ctx)           once per frame (ImGui pass) — draw your windows
+onRenderInspector(ctx)    ONLY while enabled — your options, in the Inspector's Tool card
 onRenderMenu(ctx)         once per frame, inside the Tools menu
    ── on input ──
 onMouseButton/onScroll/onKey(ctx, …)   return true to CONSUME the event
@@ -76,6 +77,27 @@ onEnable() / onDisable()  on an actual isEnabled() transition
 `onBuildOverlay` is called **once per frame** (not per eye): you describe geometry
 in world space and the renderer draws it for every eye. There are **no matrices to
 handle** and **no GPU state to save/restore**.
+
+### Tools are modes (UI redesign Pass 7)
+
+A plugin whose `info().category` is `PluginCategory::Tool` is **automatically
+registered as a tool (a mode)** in `core::ToolManager` at startup — you write no
+registration code. That buys you, for free:
+
+- an entry in the **Tools menu** and in the **`Ctrl+K` palette** (one command per
+  tool, so it is also **rebindable** in Settings ▸ Shortcuts);
+- the **status-bar chip** showing your tool is active (click = exit);
+- **`Esc` exits your tool** before it clears the selection;
+- **exclusivity** — activating another tool disables yours (`onDisable()` fires).
+
+Draw your options in **`onRenderInspector(ctx)`** rather than a floating window:
+it is called only while your plugin is enabled, inside the Inspector's Tool card,
+with no `Begin`/`End` of your own (the card owns the container). Objects your tool
+creates belong in the **Outliner** (give them an `ObjectId` and an Outliner
+provider) — do not build a second list inside your own panel.
+
+`onRenderUI` still works exactly as before, so existing plugins are unaffected —
+the hook is purely additive.
 
 ---
 

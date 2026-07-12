@@ -16,25 +16,16 @@
 namespace Gui {
 
 // Section / clip planes. These clip both meshes and point clouds whenever
-// enabled planes exist; the "editing" toggle drives the overlay + gizmo
+// enabled planes exist; the tool MODE drives the editing overlay + gizmo
 // takeover. The active plane is edited with the transform gizmo (translate =
 // slide, rotate = steer the normal).
-void drawClipPlanePanel(Services& services, bool* open) {
-    if (!ImGui::Begin(Windows::ClipPlanes, open)) {
-        ImGui::End();
-        return;
-    }
-
+//
+// Pass 7 (§13): the standalone Clip Planes window DISSOLVED — this content is
+// now the tool's options, rendered in the Inspector's Tool card while the
+// Section-plane tool is active (the planes themselves are Outliner rows since
+// Pass 1). Same controls, better home — nothing was lost (C10).
+void drawClipPlaneToolOptions(Services& services) {
     Tools::ClipPlaneTool& tool = services.clipTool();
-
-    bool enabled = tool.isEnabled();
-    if (ImGui::Checkbox("Enable editing", &enabled))
-        tool.setEnabled(enabled);
-    ImGui::SameLine();
-    ImGui::TextDisabled("(?)");
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Clipping applies whenever enabled planes exist; this "
-                          "toggle only drives the editing overlay + gizmo takeover.");
 
     const glm::vec3 center =
         (services.scene().worldBoundsMin + services.scene().worldBoundsMax) * 0.5f;
@@ -77,8 +68,6 @@ void drawClipPlanePanel(Services& services, bool* open) {
     }
     if (deleteIdx >= 0)
         tool.deletePlane(deleteIdx);
-
-    ImGui::End();
 }
 
 } // namespace Gui

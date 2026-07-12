@@ -3,6 +3,7 @@
 #include "Core/Camera.h"
 #include "Core/CommandRegistry.h"
 #include "Core/Shortcuts.h"
+#include "Core/ToolManager.h"
 #include "Core/UndoManager.h"
 #include "Cursors/Base/CursorManager.h"
 #include "Engine/Data.h"
@@ -275,6 +276,9 @@ private:
     // the old hardcoded key handling. Both are fed by registerCommands()
     // (one place: command + menu grouping + default binding).
     void registerCommands();
+    // Register the interactive tools (modes) + their commands (Pass 7 §13).
+    // Called after the plugins load, since measurement lives in one.
+    void registerTools();
     // Per-frame key-edge dispatch: bindings whose chord was pressed run their
     // command. Called from the keyboard block of updateCamera (same
     // WantCaptureKeyboard gate the hardcoded keys used).
@@ -335,6 +339,7 @@ private:
     // dispatchShortcuts() runs bindings, frecency rides preferences.json.
     core::CommandRegistry commands_;
     core::ShortcutMap shortcuts_;
+    core::ToolManager toolManager_; // Pass 7: the one tool (mode) registry
 
     // Preferences persistence (Gui::Settings ⇄ preferences.json + shortcuts ⇄
     // shortcuts.json, both cwd-relative like the GL app). prefsReady_ gates

@@ -85,6 +85,13 @@ public:
     // menu entry below.
     virtual void onRenderUI(PluginContext&) {}
 
+    // Inspector Tool card (UI redesign Pass 7 §13). Called ONLY while this
+    // plugin is enabled (it is the active tool), inside the Inspector window at
+    // the top. Draw the tool's options here — no Begin/End, just widgets — and
+    // they appear where the user is already looking instead of in a floating
+    // window of their own. Optional: a plugin with no options ignores it.
+    virtual void onRenderInspector(PluginContext&) {}
+
     // Tools-menu entry. Default: a checkbox menu item toggling windowOpen().
     // Override for a custom submenu.
     virtual void onRenderMenu(PluginContext&);

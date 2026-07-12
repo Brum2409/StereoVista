@@ -53,6 +53,29 @@ void MeasurementPlugin::onRenderMenu(PluginContext& /*ctx*/) {
 }
 
 // ── ImGui: value labels (always) + settings window ──────────────────────────
+// The tool's options, rendered by the Inspector's Tool card while this plugin is
+// the active tool (Pass 7 §13). No Begin/End — the card owns the container. The
+// measurement list is deliberately absent: measurements are Outliner rows (Pass
+// 1) and their per-object editing is the Inspector's job, not a second list.
+void MeasurementPlugin::onRenderInspector(PluginContext& ctx) {
+    (void)ctx;
+    int mode = static_cast<int>(m_tool.getMode());
+    const char* modes[] = { "Distance", "Angle", "Point", "Area" };
+    ImGui::SetNextItemWidth(160.0f);
+    if (ImGui::Combo("Mode", &mode, modes, 4))
+        m_tool.setMode(static_cast<Engine::Measurement::Type>(mode));
+    ImGui::TextDisabled(
+        "LMB add \xC2\xB7 RMB/Enter finish \xC2\xB7 Backspace undo \xC2\xB7 Del cancel");
+
+    ImGui::Checkbox("Labels", &m_tool.showLabels);
+    ImGui::SameLine();
+    ImGui::Checkbox("Segment", &m_tool.showSegmentLabels);
+    ImGui::SameLine();
+    ImGui::Checkbox("X-ray", &m_tool.xRay);
+    ImGui::SetNextItemWidth(120.0f);
+    ImGui::DragFloat("Unit scale", &m_tool.unitScale, 0.01f, 0.001f, 1000.0f, "%.3f");
+}
+
 void MeasurementPlugin::onRenderUI(PluginContext& ctx) {
     // Value labels over the 3D view are independent of the settings window.
     // The context reports where the view sits on screen (the docked viewport

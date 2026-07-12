@@ -67,6 +67,19 @@ void PluginManager::renderMenu(PluginContext& ctx) {
     for (Plugin* p : m_all) p->onRenderMenu(ctx);
 }
 
+// Inspector Tool card (Pass 7 §13): only the ENABLED plugin(s) draw — the card
+// belongs to the active tool. Returns true when anything was drawn, so the
+// Inspector can skip the card's chrome entirely when no tool has options.
+bool PluginManager::renderInspector(PluginContext& ctx) {
+    bool drew = false;
+    for (Plugin* p : m_all)
+        if (p->isEnabled()) {
+            p->onRenderInspector(ctx);
+            drew = true;
+        }
+    return drew;
+}
+
 bool PluginManager::dispatchMouseButton(PluginContext& ctx, int button,
                                         int action, int mods) {
     for (Plugin* p : m_all)

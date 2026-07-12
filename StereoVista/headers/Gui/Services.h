@@ -34,7 +34,8 @@
 class Camera;
 namespace scene { struct Scene; }
 namespace Cursor { class CursorManager; }
-namespace core { class UndoManager; class CommandRegistry; class ShortcutMap; }
+namespace core { class UndoManager; class CommandRegistry; class ShortcutMap;
+                 class ToolManager; }
 namespace Tools { class ClipPlaneTool; }
 namespace Plugins { class PluginManager; class PluginContext; }
 namespace Engine { struct XRDiagnostics; }
@@ -138,6 +139,9 @@ public:
     // labels (menus) and the binding editor (Settings, Pass 6).
     virtual core::CommandRegistry& commands() = 0;
     virtual core::ShortcutMap&     shortcuts() = 0;
+    // The tool registry (Pass 7 §13): the Tools menu, the palette, the status
+    // chip, the Inspector Tool card and the viewport toolbar all render from it.
+    virtual core::ToolManager&     tools() = 0;
     // Shortcut-capture helper for the Pass-6 binding editor: the GLFW key code
     // pressed this frame (0 = none; modifier keys are never reported). The app
     // owns the ImGui<->GLFW key translation, so the Gui layer never includes

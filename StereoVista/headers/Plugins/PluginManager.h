@@ -45,6 +45,9 @@ public:
     void buildOverlay(PluginContext& ctx);        // onBuildOverlay for all
     void renderUI(PluginContext& ctx);            // onRenderUI for all
     void renderMenu(PluginContext& ctx);          // onRenderMenu for all
+    // onRenderInspector for the ENABLED plugins only (the Inspector's Tool
+    // card belongs to the active tool). True when anything drew (Pass 7 §13).
+    bool renderInspector(PluginContext& ctx);
 
     // ── Input dispatch (true == consumed by some plugin) ────────────────────
     bool dispatchMouseButton(PluginContext& ctx, int button, int action, int mods);

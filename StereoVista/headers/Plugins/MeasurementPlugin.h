@@ -31,6 +31,10 @@ public:
 
     void onBuildOverlay(PluginContext& ctx) override;
     void onRenderUI(PluginContext& ctx) override;
+    // Tool options in the Inspector's Tool card (Pass 7 §13) — mode, labels,
+    // units. The measurement LIST is not repeated here: measurements have been
+    // Outliner rows since Pass 1.
+    void onRenderInspector(PluginContext& ctx) override;
     void onRenderMenu(PluginContext& ctx) override;
     bool onMouseButton(PluginContext& ctx, int button, int action, int mods) override;
     bool onKey(PluginContext& ctx, int key, int scancode, int action, int mods) override;
