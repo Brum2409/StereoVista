@@ -110,10 +110,17 @@ private:
 
     rhi::Device* device_ = nullptr;
 
-    rhi::Pipeline rasterizePipeline_;
+    // The three GEOMETRY kernels come in two specializations of ONE shader
+    // (spec constant 0 = the per-invocation view-array capacity): [0] =
+    // kMaxViews, bound whenever the frame's flat view count fits one
+    // viewport's eyes — the single-viewport hot path keeps exactly its
+    // pre-multi-viewport register/scratch footprint — and [1] = kMaxViews *
+    // kMaxViewports, bound only on frames rendering several viewports.
+    // Lookup/resolve hold no per-view arrays and need no variants.
+    rhi::Pipeline rasterizePipelines_[2];
+    rhi::Pipeline hqsDepthPipelines_[2];
+    rhi::Pipeline hqsColorPipelines_[2];
     rhi::Pipeline lookupPipeline_;
-    rhi::Pipeline hqsDepthPipeline_;
-    rhi::Pipeline hqsColorPipeline_;
     rhi::Pipeline resolvePipeline_;
     rhi::Pipeline hqsResolvePipeline_;
 

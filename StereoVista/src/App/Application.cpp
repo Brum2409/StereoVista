@@ -504,6 +504,18 @@ void Application::init() {
     primary.name = "Viewport";
     viewports_.push_back(std::move(primary));
 
+    // Double-click centering: when the glide completes, the centred point sits
+    // at the viewport centre and the orbit pivot has re-anchored on it
+    // (UpdateAnimation). Warp the OS mouse there too so the depth pick / a
+    // following orbit continue from that point — but only while the mouse is
+    // still over the 3D view (the GL app yanked it out of panels
+    // unconditionally). Secondary viewport cameras inherit the callback by
+    // copy in addViewport().
+    camera_.centeringCompletedCallback = [this]() {
+        if (sceneInput_.hovered)
+            warpMouseToViewportCenter();
+    };
+
     // Tools record through the app-owned undo stack.
     clipPlaneTool_.setUndoManager(&undo_);
 
@@ -568,6 +580,19 @@ void Application::endNavCapture() {
     navWindow_ = nullptr;
 }
 
+void Application::warpMouseToViewportCenter() {
+    // sceneInput_.screenPos/screenSize are the 3D-view image rect in ImGui
+    // screen space (desktop coords with multi-viewport); glfwSetCursorPos
+    // wants client-area coords of the OS window hosting the view.
+    GLFWwindow* host =
+        sceneInput_.hostWindow ? sceneInput_.hostWindow : window_.handle();
+    int wx = 0, wy = 0;
+    glfwGetWindowPos(host, &wx, &wy);
+    const glm::vec2 center =
+        sceneInput_.screenPos + sceneInput_.screenSize * 0.5f;
+    glfwSetCursorPos(host, double(center.x - wx), double(center.y - wy));
+}
+
 void Application::startOrbit() {
     // The viewport under the mouse owns the interaction (activeViewport_ is
     // frozen by updateSceneInput for the whole drag).
@@ -597,6 +622,24 @@ void Application::startOrbit() {
 void Application::updateCamera(float dt) {
     ImGuiIO& io = ImGui::GetIO();
 
+    // World size of the scene content — scales the adaptive-speed and scroll
+    // distance curves. Models + rendered I3S layers come from the precomputed
+    // scene world bounds; loaded point clouds live outside scene_, so union
+    // their (scaled) boxes in. The GL version only measured the FIRST model's
+    // untransformed vertices.
+    float sceneSize = 0.0f;
+    {
+        const glm::vec3 sceneDim = scene_.worldBoundsMax - scene_.worldBoundsMin;
+        sceneSize = glm::max(sceneDim.x, glm::max(sceneDim.y, sceneDim.z));
+        for (const Engine::PointCloud& pc : pointClouds_) {
+            if (!pc.visible || !pc.hasBounds())
+                continue;
+            const glm::vec3 dim = (pc.boundsMax - pc.boundsMin) * glm::abs(pc.scale);
+            sceneSize = glm::max(sceneSize, glm::max(dim.x, glm::max(dim.y, dim.z)));
+        }
+        sceneSize = glm::max(sceneSize, 1.0f);
+    }
+
     // Push the tunable navigation feel onto EVERY viewport camera each frame
     // (the panels edit settings_, not the Cameras directly).
     for (size_t v = 0; v < viewports_.size(); ++v) {
@@ -605,6 +648,7 @@ void Application::updateCamera(float dt) {
         cam.orbitAroundCursor = settings_.camera.orbitAroundCursor;
         cam.MouseSensitivity = settings_.camera.sensitivity;
         cam.speedFactor = settings_.camera.speedFactor;
+        cam.sceneSize = sceneSize;
         cam.useSmoothScrolling = settings_.camera.useSmoothScrolling;
         cam.scrollMomentum = settings_.camera.scrollMomentum;
         cam.scrollDeceleration = settings_.camera.scrollDeceleration;
@@ -693,15 +737,40 @@ void Application::updateCamera(float dt) {
     // ---- Camera nav + click-to-select (skips the LMB the gizmo/plugin took) ----
     if (!navActive() && !gizmoDragging_ && hovered) {
         if (lmb && !lmbOwned_ && !gizmoTookLmb) {
-            // Capture a click candidate: a left press that releases without
-            // dragging becomes a selection at the 3D cursor's world point.
-            lmbPressPos_ = sceneInput_.mousePx;
-            lmbDragDist_ = 0.0f;
-            lmbClickCandidate_ = true;
-            clickCursorValid_ = cursorManager_.isCursorPositionValid();
-            clickCursorWorld_ =
-                clickCursorValid_ ? cursorManager_.getCursorPosition() : glm::vec3(0.0f);
-            startOrbit();
+            // Double LEFT click -> glide-centre the view on the point under
+            // the mouse (the orbit pivot re-anchors there on completion, and
+            // the init() callback warps the mouse to the view centre).
+            // Detection is ImGui's (0.3s + spatial slop, aggregated across OS
+            // windows) — the GL check was time-only, so two clicks in opposite
+            // corners counted. Further GL fixes: empty space centres on the
+            // background-plane point the user actually aimed at (not a
+            // roll-levelling no-op), Ctrl stays a pure selection gesture, and
+            // XR is excluded (the desktop depth pick is frozen there).
+            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) &&
+                !(mods & GLFW_MOD_CONTROL) && !camera.IsAnimating &&
+                !xrRunning()) {
+                glm::vec3 target;
+                if (cursorManager_.isCursorPositionValid())
+                    target = cursorManager_.getCursorPosition();
+                else if (cursorManager_.hasBackgroundCursorPosition())
+                    target = cursorManager_.getBackgroundCursorPosition();
+                else // nothing under the mouse at all: level toward ahead
+                    target = camera.Position + camera.Front * camera.OrbitDistance;
+                camera.StartCenteringAnimation(target);
+                lmbClickCandidate_ = false;
+            } else {
+                // Capture a click candidate: a CTRL+left press that releases
+                // without dragging becomes a selection at the 3D cursor's
+                // world point (GL parity — a plain left press only orbits).
+                lmbPressPos_ = sceneInput_.mousePx;
+                lmbDragDist_ = 0.0f;
+                lmbClickCandidate_ = (mods & GLFW_MOD_CONTROL) != 0;
+                clickCursorValid_ = cursorManager_.isCursorPositionValid();
+                clickCursorWorld_ = clickCursorValid_
+                                        ? cursorManager_.getCursorPosition()
+                                        : glm::vec3(0.0f);
+                startOrbit();
+            }
         } else if (mmb && !mmbOwned_) {
             camera.StartPanning();
             panning_ = true;
@@ -717,10 +786,10 @@ void Application::updateCamera(float dt) {
             camera.StopOrbiting();
             orbiting_ = false;
             endNavCapture();
-            // A left click that barely moved selects the object under it — the
-            // press started on the 3D view, so no GUI re-check on release.
-            // (While measuring, the MeasurementPlugin consumes the press, so no
-            // orbit candidate is started and this never runs.)
+            // A Ctrl+left click that barely moved selects the object under it
+            // — the press started on the 3D view, so no GUI re-check on
+            // release. (While measuring, the MeasurementPlugin consumes the
+            // press, so no orbit candidate is started and this never runs.)
             if (lmbClickCandidate_ && lmbDragDist_ < kClickThresholdPx)
                 performSelectionClick();
             lmbClickCandidate_ = false;
@@ -751,18 +820,26 @@ void Application::updateCamera(float dt) {
     prevMmb_ = mmb;
     prevRmb_ = rmb;
 
-    // Scroll zoom (toward the 3D/background cursor when enabled). ImGui's GLFW
-    // backend accumulates the wheel into io.MouseWheel each frame. Plugins get
-    // first refusal (a tool may scrub a value); the camera zooms otherwise.
-    // Gated on the 3D view being hovered — panels keep their own scrolling.
-    if (hovered && io.MouseWheel != 0.0f) {
+    // Scroll zoom (toward the 3D/background cursor when enabled). The wheel is
+    // wheelThisFrame_, captured in run() before ImGui::Render — EndFrame zeroes
+    // io.MouseWheel, so reading io here always saw 0. Plugins get first refusal
+    // (a tool may scrub a value); the camera zooms otherwise. Gated on the 3D
+    // view being hovered — panels keep their own scrolling.
+    if (hovered && wheelThisFrame_ != 0.0f) {
         const bool consumed =
             pluginContext_ && pluginManager_.dispatchScroll(*pluginContext_, 0.0,
-                                                            double(io.MouseWheel));
-        if (!consumed)
-            camera.ProcessMouseScroll(io.MouseWheel,
+                                                            double(wheelThisFrame_));
+        if (!consumed) {
+            // Refresh the camera's 3D-cursor info from the CURRENT pick before
+            // zooming (the GL scroll callback did the same). Without this,
+            // zoom-to-cursor aimed at whatever startOrbit() last captured —
+            // stale, or never set at all.
+            camera.UpdateCursorInfo(cursorManager_.getCursorPosition(),
+                                    cursorManager_.isCursorPositionValid());
+            camera.ProcessMouseScroll(wheelThisFrame_,
                                       cursorManager_.getBackgroundCursorPosition(),
                                       cursorManager_.hasBackgroundCursorPosition());
+        }
     }
     // Every camera keeps integrating: scroll momentum finishes after the mouse
     // leaves a viewport, and a fly-to animation keeps running in a viewport
@@ -772,20 +849,40 @@ void Application::updateCamera(float dt) {
         viewportCamera(v).UpdateAnimation(dt);
     }
 
-    // Keyboard fly (WASDQE + Shift boost). Suppressed while a text field owns
-    // the keyboard. Keys come from ImGui's aggregated state (fed by every OS
+    // Keyboard fly: WASD + Space/E up + Shift/Q down (GL parity — Shift is
+    // vertical movement, NOT a speed boost; speed comes from the speed-factor
+    // slider / the adaptive feed). Suppressed while a text field owns the
+    // keyboard. Keys come from ImGui's aggregated state (fed by every OS
     // window the backend owns), so shortcuts keep working when the keyboard
     // focus sits on a dragged-out Viewport window.
     if (!io.WantCaptureKeyboard) {
         // Fly the ACTIVE viewport's camera (the one the mouse is over).
-        camera.MovementSpeed =
-            settings_.camera.speed * (io.KeyShift ? 4.0f : 1.0f);
-        if (ImGui::IsKeyDown(ImGuiKey_W)) camera.ProcessKeyboard(FORWARD, dt);
-        if (ImGui::IsKeyDown(ImGuiKey_S)) camera.ProcessKeyboard(BACKWARD, dt);
-        if (ImGui::IsKeyDown(ImGuiKey_A)) camera.ProcessKeyboard(LEFT, dt);
-        if (ImGui::IsKeyDown(ImGuiKey_D)) camera.ProcessKeyboard(RIGHT, dt);
-        if (ImGui::IsKeyDown(ImGuiKey_E)) camera.ProcessKeyboard(UP, dt);
-        if (ImGui::IsKeyDown(ImGuiKey_Q)) camera.ProcessKeyboard(DOWN, dt);
+        // Manual mode pins the speed each frame; adaptive mode lets
+        // updateCameraDepth evolve MovementSpeed from the depth feed instead.
+        if (!settings_.camera.adaptiveSpeed)
+            camera.MovementSpeed =
+                settings_.camera.speed * settings_.camera.speedFactor;
+
+        // Ctrl chords (undo / Ctrl+click select / …) never fly the camera, and
+        // a gizmo drag owns Shift for its snapping modifier.
+        const bool canFly = !io.KeyCtrl && !gizmoDragging_;
+        bool flying = false;
+        auto fly = [&](bool down, Camera_Movement dir) {
+            if (down && canFly) {
+                camera.ProcessKeyboard(dir, dt);
+                flying = true;
+            }
+        };
+        fly(ImGui::IsKeyDown(ImGuiKey_W), FORWARD);
+        fly(ImGui::IsKeyDown(ImGuiKey_S), BACKWARD);
+        fly(ImGui::IsKeyDown(ImGuiKey_A), LEFT);
+        fly(ImGui::IsKeyDown(ImGuiKey_D), RIGHT);
+        fly(ImGui::IsKeyDown(ImGuiKey_Space) || ImGui::IsKeyDown(ImGuiKey_E), UP);
+        fly(io.KeyShift || ImGui::IsKeyDown(ImGuiKey_Q), DOWN);
+        // Drive the adaptive-speed gate from THIS frame's keys — ProcessKeyboard
+        // only sets isMoving when called, so it went stale-true once every fly
+        // key was released (the GL app had the same latent bug).
+        camera.isMoving = flying;
 
         // Escape clears the current selection (edge-triggered).
         const bool escape = ImGui::IsKeyDown(ImGuiKey_Escape);
@@ -840,9 +937,58 @@ void Application::updateCamera(float dt) {
         if (yHeld && !prevRedoKey_) undo_.redo();
         prevRedoKey_ = yHeld;
     } else {
+        camera.isMoving = false;
         prevEscape_ = false;
         prevF1_ = false;
     }
+
+    // Distance-adaptive fly/zoom speed from the centre-depth feed. Runs after
+    // the fly keys so isMoving reflects this frame; the adapted speed applies
+    // from the next frame on (one-frame lag, same as the GL PBO read).
+    updateCameraDepth(dt);
+}
+
+void Application::updateCameraDepth(float dt) {
+    // The GL app drove this with a stalling glReadPixels of the centre depth
+    // every frame; here the same feed rides the async depth-pick readback (the
+    // 1x1 centre rect queued in updateCursorAndOverlay, read one frame later —
+    // no stall). No depth queries run while XR owns the frame.
+    if (xrRunning())
+        return;
+    const renderer::DepthReadback& rb = renderer_.depthSamples();
+    if (!rb.valid || rb.extent.width == 0 || rb.extent.height == 0)
+        return;
+    // Right after the mouse crosses into another viewport, the published
+    // readback still belongs to the previous one for ~frames-in-flight frames
+    // — feeding that distance into THIS viewport's camera would poison its
+    // speed/zoom until fresh samples land. Pause the feed instead.
+    if (rb.viewport != activeViewport_)
+        return;
+
+    const glm::ivec2 center(int(rb.extent.width) / 2, int(rb.extent.height) / 2);
+    float depth = 0.0f;
+    if (!rb.sample(center, depth))
+        return; // centre wasn't queried last frame (startup / mode switch)
+
+    // Reverse-Z: depth 0 = far plane (background/sky). A miss counts as
+    // "looking at empty space" at the far plane, like the GL path.
+    const float farPlane = settings_.camera.farPlane;
+    float distance = farPlane;
+    if (depth > 1e-6f) {
+        const float ndcX = (center.x + 0.5f) / float(rb.extent.width) * 2.0f - 1.0f;
+        const float ndcY = (center.y + 0.5f) / float(rb.extent.height) * 2.0f - 1.0f;
+        const glm::vec4 h = rb.invViewProj * glm::vec4(ndcX, ndcY, depth, 1.0f);
+        const glm::vec3 world = glm::vec3(h) / h.w;
+        distance = glm::length(world - rb.cameraPos);
+    }
+
+    // The distance feed also anchors the zoom reference distance, so scroll
+    // zoom stays distance-proportional even when adaptive fly speed is
+    // toggled off.
+    Camera& camera = activeCamera();
+    camera.UpdateDistanceToObject(distance);
+    if (settings_.camera.adaptiveSpeed)
+        camera.AdjustMovementSpeed(distance, farPlane, dt);
 }
 
 uint32_t Application::viewCameras(renderer::ViewCamera out[renderer::kMaxViews],
@@ -1205,10 +1351,11 @@ void Application::updateCursorAndOverlay(renderer::FrameSubmission& submission,
             /*forceRecalculate=*/true);
     }
 
-    // Auto-convergence samples the scene depth at the screen centre. Queried
-    // regardless of nav (convergence should keep tracking while orbiting) and
-    // read back one frame later in updateStereoConvergence.
-    if (settings_.stereo.autoConvergence && stereoMode_ != StereoMode::Off) {
+    // The scene depth at the screen centre feeds the distance-adaptive
+    // fly/zoom speed (updateCameraDepth) and stereo auto-convergence. Queried
+    // every frame regardless of nav (both consumers keep tracking while
+    // orbiting) and read back one frame later; a 1x1 rect costs nothing.
+    {
         renderer::DepthQueryRect rect;
         rect.origin = glm::ivec2(int(extent.width) / 2, int(extent.height) / 2);
         rect.size = glm::ivec2(1, 1);
@@ -1615,6 +1762,10 @@ void Application::run() {
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
         buildUi();
+        // Capture this frame's wheel BEFORE Render: ImGui::EndFrame (inside
+        // Render) zeroes io.MouseWheel, and updateCamera runs after the GUI
+        // pass — it would only ever see 0 there (scroll zoom was dead).
+        wheelThisFrame_ = ImGui::GetIO().MouseWheel;
         ImGui::Render();
 
         // Effective 3D-view input for this frame — after the GUI built (the

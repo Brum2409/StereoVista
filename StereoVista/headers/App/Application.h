@@ -122,6 +122,12 @@ private:
     // active drag).
     void updateSceneInput();
     void updateCamera(float dt);
+    // Distance-adaptive fly/zoom speed feed: samples the scene depth at the
+    // screen centre from the async depth-pick readback (one frame late, no
+    // stall — the GL app used a stalling glReadPixels for this), reconstructs
+    // the world-space distance and drives Camera::AdjustMovementSpeed and the
+    // zoom reference distance via UpdateDistanceToObject.
+    void updateCameraDepth(float dt);
     // Per-view cameras of one viewport for this frame: mono fills view 0
     // (view 1 duplicated); stereo builds off-axis left/right eyes from
     // stereoSeparation_/Convergence_ (port of the GL PerspectiveProjection +
@@ -165,6 +171,11 @@ private:
     void startOrbit();
     void beginNavCapture();
     void endNavCapture();
+    // Move the OS mouse to the centre of the active viewport's 3D-view image
+    // (host-window client coords; works for docked and dragged-out panels).
+    // Fired by the double-click centering callback so the depth pick — and a
+    // following orbit — continue from the freshly centred point.
+    void warpMouseToViewportCenter();
     bool navActive() const { return orbiting_ || panning_ || rmbLooking_; }
     void buildFrameSubmission(renderer::FrameSubmission& submission) const;
 
@@ -172,8 +183,9 @@ private:
     // MainPluginContext reaches these internals to service plugins/tools.
     friend class MainPluginContext;
     friend class MainGuiServices;
-    // Model+mesh pick under the cursor on a non-drag left click; drills into a
-    // sub-mesh when the already-selected model is clicked again.
+    // Model+mesh pick under the cursor on a non-drag Ctrl+left click (plain
+    // LMB is orbit-only, like the GL app); drills into a sub-mesh when the
+    // already-selected model is clicked again.
     void performSelectionClick();
     // The selected model (or sub-mesh) outline, appended to the overlay.
     void appendSelectionOverlay();
@@ -356,6 +368,11 @@ private:
     // Transient toast notifications (bottom-right overlay).
     struct Toast { std::string text; Plugins::ToastLevel level; float ttl; };
     std::vector<Toast> toasts_;
+
+    // This frame's mouse-wheel delta, captured in run() BEFORE ImGui::Render():
+    // ImGui::EndFrame() zeroes io.MouseWheel, and updateCamera runs after the
+    // GUI pass — reading io.MouseWheel there always saw 0 (dead scroll zoom).
+    float wheelThisFrame_ = 0.0f;
 
     // Mouse-button edge state for plugin input dispatch + click-vs-drag
     // selection. "*Owned_" latches a button a plugin consumed until release.

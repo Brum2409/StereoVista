@@ -155,6 +155,11 @@ private:
 class ComputePipelineBuilder {
 public:
     ComputePipelineBuilder& setShader(std::vector<uint32_t> computeSpirv);
+    // Specialization constant (32-bit) baked at pipeline creation — the
+    // driver finalizes codegen per value, so e.g. a spec-constant-sized array
+    // costs exactly its specialized size in registers/scratch. Used to build
+    // small/large variants of one kernel (point-cloud view cap).
+    ComputePipelineBuilder& setSpecConstant(uint32_t constantId, uint32_t value);
     ComputePipelineBuilder& bindingOverride(const BindingOverride& override_);
     ComputePipelineBuilder& externalSetLayout(uint32_t set, VkDescriptorSetLayout layout);
     ComputePipelineBuilder& setDebugName(std::string name);
@@ -163,6 +168,7 @@ public:
 
 private:
     std::vector<uint32_t> computeSpirv_;
+    std::vector<std::pair<uint32_t, uint32_t>> specConstants_; // (id, value)
     std::vector<BindingOverride> overrides_;
     std::vector<std::pair<uint32_t, VkDescriptorSetLayout>> externalLayouts_;
     std::string debugName_ = "compute pipeline";

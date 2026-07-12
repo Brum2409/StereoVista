@@ -128,6 +128,16 @@ bool InitializeImGuiWithFonts(GLFWwindow *window, bool isDarkTheme) {
 
   // Enable additional ImGui features
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+  // ... but keyboard nav must NOT claim the keyboard just because a window has
+  // nav focus: NavActive alone forces io.WantCaptureKeyboard=true, and
+  // g.NavWindow is simply the last window clicked/focused (set as soon as the
+  // startup layout restores focus, or when the user clicks ANY panel — it never
+  // clears in a fully docked layout). That silently killed the WASD/Space/Shift
+  // camera keys, which the app gates on !WantCaptureKeyboard. With this flag,
+  // WantCaptureKeyboard is true only while a widget really owns the keyboard
+  // (active InputText, held slider, modal) — exactly the "don't fly while
+  // typing" intent.
+  io.ConfigFlags |= ImGuiConfigFlags_NavNoCaptureKeyboard;
 
   // --- Docking-branch features -------------------------------------------
   // Docking: let the floating tool/settings windows be docked together into

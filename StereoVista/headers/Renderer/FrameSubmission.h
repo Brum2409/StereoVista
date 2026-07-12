@@ -78,6 +78,12 @@ struct DepthReadback {
     bool valid = false;
     glm::mat4 invViewProj{ 1.0f }; // view 0, clip -> world
     glm::vec3 cameraPos{ 0.0f };
+    // The viewport whose depth was sampled (FrameSubmission::depthPickViewport
+    // of the frame that rendered it). Consumers keyed to one viewport's camera
+    // must check this: right after the mouse crosses into another viewport the
+    // published readback still belongs to the previous one for ~frames-in-
+    // flight frames.
+    uint32_t viewport = 0;
     VkExtent2D extent{};
     std::vector<DepthQueryRect> rects;
     std::vector<float> depths; // rect texels back-to-back, row-major

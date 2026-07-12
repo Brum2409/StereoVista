@@ -668,6 +668,7 @@ void Renderer::armDepthPick(FrameContext& frame, const FrameSubmission& submissi
     }
     frame.pendingDepth.valid = true;
     frame.pendingDepth.rects = std::move(depthRects);
+    frame.pendingDepth.viewport = pickVp;
     frame.pendingDepth.extent = pickExtent;
     const ViewCamera& cam0 = viewportViews(submission, pickVp)[0];
     frame.pendingDepth.invViewProj = glm::inverse(cam0.proj * cam0.view);

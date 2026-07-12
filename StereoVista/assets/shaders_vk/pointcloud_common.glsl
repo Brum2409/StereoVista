@@ -67,19 +67,27 @@ layout(push_constant, scalar) uniform PcPush {
 // (viewport, eye) pairs and viewports differ in extent).
 PointCloudDispatch g_d;
 
+// View capacity of this pipeline VARIANT (specialization constant 0; the
+// default is the multi-viewport maximum). The renderer builds every geometry
+// kernel twice: an SV_MAX_VIEWS variant whose per-invocation arrays stay
+// exactly as small as before the multi-viewport rework (the register/scratch
+// footprint of the single-viewport hot path must not regress), and this
+// full-cap variant, bound only on frames that render more than one viewport.
+layout(constant_id = 0) const uint SV_PC_VIEW_CAP = SV_PC_MAX_VIEWS;
+
 // Per-view state filled by the pcMain prologue (indices < g_viewCount).
 // The write-target addresses live here rather than in pcProcessPoint's
 // signature so each pass constructs its restrict reference in the callee,
 // same as before (glslang decorates pointer-typed argument temporaries
 // AliasedPointer, which would defeat the restrict).
 uint g_viewCount;
-mat4 g_viewMvp[SV_PC_MAX_VIEWS];
-bool g_viewVisible[SV_PC_MAX_VIEWS];
-float g_viewSplatScale[SV_PC_MAX_VIEWS];
-ivec2 g_viewImageSize[SV_PC_MAX_VIEWS];
-uint64_t g_viewFramebuffer[SV_PC_MAX_VIEWS];
-uint64_t g_viewHqsDepth[SV_PC_MAX_VIEWS];
-uint64_t g_viewHqsAccum[SV_PC_MAX_VIEWS];
+mat4 g_viewMvp[SV_PC_VIEW_CAP];
+bool g_viewVisible[SV_PC_VIEW_CAP];
+float g_viewSplatScale[SV_PC_VIEW_CAP];
+ivec2 g_viewImageSize[SV_PC_VIEW_CAP];
+uint64_t g_viewFramebuffer[SV_PC_VIEW_CAP];
+uint64_t g_viewHqsDepth[SV_PC_VIEW_CAP];
+uint64_t g_viewHqsAccum[SV_PC_VIEW_CAP];
 
 // ── Constants (Schütz 10/20/30-bit quantisation) ─────────────────────────────
 #define STEPS_30BIT 1073741824.0 // 2^30
@@ -235,7 +243,7 @@ void pcMain() {
     // visible view needs (stereo eyes almost always agree) — the merged
     // subset must be one set, because points are decoded once and written to
     // every eye.
-    g_viewCount = min(pc.viewCount, SV_PC_MAX_VIEWS);
+    g_viewCount = min(pc.viewCount, SV_PC_VIEW_CAP);
     int level = 4;
     bool anyVisible = false;
     float lodKeep = lodOn ? 0.0 : 1.0;

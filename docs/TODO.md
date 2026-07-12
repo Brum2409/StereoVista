@@ -57,39 +57,54 @@ the jump. A single centre-pixel sample also jumps across depth discontinuities
 - **Related:** `keepLastDepthOnBackground` defaults **off** and nothing enables it,
   so the anti-flicker last-depth cache never runs — wire it on + expose it (see C2).
 
-### A3. 🐞 Zoom-to-cursor doesn't zoom to the surface point
-`Camera::cursorValid`/`cursorPosition` are fed **only inside `startOrbit()`**
-(`Application.cpp:216`), never per-frame. `ProcessMouseScroll` gates zoom-to-cursor
-on `cursorValid`, so over geometry it uses stale/false data and falls back to the
-Front-vector zoom (over *background* it happens to work, because the background
-cursor *is* passed in). 
-- **Root fix:** each frame in `updateCamera`, before `ProcessMouseScroll`, call
-  `camera_.UpdateCursorInfo(cursorManager_.getCursorPosition(), cursorManager_.isCursorPositionValid())`.
-  Reset `cursorValid=false` when the pick misses so it can't go stale.
+### A3. ✅ ~~Zoom-to-cursor doesn't zoom to the surface point~~ (fixed)
+Fixed as prescribed: the scroll path in `updateCamera` now refreshes
+`UpdateCursorInfo` from the current pick (valid flag included, so a miss can't go
+stale) right before `ProcessMouseScroll`. The same change fixed **scroll zoom
+being entirely dead**: `updateCamera` runs after `ImGui::Render()`, whose
+`EndFrame` zeroes `io.MouseWheel` — the wheel is now captured in `run()` before
+`Render` (`wheelThisFrame_`).
 
-### A4. 🐞/✳️ Camera is missing its adaptive behaviour
-`Camera` implements distance-adaptive fly speed (`AdjustMovementSpeed`) and scroll
-speed (`CalculateScrollFactor`), but the app **never calls `UpdateDistanceToObject`**,
-so `distanceUpdated` stays false → scroll factor is a constant 1.0 and fly speed
-never adapts. `MouseSensitivity` is hard-pinned to the `SENSITIVITY` const.
-- **Root fix:** feed the centre-of-screen distance every frame from the existing
-  async depth readback (no stall), call `AdjustMovementSpeed` + drive the scroll
-  factor; make sensitivity/speed/min/max/`speedFactor` real settings (see D).
+### A4. ✅ ~~Camera is missing its adaptive behaviour~~ (fixed)
+Fixed as prescribed: `Application::updateCameraDepth` feeds the centre-of-screen
+distance every frame from the async depth readback (1×1 centre rect, no stall)
+→ `UpdateDistanceToObject` + `AdjustMovementSpeed` (gated on the `adaptiveSpeed`
+setting, default ON like GL). The readback now carries its pick-viewport index
+so a viewport switch pauses the feed instead of poisoning the other camera.
+`AdjustMovementSpeed` was rewritten with a constant-TIME exponential response
+(the GL ramp compounded per FRAME — fps-dependent and seconds-slow on large
+speed gaps), the empty-space test no longer uses float equality, and the
+distance curve scales with the real scene bounds via `Camera::sceneSize` (the
+GL "largest model dimension" only measured the first model's untransformed
+vertices). **Scroll zoom was redesigned distance-proportional**: each step
+covers a fraction of the live distance to the zoom target (recomputed per
+frame → exponential ease-in/out), replacing the GL scheme that applied a
+distance factor twice and scaled by the possibly-stale fly `MovementSpeed`
+(0.01× crawl near geometry, ~20× blast over background);
+`CalculateScrollFactor` is gone. `speedFactor` now actually applies (fly, both
+modes, and zoom; the old code overwrote `MovementSpeed` with a Shift×4 boost —
+Shift now flies DOWN and Space UP, GL parity). Selection is **Ctrl+left-click**
+again (plain LMB is orbit-only). `MouseSensitivity` and the smooth-scroll
+tunables were already live settings.
 
 ---
 
 ## B. Camera & navigation — finish the port (improve where you can)
 
-- ✳️ **Centering / framing:** wire `StartCenteringAnimation` + `centeringCompletedCallback`
-  → double-click-to-centre, **F** (frame selection), **C** (centre on cursor),
-  **Home** (reset). None are wired today.
+- ✳️ **Centering / framing:** ✅ **double-click-to-centre is wired** (ImGui
+  double-click detection with spatial slop — the GL check was time-only; empty
+  space centres on the background-plane point; the completion callback warps
+  the mouse to the viewport centre only while it's still over the 3D view).
+  Still open: **F** (frame selection), **C** (centre on cursor), **Home**
+  (reset) via a state animation to the fitted view.
 - ✳️ **Standard views:** numpad 1/3/7/5 (front/right/top/iso) + Ctrl-variants
   (back/left/bottom) via a state animation to the fitted view.
-- ✳️ **Smooth-scroll settings:** expose `useSmoothScrolling`, `scrollMomentum`,
-  `scrollDeceleration`, `maxScrollVelocity` (all exist on `Camera`, none in the UI).
-- ⚡ **Frame-rate independence:** audit `ProcessMouseScroll`/`UpdateScrolling` and the
-  `+= MovementSpeed/50` ramps in `AdjustMovementSpeed` for `dt` scaling (GL tuned
-  them at a fixed cadence).
+- ✅ ~~**Smooth-scroll settings**~~: exposed in the Settings panel (Camera tab →
+  Scrolling: smooth toggle, momentum, deceleration, max velocity).
+- ✅ ~~**Frame-rate independence**~~: `AdjustMovementSpeed` uses a constant-time
+  exponential response, `UpdateScrolling` integrates the notch momentum with
+  `deltaTime`, and the non-smooth scroll path is a fixed fraction of the zoom
+  reference distance per notch (event-driven). See A4.
 - ✳️ **SpaceMouse (3DConnexion):** the GL `SpaceMouseInput`/`ThreeDConnexionSync`
   (`Engine/`, excluded) drive the camera via TDxNavLib — portable, no GL. Re-wire to
   the Vulkan `Camera` (`Synchronize*Quaternion*` helpers already exist for the

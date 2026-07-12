@@ -589,6 +589,12 @@ ComputePipelineBuilder& ComputePipelineBuilder::setShader(std::vector<uint32_t> 
     return *this;
 }
 
+ComputePipelineBuilder& ComputePipelineBuilder::setSpecConstant(uint32_t constantId,
+                                                                uint32_t value) {
+    specConstants_.emplace_back(constantId, value);
+    return *this;
+}
+
 ComputePipelineBuilder& ComputePipelineBuilder::bindingOverride(const BindingOverride& override_) {
     overrides_.push_back(override_);
     return *this;
@@ -641,6 +647,29 @@ Pipeline ComputePipelineBuilder::build(Device& device) {
     pipeInfo.stage.module = module;
     pipeInfo.stage.pName = stages[0].entryPoint.c_str();
     pipeInfo.layout = pipeline.layout_;
+
+    // Specialization constants: baked before driver codegen, so a
+    // spec-constant-sized array costs exactly its specialized size.
+    std::vector<VkSpecializationMapEntry> specEntries;
+    std::vector<uint32_t> specData;
+    VkSpecializationInfo specInfo{};
+    if (!specConstants_.empty()) {
+        specEntries.reserve(specConstants_.size());
+        specData.reserve(specConstants_.size());
+        for (const std::pair<uint32_t, uint32_t>& constant : specConstants_) {
+            VkSpecializationMapEntry entry{};
+            entry.constantID = constant.first;
+            entry.offset = static_cast<uint32_t>(specData.size() * sizeof(uint32_t));
+            entry.size = sizeof(uint32_t);
+            specEntries.push_back(entry);
+            specData.push_back(constant.second);
+        }
+        specInfo.mapEntryCount = static_cast<uint32_t>(specEntries.size());
+        specInfo.pMapEntries = specEntries.data();
+        specInfo.dataSize = specData.size() * sizeof(uint32_t);
+        specInfo.pData = specData.data();
+        pipeInfo.stage.pSpecializationInfo = &specInfo;
+    }
 
     VK_CHECK(vkCreateComputePipelines(device.device(), device.pipelineCache(), 1,
                                       &pipeInfo, nullptr, &pipeline.pipeline_));

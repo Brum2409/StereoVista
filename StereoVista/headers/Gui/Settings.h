@@ -37,14 +37,16 @@ struct Settings {
 
         // Look / zoom feel — pushed onto Core::Camera each frame.
         float sensitivity   = 0.06f; // mouse-look degrees per pixel
-        float speedFactor   = 1.0f;  // multiplier for the (future) adaptive fly speed
-        bool  adaptiveSpeed = false; // distance-adaptive fly/zoom speed (needs the
-                                     // per-frame depth feed — see docs/TODO.md A4)
+        float speedFactor   = 1.0f;  // fly-speed multiplier (manual AND adaptive)
+        bool  adaptiveSpeed = true;  // distance-adaptive fly/zoom speed, driven by
+                                     // the per-frame centre-depth feed
+                                     // (Application::updateCameraDepth). The GL
+                                     // app had this always on.
 
         bool  useSmoothScrolling = true;
-        float scrollMomentum     = 0.5f;
-        float scrollDeceleration = 5.0f;
-        float maxScrollVelocity  = 3.0f;
+        float scrollMomentum     = 0.5f; // notches of zoom velocity added per wheel notch
+        float scrollDeceleration = 4.0f; // exponential ease-out rate (1/s; lower = longer glide)
+        float maxScrollVelocity  = 3.0f; // velocity clamp when spinning the wheel
 
         bool  zoomToCursor      = true; // scroll zooms toward the 3D/background cursor
         bool  orbitAroundCursor = true; // LMB orbit pivots on the cursor point

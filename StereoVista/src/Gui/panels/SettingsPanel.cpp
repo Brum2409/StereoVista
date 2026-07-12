@@ -33,7 +33,9 @@ void drawCameraTab(Services& services) {
         c.farPlane = c.nearPlane * 2.0f;
 
     ImGui::SeparatorText("Navigation");
+    ImGui::BeginDisabled(c.adaptiveSpeed); // adaptive mode derives the speed itself
     ImGui::SliderFloat("Fly speed", &c.speed, 0.5f, 30.0f, "%.1f");
+    ImGui::EndDisabled();
     ImGui::SliderFloat("Look sensitivity", &c.sensitivity, 0.01f, 0.5f, "%.3f");
     ImGui::Checkbox("Zoom to cursor", &c.zoomToCursor);
     ImGui::SameLine();
@@ -41,10 +43,11 @@ void drawCameraTab(Services& services) {
 
     ImGui::SeparatorText("Adaptive speed");
     ImGui::Checkbox("Distance-adaptive speed", &c.adaptiveSpeed);
-    helpMarker("Scales fly/zoom speed by distance to the surface. The per-frame "
-               "depth feed that drives it is a separate fix (docs/TODO.md A4); "
-               "the speed factor below already applies.");
+    helpMarker("Scales fly/zoom speed by the distance to the surface at the "
+               "screen centre (async depth feed, no stall): fast in open space, "
+               "gentle near geometry. Off = the fixed fly speed above.");
     ImGui::SliderFloat("Speed factor", &c.speedFactor, 0.1f, 5.0f, "%.2f");
+    helpMarker("Multiplies the fly speed (both modes) and the scroll zoom.");
 
     ImGui::SeparatorText("Scrolling");
     ImGui::Checkbox("Smooth scrolling", &c.useSmoothScrolling);

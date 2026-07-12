@@ -62,13 +62,25 @@ public:
   float minSpeed = 0.2f;
   float maxSpeed = 3.0f;
   float speedFactor = 1.0f;
+  // World-space size of the scene content (largest bounds dimension), fed by
+  // the application each frame. Scales the adaptive-speed and scroll-factor
+  // distance curves — the GL code hardcoded 1.0 in the scroll path.
+  float sceneSize = 1.0f;
 
-  // Scroll parameters
+  // Scroll parameters. scrollVelocity is in wheel-notch units; the zoom
+  // constants below convert it into a FRACTION of the current distance to the
+  // zoom target per second (distance-proportional zoom — see UpdateScrolling).
   float scrollMomentum = 0.5f;
   float maxScrollVelocity = 3.0f;
   float scrollDeceleration = 5.0f;
   bool useSmoothScrolling = true;
   float scrollVelocity = 0.0f;
+  // Tuned for a calm glide: one notch peaks at ~0.6x the reference distance
+  // per second and eases out exponentially (~0.12 of the reference in total);
+  // spinning the wheel stacks velocity up to the cap for deliberate fast travel.
+  static constexpr float kZoomPerNotch = 0.12f; // fraction of the reference distance per notch
+  static constexpr float kZoomRate = 1.2f;      // fraction/s per notch of velocity
+  static constexpr float kMaxZoomPerSec = 2.0f; // fraction/s cap (wheel spam stays sane)
 
   // Orbit parameters
   glm::vec3 OrbitPoint;
@@ -257,85 +269,65 @@ public:
     OrbitPoint = Position + Front * OrbitDistance;
   }
 
-  // Adjusts camera movement speed based on distance to nearest object
-  // Uses logarithmic scaling to create natural acceleration/deceleration
-  void AdjustMovementSpeed(float distanceToNearestObject, float modelSize,
-                           float farPlane) {
+  // Adjusts camera movement speed based on distance to the nearest object,
+  // with logarithmic scaling for natural acceleration/deceleration.
+  // Rewritten from the GL version: acceleration is dt-corrected (the GL ramp
+  // compounded +2% per FRAME, so the speed curve depended on fps) and the
+  // empty-space test no longer relies on exact float equality with farPlane.
+  void AdjustMovementSpeed(float distanceToNearest, float farPlane, float dt) {
     if (!isMoving)
       return;
 
-    float minDistance = modelSize * 0.1f;
-    float maxDistance = modelSize * 10.0f;
+    maxSpeed = sceneSize * 1.5f * speedFactor;
+    minSpeed = sceneSize * 0.1f * speedFactor;
 
-    maxSpeed = modelSize * 1.5 * speedFactor;
-    minSpeed = modelSize * 0.1 * speedFactor;
-
-    minDistance = glm::max(minDistance, 0.01f);
-    maxDistance = glm::max(maxDistance, minDistance * 10.0f);
+    float minDistance = glm::max(sceneSize * 0.1f, 0.01f);
+    float maxDistance = glm::max(sceneSize * 10.0f, minDistance * 10.0f);
 
     // Normalize distance into 0-1 range
     float normalizedDistance =
-        (distanceToNearestObject - minDistance) / (maxDistance - minDistance);
-    normalizedDistance = glm::clamp(normalizedDistance, 0.0f, 1.0f);
+        glm::clamp((distanceToNearest - minDistance) /
+                       (maxDistance - minDistance),
+                   0.0f, 1.0f);
 
     // Apply logarithmic scaling for smooth speed transitions
-    float logFactor = 4.0f;
-    float t =
-        glm::log(1 + normalizedDistance * (exp(logFactor) - 1)) / logFactor;
+    const float logFactor = 4.0f;
+    const float t =
+        glm::log(1.0f + normalizedDistance * (std::exp(logFactor) - 1.0f)) /
+        logFactor;
 
-    float newTargetSpeed = minSpeed + t * (maxSpeed - minSpeed);
-    newTargetSpeed = glm::clamp(newTargetSpeed, minSpeed, maxSpeed);
+    const float targetSpeed =
+        glm::clamp(minSpeed + t * (maxSpeed - minSpeed), minSpeed, maxSpeed);
 
-    isLookingAtEmptySpace = (distanceToNearestObject == farPlane);
+    isLookingAtEmptySpace = distanceToNearest >= farPlane * 0.999f;
+    const float target = isLookingAtEmptySpace ? maxSpeed : targetSpeed;
 
-    if (isLookingAtEmptySpace) {
-      // Gradually increase speed when looking at empty space
-      float newSpeed = MovementSpeed += MovementSpeed / 50.0f;
-      newSpeed = glm::clamp(newSpeed, minSpeed, maxSpeed);
-      MovementSpeed = newSpeed;
-    } else {
-      if (newTargetSpeed > MovementSpeed) {
-        // Gradually accelerate
-        MovementSpeed += MovementSpeed / 50;
-      } else {
-        // Immediately decelerate when needed
-        MovementSpeed = newTargetSpeed;
-      }
-    }
+    // Constant-TIME acceleration (~63% of the gap every 1/6 s): reacting on a
+    // fixed time constant instead of a fixed ratio keeps large scenes / large
+    // speed gaps from taking seconds to spin up (the GL ramp multiplied per
+    // frame, so closing a 15x gap lagged badly — and each viewport camera
+    // resumes from stale speed when it becomes active). Deceleration stays
+    // immediate: flying toward geometry brakes without lag.
+    if (target > MovementSpeed)
+      MovementSpeed = glm::mix(MovementSpeed, target, 1.0f - std::exp(-6.0f * dt));
+    else
+      MovementSpeed = target;
   }
 
-  // Calculates scroll factor based on distance, similar to movement speed
-  float CalculateScrollFactor(float modelSize) {
-    if (!distanceUpdated) {
-      return 1.0f;
-    }
-
-    float minDistance = modelSize * 0.1f;
-    float maxDistance = modelSize * 10.0f;
-
-    minDistance = glm::max(minDistance, 0.01f);
-    maxDistance = glm::max(maxDistance, minDistance * 10.0f);
-
-    float normalizedDistance =
-        (distanceToNearestObject - minDistance) / (maxDistance - minDistance);
-    normalizedDistance = glm::clamp(normalizedDistance, 0.0f, 1.0f);
-
-    // Same logarithmic function as movement speed for consistency
-    float logFactor = 4.0f;
-    float t =
-        glm::log(1 + normalizedDistance * (exp(logFactor) - 1)) / logFactor;
-
-    float minScrollFactor = 0.1f;
-    float maxScrollFactor = 3.0f;
-
-    float scrollFactor =
-        minScrollFactor + t * (maxScrollFactor - minScrollFactor);
-
-    if (isLookingAtEmptySpace) {
-      scrollFactor *= 1.5f;
-    }
-
-    return scrollFactor;
+  // Reference distance for the distance-proportional zoom: how far away the
+  // thing being zoomed at is — the explicit target when zooming to the
+  // cursor, else the centre-depth feed, else the orbit anchor. Clamped to a
+  // sceneSize band so the zoom never crawls into a surface nor blasts off
+  // over the background, at ANY scene scale.
+  float zoomReferenceDistance(const glm::vec3 *target) const {
+    float ref;
+    if (target)
+      ref = glm::length(*target - Position);
+    else if (distanceUpdated)
+      ref = distanceToNearestObject;
+    else
+      ref = OrbitDistance;
+    return glm::clamp(ref, sceneSize * 0.01f, sceneSize * 2.0f);
   }
 
   // Processes mouse movement for rotation, orbiting, and panning
@@ -460,7 +452,15 @@ public:
     }
   }
 
-  // Processes mouse scroll for zooming
+  // Processes mouse scroll for zooming.
+  // Distance-proportional rewrite of the GL version: every step covers a
+  // FRACTION of the live distance to what is being zoomed at, so the feel is
+  // identical at any scene scale and any distance — brisk over far/background,
+  // automatically gentle near surfaces, and independent of the (adaptive,
+  // possibly stale per-viewport) fly MovementSpeed. The GL code scaled a fixed
+  // step by a distance factor applied TWICE (once accumulating velocity, once
+  // integrating it) and by MovementSpeed — crawling near geometry (0.01x) and
+  // blasting over background (up to 20x).
   void
   ProcessMouseScroll(float yoffset,
                      const glm::vec3 &backgroundCursorPos = glm::vec3(0.0f),
@@ -468,103 +468,82 @@ public:
     if (IsAnimating)
       return;
 
-    float modelSize = 1.0f;
-    float scrollFactor = CalculateScrollFactor(modelSize);
-    float scaledYOffset = yoffset * scrollFactor;
+    // Resolve the zoom target for this event: the 3D cursor point on
+    // geometry, else the background-plane point, else free zoom along Front.
+    bool hasTarget = false;
+    glm::vec3 targetPos(0.0f);
+    if (zoomToCursor && cursorValid) {
+      targetPos = cursorPosition;
+      hasTarget = true;
+    } else if (zoomToCursor && hasBackgroundCursor) {
+      targetPos = backgroundCursorPos;
+      hasTarget = true;
+    }
 
     if (!useSmoothScrolling) {
-      // Direct movement without momentum
-      glm::vec3 targetPosition;
-      bool hasValidTarget = false;
-
-      if (zoomToCursor && cursorValid) {
-        // Use valid 3D cursor position
-        targetPosition = cursorPosition;
-        hasValidTarget = true;
-      } else if (zoomToCursor && !cursorValid && hasBackgroundCursor) {
-        // Use background cursor position from cursor manager when over empty
-        // space
-        targetPosition = backgroundCursorPos;
-        hasValidTarget = true;
+      // Direct movement without momentum: one fixed fraction per notch.
+      const float ref = zoomReferenceDistance(hasTarget ? &targetPos : nullptr);
+      glm::vec3 dir = Front;
+      if (hasTarget) {
+        const glm::vec3 toTarget = targetPos - Position;
+        const float distance = glm::length(toTarget);
+        if (distance > 1e-4f)
+          dir = toTarget / distance;
       }
-
-      if (hasValidTarget) {
-        // Zoom toward/away from target point
-        glm::vec3 dirToTarget = targetPosition - Position;
-        float distance = glm::length(dirToTarget);
-
-        if (distance > 0.01f) {
-          dirToTarget = glm::normalize(dirToTarget);
-          Position += dirToTarget * scaledYOffset * MovementSpeed * 0.1f;
-        } else {
-          Position += Front * scaledYOffset * MovementSpeed * 0.1f;
-        }
-      } else {
-        // Standard zoom along Front vector
-        Position += Front * scaledYOffset * MovementSpeed * 0.1f;
-      }
-
-      if (IsOrbiting) {
+      Position += dir * (yoffset * kZoomPerNotch * ref * speedFactor);
+      if (IsOrbiting)
         OrbitPoint = Position + Front * OrbitDistance;
-      }
       return;
     }
 
-    // Setup for smooth scrolling with momentum
-    scrollVelocity += scaledYOffset * scrollMomentum;
+    // Smooth scrolling: accumulate momentum in wheel-notch units (the
+    // distance scaling happens at integration time, every frame, against the
+    // CURRENT distance — that is what makes the approach ease in).
+    scrollVelocity += yoffset * scrollMomentum;
     scrollVelocity =
         glm::clamp(scrollVelocity, -maxScrollVelocity, maxScrollVelocity);
-
-    if (zoomToCursor && cursorValid) {
-      scrollTargetPos = cursorPosition;
-      isScrollingToCursor = true;
-    } else if (zoomToCursor && !cursorValid && hasBackgroundCursor) {
-      // Use background cursor position from cursor manager when over empty
-      // space
-      scrollTargetPos = backgroundCursorPos;
-      isScrollingToCursor = true;
-    } else {
-      isScrollingToCursor = false;
-    }
+    scrollTargetPos = targetPos;
+    isScrollingToCursor = hasTarget;
   }
 
   // Updates smooth scrolling movement over time
   void UpdateScrolling(float deltaTime) {
-    if (scrollVelocity != 0.0f) {
-      float modelSize = 1.0f;
-      float scrollFactor = CalculateScrollFactor(modelSize);
-      float adjustedVelocity = scrollVelocity * scrollFactor;
+    if (scrollVelocity == 0.0f)
+      return;
 
-      if (isScrollingToCursor) {
-        // Zoom toward cursor position
-        glm::vec3 dirToCursor = scrollTargetPos - Position;
-        float distance = glm::length(dirToCursor);
+    // Fraction of the reference distance covered this frame. The reference is
+    // recomputed EVERY frame: zooming in on a target shrinks it, easing the
+    // approach exponentially; pulling back grows it, accelerating out — the
+    // classic map-app zoom, scale-free. The cap keeps wheel spam from
+    // covering more than ~2.5x the reference per second.
+    const float ref = zoomReferenceDistance(
+        isScrollingToCursor ? &scrollTargetPos : nullptr);
+    const float fractionPerSec =
+        glm::clamp(scrollVelocity * kZoomRate, -kMaxZoomPerSec, kMaxZoomPerSec);
+    const float step = fractionPerSec * deltaTime * ref * speedFactor;
 
-        if (distance > 0.01f) {
-          dirToCursor = glm::normalize(dirToCursor);
-          Position +=
-              dirToCursor * adjustedVelocity * MovementSpeed * deltaTime;
-        } else {
-          Position += Front * adjustedVelocity * MovementSpeed * deltaTime;
-          isScrollingToCursor = false;
-        }
-      } else {
-        // Standard zoom along Front vector
-        Position += Front * adjustedVelocity * MovementSpeed * deltaTime;
-      }
-
-      // Apply deceleration
-      float deceleration = scrollDeceleration * deltaTime * scrollFactor;
-      if (abs(scrollVelocity) <= deceleration) {
-        scrollVelocity = 0.0f;
-      } else {
-        scrollVelocity -= glm::sign(scrollVelocity) * deceleration;
-      }
-
-      if (IsOrbiting) {
-        OrbitPoint = Position + Front * OrbitDistance;
-      }
+    glm::vec3 dir = Front;
+    if (isScrollingToCursor) {
+      const glm::vec3 toTarget = scrollTargetPos - Position;
+      const float distance = glm::length(toTarget);
+      if (distance > 1e-4f)
+        dir = toTarget / distance;
+      else
+        isScrollingToCursor = false; // reached the point: continue along Front
     }
+    Position += dir * step;
+
+    // Exponential ease-out (scrollDeceleration is the decay rate, 1/s): the
+    // velocity bleeds off asymptotically instead of hitting a hard stop, which
+    // is what makes the glide feel smooth. (The GL version decelerated
+    // linearly — an abrupt end — and scaled the tail by the distance factor,
+    // so its length depended on where you looked.)
+    scrollVelocity *= std::exp(-scrollDeceleration * deltaTime);
+    if (std::abs(scrollVelocity) < 0.01f)
+      scrollVelocity = 0.0f;
+
+    if (IsOrbiting)
+      OrbitPoint = Position + Front * OrbitDistance;
   }
 
   // Sets orbit distance and updates orbit point

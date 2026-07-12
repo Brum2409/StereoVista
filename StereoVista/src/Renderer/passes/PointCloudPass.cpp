@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstring>
 #include <iostream>
+#include <string>
 
 namespace renderer {
 
@@ -56,25 +57,35 @@ void PointCloudPass::init(rhi::Device& device, rhi::ShaderCompiler& shaderCompil
     shutdown();
     device_ = &device;
 
-    rasterizePipeline_ =
-        rhi::ComputePipelineBuilder{}
-            .setShader(shaderCompiler.load("assets/shaders_vk/pointcloud_rasterize.comp"))
-            .setDebugName("pointcloud rasterize")
-            .build(device);
+    // Each geometry kernel builds twice from one SPIR-V module: spec constant
+    // 0 sizes the per-invocation view arrays (see pointcloud_common.glsl), so
+    // the [0] variant compiles exactly as tight as the pre-multi-viewport
+    // shaders and the [1] variant pays for 8 views only when actually bound.
+    const uint32_t viewCaps[2] = { kMaxViews, kMaxViews * kMaxViewports };
+    auto buildGeometryVariants = [&](rhi::Pipeline (&out)[2], const char* path,
+                                     const char* name) {
+        const std::vector<uint32_t> spirv = shaderCompiler.load(path);
+        for (uint32_t variant = 0; variant < 2; ++variant)
+            out[variant] = rhi::ComputePipelineBuilder{}
+                               .setShader(spirv)
+                               .setSpecConstant(0, viewCaps[variant])
+                               .setDebugName(std::string(name) +
+                                             (variant ? " (multi-viewport)" : ""))
+                               .build(device);
+    };
+    buildGeometryVariants(rasterizePipelines_,
+                          "assets/shaders_vk/pointcloud_rasterize.comp",
+                          "pointcloud rasterize");
+    buildGeometryVariants(hqsDepthPipelines_,
+                          "assets/shaders_vk/pointcloud_hqs_depth.comp",
+                          "pointcloud HQS depth");
+    buildGeometryVariants(hqsColorPipelines_,
+                          "assets/shaders_vk/pointcloud_hqs_color.comp",
+                          "pointcloud HQS color");
     lookupPipeline_ =
         rhi::ComputePipelineBuilder{}
             .setShader(shaderCompiler.load("assets/shaders_vk/pointcloud_lookup.comp"))
             .setDebugName("pointcloud color lookup")
-            .build(device);
-    hqsDepthPipeline_ =
-        rhi::ComputePipelineBuilder{}
-            .setShader(shaderCompiler.load("assets/shaders_vk/pointcloud_hqs_depth.comp"))
-            .setDebugName("pointcloud HQS depth")
-            .build(device);
-    hqsColorPipeline_ =
-        rhi::ComputePipelineBuilder{}
-            .setShader(shaderCompiler.load("assets/shaders_vk/pointcloud_hqs_color.comp"))
-            .setDebugName("pointcloud HQS color")
             .build(device);
 
     // Resolves composite inside the multiview scene pass: reverse-Z GREATER
@@ -457,14 +468,18 @@ void PointCloudPass::recordCompute(VkCommandBuffer cmd, bool asyncQueue) {
                           VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
     };
 
+    // Geometry variant: the small (kMaxViews) specialization whenever the
+    // frame's flat view list fits one viewport's eyes — every single-viewport
+    // frame, mono or stereo — else the full multi-viewport specialization.
+    const uint32_t variant = totalViews_ <= kMaxViews ? 0u : 1u;
     if (hqsActive_) {
         // HQS: every cloud's depth dispatch must finish before ANY colour
         // dispatch (the colour pass reads the global nearest depth).
-        dispatchGeometry(hqsDepthPipeline_);
+        dispatchGeometry(hqsDepthPipelines_[variant]);
         computeToCompute();
-        dispatchGeometry(hqsColorPipeline_);
+        dispatchGeometry(hqsColorPipelines_[variant]);
     } else {
-        dispatchGeometry(rasterizePipeline_);
+        dispatchGeometry(rasterizePipelines_[variant]);
         computeToCompute();
 
         // Colour lookup: ONE dispatch per view resolves every pixel against
@@ -527,10 +542,12 @@ void PointCloudPass::onSwapchainRecreated() {
 void PointCloudPass::shutdown() {
     if (!device_)
         return;
-    rasterizePipeline_.destroy();
+    for (uint32_t variant = 0; variant < 2; ++variant) {
+        rasterizePipelines_[variant].destroy();
+        hqsDepthPipelines_[variant].destroy();
+        hqsColorPipelines_[variant].destroy();
+    }
     lookupPipeline_.destroy();
-    hqsDepthPipeline_.destroy();
-    hqsColorPipeline_.destroy();
     resolvePipeline_.destroy();
     hqsResolvePipeline_.destroy();
     framebuffer_.destroy();
