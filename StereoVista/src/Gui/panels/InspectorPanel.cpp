@@ -136,8 +136,11 @@ void drawHeader(Services& services, scene::Selection& selection) {
         static Kind nameKind = Kind::None;
         if (nameFor != primary.id || nameKind != primary.kind) {
             const std::string cur = displayName(scene, primary);
-            std::strncpy(nameBuf, cur.c_str(), sizeof(nameBuf) - 1);
-            nameBuf[sizeof(nameBuf) - 1] = '\0';
+            size_t n = cur.size();
+            if (n > sizeof(nameBuf) - 1)
+                n = sizeof(nameBuf) - 1;
+            std::memcpy(nameBuf, cur.c_str(), n);
+            nameBuf[n] = '\0';
             nameFor = primary.id;
             nameKind = primary.kind;
         }

@@ -59,7 +59,15 @@ void drawDaylight(EditContext& ctx, scene::I3SSceneLayer& layer) {
     ImGui::SameLine();
     if (ImGui::SmallButton("Now")) {
         const std::time_t t = std::time(nullptr);
-        if (const std::tm* g = std::gmtime(&t)) {
+        std::tm gtm{};
+        const std::tm* g = nullptr;
+#ifdef _MSC_VER
+        if (gmtime_s(&gtm, &t) == 0)
+            g = &gtm;
+#else
+        g = std::gmtime(&t);
+#endif
+        if (g) {
             dl.year = g->tm_year + 1900;
             dl.month = g->tm_mon + 1;
             dl.day = g->tm_mday;
