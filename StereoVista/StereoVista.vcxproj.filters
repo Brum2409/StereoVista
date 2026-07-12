@@ -523,6 +523,9 @@
     <ClCompile Include="src\Gui\Inspector.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\Gui\Palette.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\Gui\inspectors\LayerInspector.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -1525,6 +1528,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\Gui\Inspector.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Gui\Palette.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\Gui\Preferences.h">

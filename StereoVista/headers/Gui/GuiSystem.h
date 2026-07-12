@@ -44,6 +44,11 @@ public:
     void toggleAbout() { showAbout_ = !showAbout_; }
     bool aboutVisible() const { return showAbout_; }
 
+    // Command palette (Pass 4): the palette.open command (Ctrl+K) flips this;
+    // Gui::Palette::draw owns the overlay and clears it on Esc / activation.
+    void openPalette() { paletteOpen_ = true; }
+    bool paletteOpen() const { return paletteOpen_; }
+
 private:
     void drawMenuBar(Services& services);
     void drawStatusBar(Services& services);
@@ -62,6 +67,7 @@ private:
     bool guiVisible_        = true;
     bool resetLayout_       = false;
     bool layoutInitialized_ = false;
+    bool paletteOpen_       = false;
 };
 
 } // namespace Gui

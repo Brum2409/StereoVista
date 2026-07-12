@@ -2,6 +2,7 @@
 
 #include "Core/CommandRegistry.h"
 #include "Core/Shortcuts.h"
+#include "Gui/Palette.h"
 #include "Gui/Panels.h"
 #include "Gui/Services.h"
 #include "Gui/UiKit.h"
@@ -185,6 +186,9 @@ void GuiSystem::draw(Services& services) {
 
         // Plugin (tool) windows render inside the same ImGui frame.
         services.plugins().renderUI(services.pluginContext());
+
+        // Command palette (Pass 4) — drawn last so its scrim dims every panel.
+        Palette::draw(services, &paletteOpen_);
     }
 
     // Scene-open decision modal (C8) — outside the master GUI toggle: a
@@ -255,6 +259,7 @@ void GuiSystem::drawMenuBar(Services& services) {
         commandMenuItem(services, "view.panel.history");
         commandMenuItem(services, "view.panel.snapshots");
         commandMenuItem(services, "view.status_bar");
+        commandMenuItem(services, "palette.open");
 
         ImGui::Separator();
         if (ImGui::BeginMenu("Theme")) {

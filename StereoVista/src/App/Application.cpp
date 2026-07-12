@@ -3113,6 +3113,20 @@ void Application::registerCommands() {
     panelToggle("view.panel.snapshots", Gui::Windows::Snapshots,
                 &Gui::Settings::Ui::Panels::snapshots);
     {
+        // The palette searches commands, objects, snapshots and recents (Pass 4).
+        Command c;
+        c.id = "palette.open";
+        c.title = "Command palette...";
+        c.category = "View";
+        c.keywords = "search find command palette goto anything everything";
+        c.separatorBefore = true;
+        c.action = [this] { guiSystem_.openPalette(); };
+        add(std::move(c));
+        shortcuts_.registerDefault(
+            "palette.open",
+            ShortcutBinding{ GLFW_KEY_K, /*ctrl=*/true, /*alt=*/false, /*shift=*/false });
+    }
+    {
         Command c;
         c.id = "edit.snapshot_now";
         c.title = "Snapshot now";
