@@ -1,5 +1,6 @@
 #include "Gui/Panels.h"
 #include "Gui/Services.h"
+#include "Gui/UiKit.h"
 
 #include "Engine/XRRuntimeInfo.h" // Engine::XRDiagnostics / XRRuntimeInfo (plain data)
 #include "Scene/Scene.h"          // scene::PointLight editing
@@ -291,6 +292,46 @@ void drawSkyTab(Services& services) {
     }
 }
 
+// ── Interface (theme / scale / status bar — UI redesign Pass 0) ─────────────
+void drawInterfaceTab(Services& services) {
+    Settings::Ui& ui = services.settings().ui;
+
+    ImGui::SeparatorText("Appearance");
+    const int current = services.currentTheme();
+    if (ImGui::BeginCombo("Theme", services.themeName(current))) {
+        for (int i = 0; i < services.themeCount(); ++i) {
+            const bool selected = (i == current);
+            if (ImGui::Selectable(services.themeName(i), selected))
+                services.setTheme(i);
+            if (selected)
+                ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+
+    // The scale applies on release: every change restyles + rebuilds the font
+    // atlas (device-idle), so live-dragging would hitch each tick.
+    static float pendingScale = -1.0f;
+    float scale = pendingScale >= 0.0f ? pendingScale : services.guiScaleFactor();
+    if (ImGui::SliderFloat("GUI scale", &scale, 0.5f, 2.0f, "%.2fx"))
+        pendingScale = scale;
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        services.setGuiScaleFactor(scale);
+        pendingScale = -1.0f;
+    }
+    helpMarker("Multiplies the window-derived interface scale (applies when "
+               "the slider is released).");
+
+    ImGui::SeparatorText("Interface");
+    if (UiKit::ToggleSwitch("Status bar", &ui.showStatusBar)) {}
+    if (UiKit::ToggleSwitch("Reduce motion", &ui.reduceMotion)) {}
+    helpMarker("Disables interface micro-animations (toggles, hover fades).");
+
+    ImGui::SeparatorText("Shortcuts");
+    ImGui::TextDisabled("Shortcuts are rebindable in shortcuts.json;");
+    ImGui::TextDisabled("the editor arrives with the Settings overhaul pass.");
+}
+
 } // namespace
 
 void drawSettingsPanel(Services& services, bool* open) {
@@ -306,6 +347,7 @@ void drawSettingsPanel(Services& services, bool* open) {
         if (ImGui::BeginTabItem("Rendering")){ drawRenderingTab(services); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Lighting")) { drawLightingTab(services);  ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Sky"))      { drawSkyTab(services);       ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Interface")){ drawInterfaceTab(services); ImGui::EndTabItem(); }
         ImGui::EndTabBar();
     }
 

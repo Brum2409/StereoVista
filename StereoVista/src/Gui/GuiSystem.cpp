@@ -1,12 +1,19 @@
 #include "Gui/GuiSystem.h"
 
+#include "Core/CommandRegistry.h"
+#include "Core/Shortcuts.h"
 #include "Gui/Panels.h"
 #include "Gui/Services.h"
+#include "Gui/UiKit.h"
 #include "Plugins/PluginContext.h"
 #include "Plugins/PluginManager.h"
+#include "Scene/Scene.h"
 
 #include "imgui/imgui.h"
-#include "imgui/imgui_internal.h" // DockBuilder* / DockBuilderGetNode
+#include "imgui/imgui_internal.h" // DockBuilder* / BeginViewportSideBar
+
+#include <cstdio>
+#include <string>
 
 namespace Gui {
 
@@ -21,14 +28,64 @@ void menuHint(const char* text) {
         ImGui::SetTooltip("%s", text);
 }
 
+// One registry command as a menu item: title from the registration, shortcut
+// label live from the ShortcutMap, checkmark/enabled from the command's
+// closures — and the click runs through CommandRegistry::run (contract C5).
+void commandMenuItem(Services& services, const core::Command& command) {
+    if (command.separatorBefore)
+        ImGui::Separator();
+    core::CommandRegistry& commands = services.commands();
+    const std::string shortcut = services.shortcuts().label(command.id);
+    const bool enabled = commands.isEnabled(command);
+    const bool checked = command.checked && command.checked();
+    if (ImGui::MenuItem(command.title.c_str(),
+                        shortcut.empty() ? nullptr : shortcut.c_str(), checked,
+                        enabled))
+        commands.run(command.id);
+    if (!command.tooltip.empty() &&
+        ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("%s", command.tooltip.c_str());
+}
+
+void commandMenuItem(Services& services, const char* id) {
+    if (const core::Command* command = services.commands().find(id))
+        commandMenuItem(services, *command);
+}
+
+// Render every command of a category in registration order — the generic
+// path for menus without hand-curated dynamic content.
+void commandMenu(Services& services, const char* category) {
+    services.commands().forEachInCategory(
+        category,
+        [&](const core::Command& command) { commandMenuItem(services, command); });
+}
+
+// "12,4M" style compact count for the status bar.
+std::string compactCount(unsigned long long n) {
+    char buf[32];
+    if (n >= 1000000000ull)
+        std::snprintf(buf, sizeof(buf), "%.1fB", double(n) / 1e9);
+    else if (n >= 1000000ull)
+        std::snprintf(buf, sizeof(buf), "%.1fM", double(n) / 1e6);
+    else if (n >= 10000ull)
+        std::snprintf(buf, sizeof(buf), "%.0fk", double(n) / 1e3);
+    else
+        std::snprintf(buf, sizeof(buf), "%llu", n);
+    return buf;
+}
+
 } // namespace
 
 void GuiSystem::draw(Services& services) {
     ImGuiViewport* viewport = ImGui::GetMainViewport();
 
-    // Menu bar first — BeginMainMenuBar reserves the top of the viewport work
-    // area, so the dockspace below fits under it.
+    // UiKit reads the motion preference once per frame (§15 reduceMotion).
+    UiKit::SetReduceMotion(services.settings().ui.reduceMotion);
+
+    // Menu bar, then status bar — both reserve their strip of the viewport
+    // work area, so the dockspace below fits between them.
     drawMenuBar(services);
+    drawStatusBar(services);
 
     // Dockspace over the remaining work area. The 3D scene lives in the
     // Viewport window docked into the central node. PassthruCentralNode keeps
@@ -50,7 +107,7 @@ void GuiSystem::draw(Services& services) {
 
     // The 3D viewport windows. Drawn BEFORE the panels so same-frame consumers
     // (the scene-layer hover pick) see fresh input state, and NOT gated by the
-    // F1 master toggle — hiding the side panels collapses their dock nodes and
+    // master GUI toggle — hiding the side panels collapses their dock nodes and
     // the viewports grow to (nearly) the whole window. Skipped on the classic
     // fullscreen path, where the scene shows through the passthru node.
     const unsigned int viewportCount = services.viewportPanelCount();
@@ -62,17 +119,20 @@ void GuiSystem::draw(Services& services) {
             services.onViewportPanel(i, ViewportPanelState{});
     }
 
-    // The About window and plugin windows are gated by the master toggle too.
+    // Panels (visibility lives in Settings::Ui::Panels so the View menu, the
+    // commands and preferences persistence all share one source of truth),
+    // the About window and the plugin windows — all gated by the master toggle.
     if (guiVisible_) {
-        if (showScene_)       drawScenePanel(services, &showScene_);
-        if (showInspector_)   drawInspectorPanel(services, &showInspector_);
-        if (showSettings_)    drawSettingsPanel(services, &showSettings_);
-        if (showCursor_)      drawCursorPanel(services, &showCursor_);
-        if (showPointClouds_) drawPointCloudPanel(services, &showPointClouds_);
-        if (showClipPlanes_)  drawClipPlanePanel(services, &showClipPlanes_);
-        if (showDiagnostics_) drawDiagnosticsPanel(services, &showDiagnostics_);
-        if (showSlpk_)        drawSlpkPanel(services, &showSlpk_);
-        if (showAbout_)       drawAboutWindow(services);
+        Settings::Ui::Panels& panels = services.settings().ui.panels;
+        if (panels.scene)       drawScenePanel(services, &panels.scene);
+        if (panels.inspector)   drawInspectorPanel(services, &panels.inspector);
+        if (panels.settings)    drawSettingsPanel(services, &panels.settings);
+        if (panels.cursor)      drawCursorPanel(services, &panels.cursor);
+        if (panels.pointClouds) drawPointCloudPanel(services, &panels.pointClouds);
+        if (panels.clipPlanes)  drawClipPlanePanel(services, &panels.clipPlanes);
+        if (panels.diagnostics) drawDiagnosticsPanel(services, &panels.diagnostics);
+        if (panels.slpk)        drawSlpkPanel(services, &panels.slpk);
+        if (showAbout_)         drawAboutWindow(services);
 
         // Plugin (tool) windows render inside the same ImGui frame.
         services.plugins().renderUI(services.pluginContext());
@@ -83,47 +143,31 @@ void GuiSystem::drawMenuBar(Services& services) {
     if (!ImGui::BeginMainMenuBar())
         return;
 
+    // File and Edit render generically from the registry (registration order
+    // + separatorBefore define the grouping).
     if (ImGui::BeginMenu("File")) {
-        if (ImGui::MenuItem("Import Model..."))
-            services.importModelDialog();
-        if (ImGui::MenuItem("Import Point Cloud..."))
-            services.openPointCloudDialog();
-        if (ImGui::MenuItem("Open Scene Layer (.slpk)..."))
-            services.openSlpkDialog();
-
-        ImGui::Separator();
-        // Scene load/save/merge is gated on the not-yet-ported SceneManager.
-        const bool sceneOps = services.sceneSaveAvailable();
-        ImGui::BeginDisabled(!sceneOps);
-        ImGui::MenuItem("Open Scene...");
-        ImGui::MenuItem("Save Scene...");
-        ImGui::MenuItem("Merge Scene...");
-        ImGui::EndDisabled();
-        if (!sceneOps)
-            menuHint("Scene load / save / merge returns with the SceneManager "
-                     "port (docs/TODO.md E).");
-
-        ImGui::Separator();
-        ImGui::BeginDisabled(services.screenshotPending());
-        if (ImGui::MenuItem("Save Screenshot"))
-            services.requestScreenshot();
-        ImGui::EndDisabled();
-
-        ImGui::Separator();
-        if (ImGui::MenuItem("Exit"))
-            services.requestQuit();
+        commandMenu(services, "File");
         ImGui::EndMenu();
     }
 
+    if (ImGui::BeginMenu("Edit")) {
+        commandMenu(services, "Edit");
+        ImGui::EndMenu();
+    }
+
+    // View interleaves registry commands with dynamic content (the theme
+    // picker and the viewport lifecycle) — every actionable item is still a
+    // command.
     if (ImGui::BeginMenu("View")) {
-        ImGui::MenuItem(Windows::Scene, nullptr, &showScene_);
-        ImGui::MenuItem(Windows::Inspector, nullptr, &showInspector_);
-        ImGui::MenuItem(Windows::Settings, nullptr, &showSettings_);
-        ImGui::MenuItem(Windows::Cursor, nullptr, &showCursor_);
-        ImGui::MenuItem(Windows::PointClouds, nullptr, &showPointClouds_);
-        ImGui::MenuItem(Windows::ClipPlanes, nullptr, &showClipPlanes_);
-        ImGui::MenuItem(Windows::Diagnostics, nullptr, &showDiagnostics_);
-        ImGui::MenuItem(Windows::Slpk, nullptr, &showSlpk_);
+        commandMenuItem(services, "view.panel.scene");
+        commandMenuItem(services, "view.panel.inspector");
+        commandMenuItem(services, "view.panel.settings");
+        commandMenuItem(services, "view.panel.cursor");
+        commandMenuItem(services, "view.panel.pointclouds");
+        commandMenuItem(services, "view.panel.clipplanes");
+        commandMenuItem(services, "view.panel.diagnostics");
+        commandMenuItem(services, "view.panel.slpk");
+        commandMenuItem(services, "view.status_bar");
 
         ImGui::Separator();
         if (ImGui::BeginMenu("Theme")) {
@@ -134,43 +178,135 @@ void GuiSystem::drawMenuBar(Services& services) {
             }
             ImGui::EndMenu();
         }
-        {
-            bool wireframe = services.settings().render.wireframe;
-            if (ImGui::MenuItem("Wireframe", nullptr, &wireframe))
-                services.settings().render.wireframe = wireframe;
-            menuHint("Stored for later — the Vulkan forward pass has no polygon-"
-                     "mode toggle yet (docs/TODO.md).");
-        }
-        ImGui::MenuItem("Show GUI panels", "F1", &guiVisible_);
+        commandMenuItem(services, "view.wireframe");
+        commandMenuItem(services, "view.toggle_gui");
 
         ImGui::Separator();
+        commandMenuItem(services, "view.center");
         // Extra 3D viewports, each with its own camera (stereo-capable like
         // the primary). New ones float — dock them wherever they belong.
-        ImGui::BeginDisabled(!services.canAddViewport());
-        if (ImGui::MenuItem("Add Viewport"))
-            services.addViewport();
-        ImGui::EndDisabled();
+        commandMenuItem(services, "view.add_viewport");
         if (!services.canAddViewport())
             menuHint("Maximum number of viewports reached.");
 
         ImGui::Separator();
-        if (ImGui::MenuItem("Reset Layout"))
-            resetLayout_ = true;
+        commandMenuItem(services, "view.reset_layout");
         ImGui::EndMenu();
     }
 
     if (ImGui::BeginMenu("Tools")) {
-        // Plugin (tool) menu entries; each plugin appends its own item(s).
+        // Registry commands first (empty today; the Pass-7 ToolManager fills
+        // this), then each plugin appends its own item(s).
+        commandMenu(services, "Tools");
         services.plugins().renderMenu(services.pluginContext());
         ImGui::EndMenu();
     }
 
     if (ImGui::BeginMenu("Help")) {
-        ImGui::MenuItem("About StereoVista", nullptr, &showAbout_);
+        commandMenu(services, "Help");
         ImGui::EndMenu();
     }
 
     ImGui::EndMainMenuBar();
+}
+
+void GuiSystem::drawStatusBar(Services& services) {
+    // Window chrome, not a panel: a thin strip pinned to the bottom of the
+    // main window (BeginViewportSideBar shrinks the work area, so the
+    // dockspace and the passthru scene view sit above it). Hidden with the
+    // master GUI toggle and by its own View-menu command.
+    if (!guiVisible_ || !services.settings().ui.showStatusBar)
+        return;
+
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float height = ImGui::GetFrameHeight();
+    const ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings;
+    if (ImGui::BeginViewportSideBar("##StatusBar", viewport, ImGuiDir_Down,
+                                    height, flags)) {
+        const scene::Scene& scene = services.scene();
+
+        // ── Scene stats ────────────────────────────────────────────────────
+        const size_t models = scene.models.size();
+        const size_t clouds = services.pointCloudCount();
+        const size_t layers = scene.i3sLayers.size();
+        unsigned long long points = 0;
+        bool streaming = false;
+        for (size_t i = 0; i < clouds; ++i) {
+            points += services.pointCloudPoints(i);
+            streaming = streaming || services.pointCloudProgress(i).active;
+        }
+
+        ImGui::AlignTextToFramePadding();
+        if (models == 0 && clouds == 0 && layers == 0) {
+            ImGui::TextDisabled("Empty scene - File > Import to begin");
+        } else {
+            std::string stats = std::to_string(models) +
+                                (models == 1 ? " model" : " models");
+            if (clouds > 0)
+                stats += "  ·  " + std::to_string(clouds) +
+                         (clouds == 1 ? " cloud (" : " clouds (") +
+                         compactCount(points) + " pts)";
+            if (layers > 0)
+                stats += "  ·  " + std::to_string(layers) +
+                         (layers == 1 ? " layer" : " layers");
+            ImGui::TextUnformatted(stats.c_str());
+        }
+
+        // ── Selection summary ──────────────────────────────────────────────
+        const int selModel = services.selectedModel();
+        if (selModel >= 0 && selModel < static_cast<int>(scene.models.size())) {
+            ImGui::SameLine(0.0f, UiKit::Space(7));
+            const UiKit::KindStyle style =
+                UiKit::StyleFor(services.selectedMesh() >= 0
+                                    ? UiKit::ObjectKind::Mesh
+                                    : UiKit::ObjectKind::Model);
+            UiKit::InlineIcon(style.icon, style.color);
+            const scene::Model& model = scene.models[selModel];
+            std::string name = model.name.empty()
+                                   ? "model " + std::to_string(selModel)
+                                   : model.name;
+            const int selMesh = services.selectedMesh();
+            if (selMesh >= 0 && selMesh < static_cast<int>(model.meshes.size())) {
+                const std::string& meshName = model.meshes[selMesh].name;
+                name += " / " + (meshName.empty()
+                                     ? "mesh " + std::to_string(selMesh)
+                                     : meshName);
+            }
+            ImGui::TextUnformatted(name.c_str());
+        }
+
+        // ── Background activity ────────────────────────────────────────────
+        if (streaming || services.slpkLoadsInFlight() > 0) {
+            ImGui::SameLine(0.0f, UiKit::Space(7));
+            ImGui::TextColored(UiKit::Color(UiKit::Semantic::Info), "%s",
+                               streaming ? "Streaming points..."
+                                         : "Opening scene layer...");
+        }
+
+        // ── Right block: FPS (click -> Performance panel) + reserved slot ──
+        const FrameDiagnostics diag = services.diagnostics();
+        char fpsText[48];
+        std::snprintf(fpsText, sizeof(fpsText), "%.0f fps", double(diag.fps));
+        // Far-right slot reserved for presence/sync (§16) — keep the gap.
+        const float reserved = UiKit::Space(7);
+        const float fpsWidth = ImGui::CalcTextSize(fpsText).x;
+        ImGui::SameLine(ImGui::GetCursorPosX() +
+                        ImGui::GetContentRegionAvail().x - fpsWidth - reserved);
+        const UiKit::Semantic level = diag.fps >= 50.0f
+                                          ? UiKit::Semantic::Success
+                                          : (diag.fps >= 25.0f
+                                                 ? UiKit::Semantic::Warning
+                                                 : UiKit::Semantic::Danger);
+        ImGui::TextColored(UiKit::Color(level), "%s", fpsText);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%.2f ms  ·  click for the Performance panel",
+                              double(diag.frameMs));
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                services.commands().run("view.panel.diagnostics");
+        }
+    }
+    ImGui::End();
 }
 
 void GuiSystem::drawViewportPanel(Services& services, unsigned int index) {

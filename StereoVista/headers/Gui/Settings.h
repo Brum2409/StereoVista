@@ -21,6 +21,10 @@
 //   * Transient / lifecycle state (the applied stereo mode, the live VR session
 //     toggle, present-mode + swapchain bookkeeping) intentionally stays on
 //     Application — it is not a "setting" and must not be serialized.
+//   * Since UI redesign Pass 0 this struct IS persisted: Gui::Preferences
+//     serializes it to/from preferences.json (load-on-start, debounced save;
+//     missing keys keep these defaults). New fields need a matching line in
+//     src/Gui/Preferences.cpp.
 // ============================================================================
 
 #include "Renderer/FrameSubmission.h" // renderer::SunState, renderer::SkyState
@@ -117,6 +121,25 @@ struct Settings {
                                   // the same dispatches record inline (A/B
                                   // debugging aid).
     } render;
+
+    // ── Interface (UI redesign Pass 0) ──────────────────────────────────────
+    struct Ui {
+        int   theme = 0;        // GuiTheme index (imgui_sytle.h; append-only enum)
+        float guiScale = 1.0f;  // user factor on the window-derived scale (0.5–2)
+        bool  showStatusBar = true;
+        bool  reduceMotion = false; // disables all UiKit micro-animation (§15)
+        // Panel visibility (View menu toggles; defaults = the shipped layout).
+        struct Panels {
+            bool scene       = true;
+            bool inspector   = true;
+            bool settings    = true;
+            bool cursor      = false;
+            bool pointClouds = true;
+            bool clipPlanes  = false;
+            bool diagnostics = false;
+            bool slpk        = true;
+        } panels;
+    } ui;
 };
 
 } // namespace Gui

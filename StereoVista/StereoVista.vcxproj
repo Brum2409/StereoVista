@@ -590,6 +590,8 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="src\Core\UndoManager.cpp" />
+    <ClCompile Include="src\Core\CommandRegistry.cpp" />
+    <ClCompile Include="src\Core\Shortcuts.cpp" />
     <ClCompile Include="src\Core\CursorSynchronizer.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
@@ -608,6 +610,8 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClCompile Include="src\Plugins\MeasurementPlugin.cpp" />
     <ClCompile Include="src\Plugins\Examples\CrosshairPlugin.cpp" />
     <ClCompile Include="src\Gui\GuiSystem.cpp" />
+    <ClCompile Include="src\Gui\UiKit.cpp" />
+    <ClCompile Include="src\Gui\Preferences.cpp" />
     <ClCompile Include="src\Gui\panels\ScenePanel.cpp" />
     <ClCompile Include="src\Gui\panels\InspectorPanel.cpp" />
     <ClCompile Include="src\Gui\panels\SettingsPanel.cpp" />
@@ -738,6 +742,8 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClInclude Include="headers\Core\SceneManager.h" />
     <ClInclude Include="headers\Core\SnapshotManager.h" />
     <ClInclude Include="headers\Core\UndoManager.h" />
+    <ClInclude Include="headers\Core\CommandRegistry.h" />
+    <ClInclude Include="headers\Core\Shortcuts.h" />
     <ClInclude Include="headers\Core\CursorSynchronizer.h" />
     <ClInclude Include="headers\Core\CursorSyncState.h" />
     <ClInclude Include="headers\Engine\XRSession.h" />
@@ -931,6 +937,8 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClInclude Include="headers\Gui\Services.h" />
     <ClInclude Include="headers\Gui\GuiSystem.h" />
     <ClInclude Include="headers\Gui\Panels.h" />
+    <ClInclude Include="headers\Gui\UiKit.h" />
+    <ClInclude Include="headers\Gui\Preferences.h" />
   </ItemGroup>
   <ItemGroup>
   </ItemGroup>

@@ -32,7 +32,7 @@
 class Camera;
 namespace scene { struct Scene; }
 namespace Cursor { class CursorManager; }
-namespace core { class UndoManager; }
+namespace core { class UndoManager; class CommandRegistry; class ShortcutMap; }
 namespace Tools { class ClipPlaneTool; }
 namespace Plugins { class PluginManager; class PluginContext; }
 namespace Engine { struct XRDiagnostics; }
@@ -114,6 +114,13 @@ public:
     virtual Tools::ClipPlaneTool&   clipTool() = 0;
     virtual Plugins::PluginManager& plugins() = 0;
     virtual Plugins::PluginContext& pluginContext() = 0;
+
+    // ── Commands + shortcuts (UI redesign Pass 0) ────────────────────────────
+    // Every menu item / toolbar button / palette row runs through
+    // commands().run(id) — contract C5. shortcuts() supplies the live key
+    // labels (menus) and the binding editor (Settings, Pass 6).
+    virtual core::CommandRegistry& commands() = 0;
+    virtual core::ShortcutMap&     shortcuts() = 0;
 
     // ── Docked 3D viewports ─────────────────────────────────────────────────
     // The GuiSystem draws one Viewport window per index in
@@ -241,6 +248,12 @@ public:
     virtual const char* themeName(int theme) const = 0;
     virtual int         currentTheme() const = 0;
     virtual void        setTheme(int theme) = 0;
+
+    // ── GUI scale (user factor on the window-derived scale, 0.5–2.0) ────────
+    // Applying triggers a style restyle + font rebuild at the next safe frame
+    // boundary, so call it from a released slider, not every drag frame.
+    virtual float guiScaleFactor() const = 0;
+    virtual void  setGuiScaleFactor(float factor) = 0;
 
     // ── User feedback ───────────────────────────────────────────────────────
     virtual void toast(const std::string& message,

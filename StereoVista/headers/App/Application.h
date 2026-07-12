@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Core/Camera.h"
+#include "Core/CommandRegistry.h"
+#include "Core/Shortcuts.h"
 #include "Core/UndoManager.h"
 #include "Cursors/Base/CursorManager.h"
 #include "Engine/Data.h"
@@ -179,6 +181,20 @@ private:
     bool navActive() const { return orbiting_ || panning_ || rmbLooking_; }
     void buildFrameSubmission(renderer::FrameSubmission& submission) const;
 
+    // ---- Commands, shortcuts, preferences (UI redesign Pass 0) ----
+    // Every user-facing action is a Command run through commands_ (contract
+    // C5); shortcuts_ maps rebindable key chords to command ids and replaces
+    // the old hardcoded key handling. Both are fed by registerCommands()
+    // (one place: command + menu grouping + default binding).
+    void registerCommands();
+    // Per-frame key-edge dispatch: bindings whose chord was pressed run their
+    // command. Called from the keyboard block of updateCamera (same
+    // WantCaptureKeyboard gate the hardcoded keys used).
+    void dispatchShortcuts();
+    // "view.center" (GL CenterView port): glide-center on the 3D cursor
+    // point, else the selection, else the scene bounds.
+    void centerViewOnCursor();
+
     // ---- Plugins / selection / picking (Phase 6) ----
     // MainPluginContext reaches these internals to service plugins/tools.
     friend class MainPluginContext;
@@ -225,6 +241,21 @@ private:
     // panel) and the concrete services facade the panels talk through.
     Gui::GuiSystem guiSystem_;
     std::unique_ptr<Gui::Services> guiServices_;
+
+    // Commands + rebindable shortcuts (UI redesign Pass 0). Registered once in
+    // registerCommands(); menus/status bar render from commands_ via Services,
+    // dispatchShortcuts() runs bindings, frecency rides preferences.json.
+    core::CommandRegistry commands_;
+    core::ShortcutMap shortcuts_;
+
+    // Preferences persistence (Gui::Settings ⇄ preferences.json + shortcuts ⇄
+    // shortcuts.json, both cwd-relative like the GL app). prefsReady_ gates
+    // saving so a failed init can never clobber a user's file with defaults;
+    // the snapshot string + timer drive the debounced save-on-change.
+    bool prefsLoaded_ = false;
+    bool prefsReady_ = false;
+    std::string prefsSnapshot_;
+    double prefsNextCheckTime_ = 0.0;
 
     // Loaded point clouds (Phase 4: parsers + GPU upload). Owned here until the
     // full SceneManager returns; streaming clouds are pumped every frame before
@@ -346,8 +377,8 @@ private:
     glm::vec3 gizmoUndoPos_{ 0.0f };
     glm::vec3 gizmoUndoRot_{ 0.0f };
     glm::vec3 gizmoUndoScale_{ 1.0f };
-    bool prevKey1_ = false, prevKey2_ = false, prevKey3_ = false; // mode edges
-    bool prevUndoKey_ = false, prevRedoKey_ = false;              // Ctrl+Z/Y edges
+    // (The gizmo mode keys and Ctrl+Z/Y are rebindable commands now — see
+    // registerCommands/dispatchShortcuts; the old per-key edge flags are gone.)
 
     // Action-key edges dispatched to plugins (Enter / KP-Enter / Delete /
     // Backspace) — e.g. the MeasurementPlugin's finish / cancel / undo-point.
@@ -383,8 +414,6 @@ private:
     bool lmbClickCandidate_ = false; // press started a potential (non-drag) click
     bool clickCursorValid_ = false;  // the 3D cursor was over geometry at press
     glm::vec3 clickCursorWorld_{ 0.0f };
-    bool prevEscape_ = false;        // Escape edge -> clear selection
-    bool prevF1_ = false;            // F1 edge -> toggle GUI panel visibility
 
     VkDescriptorPool imguiDescriptorPool_ = VK_NULL_HANDLE;
     // Backing store for ImGui_ImplVulkan_InitInfo::PipelineRenderingCreateInfo

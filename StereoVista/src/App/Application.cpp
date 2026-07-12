@@ -1,6 +1,8 @@
 #include "App/Application.h"
 
 #include "Core/Profiling.h"
+#include "Gui/Panels.h"      // Gui::Windows titles (panel-toggle command labels)
+#include "Gui/Preferences.h" // Gui::Settings ⇄ preferences.json (Pass 0)
 #include "Gui/Services.h" // abstract facade implemented by MainGuiServices below
 
 #include "Engine/Screenshot.h"
@@ -38,9 +40,65 @@ namespace {
 constexpr float kClickThresholdPx = 6.0f; // max mouse travel that still counts
                                           // as a click (vs. an orbit drag)
 
+// Runtime configuration files, cwd-relative like the GL app (and like
+// pipeline_cache.bin / imgui.ini).
+constexpr const char* kPreferencesFile = "preferences.json";
+constexpr const char* kShortcutsFile = "shortcuts.json";
+
 void checkImGuiVkResult(VkResult result) {
     if (result != VK_SUCCESS)
         std::cerr << "[imgui][vulkan] VkResult " << static_cast<int>(result) << "\n";
+}
+
+// GLFW key code -> ImGuiKey for the shortcut dispatch (the backend's own
+// translator is file-static, so it can't be reused here). Covers the
+// bindable keyboard; unknown keys return ImGuiKey_None and never match.
+ImGuiKey imGuiKeyFromGlfw(int key) {
+    if (key >= GLFW_KEY_A && key <= GLFW_KEY_Z)
+        return static_cast<ImGuiKey>(ImGuiKey_A + (key - GLFW_KEY_A));
+    if (key >= GLFW_KEY_0 && key <= GLFW_KEY_9)
+        return static_cast<ImGuiKey>(ImGuiKey_0 + (key - GLFW_KEY_0));
+    if (key >= GLFW_KEY_F1 && key <= GLFW_KEY_F12)
+        return static_cast<ImGuiKey>(ImGuiKey_F1 + (key - GLFW_KEY_F1));
+    if (key >= GLFW_KEY_KP_0 && key <= GLFW_KEY_KP_9)
+        return static_cast<ImGuiKey>(ImGuiKey_Keypad0 + (key - GLFW_KEY_KP_0));
+    switch (key) {
+    case GLFW_KEY_SPACE:         return ImGuiKey_Space;
+    case GLFW_KEY_APOSTROPHE:    return ImGuiKey_Apostrophe;
+    case GLFW_KEY_COMMA:         return ImGuiKey_Comma;
+    case GLFW_KEY_MINUS:         return ImGuiKey_Minus;
+    case GLFW_KEY_PERIOD:        return ImGuiKey_Period;
+    case GLFW_KEY_SLASH:         return ImGuiKey_Slash;
+    case GLFW_KEY_SEMICOLON:     return ImGuiKey_Semicolon;
+    case GLFW_KEY_EQUAL:         return ImGuiKey_Equal;
+    case GLFW_KEY_LEFT_BRACKET:  return ImGuiKey_LeftBracket;
+    case GLFW_KEY_BACKSLASH:     return ImGuiKey_Backslash;
+    case GLFW_KEY_RIGHT_BRACKET: return ImGuiKey_RightBracket;
+    case GLFW_KEY_GRAVE_ACCENT:  return ImGuiKey_GraveAccent;
+    case GLFW_KEY_ESCAPE:        return ImGuiKey_Escape;
+    case GLFW_KEY_ENTER:         return ImGuiKey_Enter;
+    case GLFW_KEY_TAB:           return ImGuiKey_Tab;
+    case GLFW_KEY_BACKSPACE:     return ImGuiKey_Backspace;
+    case GLFW_KEY_INSERT:        return ImGuiKey_Insert;
+    case GLFW_KEY_DELETE:        return ImGuiKey_Delete;
+    case GLFW_KEY_RIGHT:         return ImGuiKey_RightArrow;
+    case GLFW_KEY_LEFT:          return ImGuiKey_LeftArrow;
+    case GLFW_KEY_DOWN:          return ImGuiKey_DownArrow;
+    case GLFW_KEY_UP:            return ImGuiKey_UpArrow;
+    case GLFW_KEY_PAGE_UP:       return ImGuiKey_PageUp;
+    case GLFW_KEY_PAGE_DOWN:     return ImGuiKey_PageDown;
+    case GLFW_KEY_HOME:          return ImGuiKey_Home;
+    case GLFW_KEY_END:           return ImGuiKey_End;
+    case GLFW_KEY_PAUSE:         return ImGuiKey_Pause;
+    case GLFW_KEY_KP_DECIMAL:    return ImGuiKey_KeypadDecimal;
+    case GLFW_KEY_KP_DIVIDE:     return ImGuiKey_KeypadDivide;
+    case GLFW_KEY_KP_MULTIPLY:   return ImGuiKey_KeypadMultiply;
+    case GLFW_KEY_KP_SUBTRACT:   return ImGuiKey_KeypadSubtract;
+    case GLFW_KEY_KP_ADD:        return ImGuiKey_KeypadAdd;
+    case GLFW_KEY_KP_ENTER:      return ImGuiKey_KeypadEnter;
+    case GLFW_KEY_KP_EQUAL:      return ImGuiKey_KeypadEqual;
+    default:                     return ImGuiKey_None;
+    }
 }
 
 } // namespace
@@ -62,6 +120,9 @@ public:
     const Camera&      camera() const override    { return app_.activeCamera(); }
     glm::vec3          cameraPosition() const override { return app_.activeCamera().Position; }
     core::UndoManager& undo() override            { return app_.undo_; }
+
+    // The persisted user settings (preferences.json persistence is app-owned).
+    Gui::Settings& preferences() override { return app_.settings_; }
 
     renderer::OverlayDrawList& overlay() override { return app_.overlay_; }
 
@@ -131,6 +192,9 @@ public:
     Tools::ClipPlaneTool&   clipTool() override      { return app_.clipPlaneTool_; }
     Plugins::PluginManager& plugins() override       { return app_.pluginManager_; }
     Plugins::PluginContext& pluginContext() override { return *app_.pluginContext_; }
+
+    core::CommandRegistry& commands() override  { return app_.commands_; }
+    core::ShortcutMap&     shortcuts() override { return app_.shortcuts_; }
 
     // ---- Docked 3D viewports ----
     uint32_t viewportPanelCount() const override {
@@ -431,7 +495,28 @@ public:
     int themeCount() const override { return GetGuiThemeCount(); }
     const char* themeName(int theme) const override { return GetGuiThemeName(theme); }
     int currentTheme() const override { return g_currentTheme; }
-    void setTheme(int theme) override { ApplyGuiTheme(theme, 1.0f); }
+    void setTheme(int theme) override {
+        ApplyGuiTheme(theme, 1.0f);
+        // g_currentTheme is what ApplyGuiTheme actually accepted; recording it
+        // into the settings persists the choice (preferences.json).
+        app_.settings_.ui.theme = g_currentTheme;
+    }
+
+    float guiScaleFactor() const override { return app_.settings_.ui.guiScale; }
+    void setGuiScaleFactor(float factor) override {
+        factor = std::clamp(factor, GuiScaleSettings::MIN_USER_FACTOR,
+                            GuiScaleSettings::MAX_USER_FACTOR);
+        app_.settings_.ui.guiScale = factor;
+        g_GuiScale.userScaleFactor = factor;
+        // Defeat UpdateGuiScale's resize hysteresis so the new factor applies
+        // without a window resize; the restyle + font rebuild run at the top
+        // of the next frame (device-idle), like a window-driven rescale.
+        g_GuiScale.lastWindowWidth = 0;
+        g_GuiScale.lastWindowHeight = 0;
+        int fbWidth = 0, fbHeight = 0;
+        app_.window_.framebufferSize(fbWidth, fbHeight);
+        UpdateGuiScale(fbWidth, fbHeight);
+    }
 
     void toast(const std::string& message, Plugins::ToastLevel level) override {
         app_.pushToast(message, level);
@@ -462,6 +547,12 @@ Application::~Application() {
 }
 
 void Application::init() {
+    // Preferences first: everything below (theme, GUI scale, sun/sky
+    // defaults, panel visibility, navigation feel) respects the persisted
+    // values. A missing file or missing keys keep the Settings defaults; a
+    // GL-era preferences.json migrates its overlapping subset (Preferences.h).
+    prefsLoaded_ = Gui::Preferences::load(kPreferencesFile, settings_, &commands_);
+
     window_.init(1920, 1080, "StereoVista");
 
 #ifdef SV_VULKAN_VALIDATION
@@ -497,6 +588,14 @@ void Application::init() {
     // context above).
     guiServices_ = std::make_unique<MainGuiServices>(*this);
 
+    // Commands + shortcuts (UI redesign Pass 0): register every action and
+    // its default binding, then overlay the user's shortcuts.json (a GL-era
+    // profile file is migrated on load). From here on saving is safe.
+    registerCommands();
+    shortcuts_.loadFromFile(kShortcutsFile);
+    prefsReady_ = true;
+    prefsSnapshot_ = Gui::Preferences::snapshot(settings_, &commands_);
+
     // The primary viewport entry (always present; never closable). Its camera
     // is camera_ — see viewportCamera(). Extra viewports come from the View menu.
     AppViewport primary;
@@ -520,10 +619,18 @@ void Application::init() {
     clipPlaneTool_.setUndoManager(&undo_);
 
     // Sun defaults follow the GL app (dimmed warm directional); the repo
-    // skybox becomes the background when its faces resolve.
-    settings_.lighting.sun.enabled = true;
-    if (renderer_.skybox().loadCubemap("skybox"))
+    // skybox becomes the background when its faces resolve. Loaded
+    // preferences win over these first-run defaults — but a persisted sky
+    // mode whose source isn't available falls back to the gradient.
+    if (!prefsLoaded_)
+        settings_.lighting.sun.enabled = true;
+    const bool hasCubemap = renderer_.skybox().loadCubemap("skybox");
+    if (hasCubemap && !prefsLoaded_)
         settings_.sky.mode = renderer::SkyMode::Cubemap;
+    if ((settings_.sky.mode == renderer::SkyMode::Cubemap && !hasCubemap) ||
+        (settings_.sky.mode == renderer::SkyMode::Equirect &&
+         !renderer_.skybox().hasEquirect()))
+        settings_.sky.mode = renderer::SkyMode::Gradient;
 
     initImGui();
 }
@@ -884,22 +991,10 @@ void Application::updateCamera(float dt) {
         // key was released (the GL app had the same latent bug).
         camera.isMoving = flying;
 
-        // Escape clears the current selection (edge-triggered).
-        const bool escape = ImGui::IsKeyDown(ImGuiKey_Escape);
-        if (escape && !prevEscape_)
-            selection_ = Selection{};
-        prevEscape_ = escape;
-
-        // F1 toggles GUI panel visibility (edge-triggered; the menu bar and the
-        // viewport stay — hiding the panels grows the viewport to the window).
-        const bool f1 = ImGui::IsKeyDown(ImGuiKey_F1);
-        if (f1 && !prevF1_)
-            guiSystem_.toggleGuiVisible();
-        prevF1_ = f1;
-
         // Dispatch action keys to plugins (edge-triggered): the MeasurementPlugin
         // uses Enter (finish), Delete (cancel), Backspace (undo last point).
-        // Plugins keep receiving GLFW keycodes (their public contract).
+        // Plugins keep receiving GLFW keycodes (their public contract), and
+        // keep first refusal on these keys (dispatched before the shortcuts).
         if (pluginContext_) {
             auto keyEdge = [&](ImGuiKey key, int glfwKey, bool& prev) {
                 const bool down = ImGui::IsKeyDown(key);
@@ -914,32 +1009,14 @@ void Application::updateCamera(float dt) {
             keyEdge(ImGuiKey_Backspace, GLFW_KEY_BACKSPACE, prevBackspace_);
         }
 
-        // Transform-gizmo mode: 1 / 2 / 3 while a model is selected.
-        if (gizmo_.hasTarget()) {
-            const bool k1 = ImGui::IsKeyDown(ImGuiKey_1);
-            const bool k2 = ImGui::IsKeyDown(ImGuiKey_2);
-            const bool k3 = ImGui::IsKeyDown(ImGuiKey_3);
-            if (k1 && !prevKey1_) gizmo_.setMode(Tools::TransformGizmo::Mode::Translate);
-            if (k2 && !prevKey2_) gizmo_.setMode(Tools::TransformGizmo::Mode::Rotate);
-            if (k3 && !prevKey3_) gizmo_.setMode(Tools::TransformGizmo::Mode::Scale);
-            prevKey1_ = k1; prevKey2_ = k2; prevKey3_ = k3;
-        }
-
-        // Undo / redo: Ctrl+Z, Ctrl+Y (or Ctrl+Shift+Z for redo).
-        const bool ctrl = (mods & GLFW_MOD_CONTROL) != 0;
-        const bool zHeld = ctrl && ImGui::IsKeyDown(ImGuiKey_Z);
-        if (zHeld && !prevUndoKey_) {
-            if (mods & GLFW_MOD_SHIFT) undo_.redo();
-            else undo_.undo();
-        }
-        prevUndoKey_ = zHeld;
-        const bool yHeld = ctrl && ImGui::IsKeyDown(ImGuiKey_Y);
-        if (yHeld && !prevRedoKey_) undo_.redo();
-        prevRedoKey_ = yHeld;
+        // Rebindable shortcuts -> commands (UI redesign Pass 0). Replaces the
+        // hardcoded Escape / F1 / gizmo-mode / Ctrl+Z/Y handling: the same
+        // actions are commands now (select.clear, view.toggle_gui — moved to
+        // G, its GL key — gizmo.*, edit.undo/redo), dispatched by exact
+        // modifier match on this frame's key press edges.
+        dispatchShortcuts();
     } else {
         camera.isMoving = false;
-        prevEscape_ = false;
-        prevF1_ = false;
     }
 
     // Distance-adaptive fly/zoom speed from the centre-depth feed. Runs after
@@ -1659,10 +1736,19 @@ void Application::initImGui() {
 
     // Context + docking/viewport flags + GLFW platform backend + theme +
     // fonts (project-local imgui_style.cpp, preserved from the GL build).
+    // The persisted user scale factor feeds the very first scale computation
+    // so the font atlas builds at the right size immediately; the persisted
+    // theme (clamped against a file from a newer build) applies right after
+    // the context exists.
     int fbWidth = 0, fbHeight = 0;
     window_.framebufferSize(fbWidth, fbHeight);
+    g_GuiScale.userScaleFactor = settings_.ui.guiScale;
     UpdateGuiScale(fbWidth, fbHeight);
-    InitializeImGuiWithFonts(window_.handle(), true);
+    settings_.ui.theme =
+        std::clamp(settings_.ui.theme, 0, GetGuiThemeCount() - 1);
+    InitializeImGuiWithFonts(window_.handle(),
+                             IsGuiThemeDark(settings_.ui.theme));
+    ApplyGuiTheme(settings_.ui.theme, 1.0f);
 
     // A floating (undocked) Viewport window must not be dragged around by a
     // camera orbit that starts on its body — windows move by title bar only.
@@ -1720,6 +1806,18 @@ void Application::run() {
         if (window_.isMinimized()) {
             glfwWaitEventsTimeout(0.1);
             continue;
+        }
+
+        // Debounced preferences save: every ~2.5 s serialize the settings (+
+        // command frecency) and write only when something changed. Cheap —
+        // the struct is small — and catches every edit path without hooks.
+        if (prefsReady_ && now >= prefsNextCheckTime_) {
+            prefsNextCheckTime_ = now + 2.5;
+            std::string snap = Gui::Preferences::snapshot(settings_, &commands_);
+            if (snap != prefsSnapshot_) {
+                prefsSnapshot_ = std::move(snap);
+                Gui::Preferences::save(kPreferencesFile, settings_, &commands_);
+            }
         }
 
         if (window_.consumeResizeFlag())
@@ -2120,6 +2218,15 @@ void Application::shutdownImGui() {
 }
 
 void Application::shutdown() {
+    // Persist user state first. prefsReady_ is only set once init() got past
+    // loading + command registration, so an early init failure can never
+    // clobber a user's files with defaults. (shutdown may run twice — the
+    // explicit call and the destructor — the second write is identical.)
+    if (prefsReady_) {
+        Gui::Preferences::save(kPreferencesFile, settings_, &commands_);
+        shortcuts_.saveToFile(kShortcutsFile);
+    }
+
     if (device_.device() != VK_NULL_HANDLE)
         device_.waitIdle();
     // The VR session owns XR handles + Vulkan image views on device_; release it
@@ -2278,6 +2385,385 @@ void Application::drawToasts() {
         }
     }
     ImGui::End();
+}
+
+// ---- Commands, shortcuts (UI redesign Pass 0) ----
+
+// The ONE place actions, menu grouping (category + separatorBefore) and
+// default key bindings are defined. GuiSystem::drawMenuBar renders from this
+// registry; dispatchShortcuts() and the future palette/macros run the same
+// commands (contract C5). Actions go through guiServices_ where a service
+// exists — the same surface the panels use — and through app internals
+// otherwise.
+void Application::registerCommands() {
+    using core::Command;
+    using core::ShortcutBinding;
+    // Captured as a pointer BY VALUE: these closures outlive this scope,
+    // and guiServices_ lives as long as the Application.
+    Gui::Services* services = guiServices_.get();
+
+    auto add = [this](Command command) { commands_.add(std::move(command)); };
+
+    // ── File ─────────────────────────────────────────────────────────────
+    {
+        Command c;
+        c.id = "file.import_model";
+        c.title = "Import model...";
+        c.category = "File";
+        c.keywords = "load mesh obj fbx gltf assimp open";
+        c.action = [services] { services->importModelDialog(); };
+        add(std::move(c));
+    }
+    {
+        Command c;
+        c.id = "file.import_pointcloud";
+        c.title = "Import point cloud...";
+        c.category = "File";
+        c.keywords = "load las laz ply xyz pcb hdf5 open";
+        c.action = [services] { services->openPointCloudDialog(); };
+        add(std::move(c));
+    }
+    {
+        Command c;
+        c.id = "file.open_slpk";
+        c.title = "Open scene layer (.slpk)...";
+        c.category = "File";
+        c.keywords = "i3s esri package layer import";
+        c.action = [services] { services->openSlpkDialog(); };
+        add(std::move(c));
+    }
+    // Scene document ops are registered now (stable ids, menu placement) but
+    // stay disabled until the Pass-1 scene-document work lands.
+    const char* sceneOpsTooltip =
+        "Scene load / save / merge returns with the scene-document work "
+        "(UI redesign Pass 1).";
+    {
+        Command c;
+        c.id = "file.open_scene";
+        c.title = "Open scene...";
+        c.category = "File";
+        c.tooltip = sceneOpsTooltip;
+        c.separatorBefore = true;
+        c.enabled = [services] { return services->sceneSaveAvailable(); };
+        c.action = [] {};
+        add(std::move(c));
+    }
+    {
+        Command c;
+        c.id = "file.save_scene";
+        c.title = "Save scene...";
+        c.category = "File";
+        c.tooltip = sceneOpsTooltip;
+        c.enabled = [services] { return services->sceneSaveAvailable(); };
+        c.action = [] {};
+        add(std::move(c));
+    }
+    {
+        Command c;
+        c.id = "file.merge_scene";
+        c.title = "Merge scene...";
+        c.category = "File";
+        c.tooltip = sceneOpsTooltip;
+        c.enabled = [services] { return services->sceneSaveAvailable(); };
+        c.action = [] {};
+        add(std::move(c));
+    }
+    {
+        Command c;
+        c.id = "file.screenshot";
+        c.title = "Save screenshot";
+        c.category = "File";
+        c.keywords = "capture image png";
+        c.separatorBefore = true;
+        c.enabled = [services] { return !services->screenshotPending(); };
+        c.action = [services] { services->requestScreenshot(); };
+        add(std::move(c));
+        shortcuts_.registerDefault("file.screenshot",
+                                   ShortcutBinding{ GLFW_KEY_F12 });
+    }
+    {
+        Command c;
+        c.id = "file.exit";
+        c.title = "Exit";
+        c.category = "File";
+        c.keywords = "quit close";
+        c.separatorBefore = true;
+        c.action = [services] { services->requestQuit(); };
+        add(std::move(c));
+    }
+
+    // ── Edit ─────────────────────────────────────────────────────────────
+    {
+        Command c;
+        c.id = "edit.undo";
+        c.title = "Undo";
+        c.category = "Edit";
+        c.enabled = [this] { return undo_.canUndo(); };
+        c.action = [this] { undo_.undo(); };
+        add(std::move(c));
+        shortcuts_.registerDefault("edit.undo",
+                                   ShortcutBinding{ GLFW_KEY_Z, true });
+    }
+    {
+        Command c;
+        c.id = "edit.redo";
+        c.title = "Redo";
+        c.category = "Edit";
+        c.enabled = [this] { return undo_.canRedo(); };
+        c.action = [this] { undo_.redo(); };
+        add(std::move(c));
+        shortcuts_.registerDefault(
+            "edit.redo", ShortcutBinding{ GLFW_KEY_Y, true },
+            ShortcutBinding{ GLFW_KEY_Z, true, false, true }); // Ctrl+Shift+Z
+    }
+    // Gizmo modes (enabled while something is selected — same gate the old
+    // hardcoded 1/2/3 keys had).
+    const auto gizmoActive = [this] { return gizmo_.hasTarget(); };
+    {
+        Command c;
+        c.id = "gizmo.translate";
+        c.title = "Gizmo: translate";
+        c.category = "Edit";
+        c.separatorBefore = true;
+        c.enabled = gizmoActive;
+        c.checked = [this] {
+            return gizmo_.mode() == Tools::TransformGizmo::Mode::Translate;
+        };
+        c.action = [this] {
+            gizmo_.setMode(Tools::TransformGizmo::Mode::Translate);
+        };
+        add(std::move(c));
+        shortcuts_.registerDefault("gizmo.translate",
+                                   ShortcutBinding{ GLFW_KEY_1 });
+    }
+    {
+        Command c;
+        c.id = "gizmo.rotate";
+        c.title = "Gizmo: rotate";
+        c.category = "Edit";
+        c.enabled = gizmoActive;
+        c.checked = [this] {
+            return gizmo_.mode() == Tools::TransformGizmo::Mode::Rotate;
+        };
+        c.action = [this] {
+            gizmo_.setMode(Tools::TransformGizmo::Mode::Rotate);
+        };
+        add(std::move(c));
+        shortcuts_.registerDefault("gizmo.rotate", ShortcutBinding{ GLFW_KEY_2 });
+    }
+    {
+        Command c;
+        c.id = "gizmo.scale";
+        c.title = "Gizmo: scale";
+        c.category = "Edit";
+        c.enabled = gizmoActive;
+        c.checked = [this] {
+            return gizmo_.mode() == Tools::TransformGizmo::Mode::Scale;
+        };
+        c.action = [this] {
+            gizmo_.setMode(Tools::TransformGizmo::Mode::Scale);
+        };
+        add(std::move(c));
+        shortcuts_.registerDefault("gizmo.scale", ShortcutBinding{ GLFW_KEY_3 });
+    }
+    {
+        Command c;
+        c.id = "gizmo.toggle_space";
+        c.title = "Gizmo: local space";
+        c.category = "Edit";
+        c.keywords = "world coordinate";
+        c.enabled = gizmoActive;
+        c.checked = [services] { return services->gizmoLocalSpace(); };
+        c.action = [services] {
+            services->setGizmoLocalSpace(!services->gizmoLocalSpace());
+        };
+        add(std::move(c));
+        shortcuts_.registerDefault("gizmo.toggle_space",
+                                   ShortcutBinding{ GLFW_KEY_4 });
+    }
+    {
+        Command c;
+        c.id = "select.clear";
+        c.title = "Clear selection";
+        c.category = "Edit";
+        c.keywords = "deselect escape";
+        c.separatorBefore = true;
+        c.enabled = [this] { return selection_.model >= 0; };
+        c.action = [this] { selection_ = Selection{}; };
+        add(std::move(c));
+        shortcuts_.registerDefault("select.clear",
+                                   ShortcutBinding{ GLFW_KEY_ESCAPE });
+    }
+    {
+        Command c;
+        c.id = "edit.delete_selected";
+        c.title = "Delete selected model";
+        c.category = "Edit";
+        c.keywords = "remove";
+        // Unbound by default (the GL app used Delete, but plugins own that
+        // key here: the MeasurementPlugin's cancel). Bindable by the user.
+        c.enabled = [this] {
+            return selection_.model >= 0 &&
+                   selection_.model < int(scene_.models.size());
+        };
+        c.action = [this, services] {
+            services->deleteModel(selection_.model);
+        };
+        add(std::move(c));
+    }
+
+    // ── View: panel toggles (checkable; state lives in Settings::Ui) ─────
+    const auto panelToggle = [&](const char* id, const char* title,
+                                 bool Gui::Settings::Ui::Panels::* flag) {
+        Command c;
+        c.id = id;
+        c.title = title;
+        c.category = "View";
+        c.keywords = "panel window show hide toggle";
+        c.checked = [this, flag] { return settings_.ui.panels.*flag; };
+        c.action = [this, flag] {
+            settings_.ui.panels.*flag = !(settings_.ui.panels.*flag);
+        };
+        add(std::move(c));
+    };
+    panelToggle("view.panel.scene", Gui::Windows::Scene,
+                &Gui::Settings::Ui::Panels::scene);
+    panelToggle("view.panel.inspector", Gui::Windows::Inspector,
+                &Gui::Settings::Ui::Panels::inspector);
+    panelToggle("view.panel.settings", Gui::Windows::Settings,
+                &Gui::Settings::Ui::Panels::settings);
+    panelToggle("view.panel.cursor", Gui::Windows::Cursor,
+                &Gui::Settings::Ui::Panels::cursor);
+    panelToggle("view.panel.pointclouds", Gui::Windows::PointClouds,
+                &Gui::Settings::Ui::Panels::pointClouds);
+    panelToggle("view.panel.clipplanes", Gui::Windows::ClipPlanes,
+                &Gui::Settings::Ui::Panels::clipPlanes);
+    panelToggle("view.panel.diagnostics", Gui::Windows::Diagnostics,
+                &Gui::Settings::Ui::Panels::diagnostics);
+    panelToggle("view.panel.slpk", Gui::Windows::Slpk,
+                &Gui::Settings::Ui::Panels::slpk);
+    {
+        Command c;
+        c.id = "view.status_bar";
+        c.title = "Status bar";
+        c.category = "View";
+        c.checked = [this] { return settings_.ui.showStatusBar; };
+        c.action = [this] {
+            settings_.ui.showStatusBar = !settings_.ui.showStatusBar;
+        };
+        add(std::move(c));
+    }
+    {
+        Command c;
+        c.id = "view.wireframe";
+        c.title = "Wireframe";
+        c.category = "View";
+        c.keywords = "line mode debug";
+        c.tooltip = "Draw all scene geometry (models + scene layers) with the "
+                    "line-mode debug pipeline.";
+        c.separatorBefore = true;
+        c.enabled = [services] { return services->wireframeSupported(); };
+        c.checked = [this] { return settings_.render.wireframe; };
+        c.action = [this] {
+            settings_.render.wireframe = !settings_.render.wireframe;
+        };
+        add(std::move(c));
+    }
+    {
+        Command c;
+        c.id = "view.toggle_gui";
+        c.title = "Show GUI panels";
+        c.category = "View";
+        c.keywords = "hide interface hud";
+        c.tooltip = "Hide the side panels — the menu bar and the 3D view "
+                    "stay. (G, the GL app's key; F1 is reserved for the "
+                    "upcoming shortcut overlay.)";
+        c.checked = [this] { return guiSystem_.guiVisible(); };
+        c.action = [this] { guiSystem_.toggleGuiVisible(); };
+        add(std::move(c));
+        shortcuts_.registerDefault("view.toggle_gui",
+                                   ShortcutBinding{ GLFW_KEY_G });
+    }
+    {
+        Command c;
+        c.id = "view.center";
+        c.title = "Center view";
+        c.category = "View";
+        c.keywords = "focus frame look at";
+        c.separatorBefore = true;
+        c.action = [this] { centerViewOnCursor(); };
+        add(std::move(c));
+        shortcuts_.registerDefault("view.center", ShortcutBinding{ GLFW_KEY_C });
+    }
+    {
+        Command c;
+        c.id = "view.add_viewport";
+        c.title = "Add viewport";
+        c.category = "View";
+        c.keywords = "camera window 3d view";
+        c.enabled = [services] { return services->canAddViewport(); };
+        c.action = [services] { services->addViewport(); };
+        add(std::move(c));
+    }
+    {
+        Command c;
+        c.id = "view.reset_layout";
+        c.title = "Reset layout";
+        c.category = "View";
+        c.keywords = "dock default windows arrange";
+        c.separatorBefore = true;
+        c.action = [this] { guiSystem_.requestResetLayout(); };
+        add(std::move(c));
+    }
+
+    // ── Help ─────────────────────────────────────────────────────────────
+    {
+        Command c;
+        c.id = "help.about";
+        c.title = "About StereoVista";
+        c.category = "Help";
+        c.checked = [this] { return guiSystem_.aboutVisible(); };
+        c.action = [this] { guiSystem_.toggleAbout(); };
+        add(std::move(c));
+    }
+}
+
+void Application::dispatchShortcuts() {
+    const ImGuiIO& io = ImGui::GetIO();
+    // Collect first, run after: a command could mutate the binding table
+    // (the Pass-6 editor) while we iterate it.
+    std::vector<std::string> toRun;
+    shortcuts_.forEach([&](const std::string& commandId,
+                           const core::ShortcutBinding& binding) {
+        if (binding.ctrl != io.KeyCtrl || binding.alt != io.KeyAlt ||
+            binding.shift != io.KeyShift)
+            return; // exact modifier match (Ctrl+Z must not fire Ctrl+Shift+Z)
+        const ImGuiKey key = imGuiKeyFromGlfw(binding.keyCode);
+        if (key == ImGuiKey_None || !ImGui::IsKeyPressed(key, false))
+            return;
+        toRun.push_back(commandId);
+    });
+    for (const std::string& commandId : toRun)
+        commands_.run(commandId); // no-op when the command is disabled
+}
+
+void Application::centerViewOnCursor() {
+    // GL CenterView port: glide-center on the 3D cursor point (desktop only —
+    // the depth pick is frozen in XR), else the selection, else the scene.
+    Camera& cam = activeCamera();
+    if (cam.IsAnimating)
+        return;
+    if (!xrRunning() && cursorManager_.isCursorPositionValid()) {
+        cam.StartCenteringAnimation(cursorManager_.getCursorPosition());
+        return;
+    }
+    if (selection_.model >= 0 && selection_.model < int(scene_.models.size())) {
+        guiServices_->focusCameraOn(selection_.model);
+        return;
+    }
+    if (scene_.worldBoundsMax.x >= scene_.worldBoundsMin.x)
+        cam.StartCenteringAnimation(
+            (scene_.worldBoundsMin + scene_.worldBoundsMax) * 0.5f);
 }
 
 Plugins::PickRay Application::mouseRayCurrent() const {

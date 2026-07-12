@@ -32,6 +32,7 @@
 namespace scene { struct Scene; struct RayHit; }
 namespace renderer { class OverlayDrawList; }
 namespace core { class UndoManager; }
+namespace Gui { struct Settings; }
 class Camera;
 
 namespace Plugins {
@@ -54,6 +55,13 @@ public:
     virtual const Camera&      camera()        const = 0;
     virtual glm::vec3          cameraPosition() const = 0;
     virtual core::UndoManager& undo()                = 0;
+
+    // ── Preferences (restored in UI redesign Pass 0) ─────────────────────────
+    // The app's persisted user settings (Gui/Settings.h) — read for behaviour
+    // flags, write to change them; persistence to preferences.json is
+    // automatic (debounced save + save-on-exit). Include Gui/Settings.h in
+    // your plugin .cpp to use it.
+    virtual Gui::Settings& preferences() = 0;
 
     // ── Overlay (replaces the GL compileOverlayProgram) ─────────────────────
     // Append world-space geometry once per frame; the renderer draws it on the
