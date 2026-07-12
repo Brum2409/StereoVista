@@ -538,6 +538,15 @@
     <ClCompile Include="src\App\Snapshots.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\App\ImportOps.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Core\ImportService.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Gui\panels\WelcomeHub.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\Gui\UiKit.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -1531,6 +1540,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\Gui\Palette.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="headers\Core\ImportService.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\Gui\Preferences.h">

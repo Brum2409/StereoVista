@@ -134,6 +134,14 @@
                 "shift": false
             }
         ],
+        "palette.open": [
+            {
+                "alt": false,
+                "ctrl": true,
+                "keyCode": 75,
+                "shift": false
+            }
+        ],
         "select.all": [
             {
                 "alt": false,

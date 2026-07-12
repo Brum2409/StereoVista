@@ -20,12 +20,16 @@
             "score": 2.0
         },
         "edit.undo": {
-            "lastUse": 1783875471,
-            "score": 5.959317742956334
+            "lastUse": 1783876563,
+            "score": 6.955589819481245
         },
         "file.import_pointcloud": {
             "lastUse": 1783863439,
             "score": 1.9996837328572683
+        },
+        "file.merge_scene": {
+            "lastUse": 1783876518,
+            "score": 1.0
         },
         "file.new_scene": {
             "lastUse": 1783862970,
@@ -56,12 +60,16 @@
             "score": 1.9997037830572026
         },
         "help.about": {
-            "lastUse": 1783850040,
-            "score": 1.0
+            "lastUse": 1783876818,
+            "score": 1.9847723111062776
+        },
+        "palette.open": {
+            "lastUse": 1783877266,
+            "score": 9.997054002839386
         },
         "select.all": {
-            "lastUse": 1783863368,
-            "score": 11.994527693980354
+            "lastUse": 1783876556,
+            "score": 14.904213631532746
         },
         "view.add_viewport": {
             "lastUse": 1783860672,
@@ -71,8 +79,24 @@
             "lastUse": 1783850051,
             "score": 1.0
         },
+        "view.panel.cursor": {
+            "lastUse": 1783876502,
+            "score": 1.0
+        },
+        "view.panel.history": {
+            "lastUse": 1783876568,
+            "score": 1.0
+        },
+        "view.panel.inspector": {
+            "lastUse": 1783876813,
+            "score": 1.0
+        },
         "view.panel.snapshots": {
             "lastUse": 1783875653,
+            "score": 1.0
+        },
+        "view.status_bar": {
+            "lastUse": 1783876566,
             "score": 1.0
         }
     },
@@ -81,12 +105,16 @@
         "type": 0
     },
     "files": {
+        "autosaveEnabled": false,
+        "autosaveMinutes": 1,
+        "autosaveSlots": 1,
         "openSceneMode": 0,
         "recentScenes": [
             "C:\\Users\\benta\\Downloads\\Stereo Demo\\StereoVista\\snapshots\\snap_0.scene",
             "C:\\Users\\benta\\Downloads\\Stereo Demo\\StereoVista\\office.scene"
         ],
-        "safetySnapshotBeforeReplace": true
+        "safetySnapshotBeforeReplace": true,
+        "showWelcomeHub": false
     },
     "lighting": {
         "ambient": 0.029999999329447746,
@@ -144,7 +172,7 @@
     },
     "stereo": {
         "autoConvergence": true,
-        "convergence": 13.06039810180664,
+        "convergence": 25.118534088134766,
         "convergenceFactor": 1.2999999523162842,
         "convergenceSmoothing": 1.2000000476837158,
         "flipEyes": false,
@@ -155,9 +183,9 @@
         "inspector": {
             "display": true,
             "exportSection": false,
-            "info": false,
+            "info": true,
             "layer": true,
-            "lightProps": true,
+            "lightProps": false,
             "material": true,
             "sky": true,
             "sun": true,
@@ -178,7 +206,7 @@
         },
         "reduceMotion": false,
         "showStatusBar": false,
-        "theme": 0
+        "theme": 6
     },
     "version": 3,
     "vr": {

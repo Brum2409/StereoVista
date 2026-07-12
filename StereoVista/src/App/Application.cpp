@@ -481,6 +481,19 @@ public:
 
     void importModelDialog() override { app_.openModelDialog(); }
     void openPointCloudDialog() override { app_.openPointCloudDialog(); }
+
+    // ── Smart import + autosave/recovery (Pass 5) ────────────────────────────
+    void importFiles(const std::vector<std::string>& paths) override {
+        app_.importFiles(paths);
+    }
+    void importFilesDialog() override { app_.importFilesDialog(); }
+    bool sceneEmpty() const override { return app_.sceneEmpty(); }
+    void addPrimitive(int type) override { app_.addPrimitive(type); }
+    std::string autosaveStatus() const override { return app_.autosaveStatus(); }
+    bool recoveryAvailable() const override { return app_.recoveryAvailable(); }
+    std::string recoveryTimestamp() const override { return app_.recoveryTimestamp(); }
+    void restoreLastSession() override { app_.restoreLastSession(); }
+    void discardRecovery() override { app_.discardRecovery(); }
     bool sceneSaveAvailable() const override { return true; } // Pass 1 landed
     void deleteModel(int model) override {
         // Undoable path shared with the Outliner (one step, by ObjectId).
@@ -733,6 +746,11 @@ void Application::init() {
     // values. A missing file or missing keys keep the Settings defaults; a
     // GL-era preferences.json migrates its overlapping subset (Preferences.h).
     prefsLoaded_ = Gui::Preferences::load(kPreferencesFile, settings_, &commands_);
+
+    // Crash recovery (Pass 5): a session.lock left behind by the previous run
+    // means it did not exit cleanly — the Welcome Hub then leads with a
+    // "Restore last session" card. Re-arms the lock for this run.
+    initSession();
 
     window_.init(1920, 1080, "StereoVista");
 
@@ -2066,6 +2084,10 @@ void Application::run() {
             }
         }
 
+        // Autosave (Pass 5): rotating slots into autosave/, skipped while
+        // anything streams. Ids exist by now (ensureIds ran above).
+        maybeAutosave(now);
+
         if (window_.consumeResizeFlag())
             handleResize();
 
@@ -2451,33 +2473,14 @@ void Application::frameI3SLayer(size_t index) {
 }
 
 void Application::handleDroppedFiles() {
+    // Drag-drop is just another import source since Pass 5: one entry point
+    // (importFiles) plans the paths, sniffs the ambiguous ones, skips dupes,
+    // groups + names + selects + frames. The old body classified by extension
+    // inline and hard-wired .ply to point clouds — a dropped PLY *mesh* silently
+    // became a vertex cloud. core::ImportService reads the header instead.
     const std::vector<std::string> dropped = window_.consumeDroppedFiles();
-    if (dropped.empty())
-        return;
-
-    std::vector<std::string> models;
-    std::vector<std::string> pointClouds;
-    for (const std::string& path : dropped) {
-        std::string ext = std::filesystem::path(path).extension().string();
-        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-        if (ext == ".slpk") {
-            openSlpk(path);
-        } else if (ext == ".obj" || ext == ".fbx" || ext == ".gltf" ||
-                   ext == ".glb" || ext == ".dae" || ext == ".stl" ||
-                   ext == ".3ds" || ext == ".blend") {
-            models.push_back(path);
-        } else if (ext == ".las" || ext == ".laz" || ext == ".xyz" ||
-                   ext == ".txt" || ext == ".ply" || ext == ".pcb" ||
-                   ext == ".h5" || ext == ".hdf5" || ext == ".f5") {
-            pointClouds.push_back(path);
-        } else {
-            pushToast("Unsupported file type: " +
-                          std::filesystem::path(path).filename().string(),
-                      Plugins::ToastLevel::Warning);
-        }
-    }
-    importModelFiles(models);
-    loadPointCloudFiles(pointClouds);
+    if (!dropped.empty())
+        importFiles(dropped);
 }
 
 void Application::handleResize() {
@@ -2516,6 +2519,9 @@ void Application::shutdown() {
         Gui::Preferences::save(kPreferencesFile, settings_, &commands_);
         shortcuts_.saveToFile(kShortcutsFile);
     }
+    // Clean exit: drop the session lock. A crash leaves it behind — that IS the
+    // staleness signal the next launch recovers from (Pass 5).
+    endSession();
 
     if (device_.device() != VK_NULL_HANDLE)
         device_.waitIdle();
@@ -2779,6 +2785,19 @@ void Application::registerCommands() {
     auto add = [this](Command command) { commands_.add(std::move(command)); };
 
     // ── File ─────────────────────────────────────────────────────────────
+    {
+        // The one import entry (Pass 5): any mix of models / clouds / .slpk /
+        // .scene in a single combined-filter dialog.
+        Command c;
+        c.id = "file.import_files";
+        c.title = "Import files...";
+        c.category = "File";
+        c.keywords = "import load open add model point cloud slpk scene drop any";
+        c.action = [this] { importFilesDialog(); };
+        add(std::move(c));
+        shortcuts_.registerDefault("file.import_files",
+                                   ShortcutBinding{ GLFW_KEY_I, /*ctrl=*/true });
+    }
     {
         Command c;
         c.id = "file.import_model";
@@ -3112,6 +3131,24 @@ void Application::registerCommands() {
                 &Gui::Settings::Ui::Panels::history);
     panelToggle("view.panel.snapshots", Gui::Windows::Snapshots,
                 &Gui::Settings::Ui::Panels::snapshots);
+    // ── Create: primitives (Pass 5; the Welcome Hub row and the palette run
+    //    the SAME commands — one path, contract C5) ─────────────────────────
+    {
+        static const char* kPrimitiveNames[] = { "Cube", "Sphere", "Cylinder",
+                                                 "Plane", "Torus" };
+        static const char* kPrimitiveIds[] = { "create.cube", "create.sphere",
+                                               "create.cylinder", "create.plane",
+                                               "create.torus" };
+        for (int i = 0; i < 5; ++i) {
+            Command c;
+            c.id = kPrimitiveIds[i];
+            c.title = kPrimitiveNames[i];
+            c.category = "Create";
+            c.keywords = "primitive add new object mesh shape";
+            c.action = [this, i] { addPrimitive(i); };
+            add(std::move(c));
+        }
+    }
     {
         // The palette searches commands, objects, snapshots and recents (Pass 4).
         Command c;

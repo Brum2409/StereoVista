@@ -287,6 +287,23 @@ public:
     virtual bool gizmoSnap() const = 0;
     virtual void setGizmoSnap(bool on) = 0;
 
+    // ── Smart import (Pass 5 §11: one entry point for every source) ─────────
+    // Plans + executes any mix of paths (models, clouds, .slpk, .scene), skips
+    // duplicates, prettifies names, auto-groups a multi-file batch, selects it
+    // and frames when the scene was empty. Drag-drop, the menu, the Welcome Hub
+    // and the palette all funnel through this.
+    virtual void importFiles(const std::vector<std::string>& paths) = 0;
+    virtual void importFilesDialog() = 0; // one combined-filter dialog (Ctrl+I)
+    virtual bool sceneEmpty() const = 0;   // drives the Welcome Hub
+    virtual void addPrimitive(int type) = 0; // scene::PrimitiveType index
+
+    // ── Autosave + crash recovery (Pass 5) ──────────────────────────────────
+    virtual std::string autosaveStatus() const = 0; // "" or "Autosaved - 14:02"
+    virtual bool        recoveryAvailable() const = 0;
+    virtual std::string recoveryTimestamp() const = 0;
+    virtual void        restoreLastSession() = 0;
+    virtual void        discardRecovery() = 0;
+
     // ── Scene operations ────────────────────────────────────────────────────
     virtual void importModelDialog() = 0;    // Assimp import -> scene
     virtual void openPointCloudDialog() = 0;  // load a point cloud file

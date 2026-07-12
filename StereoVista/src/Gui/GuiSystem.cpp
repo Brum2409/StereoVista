@@ -249,6 +249,13 @@ void GuiSystem::drawMenuBar(Services& services) {
         ImGui::EndMenu();
     }
 
+    // Create: the primitive commands (Pass 5). Registry-rendered, so a future
+    // tool that registers a "Create" command appears here with no edit.
+    if (ImGui::BeginMenu("Create")) {
+        commandMenu(services, "Create");
+        ImGui::EndMenu();
+    }
+
     if (ImGui::BeginMenu("Select")) {
         commandMenu(services, "Select");
         ImGui::EndMenu();
@@ -393,6 +400,9 @@ void GuiSystem::drawStatusBar(Services& services) {
                                          : "Opening scene layer...");
         }
 
+        // ── Autosave whisper (Pass 5 §11): quiet, never in the way ─────────
+        const std::string autosave = services.autosaveStatus();
+
         // ── Right block: FPS (click -> Performance panel) + reserved slot ──
         const FrameDiagnostics diag = services.diagnostics();
         char fpsText[48];
@@ -400,8 +410,15 @@ void GuiSystem::drawStatusBar(Services& services) {
         // Far-right slot reserved for presence/sync (§16) — keep the gap.
         const float reserved = UiKit::Space(7);
         const float fpsWidth = ImGui::CalcTextSize(fpsText).x;
-        ImGui::SameLine(ImGui::GetCursorPosX() +
-                        ImGui::GetContentRegionAvail().x - fpsWidth - reserved);
+        const float autosaveWidth =
+            autosave.empty() ? 0.0f
+                             : ImGui::CalcTextSize(autosave.c_str()).x + UiKit::Space(7);
+        ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x -
+                        fpsWidth - autosaveWidth - reserved);
+        if (!autosave.empty()) {
+            ImGui::TextDisabled("%s", autosave.c_str());
+            ImGui::SameLine(0.0f, UiKit::Space(7));
+        }
         const UiKit::Semantic level = diag.fps >= 50.0f
                                           ? UiKit::Semantic::Success
                                           : (diag.fps >= 25.0f
@@ -477,6 +494,16 @@ void GuiSystem::drawViewportPanel(Services& services, unsigned int index) {
     ImGui::End();
     ImGui::PopStyleVar();
     services.onViewportPanel(index, state);
+
+    // Welcome Hub (Pass 5): floats over the PRIMARY viewport only, and only
+    // while the scene is empty. Drawn as its OWN window after the panel's
+    // End() so its buttons are clickable and it never disturbs the image's
+    // hover/pick reporting above (a mouse over the hub correctly stops
+    // hovering the scene image).
+    if (index == 0 && state.shown)
+        drawWelcomeHub(services, state.screenX, state.screenY, state.screenW,
+                       state.screenH);
+
     if (!keepOpen)
         services.closeViewport(index);
 }

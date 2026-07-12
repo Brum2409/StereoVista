@@ -43,4 +43,12 @@ void drawSlpkPanel(Services& services, bool* open);
 void drawHistoryPanel(Services& services, bool* open);
 void drawSnapshotsPanel(Services& services, bool* open);
 
+// Welcome Hub (UI redesign Pass 5 §11): a non-modal card centered over the
+// PRIMARY viewport while the scene is empty — recent scenes, import, primitives,
+// and a "Restore last session" card after an unclean shutdown. Not a dockable
+// panel: it is drawn over the viewport image, so it takes that image's screen
+// rect instead of a visibility flag.
+void drawWelcomeHub(Services& services, float screenX, float screenY,
+                    float screenW, float screenH);
+
 } // namespace Gui

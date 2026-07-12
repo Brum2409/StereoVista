@@ -137,6 +137,14 @@ struct Settings {
         // Auto-capture a scene snapshot before a destructive Replace (UI
         // redesign Pass 3 §9 safety snapshots; needs a non-empty scene).
         bool safetySnapshotBeforeReplace = true;
+        // Autosave (UI redesign Pass 5 §11). v3 scenes store asset REFERENCES,
+        // so an autosave is cheap; it is skipped while anything is streaming.
+        // Slots rotate so two crashes in a row can't leave one corrupt file.
+        bool autosaveEnabled = true;
+        int  autosaveMinutes = 5;  // clamped 1..60 on load
+        int  autosaveSlots   = 3;  // clamped 1..10 on load
+        // Welcome Hub over the empty primary viewport.
+        bool showWelcomeHub = true;
     } files;
 
     // ── Interface (UI redesign Pass 0) ──────────────────────────────────────

@@ -61,21 +61,8 @@ void Application::createSnapshot(const std::string& name, uint32_t aspects) {
         const std::string path =
             "snapshots/snap_" + std::to_string(snapshotCounter_++) + ".scene";
 
-        scene::SceneSaveState state;
-        const Camera::CameraState cam = camera_.GetState();
-        state.camera.valid = true;
-        state.camera.position = cam.position;
-        state.camera.front = cam.front;
-        state.camera.up = cam.up;
-        state.camera.yaw = cam.yaw;
-        state.camera.pitch = cam.pitch;
-        state.camera.zoom = cam.zoom;
-        state.camera.orientation = cam.orientation;
-        state.camera.hasOrientation = true;
-        state.environment.hasSun = true;
-        state.environment.sun = settings_.lighting.sun;
-        state.environment.hasSky = true;
-        state.environment.sky = settings_.sky;
+        // Camera + environment block (shared with saveScene and autosave).
+        const scene::SceneSaveState state = currentSaveState();
 
         std::string error;
         if (scene::saveSceneDocument(path, scene_, state, renderer_.materials(),

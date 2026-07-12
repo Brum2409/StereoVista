@@ -138,6 +138,28 @@ private:
         std::vector<std::string> tags;
         Camera::CameraState camera{};
     };
+    // ---- Smart import + autosave + recovery (Pass 5 §11; src/App/ImportOps.cpp) ----
+    // ONE entry point for menu / drag-drop / hub / palette imports: plans every
+    // path (core::ImportService), skips duplicates, runs the existing loaders,
+    // then prettifies names, auto-groups a multi-file batch, selects it and
+    // frames when the scene was empty.
+    void importFiles(const std::vector<std::string>& paths);
+    void importFilesDialog(); // one combined-filter dialog (Ctrl+I)
+    bool sceneEmpty() const;
+    void addPrimitive(int type); // scene::PrimitiveType index; selects the result
+
+    void maybeAutosave(double now); // called from the frame loop
+    void initSession();             // session.lock: detect an unclean shutdown
+    void endSession();              // remove the lock (clean exit)
+    bool recoveryAvailable() const { return recoveryAvailable_; }
+    const std::string& recoveryTimestamp() const { return recoveryStamp_; }
+    void restoreLastSession();
+    void discardRecovery();
+    const std::string& autosaveStatus() const { return autosaveStatus_; }
+    // The camera + environment block every v3 save writes (was duplicated in
+    // saveScene and Snapshots; factored here).
+    scene::SceneSaveState currentSaveState() const;
+
     void createSnapshot(const std::string& name, uint32_t aspects);
     void restoreSnapshot(size_t index, uint32_t restoreAspects);
     void deleteSnapshot(size_t index);
@@ -333,6 +355,13 @@ private:
     // ---- Snapshots (Pass 3) ----
     std::vector<SnapshotEntry> snapshots_;
     int snapshotCounter_ = 0; // unique snapshot scene-file names this session
+    // ---- Autosave + crash recovery (Pass 5) ----
+    double autosaveNextTime_ = 0.0; // glfwGetTime() of the next autosave check
+    int autosaveSlot_ = 0;          // rotates over settings_.files.autosaveSlots
+    std::string autosaveStatus_;    // "Autosaved - 14:02" (status-bar whisper)
+    bool recoveryAvailable_ = false;
+    std::string recoveryPath_;      // newest autosave from the crashed session
+    std::string recoveryStamp_;     // its clock stamp (read from session.lock)
     // Saved identity/display state for layers whose async SLPK re-open is in
     // flight (scene load + delete-undo); consumed by pumpSlpkLoads on adopt.
     std::vector<scene::PendingLayerState> pendingLayerStates_;

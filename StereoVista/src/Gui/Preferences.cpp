@@ -128,6 +128,10 @@ json toJson(const Settings& s) {
     files["openSceneMode"] = s.files.openSceneMode;
     files["recentScenes"] = s.files.recentScenes;
     files["safetySnapshotBeforeReplace"] = s.files.safetySnapshotBeforeReplace;
+    files["autosaveEnabled"] = s.files.autosaveEnabled;
+    files["autosaveMinutes"] = s.files.autosaveMinutes;
+    files["autosaveSlots"] = s.files.autosaveSlots;
+    files["showWelcomeHub"] = s.files.showWelcomeHub;
 
     json& ui = doc["ui"];
     ui["theme"] = s.ui.theme;
@@ -241,6 +245,12 @@ void fromJson(const json& doc, Settings& s) {
         get(*files, "openSceneMode", s.files.openSceneMode);
         s.files.openSceneMode = std::clamp(s.files.openSceneMode, 0, 2);
         get(*files, "safetySnapshotBeforeReplace", s.files.safetySnapshotBeforeReplace);
+        get(*files, "autosaveEnabled", s.files.autosaveEnabled);
+        get(*files, "autosaveMinutes", s.files.autosaveMinutes);
+        s.files.autosaveMinutes = std::clamp(s.files.autosaveMinutes, 1, 60);
+        get(*files, "autosaveSlots", s.files.autosaveSlots);
+        s.files.autosaveSlots = std::clamp(s.files.autosaveSlots, 1, 10);
+        get(*files, "showWelcomeHub", s.files.showWelcomeHub);
         get(*files, "recentScenes", s.files.recentScenes);
         if (s.files.recentScenes.size() >
             static_cast<size_t>(Settings::Files::kMaxRecentScenes))
