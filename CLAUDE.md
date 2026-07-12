@@ -159,6 +159,7 @@ Do not modify these during a running session as changes may be overwritten on ex
 
 ## Development Notes
 
+- **A full GUI/UX redesign is in progress.** The master plan — vision, design system (UiKit), app shell (DockSpace + Outliner/Inspector), command palette, smart import, and the multi-pass roadmap with a live Status Board — is **`docs/UI_REDESIGN.md`**. Read it before doing any GUI work, follow its engineering guardrails, and update its Status Board when completing a pass.
 - `main.cpp` is intentionally large (~7,000 lines) and contains the main loop, GLFW callbacks, and high-level rendering orchestration. Refactoring it requires care to preserve rendering state dependencies.
 - There is no unit test infrastructure. When making rendering changes, visual verification is required.
 - The project is Windows-only due to Visual Studio project files, MSVC-specific pragmas, and Windows API usage (window handles, DLL loading).
