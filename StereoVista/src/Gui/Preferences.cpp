@@ -127,6 +127,7 @@ json toJson(const Settings& s) {
     json& files = doc["files"];
     files["openSceneMode"] = s.files.openSceneMode;
     files["recentScenes"] = s.files.recentScenes;
+    files["safetySnapshotBeforeReplace"] = s.files.safetySnapshotBeforeReplace;
 
     json& ui = doc["ui"];
     ui["theme"] = s.ui.theme;
@@ -142,6 +143,8 @@ json toJson(const Settings& s) {
     panels["clipPlanes"] = s.ui.panels.clipPlanes;
     panels["diagnostics"] = s.ui.panels.diagnostics;
     panels["slpk"] = s.ui.panels.slpk;
+    panels["history"] = s.ui.panels.history;
+    panels["snapshots"] = s.ui.panels.snapshots;
     // Inspector per-kind section collapsed state (UI redesign Pass 2 §8).
     json& insp = ui["inspector"];
     insp["transform"] = s.ui.inspector.transform;
@@ -237,6 +240,7 @@ void fromJson(const json& doc, Settings& s) {
     if (const json* files = section(doc, "files")) {
         get(*files, "openSceneMode", s.files.openSceneMode);
         s.files.openSceneMode = std::clamp(s.files.openSceneMode, 0, 2);
+        get(*files, "safetySnapshotBeforeReplace", s.files.safetySnapshotBeforeReplace);
         get(*files, "recentScenes", s.files.recentScenes);
         if (s.files.recentScenes.size() >
             static_cast<size_t>(Settings::Files::kMaxRecentScenes))
@@ -259,6 +263,8 @@ void fromJson(const json& doc, Settings& s) {
             get(*panels, "clipPlanes", s.ui.panels.clipPlanes);
             get(*panels, "diagnostics", s.ui.panels.diagnostics);
             get(*panels, "slpk", s.ui.panels.slpk);
+            get(*panels, "history", s.ui.panels.history);
+            get(*panels, "snapshots", s.ui.panels.snapshots);
         }
         if (const json* insp = section(*ui, "inspector")) {
             get(*insp, "transform", s.ui.inspector.transform);

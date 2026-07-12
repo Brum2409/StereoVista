@@ -325,7 +325,7 @@ void Application::openSceneFile(const std::string& path) {
         return;
     }
     switch (settings_.files.openSceneMode) {
-    case 1: replaceSceneFromFile(path); break;
+    case 1: maybeSafetySnapshotBeforeReplace(); replaceSceneFromFile(path); break;
     case 2: mergeSceneFromFile(path); break;
     default:
         // Ask (C8): park the path; the GuiSystem modal calls
@@ -342,8 +342,10 @@ void Application::resolvePendingSceneOpen(int action, bool remember) {
         return;
     if (remember)
         settings_.files.openSceneMode = action; // 1 = replace, 2 = merge
-    if (action == 1)
+    if (action == 1) {
+        maybeSafetySnapshotBeforeReplace();
         replaceSceneFromFile(path);
+    }
     else if (action == 2)
         mergeSceneFromFile(path);
 }
@@ -515,6 +517,7 @@ bool Application::saveScene() {
     }
     scenePath_ = target.string();
     addRecentScene(scenePath_);
+    undo_.markSaved(); // History panel's last-saved marker (Pass 3 §9)
     pushToast("Saved " + fileStem(scenePath_), Plugins::ToastLevel::Success);
     return true;
 }

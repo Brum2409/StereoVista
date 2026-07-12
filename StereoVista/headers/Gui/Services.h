@@ -101,6 +101,21 @@ struct PointCloudProgress {
     double   pointsPerSecond = 0.0;
 };
 
+// Snapshot aspects (UI redesign Pass 3 §9). Bitmask so a snapshot / restore may
+// cover any combination of camera and scene.
+enum SnapshotAspect : uint32_t {
+    kSnapshotCamera = 1u << 0,
+    kSnapshotScene  = 1u << 1,
+};
+
+// One named snapshot as the Snapshots panel sees it (plain data — no app types).
+struct SnapshotView {
+    std::string name;
+    std::string timestamp;             // human "2026-07-12 14:02"
+    uint32_t    aspects = 0;           // SnapshotAspect bits captured
+    std::vector<std::string> tags;
+};
+
 class Services {
 public:
     virtual ~Services() = default;
@@ -249,6 +264,18 @@ public:
     virtual const std::string& pendingSceneOpenPath() const = 0; // "" = none
     // action: 0 = cancel, 1 = replace, 2 = merge; remember persists the choice.
     virtual void resolvePendingSceneOpen(int action, bool remember) = 0;
+
+    // ── Snapshots (Pass 3 §9: named checkpoints) ────────────────────────────
+    virtual size_t       snapshotCount() const = 0;
+    virtual SnapshotView snapshot(size_t i) const = 0;
+    // Capture the requested aspects (SnapshotAspect bits) of the live scene.
+    virtual void createSnapshot(const std::string& name, uint32_t aspects) = 0;
+    // Re-apply the snapshot's saved aspects, filtered by `restoreAspects`
+    // (scene restore replaces the current scene — one coarse checkpoint op).
+    virtual void restoreSnapshot(size_t i, uint32_t restoreAspects) = 0;
+    virtual void deleteSnapshot(size_t i) = 0;
+    virtual void renameSnapshot(size_t i, const std::string& name) = 0;
+    virtual void setSnapshotTags(size_t i, const std::vector<std::string>& tags) = 0;
 
     // ── Transform gizmo (behind the facade so panels avoid the Tools header) ─
     virtual bool gizmoEnabled() const = 0;

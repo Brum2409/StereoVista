@@ -134,6 +134,9 @@ struct Settings {
         // Most-recent-first, absolute paths, capped at kMaxRecentScenes.
         std::vector<std::string> recentScenes;
         static constexpr int kMaxRecentScenes = 10;
+        // Auto-capture a scene snapshot before a destructive Replace (UI
+        // redesign Pass 3 §9 safety snapshots; needs a non-empty scene).
+        bool safetySnapshotBeforeReplace = true;
     } files;
 
     // ── Interface (UI redesign Pass 0) ──────────────────────────────────────
@@ -152,6 +155,8 @@ struct Settings {
             bool clipPlanes  = false;
             bool diagnostics = false;
             bool slpk        = true;
+            bool history     = false;
+            bool snapshots   = false;
         } panels;
         // Inspector per-kind section collapsed state (UI redesign Pass 2 §8:
         // "collapsed state persisted"). Each bool is bound to a CollapsingHeader

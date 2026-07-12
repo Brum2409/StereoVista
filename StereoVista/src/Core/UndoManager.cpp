@@ -56,9 +56,28 @@ std::string UndoManager::redoDescription() const {
     return redoStack_.empty() ? std::string() : redoStack_.back()->description();
 }
 
+std::vector<std::string> UndoManager::undoDescriptions() const {
+    std::vector<std::string> out;
+    out.reserve(undoStack_.size());
+    for (const std::unique_ptr<UndoCommand>& c : undoStack_) // oldest -> newest
+        out.push_back(c->description());
+    return out;
+}
+
+std::vector<std::string> UndoManager::redoDescriptions() const {
+    std::vector<std::string> out;
+    out.reserve(redoStack_.size());
+    // redoStack_.back() is the next redo; walk back->front = next -> furthest.
+    for (auto it = redoStack_.rbegin(); it != redoStack_.rend(); ++it)
+        out.push_back((*it)->description());
+    return out;
+}
+
 void UndoManager::clear() {
     undoStack_.clear();
     redoStack_.clear();
+    hasSavedMark_ = false;
+    savedDepth_ = 0;
 }
 
 } // namespace core

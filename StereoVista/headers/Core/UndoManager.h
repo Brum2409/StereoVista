@@ -68,6 +68,21 @@ public:
     size_t undoCount() const { return undoStack_.size(); }
     size_t redoCount() const { return redoStack_.size(); }
 
+    // ── History timeline (UI redesign Pass 3 §9) ─────────────────────────────
+    // Human labels for the whole stack, oldest→newest (the applied/past edits)
+    // and next-redo→furthest (the undone/future edits). The History panel
+    // renders them as one timeline and jumps by calling undo()/redo() N times.
+    std::vector<std::string> undoDescriptions() const;
+    std::vector<std::string> redoDescriptions() const;
+
+    // Last-saved marker: the app calls markSaved() after a successful scene
+    // save; the History panel draws a "saved" divider at savedDepth() (the
+    // undo-stack depth at that moment). hasSavedMark() is false until the first
+    // save or after clear().
+    void markSaved() { savedDepth_ = undoStack_.size(); hasSavedMark_ = true; }
+    bool hasSavedMark() const { return hasSavedMark_; }
+    size_t savedDepth() const { return savedDepth_; }
+
     // Drops all history. Call when a scene file is loaded (recorded indices
     // would no longer match) or when the referenced objects are destroyed.
     void clear();
@@ -90,6 +105,8 @@ private:
     std::vector<std::unique_ptr<UndoCommand>> redoStack_;
     std::function<void()> sceneChanged_;
     std::function<void()> modified_;
+    size_t savedDepth_ = 0;
+    bool hasSavedMark_ = false;
 };
 
 } // namespace core

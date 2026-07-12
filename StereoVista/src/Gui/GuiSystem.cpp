@@ -179,6 +179,8 @@ void GuiSystem::draw(Services& services) {
         if (panels.clipPlanes)  drawClipPlanePanel(services, &panels.clipPlanes);
         if (panels.diagnostics) drawDiagnosticsPanel(services, &panels.diagnostics);
         if (panels.slpk)        drawSlpkPanel(services, &panels.slpk);
+        if (panels.history)     drawHistoryPanel(services, &panels.history);
+        if (panels.snapshots)   drawSnapshotsPanel(services, &panels.snapshots);
         if (showAbout_)         drawAboutWindow(services);
 
         // Plugin (tool) windows render inside the same ImGui frame.
@@ -250,6 +252,8 @@ void GuiSystem::drawMenuBar(Services& services) {
         commandMenuItem(services, "view.panel.clipplanes");
         commandMenuItem(services, "view.panel.diagnostics");
         commandMenuItem(services, "view.panel.slpk");
+        commandMenuItem(services, "view.panel.history");
+        commandMenuItem(services, "view.panel.snapshots");
         commandMenuItem(services, "view.status_bar");
 
         ImGui::Separator();
@@ -507,6 +511,8 @@ void GuiSystem::buildDefaultLayout(unsigned int dockspaceId, float sizeX,
     ImGui::DockBuilderDockWindow(Windows::Viewport, center);
     ImGui::DockBuilderDockWindow(Windows::Scene, left);
     ImGui::DockBuilderDockWindow(Windows::Inspector, leftBottom);
+    ImGui::DockBuilderDockWindow(Windows::History, leftBottom);
+    ImGui::DockBuilderDockWindow(Windows::Snapshots, leftBottom);
     ImGui::DockBuilderDockWindow(Windows::Settings, right);
     ImGui::DockBuilderDockWindow(Windows::Cursor, right);
     ImGui::DockBuilderDockWindow(Windows::PointClouds, right);

@@ -402,6 +402,7 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <!-- Vulkan application (active) -->
     <ClCompile Include="src\App\Application.cpp" />
     <ClCompile Include="src\App\SceneOps.cpp" />
+    <ClCompile Include="src\App\Snapshots.cpp" />
     <ClCompile Include="src\App\main.cpp" />
     <ClCompile Include="src\Platform\Window.cpp" />
     <ClCompile Include="src\Platform\FileMapping.cpp" />
@@ -613,6 +614,8 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClCompile Include="src\Gui\Outliner.cpp" />
     <ClCompile Include="src\Gui\Inspector.cpp" />
     <ClCompile Include="src\Gui\inspectors\LayerInspector.cpp" />
+    <ClCompile Include="src\Gui\panels\HistoryPanel.cpp" />
+    <ClCompile Include="src\Gui\panels\SnapshotsPanel.cpp" />
     <ClCompile Include="src\Gui\Preferences.cpp" />
     <ClCompile Include="src\Gui\panels\ScenePanel.cpp" />
     <ClCompile Include="src\Gui\panels\InspectorPanel.cpp" />

@@ -434,6 +434,35 @@ public:
         app_.resolvePendingSceneOpen(action, remember);
     }
 
+    // ── Snapshots (Pass 3 §9) ────────────────────────────────────────────────
+    size_t snapshotCount() const override { return app_.snapshots().size(); }
+    Gui::SnapshotView snapshot(size_t i) const override {
+        Gui::SnapshotView v;
+        if (i < app_.snapshots().size()) {
+            const Application::SnapshotEntry& e = app_.snapshots()[i];
+            v.name = e.name;
+            v.timestamp = e.timestamp;
+            v.aspects = e.aspects;
+            v.tags = e.tags;
+        }
+        return v;
+    }
+    void createSnapshot(const std::string& name, uint32_t aspects) override {
+        app_.createSnapshot(name, aspects);
+    }
+    void restoreSnapshot(size_t i, uint32_t restoreAspects) override {
+        app_.restoreSnapshot(i, restoreAspects);
+    }
+    void deleteSnapshot(size_t i) override { app_.deleteSnapshot(i); }
+    void renameSnapshot(size_t i, const std::string& name) override {
+        if (i < app_.snapshots().size() && !name.empty())
+            app_.snapshots()[i].name = name;
+    }
+    void setSnapshotTags(size_t i, const std::vector<std::string>& tags) override {
+        if (i < app_.snapshots().size())
+            app_.snapshots()[i].tags = tags;
+    }
+
     bool gizmoEnabled() const override { return app_.gizmo_.enabled; }
     void setGizmoEnabled(bool on) override { app_.gizmo_.enabled = on; }
     int gizmoMode() const override { return static_cast<int>(app_.gizmo_.mode()); }
@@ -3079,6 +3108,22 @@ void Application::registerCommands() {
                 &Gui::Settings::Ui::Panels::diagnostics);
     panelToggle("view.panel.slpk", Gui::Windows::Slpk,
                 &Gui::Settings::Ui::Panels::slpk);
+    panelToggle("view.panel.history", Gui::Windows::History,
+                &Gui::Settings::Ui::Panels::history);
+    panelToggle("view.panel.snapshots", Gui::Windows::Snapshots,
+                &Gui::Settings::Ui::Panels::snapshots);
+    {
+        Command c;
+        c.id = "edit.snapshot_now";
+        c.title = "Snapshot now";
+        c.category = "Edit";
+        c.keywords = "snapshot checkpoint capture save state camera scene";
+        c.action = [this] {
+            createSnapshot("", Gui::kSnapshotCamera | Gui::kSnapshotScene);
+            settings_.ui.panels.snapshots = true;
+        };
+        add(std::move(c));
+    }
     {
         Command c;
         c.id = "view.status_bar";

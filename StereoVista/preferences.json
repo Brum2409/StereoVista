@@ -20,8 +20,8 @@
             "score": 2.0
         },
         "edit.undo": {
-            "lastUse": 1783862042,
-            "score": 4.997628557232314
+            "lastUse": 1783875471,
+            "score": 5.959317742956334
         },
         "file.import_pointcloud": {
             "lastUse": 1783863439,
@@ -70,6 +70,10 @@
         "view.center": {
             "lastUse": 1783850051,
             "score": 1.0
+        },
+        "view.panel.snapshots": {
+            "lastUse": 1783875653,
+            "score": 1.0
         }
     },
     "cursor": {
@@ -79,8 +83,10 @@
     "files": {
         "openSceneMode": 0,
         "recentScenes": [
+            "C:\\Users\\benta\\Downloads\\Stereo Demo\\StereoVista\\snapshots\\snap_0.scene",
             "C:\\Users\\benta\\Downloads\\Stereo Demo\\StereoVista\\office.scene"
-        ]
+        ],
+        "safetySnapshotBeforeReplace": true
     },
     "lighting": {
         "ambient": 0.029999999329447746,
@@ -108,7 +114,7 @@
         "hqs": false,
         "hqsThreshold": 0.012199999764561653,
         "lodEnabled": true,
-        "lodPointsPerPixel": 2.0,
+        "lodPointsPerPixel": 1.7599999904632568,
         "mortonResort": true,
         "splatEnabled": true,
         "splatMaxRadius": 3
@@ -145,19 +151,33 @@
         "separation": 0.10999999940395355
     },
     "ui": {
-        "guiScale": 1.149999976158142,
+        "guiScale": 1.2899999618530273,
+        "inspector": {
+            "display": true,
+            "exportSection": false,
+            "info": false,
+            "layer": true,
+            "lightProps": true,
+            "material": true,
+            "sky": true,
+            "sun": true,
+            "textures": false,
+            "transform": true
+        },
         "panels": {
             "clipPlanes": false,
             "cursor": false,
             "diagnostics": false,
+            "history": false,
             "inspector": true,
             "pointClouds": true,
             "scene": true,
             "settings": true,
-            "slpk": true
+            "slpk": true,
+            "snapshots": false
         },
         "reduceMotion": false,
-        "showStatusBar": true,
+        "showStatusBar": false,
         "theme": 0
     },
     "version": 3,

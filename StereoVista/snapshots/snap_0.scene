@@ -1,0 +1,1420 @@
+{
+  "camera": {
+    "front": [
+      -0.5450121760368347,
+      -0.4774763584136963,
+      -0.6891865134239197
+    ],
+    "orientation": [
+      0.23302897810935974,
+      -0.3179689347743988,
+      -0.07985179871320724,
+      -0.9155418872833252
+    ],
+    "pitch": -28.610132217407227,
+    "position": [
+      11.616965293884277,
+      10.9024658203125,
+      11.285332679748535
+    ],
+    "up": [
+      -0.29440730810165405,
+      0.8786423802375793,
+      -0.3759148120880127
+    ],
+    "yaw": 38.27549743652344,
+    "zoom": 48.1510009765625
+  },
+  "clipPlanes": [],
+  "formatVersion": 3,
+  "groups": [
+    {
+      "id": 43,
+      "locked": false,
+      "name": "Meshes",
+      "parentId": 0,
+      "visible": true
+    },
+    {
+      "id": 48,
+      "locked": false,
+      "name": "Clouds",
+      "parentId": 0,
+      "visible": true
+    }
+  ],
+  "measurements": [],
+  "metadata": {
+    "appVersion": "StereoVista (Vulkan)",
+    "counts": {
+      "clipPlanes": 0,
+      "groups": 2,
+      "measurements": 0,
+      "models": 41,
+      "pointClouds": 1,
+      "pointLights": 1,
+      "sceneLayers": 0
+    },
+    "modifiedAt": "2026-07-12 19:00:57"
+  },
+  "models": [
+    {
+      "color": [
+        0.6000000238418579,
+        0.5,
+        0.4000000059604645
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 1,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Floor",
+      "position": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "primitiveType": "plane",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        6.0,
+        1.0,
+        6.0
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        1.0,
+        0.949999988079071,
+        0.8500000238418579
+      ],
+      "emissive": 1.2000000476837158,
+      "groupId": 43,
+      "id": 2,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Ceiling_Light",
+      "position": [
+        0.8386815190315247,
+        1.6275473833084106,
+        -2.7149529457092285
+      ],
+      "primitiveType": "sphere",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        0.30000001192092896,
+        0.30000001192092896,
+        0.30000001192092896
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.4000000059604645,
+        0.30000001192092896,
+        0.25
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 3,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Table_Top",
+      "position": [
+        6.312781624728814e-05,
+        0.7502246499061584,
+        0.00076761917443946
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        2.5999999046325684,
+        0.07999999821186066,
+        0.8899999856948853
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.3499999940395355,
+        0.25,
+        0.20000000298023224
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 4,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Table_Leg_0",
+      "position": [
+        -0.6000000238418579,
+        0.375,
+        -0.3499999940395355
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        0.05999999865889549,
+        0.75,
+        0.05999999865889549
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.3499999940395355,
+        0.25,
+        0.20000000298023224
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 5,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Table_Leg_1",
+      "position": [
+        1.2300344705581665,
+        0.3642911911010742,
+        -0.376854807138443
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        0.05999999865889549,
+        0.75,
+        0.05999999865889549
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.3499999940395355,
+        0.25,
+        0.20000000298023224
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 6,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Table_Leg_2",
+      "position": [
+        -0.7256127595901489,
+        0.35469526052474976,
+        0.3554886281490326
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        0.05999999865889549,
+        0.75,
+        0.05999999865889549
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.3499999940395355,
+        0.25,
+        0.20000000298023224
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 7,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Table_Leg_3",
+      "position": [
+        1.2101970911026,
+        0.38207191228866577,
+        0.3612269163131714
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        0.05999999865889549,
+        0.75,
+        0.05999999865889549
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.30000001192092896,
+        0.25,
+        0.3499999940395355
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 8,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Chair_Seat",
+      "position": [
+        -0.44868355989456177,
+        0.5256991386413574,
+        -1.068361520767212
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        0.5,
+        0.07999999821186066,
+        0.5
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.30000001192092896,
+        0.25,
+        0.3499999940395355
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 9,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Chair_Back",
+      "position": [
+        -0.45003801584243774,
+        0.7779392004013062,
+        -1.2972859144210815
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        0.5,
+        0.5,
+        0.07999999821186066
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.25,
+        0.20000000298023224,
+        0.30000001192092896
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 10,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Chair_Leg_0",
+      "position": [
+        -0.6545819640159607,
+        0.24809345602989197,
+        -1.2634096145629883
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        0.05000000074505806,
+        0.5,
+        0.05000000074505806
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.25,
+        0.20000000298023224,
+        0.30000001192092896
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 11,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Chair_Leg_1",
+      "position": [
+        -0.23669184744358063,
+        0.2466915398836136,
+        -1.2689268589019775
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        0.05000000074505806,
+        0.5,
+        0.05000000074505806
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.25,
+        0.20000000298023224,
+        0.30000001192092896
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 12,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Chair_Leg_2",
+      "position": [
+        -0.6483641862869263,
+        0.23113203048706055,
+        -0.8725801110267639
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        0.05000000074505806,
+        0.5,
+        0.05000000074505806
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.25,
+        0.20000000298023224,
+        0.30000001192092896
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 13,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Chair_Leg_3",
+      "position": [
+        -0.23644931614398956,
+        0.2461390644311905,
+        -0.8684918284416199
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        0.05000000074505806,
+        0.5,
+        0.05000000074505806
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.5,
+        0.4000000059604645,
+        0.3499999940395355
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 14,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Shelf",
+      "position": [
+        1.5,
+        1.5,
+        -2.700000047683716
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        1.7999999523162842,
+        0.07999999821186066,
+        0.3499999940395355
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.699999988079071,
+        0.30000001192092896,
+        0.20000000298023224
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 15,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Vase",
+      "position": [
+        1.2696460485458374,
+        1.6518617868423462,
+        -2.652597665786743
+      ],
+      "primitiveType": "sphere",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 0.2709999978542328,
+      "scale": [
+        0.15000000596046448,
+        0.25,
+        0.15000000596046448
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.30000001192092896,
+        0.5,
+        0.800000011920929
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 16,
+      "locked": false,
+      "metallicFactor": 0.8709999918937683,
+      "name": "Table_Decoration",
+      "position": [
+        -0.12861934304237366,
+        0.8338975310325623,
+        0.11883608996868134
+      ],
+      "primitiveType": "sphere",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 0.453000009059906,
+      "scale": [
+        0.11999999731779099,
+        0.11999999731779099,
+        0.11999999731779099
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.6000000238418579,
+        0.3499999940395355,
+        0.25
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 17,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Plant_Pot",
+      "position": [
+        -2.500607967376709,
+        0.1256849318742752,
+        -2.5017895698547363
+      ],
+      "primitiveType": "cylinder",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        0.30000001192092896,
+        0.3199999928474426,
+        0.3400000035762787
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.20000000298023224,
+        0.6000000238418579,
+        0.30000001192092896
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 18,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Plant",
+      "position": [
+        -2.499955415725708,
+        0.37047073245048523,
+        -2.5168051719665527
+      ],
+      "primitiveType": "sphere",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        0.25,
+        1.5199999809265137,
+        0.27000001072883606
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.7807217836380005,
+        0.8791280388832092,
+        0.9241877198219299
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 19,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Cylinder_1",
+      "position": [
+        -0.38835546374320984,
+        0.8092454075813293,
+        -0.37256699800491333
+      ],
+      "primitiveType": "cylinder",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        0.07000000029802322,
+        0.09000000357627869,
+        0.07000000029802322
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.800000011920929,
+        0.800000011920929,
+        0.800000011920929
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 20,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Cube_12",
+      "position": [
+        -0.025722848251461983,
+        1.2719271183013916,
+        -2.9696810245513916
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        6.03000020980835,
+        2.880000114440918,
+        0.18000000715255737
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 21,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Cube_13",
+      "position": [
+        1.617059588432312,
+        1.6875144243240356,
+        -2.7020843029022217
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        0.25999999046325684,
+        0.3400000035762787,
+        0.07000000029802322
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 22,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Cube_13_Copy_Copy",
+      "position": [
+        1.9009393453598022,
+        1.6747101545333862,
+        -2.7825558185577393
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        -9.0,
+        30.0,
+        3.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        0.25999999046325684,
+        0.3400000035762787,
+        0.07000000029802322
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.4000000059604645,
+        0.30000001192092896,
+        0.25
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 23,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Table_Top_Copy",
+      "position": [
+        -1.9799578189849854,
+        0.7389959096908569,
+        -0.4505751430988312
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        0.0,
+        -42.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        1.0399999618530273,
+        0.07999999821186066,
+        0.8899999856948853
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.3499999940395355,
+        0.25,
+        0.20000000298023224
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 24,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Table_Leg_2_Copy",
+      "position": [
+        -2.1033620834350586,
+        0.37867894768714905,
+        -1.0045626163482666
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        0.0,
+        55.0,
+        -3.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        0.05999999865889549,
+        0.75,
+        0.05999999865889549
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.3499999940395355,
+        0.25,
+        0.20000000298023224
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 25,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Table_Leg_2_Copy_Copy",
+      "position": [
+        -1.4407047033309937,
+        0.37821581959724426,
+        -0.4617941379547119
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        0.0,
+        55.0,
+        -3.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        0.05999999865889549,
+        0.75,
+        0.05999999865889549
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.3499999940395355,
+        0.25,
+        0.20000000298023224
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 26,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Table_Leg_2_Copy_Copy_Copy",
+      "position": [
+        -1.925943374633789,
+        0.36522993445396423,
+        0.024517899379134178
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        0.0,
+        55.0,
+        -3.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        0.05999999865889549,
+        0.75,
+        0.05999999865889549
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.3499999940395355,
+        0.25,
+        0.20000000298023224
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 27,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Table_Leg_2_Copy_Copy_Copy_Copy",
+      "position": [
+        -2.5040507316589355,
+        0.3685436546802521,
+        -0.5025349855422974
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        0.0,
+        55.0,
+        -3.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        0.05999999865889549,
+        0.75,
+        0.05999999865889549
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.800000011920929,
+        0.800000011920929,
+        0.800000011920929
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 28,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Cube_12_Copy",
+      "position": [
+        -2.9071524143218994,
+        1.3288220167160034,
+        2.0195300579071045
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        0.0,
+        90.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        2.009999990463257,
+        2.7899999618530273,
+        0.17000000178813934
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.5076307654380798,
+        0.5758571624755859,
+        0.6859205961227417
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 29,
+      "locked": false,
+      "metallicFactor": 0.6650000214576721,
+      "name": "Cylinder_499",
+      "position": [
+        -1.98891282081604,
+        0.8830146193504333,
+        2.3243801593780518
+      ],
+      "primitiveType": "cylinder",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        0.05000000074505806,
+        1.899999976158142,
+        0.05000000074505806
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.19855594635009766,
+        0.09576768428087234,
+        0.017203407362103462
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 30,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Cube_14",
+      "position": [
+        2.634658098220825,
+        0.8108050227165222,
+        0.5955312848091125
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        0.47999998927116394,
+        1.9600000381469727,
+        1.809999942779541
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.5076307654380798,
+        0.5758571624755859,
+        0.6859205961227417
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 31,
+      "locked": false,
+      "metallicFactor": 0.6650000214576721,
+      "name": "Cylinder_499_Copy",
+      "position": [
+        -1.8989726305007935,
+        2.0507328510284424,
+        2.2797513008117676
+      ],
+      "primitiveType": "cylinder",
+      "rotation": [
+        0.0,
+        28.0,
+        -25.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        0.05000000074505806,
+        0.5,
+        0.05000000074505806
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.5076307654380798,
+        0.5758571624755859,
+        0.6859205961227417
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 32,
+      "locked": false,
+      "metallicFactor": 0.6650000214576721,
+      "name": "Cylinder_499_Copy_Copy",
+      "position": [
+        -1.611885666847229,
+        2.262711763381958,
+        2.119337558746338
+      ],
+      "primitiveType": "cylinder",
+      "rotation": [
+        0.0,
+        28.0,
+        -91.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        0.05000000074505806,
+        0.5,
+        0.05000000074505806
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.800000011920929,
+        0.6000000238418579,
+        0.20000000298023224
+      ],
+      "emissive": 0.3709999918937683,
+      "groupId": 43,
+      "id": 33,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Torus_0",
+      "position": [
+        -1.3468520641326904,
+        2.2612812519073486,
+        1.9717923402786255
+      ],
+      "primitiveType": "torus",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        0.15000000596046448,
+        0.15000000596046448,
+        0.15000000596046448
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.800000011920929,
+        0.800000011920929,
+        0.800000011920929
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 34,
+      "locked": false,
+      "metallicFactor": 0.859000027179718,
+      "name": "Cube_15",
+      "position": [
+        2.39404034614563,
+        0.951382040977478,
+        0.4590974450111389
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 0.7940000295639038,
+      "scale": [
+        0.03999999910593033,
+        0.17000000178813934,
+        0.05999999865889549
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.800000011920929,
+        0.800000011920929,
+        0.800000011920929
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 35,
+      "locked": false,
+      "metallicFactor": 0.859000027179718,
+      "name": "Cube_15_Copy",
+      "position": [
+        2.3911406993865967,
+        0.9569969177246094,
+        0.7263139486312866
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 0.7940000295639038,
+      "scale": [
+        0.03999999910593033,
+        0.17000000178813934,
+        0.05999999865889549
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.6000000238418579,
+        0.3499999940395355,
+        0.25
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 36,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Plant_Pot_Copy",
+      "position": [
+        2.5849523544311523,
+        0.07372341305017471,
+        2.4131927490234375
+      ],
+      "primitiveType": "cylinder",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        0.30000001192092896,
+        0.3199999928474426,
+        0.3400000035762787
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.20000000298023224,
+        0.6000000238418579,
+        0.30000001192092896
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 37,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Plant_Copy",
+      "position": [
+        2.5841915607452393,
+        0.4146551191806793,
+        2.4239656925201416
+      ],
+      "primitiveType": "sphere",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        0.25,
+        1.5199999809265137,
+        0.27000001072883606
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.800000011920929,
+        0.800000011920929,
+        0.800000011920929
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 38,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Cube_12_Copy_Copy",
+      "position": [
+        -2.9266467094421387,
+        1.2867342233657837,
+        -1.9936537742614746
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        0.0,
+        90.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        2.299999952316284,
+        2.8299999237060547,
+        0.18000000715255737
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.800000011920929,
+        0.800000011920929,
+        0.800000011920929
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 39,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Cube_12_Copy_Copy_Copy",
+      "position": [
+        -2.9296464920043945,
+        0.5108129978179932,
+        0.034247513860464096
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        0.0,
+        90.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        6.03000020980835,
+        1.340000033378601,
+        0.18000000715255737
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.800000011920929,
+        0.800000011920929,
+        0.800000011920929
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 40,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Cube_12_Copy_Copy_Copy",
+      "position": [
+        -2.942657232284546,
+        2.616795539855957,
+        -0.15319934487342834
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        0.0,
+        90.0,
+        0.0
+      ],
+      "roughnessFactor": 0.5,
+      "scale": [
+        5.760000228881836,
+        0.23000000417232513,
+        0.18000000715255737
+      ],
+      "visible": true
+    },
+    {
+      "color": [
+        0.8989169597625732,
+        0.0941104143857956,
+        0.0941104143857956
+      ],
+      "emissive": 0.0,
+      "groupId": 43,
+      "id": 41,
+      "locked": false,
+      "metallicFactor": 0.0,
+      "name": "Cube_39",
+      "position": [
+        -0.3889999985694885,
+        -0.19677139818668365,
+        -0.5260000228881836
+      ],
+      "primitiveType": "cube",
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "roughnessFactor": 1.0,
+      "scale": [
+        4.559999942779541,
+        0.4099999964237213,
+        3.1600000858306885
+      ],
+      "visible": true
+    }
+  ],
+  "nextObjectId": 50,
+  "pointClouds": [
+    {
+      "absolutePath": "C:\\Users\\benta\\Downloads\\MLS_village_color.laz",
+      "basePointSize": 2.0,
+      "groupId": 48,
+      "id": 49,
+      "locked": false,
+      "name": "MLS_village_color",
+      "path": "../../../MLS_village_color.laz",
+      "position": [
+        2.9965128898620605,
+        2.6365604400634766,
+        -6.041849136352539
+      ],
+      "rotation": [
+        -90.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        0.10000000149011612,
+        0.10000000149011612,
+        0.10000000149011612
+      ],
+      "visible": true
+    }
+  ],
+  "pointLights": [
+    {
+      "castShadows": true,
+      "color": [
+        0.9025270938873291,
+        0.8609112501144409,
+        0.7135502696037292
+      ],
+      "groupId": 43,
+      "id": 42,
+      "intensity": 1.0,
+      "linear": 0.09000000357627869,
+      "locked": false,
+      "name": "",
+      "position": [
+        -1.3694027662277222,
+        2.1873834133148193,
+        2.0065276622772217
+      ],
+      "quadratic": 0.03200000151991844,
+      "radius": 0.05000000074505806,
+      "visible": true
+    }
+  ],
+  "sceneLayers": [],
+  "sky": {
+    "gradientBottom": [
+      0.699999988079071,
+      0.699999988079071,
+      1.0
+    ],
+    "gradientTop": [
+      0.10000000149011612,
+      0.10000000149011612,
+      0.30000001192092896
+    ],
+    "intensity": 1.0,
+    "mode": 3,
+    "solidColor": [
+      0.20000000298023224,
+      0.30000001192092896,
+      0.4000000059604645
+    ]
+  },
+  "sun": {
+    "angularSizeDeg": 1.5,
+    "color": [
+      1.0,
+      0.9800000190734863,
+      0.949999988079071
+    ],
+    "direction": [
+      -0.40824833512306213,
+      -0.8164966702461243,
+      -0.40824833512306213
+    ],
+    "enabled": true,
+    "intensity": 0.1599999964237213
+  }
+}

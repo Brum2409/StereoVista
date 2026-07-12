@@ -26,6 +26,8 @@ inline constexpr const char* PointClouds = "Point Clouds";
 inline constexpr const char* ClipPlanes  = "Clip Planes";
 inline constexpr const char* Diagnostics = "Performance";
 inline constexpr const char* Slpk        = "Scene Layers";
+inline constexpr const char* History     = "History";
+inline constexpr const char* Snapshots   = "Snapshots";
 } // namespace Windows
 
 void drawScenePanel(Services& services, bool* open);
@@ -37,5 +39,8 @@ void drawClipPlanePanel(Services& services, bool* open);
 void drawDiagnosticsPanel(Services& services, bool* open);
 // SLPK / I3S scene layers (open + inspector; docs/SLPK_IMPLEMENTATION_PLAN.md).
 void drawSlpkPanel(Services& services, bool* open);
+// History timeline + named Snapshots (UI redesign Pass 3 §9).
+void drawHistoryPanel(Services& services, bool* open);
+void drawSnapshotsPanel(Services& services, bool* open);
 
 } // namespace Gui

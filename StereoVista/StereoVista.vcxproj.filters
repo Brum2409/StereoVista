@@ -526,6 +526,15 @@
     <ClCompile Include="src\Gui\inspectors\LayerInspector.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\Gui\panels\HistoryPanel.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Gui\panels\SnapshotsPanel.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\App\Snapshots.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\Gui\UiKit.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

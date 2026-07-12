@@ -125,6 +125,28 @@ private:
     void applyLoadedCamera(const scene::SceneCameraState& cam);
     void applyLoadedEnvironment(const scene::SceneEnvironmentState& env);
 
+    // ---- Snapshots (Pass 3 §9; src/App/Snapshots.cpp) ----
+    // A named checkpoint: camera pose and/or a scene serialized to a snapshots/
+    // file (scene state can't be copied in-memory — MeshBuffers are GPU-backed
+    // move-only). Session-scoped for now (cross-restart persistence lands with
+    // autosave, Pass 5).
+    struct SnapshotEntry {
+        std::string name;
+        std::string timestamp;
+        std::string filePath;    // saved .scene ("" when no scene aspect)
+        uint32_t    aspects = 0; // Gui::SnapshotAspect bits
+        std::vector<std::string> tags;
+        Camera::CameraState camera{};
+    };
+    void createSnapshot(const std::string& name, uint32_t aspects);
+    void restoreSnapshot(size_t index, uint32_t restoreAspects);
+    void deleteSnapshot(size_t index);
+    // Auto-capture a scene safety snapshot before a destructive Replace, when
+    // the pref is on and the current scene is non-empty (§9). No-op otherwise.
+    void maybeSafetySnapshotBeforeReplace();
+    const std::vector<SnapshotEntry>& snapshots() const { return snapshots_; }
+    std::vector<SnapshotEntry>& snapshots() { return snapshots_; }
+
     // ---- Outliner item operations (Pass 1; SceneOps.cpp) ----
     // Each call = one undoable step (C4); refs resolve by ObjectId (C3).
     void deleteItems(const std::vector<scene::SceneItemRef>& refs);
@@ -308,6 +330,9 @@ private:
     // ---- Scene document state (Pass 1) ----
     std::string scenePath_;       // current document ("" = untitled)
     std::string pendingOpenPath_; // parked while the ask-modal is up (C8)
+    // ---- Snapshots (Pass 3) ----
+    std::vector<SnapshotEntry> snapshots_;
+    int snapshotCounter_ = 0; // unique snapshot scene-file names this session
     // Saved identity/display state for layers whose async SLPK re-open is in
     // flight (scene load + delete-undo); consumed by pumpSlpkLoads on adopt.
     std::vector<scene::PendingLayerState> pendingLayerStates_;
