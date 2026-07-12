@@ -10,6 +10,13 @@
 > a system.** On `main` (feature-frozen during the migration) the app is still
 > OpenGL; that history — and the migration's design rationale / session log —
 > lives in git.
+>
+> **A full GUI/UX remake is in progress on this branch.** The master plan — vision,
+> coherence contracts, design system (UiKit), Outliner/Inspector architecture, command
+> palette, smart import, and the multi-pass roadmap with a live Status Board — is
+> **`docs/UI_REDESIGN.md`** (it supersedes TODO §D). Read it before doing any GUI
+> work, follow its contracts and guardrails, and update its Status Board when
+> completing a pass.
 
 ## Project Overview
 

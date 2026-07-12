@@ -136,6 +136,11 @@ tunables were already live settings.
 
 ## D. GUI — replace the debug panel with the real settings GUI
 
+> **Superseded:** the full GUI/UX remake plan — including everything in this section
+> plus the UI-facing parts of §C/§E — now lives in **`docs/UI_REDESIGN.md`** (coherence
+> contracts, pass roadmap, Status Board). Do GUI work from that plan; this section
+> stays only as the original gap analysis.
+
 Today everything is driven from one interim **debug panel** in `Application.cpp`
 (`buildUi`); the old structured GUI (`Gui/GUI.cpp`, ~8.8k excluded lines) is the
 reference. This is the single biggest gap.
