@@ -439,9 +439,6 @@
     <ClCompile Include="headers\libs\portable-file-dialogs.h">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\Gui\GUI.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="src\Gui\CursorPreview3D.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -457,9 +454,6 @@
     <ClCompile Include="src\Engine\XRSession.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\Engine\ShortcutManager.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="src\Engine\SpaceMouseInput.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -467,9 +461,6 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\Core\SceneManager.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Core\SnapshotManager.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\Core\UndoManager.cpp">
@@ -1380,9 +1371,6 @@
     <ClInclude Include="headers\Core\SceneManager.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="headers\Core\SnapshotManager.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="headers\Core\UndoManager.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -1399,9 +1387,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\Engine\OctreePointCloudManager.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="headers\Engine\ShortcutManager.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="headers\Engine\SpaceMouseInput.h">

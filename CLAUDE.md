@@ -312,7 +312,7 @@ Vulkan GLSL in `assets/shaders_vk/`.
   post-processing — Voxel Cone Tracing, DDGI, BVH ray-traced Radiance, Bloom, SSAO.
   These were deleted from the tree (git history is the reference); the app ships
   **Shadow Mapping only**, and the VCT/Radiance lighting-mode options are dropped.
-- **GUI/UX remake (docs/UI_REDESIGN.md): Passes 0–7 landed** (P8 in flight). The
+- **GUI/UX remake (docs/UI_REDESIGN.md): complete — Passes 0–9 landed.** The
   through-line is **registries, not switches** (contract C6) — every one of these
   is append-only, so a new object kind / tool / exporter plugs in without editing
   existing UI files:
@@ -344,15 +344,23 @@ Vulkan GLSL in `assets/shaders_vk/`.
   **P7** `core::ToolManager` (tools are modes; `Esc` exits), the Inspector **Tool card**
   (new additive plugin hook `onRenderInspector`), and `Gui::Exporters`. The
   **ClipPlanes panel dissolved** into the Tool card + Outliner.
+  **P8** per-viewport toolbar, status/stereo chip, standard views, SceneStats,
+  F1 shortcut overlay, `Gui::HintEngine`.
+  **P9** Harmony audit: docs trued up, §16.1 recipe re-verified, bindless
+  texture-slot leak fixed, and the fully-ported GL references deleted (see below).
 
   Runtime files added: `snapshots/`, `autosave/` (both gitignored). See the plan's
   Status Board for per-pass state and the full deviation list.
-- **Not yet ported (tracked as a separate scope):** the full production GUI
-  (in progress via the UI redesign passes above), `SceneManager`
-  scene save/load/merge + hierarchy, cursor-preset persistence, 3DConnexion
+- **GL references — deleted vs. still-kept:** Pass 9 deleted the fully-ported
+  `src/Gui/GUI.cpp` + `headers/Gui/Gui.h` (→ `Gui/panels/*` + UiKit),
+  `Engine/ShortcutManager.*` (→ `core::ShortcutMap`) and
+  `Core/SnapshotManager.*` (→ Pass-3 Snapshots on `SceneDocument`). Git history is
+  the reference for those.
+- **Not yet ported (tracked as a separate scope):** `SceneManager` scene
+  save/load/merge + hierarchy edge cases, cursor-preset persistence, 3DConnexion
   SpaceMouse, camera snapshots, cursor sync, the `CursorPreview3D` thumbnail,
   and out-of-core point-cloud LOD (`OctreePointCloudManager`).
   Their **OpenGL sources remain in-tree but `ExcludedFromBuild`** (in `src/Gui`,
   `src/Core`, `src/Engine`, `src/Cursors`) as the behaviour reference until each is
-  re-implemented on Vulkan, then deleted. See `docs/TODO.md` for
-  the plan and status.
+  re-implemented on Vulkan, then deleted (`GuiTypes.h` stays while the excluded
+  `SpaceMouseInput.h` still includes it). See `docs/TODO.md` for the plan and status.

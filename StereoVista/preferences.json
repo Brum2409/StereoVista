@@ -28,8 +28,8 @@
             "score": 1.0
         },
         "edit.undo": {
-            "lastUse": 1783876563,
-            "score": 6.955589819481245
+            "lastUse": 1783882530,
+            "score": 7.931847048707908
         },
         "file.import_files": {
             "lastUse": 1783882278,
@@ -60,16 +60,16 @@
             "score": 1.0
         },
         "gizmo.rotate": {
-            "lastUse": 1783860108,
-            "score": 1.0
+            "lastUse": 1783882527,
+            "score": 1.9872352231377866
         },
         "gizmo.scale": {
             "lastUse": 1783860109,
             "score": 2.99999828088579
         },
         "gizmo.translate": {
-            "lastUse": 1783860628,
-            "score": 1.9997037830572026
+            "lastUse": 1783882548,
+            "score": 2.9747425997621333
         },
         "help.about": {
             "lastUse": 1783882466,
@@ -86,6 +86,10 @@
         "select.all": {
             "lastUse": 1783876556,
             "score": 14.904213631532746
+        },
+        "select.clear": {
+            "lastUse": 1783882892,
+            "score": 2.9995748507436684
         },
         "tool.clipplane": {
             "lastUse": 1783881374,

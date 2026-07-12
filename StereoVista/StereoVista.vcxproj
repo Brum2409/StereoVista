@@ -569,16 +569,10 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
          Phase 8; git history is its reference. Re-enable a file below only after
          its Vulkan port lands, then delete it (see
          docs/VULKAN_MIGRATION_STATUS.md phase board). -->
-    <ClCompile Include="src\Gui\GUI.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
     <ClCompile Include="src\Gui\CursorPreview3D.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="src\Engine\XRSession.cpp" />
-    <ClCompile Include="src\Engine\ShortcutManager.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
     <ClCompile Include="src\Engine\SpaceMouseInput.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
@@ -586,9 +580,6 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="src\Core\SceneManager.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="src\Core\SnapshotManager.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="src\Core\UndoManager.cpp" />
@@ -755,7 +746,6 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClInclude Include="headers\libs\volk\volk.h" />
     <ClInclude Include="headers\libs\vma\vk_mem_alloc.h" />
     <ClInclude Include="headers\Core\SceneManager.h" />
-    <ClInclude Include="headers\Core\SnapshotManager.h" />
     <ClInclude Include="headers\Core\UndoManager.h" />
     <ClInclude Include="headers\Core\CommandRegistry.h" />
     <ClInclude Include="headers\Core\Shortcuts.h" />
@@ -767,7 +757,6 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClInclude Include="headers\Engine\XRSession.h" />
     <ClInclude Include="headers\engine\data.h" />
     <ClInclude Include="headers\Engine\OctreePointCloudManager.h" />
-    <ClInclude Include="headers\Engine\ShortcutManager.h" />
     <ClInclude Include="headers\Engine\SpaceMouseInput.h" />
     <ClInclude Include="headers\Engine\ThreeDConnexionSync.h" />
     <ClInclude Include="headers\Engine\Screenshot.h" />

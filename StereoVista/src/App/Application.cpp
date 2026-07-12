@@ -682,24 +682,38 @@ public:
         stbi_image_free(data);
         const uint32_t index = app_.renderer_.materials().addTexture(std::move(tex));
 
+        // Reassigning a slot orphans whatever bindless texture it held; collect
+        // the distinct previous indices so each is retired exactly once (a shared
+        // index across meshes must not be freed twice — that double-parks a slot
+        // the graveyard could then hand back while still referenced).
+        std::vector<uint32_t> retired;
         auto assign = [&](int meshIdx) {
             renderer::gpu::MaterialData* mat = materialForMesh(model, meshIdx);
             if (!mat)
                 return;
+            uint32_t* target = nullptr;
             switch (slot) {
-            case 0: mat->albedoTexture = index; break;
-            case 1: mat->normalTexture = index; break;
-            case 2: mat->metallicTexture = index; break;
-            case 3: mat->roughnessTexture = index; break;
-            case 4: mat->aoTexture = index; break;
-            default: break;
+            case 0: target = &mat->albedoTexture; break;
+            case 1: target = &mat->normalTexture; break;
+            case 2: target = &mat->metallicTexture; break;
+            case 3: target = &mat->roughnessTexture; break;
+            case 4: target = &mat->aoTexture; break;
+            default: return;
             }
+            const uint32_t prev = *target;
+            if (prev != renderer::kInvalidTexture && prev != index &&
+                std::find(retired.begin(), retired.end(), prev) == retired.end())
+                retired.push_back(prev);
+            *target = index;
         };
         if (mesh >= 0)
             assign(mesh);
         else
             for (int j = 0; j < static_cast<int>(m.meshes.size()); ++j)
                 assign(j);
+        const uint64_t retireValue = app_.renderer_.frameRetireValue();
+        for (uint32_t old : retired)
+            app_.renderer_.materials().freeTexture(old, retireValue);
         return true;
     }
 
