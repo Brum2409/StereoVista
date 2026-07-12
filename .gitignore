@@ -118,3 +118,5 @@ StereoVista/imgui.ini
 # Snapshot scene files written at runtime (UI redesign Pass 3)
 snapshots/
 StereoVista/snapshots/
+autosave/
+StereoVista/autosave/
