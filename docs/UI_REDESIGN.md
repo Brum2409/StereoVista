@@ -182,6 +182,51 @@ capable, XR fullscreen fallback). **Pass 0 upgrades it** rather than replacing i
   (`Application.cpp:897`); the GL app used `G`, and §14 wants `F1` for the shortcut
   overlay — re-map when shortcuts land in P0 (implementer's call, note it).
 
+### 5.1 Every window has a home (disposition map)
+
+Today the branch splits everything into its own window. That was the right *mechanism*
+(docking freedom, C7) with an interim *information architecture* — the remake keeps the
+mechanism and fixes the architecture: fewer, deeper homes, any panel still poppable
+into its own OS window.
+
+| Window today (`Gui::Windows`) | Fate |
+|---|---|
+| `Viewport` 1..N (own camera each) | **Keep — the centerpiece** (§5.2) |
+| `Scene` | Grows into the Outliner (P1) |
+| `Inspector` | Grows into the real Inspector (P2) |
+| `Settings` | Grows into searchable Settings (P6) |
+| `3D Cursor` | Becomes a Settings category (P6) |
+| `Point Clouds` | Dissolves: listing → Outliner, per-cloud → Inspector, globals → Settings/GLOBAL cards (P1–2) |
+| `Clip Planes` | Dissolves: tool mode + Outliner items + Inspector tool card (planes in Outliner from P1; mode in P7) |
+| `Performance` | Becomes the status bar's FPS detail popup (P8); still poppable as a window |
+| `Scene Layers` (SLPK) | Dissolves: layers → Outliner, controls → Inspector layer editor, opening → ImportService (P1–2, may trail) |
+| About | Stays under Help |
+| *New:* History, Snapshots | Default tabs beside the Inspector (P3) |
+
+### 5.2 Multi-viewport rules
+
+Multiple 3D viewports are a first-class feature and must stay one: each Viewport panel
+has its **own Camera** (`Application::viewportCamera(i)` / `activeCamera()`); index 0
+is the primary and is never closable; extras are added/closed from the View menu
+(close deferred to a frame boundary) and may live in dragged-out OS windows
+(`ViewportPanelState.hostWindow`). Rules for all passes:
+
+- **Per-viewport UI:** the §14 toolbar renders inside *each* viewport and acts on that
+  viewport's camera (view/shading/camera dropdowns, Frame). The Welcome Hub shows in
+  the **primary** viewport only.
+- **Active viewport** = focused, else last-hovered (`ViewportPanelState`). Keyboard,
+  menu and palette camera commands (`view.frame_selected`, standard views…) act on the
+  active viewport via `activeCamera()` — never hardcode viewport 0. Pointer-local
+  interactions (picking, gizmo, tools, 3D cursor) route to the viewport under the mouse.
+- **Global, once (main window):** menu bar, status bar, palette, toasts, hints, dialogs.
+- Per-viewport camera pose is session/scene state, not a Setting; Settings hold
+  cross-viewport *defaults* (FOV, speed, planes). Snapshots must be explicit about
+  multi-viewport capture (per-viewport cameras + active index recommended) — decide in
+  P3, stay consistent.
+- Viewport window titles stay stable per index (imgui.ini docking identity); respect
+  the add/close lifecycle. Selection, tools and undo are **application-global** — one
+  selection and one active tool across all viewports.
+
 ---
 
 ## 6. Foundation systems (Pass 0)
@@ -264,8 +309,11 @@ class Selection { /* ordered multi-select; primary = last; onChanged callbacks *
 Every persisted object gets a `uint64_t id` from a per-scene monotonic counter,
 serialized, regenerated for legacy files at load. References that outlive a frame
 (selection, undo records, snapshots, palette results, future collaboration deltas)
-resolve by id — this is what makes §9 and §16 tractable. `ScenePicking` and the gizmo
-move onto `Selection` (multi-select transforms apply to the set).
+resolve by id — this is what makes §9 and §16 tractable. The seed exists: grow the
+app-owned `struct Selection { int model; int mesh; }` (`Application.h:335`) into this
+multi-select, ObjectId-based one — `ScenePicking`, the gizmo and the Esc-clears-
+selection handling (`Application.cpp:888`) move onto it (multi-select transforms apply
+to the set; `Esc` exits the active tool first, then clears the selection).
 
 ### 7.2 Scene document (port of GL `SceneManager`, done natively)
 
@@ -335,7 +383,10 @@ toast; every numeric row Ctrl+click-to-type.
 user-visible mutation and route it through the manager with ObjectId records: scene
 ops (P1 lands most), visibility/lock, group ops, renames, measurement + clip-plane
 add/delete, import batches (one step), sun/sky edits, snapshot restore. Gesture-
-grained (one entry per user intent). Settings stay non-undoable (resettable, §12).
+grained (one entry per user intent) — generalize the app's existing gizmo drag-undo
+lifecycle (`Application.h:343-347`) into the shared pattern. Settings stay
+non-undoable (resettable, §12). `LambdaUndoCommand` already carries `description()`
+strings, so History labels come free — write them for humans.
 
 **History panel** (window `"History"`, default tab beside Inspector): icon-coded,
 human-labeled timeline ("Moved 3 objects", "Imported survey_north (4 files)"),
@@ -439,9 +490,10 @@ appear everywhere with zero UI edits.
 
 ## 14. Viewport toolbar, status bar, hints (Pass 8)
 
-- **Viewport toolbar** overlaid top-center of each Viewport panel: gizmo segmented
-  control | view ▾ (standard views, Frame `F`, reset) | shading ▾ | camera ▾ | tools
-  segment (ToolManager) | layout/hide-UI. Width-aware overflow into `⋯` (C9).
+- **Viewport toolbar** overlaid top-center of *each* Viewport panel, acting on that
+  viewport's own camera (§5.2): gizmo segmented control | view ▾ (standard views,
+  Frame `F`, reset) | shading ▾ | camera ▾ | tools segment (ToolManager) |
+  layout/hide-UI. Width-aware overflow into `⋯` (C9).
 - **Status bar completes:** stats, selection summary, streaming/import progress
   (per-file detail on hover), tool chip, stereo-mode chip, FPS (click → Performance
   panel), autosave whisper.
@@ -526,7 +578,9 @@ Build none of it now — never design its rails away:
    don't stale-translate" (branch CLAUDE.md): fix GL bugs during the port instead of
    copying them. Don't resurrect the GL `ApplicationPreferences`/dead GL fields.
 3. **Never break:** single-pass multiview stereo (GUI drawn once per frame — no
-   per-eye GUI paths); the dockable-Viewport ⇄ XR-fullscreen duality; multi-viewport
+   per-eye GUI paths); the dockable-Viewport ⇄ XR-fullscreen duality; the
+   multi-viewport contract (§5.2: per-viewport cameras, active-viewport command
+   routing, primary never closable, stable titles); multi-viewport
    OS drag-out (+ the ImGui-Vulkan `pColorAttachmentFormats` lifetime trap — long-
    lived `Application` member); GUI-hidden mode; GUI scale 0.5–2.0×; all 7 themes
    (light *and* dark); `.scene` v1/v2 loading forever; plugin API (additive only);
@@ -578,7 +632,7 @@ Keep this truthful — it is the coordination point between passes.
 
 | Pass | State | Branch/PR | Notes & deviations |
 |---|---|---|---|
-| Plan | ✅ done | `StereoVista-vulkan` | Rev 4: adapted to the Vulkan branch (GuiSystem/Services/panels reality; scene-system port folded into P1; snapshots/shortcuts/prefs ports slotted; supersedes TODO §D). |
+| Plan | ✅ done | `StereoVista-vulkan` | Rev 4.1: adapted to the Vulkan branch (GuiSystem/Services/panels reality; scene-system port folded into P1; snapshots/shortcuts/prefs ports slotted; supersedes TODO §D) + verified against source; §5.1 window disposition map and §5.2 multi-viewport rules (per-viewport cameras, active-viewport routing) made explicit. |
 | 0 Foundation | ⬜ not started | | |
 | 1 Outliner + scene | ⬜ not started | | |
 | 2 Inspector | ⬜ not started | | |
@@ -611,3 +665,8 @@ Keep this truthful — it is the coordination point between passes.
   everything else is a strong default implementers may improve on. Motion/QoL layer
   (§15, incl. `reduceMotion`) and provisions for Phase-9 GI, SLPK phases, macros/AI,
   collaboration, web viewer, live captures (§16).
+- 2026-07-12 — Rev 4.1 after source verification: multi-viewport is first-class and
+  stays (per-viewport cameras via `viewportCamera(i)`, active-viewport command
+  routing, primary never closable — §5.2); every current window's fate is explicit
+  (§5.1); Selection grows from the existing `Application::Selection` seed; History
+  builds on `LambdaUndoCommand::description()` and the gizmo drag-undo pattern.
