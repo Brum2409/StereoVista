@@ -5,7 +5,7 @@
 // the unified renderer::OverlayDrawList (playbook C.9), and the fragment
 // (ring) cursor publishes its state into the FrameSubmission for mesh.frag.
 
-#include "Gui/GuiTypes.h"
+#include "Cursors/CursorTypes.h"
 #include <glm/glm.hpp>
 #include <string>
 
@@ -28,8 +28,8 @@ namespace Cursor {
         void setPositionValid(bool valid) { m_positionValid = valid; }
 
         // Unified scaling system for all cursor types
-        GUI::CursorScalingMode getScalingMode() const { return m_scalingMode; }
-        void setScalingMode(GUI::CursorScalingMode mode) { m_scalingMode = mode; }
+        ScalingMode getScalingMode() const { return m_scalingMode; }
+        void setScalingMode(ScalingMode mode) { m_scalingMode = mode; }
         float getBaseSize() const { return m_baseSize; }
         void setBaseSize(float size) { m_baseSize = size; }
         float getCurrentScale() const { return m_currentScale; }
@@ -48,7 +48,7 @@ namespace Cursor {
         std::string m_name;
 
         // Unified scaling properties
-        GUI::CursorScalingMode m_scalingMode;
+        ScalingMode m_scalingMode;
         float m_baseSize;
         float m_currentScale;
         float m_minDiff;

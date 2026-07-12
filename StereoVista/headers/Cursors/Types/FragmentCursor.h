@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Cursors/Base/Cursor.h"
-#include "Gui/GuiTypes.h"
+#include "Cursors/CursorTypes.h"
 
 namespace renderer {
 struct FragmentCursorState;
@@ -35,10 +35,10 @@ namespace Cursor {
         const glm::vec4& getInnerColor() const { return m_settings.innerColor; }
         void setInnerColor(const glm::vec4& color) { m_settings.innerColor = color; }
 
-        const GUI::FragmentShaderCursorSettings& getSettings() const { return m_settings; }
-        void setSettings(const GUI::FragmentShaderCursorSettings& settings) { m_settings = settings; }
+        const FragmentCursorSettings& getSettings() const { return m_settings; }
+        void setSettings(const FragmentCursorSettings& settings) { m_settings = settings; }
 
     private:
-        GUI::FragmentShaderCursorSettings m_settings;
+        FragmentCursorSettings m_settings;
     };
 }

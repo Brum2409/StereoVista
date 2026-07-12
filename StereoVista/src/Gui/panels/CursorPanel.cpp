@@ -22,7 +22,7 @@ void drawScaling(Cursor::BaseCursor* cursor) {
     const char* modes[] = { "Normal", "Fixed", "Constrained dynamic", "Logarithmic" };
     int mode = static_cast<int>(cursor->getScalingMode());
     if (ImGui::Combo("Scaling mode", &mode, modes, 4))
-        cursor->setScalingMode(static_cast<GUI::CursorScalingMode>(mode));
+        cursor->setScalingMode(static_cast<Cursor::ScalingMode>(mode));
     float base = cursor->getBaseSize();
     if (ImGui::SliderFloat("Base size", &base, 0.005f, 1.0f, "%.3f"))
         cursor->setBaseSize(base);
@@ -130,12 +130,12 @@ void drawCursorPanel(Services& services, bool* open) {
         int cacheMode = cm.getBackgroundCacheMode();
         if (ImGui::Combo("Expiry", &cacheMode, cacheModes, 3))
             cm.setBackgroundCacheMode(cacheMode);
-        if (cacheMode == GUI::CURSOR_CACHE_TIMED) {
+        if (cacheMode == Cursor::CURSOR_CACHE_TIMED) {
             float t = cm.getBackgroundCacheTime();
             if (ImGui::SliderFloat("Hold time (s)", &t, 0.1f, 10.0f, "%.1f"))
                 cm.setBackgroundCacheTime(t);
         }
-        if (cacheMode == GUI::CURSOR_CACHE_DISTANCE) {
+        if (cacheMode == Cursor::CURSOR_CACHE_DISTANCE) {
             float d = cm.getBackgroundCacheDistance();
             if (ImGui::SliderFloat("Travel (px)", &d, 10.0f, 1000.0f, "%.0f"))
                 cm.setBackgroundCacheDistance(d);

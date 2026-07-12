@@ -134,7 +134,7 @@ public:
   }
 
   // Cache-expiry policy for the last-depth behaviour (values mirror
-  // GUI::CursorBackgroundCacheMode).
+  // Cursor::BackgroundCacheMode).
   void setBackgroundCacheMode(int mode) { m_backgroundCacheMode = mode; }
   int getBackgroundCacheMode() const { return m_backgroundCacheMode; }
   void setBackgroundCacheTime(float seconds) {
@@ -184,7 +184,7 @@ private:
   bool m_keepLastDepthOnBackground = false;
   float m_lastValidDepth = 0.5f;
   bool m_hasLastValidDepth = false;
-  int m_backgroundCacheMode = 0;            // GUI::CursorBackgroundCacheMode
+  int m_backgroundCacheMode = 0;            // Cursor::BackgroundCacheMode
   float m_backgroundCacheTime = 1.0f;       // seconds (timed mode)
   float m_backgroundCacheDistance = 250.0f; // screen pixels (distance mode)
   double m_lastHitTime = 0.0;               // glfwGetTime() at the last hit

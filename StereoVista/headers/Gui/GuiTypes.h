@@ -1,5 +1,15 @@
 #pragma once
 
+// ============================================================================
+// GL-ERA REFERENCE ONLY — no live (compiled) code includes this header since
+// UI redesign Pass 0: the cursor enums/settings the Vulkan build used moved
+// to Cursors/CursorTypes.h, and the ApplicationPreferences blob was replaced
+// by Gui::Settings (+ Gui/Preferences.h persistence). This file stays only so
+// the ExcludedFromBuild GL sources (GUI.cpp, CursorPreview3D, SpaceMouse,
+// SceneManager/SnapshotManager) remain readable as the behaviour reference;
+// it is deleted with them once their ports land. Do not include it.
+// ============================================================================
+
 // GPU-API-free since Phase 6 of the Vulkan migration (the glad include and
 // the GL-era GUI::PlaneCursor handle bundle are gone; the real PlaneCursor
 // lives in Cursors/Types and owns no GPU objects anymore).

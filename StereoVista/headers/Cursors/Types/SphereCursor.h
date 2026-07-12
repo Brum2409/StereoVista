@@ -1,7 +1,6 @@
 #pragma once
 
 #include "Cursors/Base/Cursor.h"
-#include "Gui/GuiTypes.h"
 #include <cstdint>
 #include <vector>
 

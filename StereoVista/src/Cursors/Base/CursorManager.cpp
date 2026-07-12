@@ -1,7 +1,7 @@
 #include "Cursors/Base/CursorManager.h"
 
 #include "Core/Camera.h"
-#include "Gui/GuiTypes.h"
+#include "Cursors/CursorTypes.h"
 #include "Renderer/FrameSubmission.h"
 #include "Renderer/OverlayDrawList.h"
 
@@ -163,9 +163,9 @@ void CursorManager::updateCursorPosition(GLFWwindow *hostWindow,
   if (!isHit && m_keepLastDepthOnBackground && m_hasLastValidDepth &&
       anyCursorVisible) {
     bool cacheValid = true;
-    if (m_backgroundCacheMode == GUI::CURSOR_CACHE_TIMED) {
+    if (m_backgroundCacheMode == CURSOR_CACHE_TIMED) {
       cacheValid = (glfwGetTime() - m_lastHitTime) <= m_backgroundCacheTime;
-    } else if (m_backgroundCacheMode == GUI::CURSOR_CACHE_DISTANCE) {
+    } else if (m_backgroundCacheMode == CURSOR_CACHE_DISTANCE) {
       const float dx = m_lastX - m_lastHitScreenX;
       const float dy = m_lastY - m_lastHitScreenY;
       cacheValid =

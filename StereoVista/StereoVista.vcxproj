@@ -744,6 +744,7 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClInclude Include="headers\Core\UndoManager.h" />
     <ClInclude Include="headers\Core\CommandRegistry.h" />
     <ClInclude Include="headers\Core\Shortcuts.h" />
+    <ClInclude Include="headers\Cursors\CursorTypes.h" />
     <ClInclude Include="headers\Core\CursorSynchronizer.h" />
     <ClInclude Include="headers\Core\CursorSyncState.h" />
     <ClInclude Include="headers\Engine\XRSession.h" />

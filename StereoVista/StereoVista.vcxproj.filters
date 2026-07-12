@@ -1500,6 +1500,9 @@
     <ClInclude Include="headers\Core\Shortcuts.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="headers\Cursors\CursorTypes.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="assets\shaders_vk\mesh.vert">
