@@ -1,5 +1,12 @@
 #include "IconsFontAwesome5.h"
 #include "imgui_sytle.h"
+
+// The backends moved here from imgui_sytle.h (see the note there): this file
+// initializes the GLFW platform backend and re-uploads the Vulkan font atlas.
+#include "imgui/backends/imgui_impl_glfw.h"
+#include "imgui/backends/imgui_impl_vulkan.h"
+#include <imgui/imgui_internal.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>

@@ -2,10 +2,12 @@
 #include <filesystem>
 #include <unordered_map>
 
+// Declarations only — deliberately NO backend includes here: this header is
+// consumed by the Gui layer (UiKit, panels) for the shared fonts / scale /
+// semantic colors / theme API, and the GUI layering rule forbids Vulkan
+// headers there. imgui_style.cpp includes the glfw+vulkan backends itself for
+// the init/font-upload work.
 #include "imgui/imgui.h"
-#include "imgui/backends/imgui_impl_glfw.h"
-#include "imgui/backends/imgui_impl_vulkan.h"
-#include <imgui/imgui_internal.h>
 
 struct GLFWwindow;
 
