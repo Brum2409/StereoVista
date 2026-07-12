@@ -29,6 +29,14 @@ namespace Tools {
         void setEnabled(bool enabled);
         bool isEnabled() const { return m_enabled; }
 
+        // Bind the tool to an externally owned measurement vector — since UI
+        // redesign Pass 1 that is scene::Scene::measurements ("one heart"): the
+        // Outliner and the scene document see exactly what this tool creates.
+        // The pointed-to vector must outlive the tool (Application guarantees
+        // it: scene_ is a member; the MeasurementPlugin binds in onRegister).
+        // Unbound, the tool falls back to a private vector.
+        void bindStorage(std::vector<Engine::Measurement>* store) { m_store = store; }
+
         void setMode(Engine::Measurement::Type mode);
         Engine::Measurement::Type getMode() const { return m_mode; }
 
@@ -45,7 +53,7 @@ namespace Tools {
         void deleteMeasurement(int index);
         void clearAll();
         const std::vector<Engine::Measurement>& measurements() const {
-            return m_measurements;
+            return storeRef();
         }
 
         // ── Rendering ────────────────────────────────────────────────────────
@@ -73,10 +81,18 @@ namespace Tools {
     private:
         void commitActive();
 
+        std::vector<Engine::Measurement>& storeRef() {
+            return m_store ? *m_store : m_ownMeasurements;
+        }
+        const std::vector<Engine::Measurement>& storeRef() const {
+            return m_store ? *m_store : m_ownMeasurements;
+        }
+
         bool m_enabled = false;
         Engine::Measurement::Type m_mode = Engine::Measurement::Type::Distance;
 
-        std::vector<Engine::Measurement> m_measurements; // owned (persistence later)
+        std::vector<Engine::Measurement>* m_store = nullptr; // scene storage
+        std::vector<Engine::Measurement> m_ownMeasurements;  // unbound fallback
         Engine::Measurement m_active;
         bool m_hasActive = false;
         int  m_nameCounter = 0;

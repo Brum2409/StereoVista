@@ -1,173 +1,123 @@
 {
     "camera": {
-        "alwaysShowOrbitCenter": false,
-        "autoConvergence": true,
-        "convergence": 13.06039810180664,
-        "convergenceCapMax": 39.0,
-        "convergenceCapMin": 0.800000011920929,
-        "convergenceDistanceFactor": 1.2999999523162842,
-        "convergenceSmoothingSpeed": 1.2000000476837158,
-        "enableConvergenceCap": true,
-        "farPlane": 1000.0,
-        "flipEyes": false,
-        "fov": 48.1510009765625,
+        "adaptiveSpeed": true,
+        "farPlane": 13219.724609375,
+        "fovDeg": 48.1510009765625,
         "maxScrollVelocity": 4.0,
-        "mouseSensitivity": 0.07999999821186066,
-        "mouseSmoothingFactor": 1.0,
         "nearPlane": 0.009999999776482582,
         "orbitAroundCursor": true,
-        "orbitCenterColor": [
-            0.0,
-            1.0,
-            0.0,
-            0.699999988079071
-        ],
-        "orbitCenterSphereRadius": 1.0,
-        "orbitFollowsCursor": false,
         "scrollDeceleration": 2.0,
         "scrollMomentum": 0.12999999523162842,
-        "separation": 0.10999999940395355,
-        "showOrbitCenter": false,
+        "sensitivity": 0.07999999821186066,
+        "speed": 100.5484390258789,
         "speedFactor": 1.0,
-        "useNewStereoMethod": true,
         "useSmoothScrolling": true,
         "zoomToCursor": true
     },
+    "commandFrecency": {
+        "edit.redo": {
+            "lastUse": 1783860664,
+            "score": 2.0
+        },
+        "edit.undo": {
+            "lastUse": 1783862042,
+            "score": 4.997628557232314
+        },
+        "file.import_pointcloud": {
+            "lastUse": 1783863439,
+            "score": 1.9996837328572683
+        },
+        "file.new_scene": {
+            "lastUse": 1783862970,
+            "score": 1.0
+        },
+        "file.open_slpk": {
+            "lastUse": 1783864668,
+            "score": 1.0
+        },
+        "file.save_scene": {
+            "lastUse": 1783863479,
+            "score": 2.999659087354864
+        },
+        "file.save_scene_as": {
+            "lastUse": 1783862964,
+            "score": 1.0
+        },
+        "gizmo.rotate": {
+            "lastUse": 1783860108,
+            "score": 1.0
+        },
+        "gizmo.scale": {
+            "lastUse": 1783860109,
+            "score": 2.99999828088579
+        },
+        "gizmo.translate": {
+            "lastUse": 1783860628,
+            "score": 1.9997037830572026
+        },
+        "help.about": {
+            "lastUse": 1783850040,
+            "score": 1.0
+        },
+        "select.all": {
+            "lastUse": 1783863368,
+            "score": 11.994527693980354
+        },
+        "view.add_viewport": {
+            "lastUse": 1783860672,
+            "score": 1.0
+        },
+        "view.center": {
+            "lastUse": 1783850051,
+            "score": 1.0
+        }
+    },
     "cursor": {
-        "currentPreset": "Sphere"
+        "show": true,
+        "type": 0
     },
-    "edl": {
-        "enabled": false,
-        "radius": 2.0,
-        "strength": 5.0
-    },
-    "hdr": {
-        "bloomIntensity": 0.1770000010728836,
-        "bloomThreshold": 0.33000001311302185,
-        "contrast": 1.0,
-        "enableBloom": false,
-        "enableFXAA": true,
-        "enableVignette": true,
-        "enabled": true,
-        "exposure": 1.9299999475479126,
-        "fxaaEdgeThreshold": 0.1770000010728836,
-        "fxaaSubpixel": 0.27000001072883606,
-        "saturation": 1.0,
-        "toneMapOperator": 1,
-        "vignetteIntensity": 0.46000000834465027,
-        "vignetteRadius": 0.5400000214576721,
-        "vignetteSoftness": 0.49000000953674316
+    "files": {
+        "openSceneMode": 0,
+        "recentScenes": [
+            "C:\\Users\\benta\\Downloads\\Stereo Demo\\StereoVista\\office.scene"
+        ]
     },
     "lighting": {
-        "ambientStrength": 0.10000000149011612,
-        "enableShadows": true,
-        "mode": 0
+        "ambient": 0.029999999329447746,
+        "pointShadowRange": 50.0,
+        "shadows": true,
+        "softShadows": false,
+        "sun": {
+            "angularSizeDeg": 1.5,
+            "color": [
+                1.0,
+                0.9800000190734863,
+                0.949999988079071
+            ],
+            "direction": [
+                -0.40824833512306213,
+                -0.8164966702461243,
+                -0.40824833512306213
+            ],
+            "enabled": true,
+            "intensity": 0.1599999964237213
+        }
     },
-    "materials": {
-        "enableAO": true,
-        "enableNormalMapping": true,
-        "enablePBR": true,
-        "enableParallaxMapping": true,
-        "heightScale": 0.015799999237060547,
-        "metallicFactor": 1.0,
-        "normalScale": 0.7400000095367432,
-        "roughnessFactor": 0.0
-    },
-    "modelImport": {
-        "autoScaleLargeModels": true,
-        "calculateTangentSpace": true,
-        "fixInfacingNormals": false,
-        "flipNormals": false,
-        "flipUVs": false,
-        "generateNormals": true,
-        "generateSmoothNormals": false,
-        "joinIdenticalVertices": false,
-        "maxModelRadius": 5.0,
-        "optimizeMeshes": false,
-        "pretransformVertices": false,
-        "removeRedundantMaterials": false,
-        "sortByPrimitiveType": false
-    },
-    "openxr": {
-        "farPlane": 200.0,
-        "mirrorToWindow": true,
-        "nearPlane": 0.05000000074505806,
-        "useScenePlanes": true,
-        "worldScale": 1.0
-    },
-    "pointcloud": {
-        "baseSize": 0.0010000000474974513,
-        "hqsDepthThreshold": 0.012199999764561653,
-        "hqsEnabled": false,
+    "pointCloud": {
+        "downsample": 1,
+        "hqs": false,
+        "hqsThreshold": 0.012199999764561653,
+        "lodEnabled": true,
+        "lodPointsPerPixel": 2.0,
         "mortonResort": true,
         "splatEnabled": true,
         "splatMaxRadius": 3
     },
-    "radar": {
-        "autoFit": true,
-        "enabled": false,
-        "frustumSpread": 0.27000001072883606,
-        "posX": 0.6499999761581421,
-        "posY": 0.3700000047683716,
-        "radius": 0.3499999940395355,
-        "scale": 0.03999999910593033,
-        "sceneBrightness": 8.0,
-        "showScene": true,
-        "sliceEnabled": true,
-        "sliceOffset": 3.359999895095825
+    "render": {
+        "asyncCompute": true,
+        "wireframe": false
     },
-    "radiance": {
-        "bvhDebugMaxDepth": 8,
-        "bvhDebugRenderMode": 0,
-        "ddgiDepthSharpness": 50,
-        "ddgiGIIntensity": 0.578000009059906,
-        "ddgiHysteresis": 0.9900000095367432,
-        "ddgiNormalBias": 0.6399999856948853,
-        "ddgiProbeCountX": 24,
-        "ddgiProbeCountY": 24,
-        "ddgiProbeCountZ": 24,
-        "ddgiRaysPerProbe": 16,
-        "ddgiShowProbes": false,
-        "ddgiVisibilityStrength": 0.550000011920929,
-        "emissiveIntensity": 1.2899999618530273,
-        "enableBVH": true,
-        "enableDDGI": true,
-        "enableEmissiveLighting": true,
-        "enableIndirectLighting": true,
-        "enableRaytracing": true,
-        "enableTwoLevelBVH": true,
-        "indirectIntensity": 0.30000001192092896,
-        "materialRoughness": 0.5,
-        "maxBounces": 2,
-        "rayMaxDistance": 50.0,
-        "samplesPerPixel": 1,
-        "shadowSamples": 1,
-        "shadowSoftness": 0.3199999928474426,
-        "showBVHDebug": false,
-        "skyIntensity": 0.11999999731779099
-    },
-    "scene": {
-        "applyEnvironmentOnLoad": true,
-        "recent": [],
-        "save": {
-            "compact": false,
-            "includeCamera": true,
-            "includeClipPlanes": true,
-            "includeEnvironment": true,
-            "includeLighting": true,
-            "includeMeasurements": true,
-            "includeSnapshots": true
-        }
-    },
-    "shadows": {
-        "enableIndirectLighting": true,
-        "enablePCSS": false,
-        "lightSize": 0.13099999725818634,
-        "pcfKernelSize": 9,
-        "shadowSoftness": 16.579999923706055
-    },
-    "skybox": {
-        "exposure": 0.05999999865889549,
+    "sky": {
         "gradientBottom": [
             0.699999988079071,
             0.699999988079071,
@@ -178,87 +128,44 @@
             0.10000000149011612,
             0.30000001192092896
         ],
-        "hdrPath": "C:\\Users\\Benbrem\\Downloads\\Arbeit\\Stereo-Demo-main\\Stereo-Viewer-Project\\bin\\x64\\Release\\skybox\\HDR\\table_mountain_2_puresky_4k.hdr",
-        "selectedCubemap": 0,
+        "intensity": 1.0,
+        "mode": 3,
         "solidColor": [
             0.20000000298023224,
             0.30000001192092896,
             0.4000000059604645
-        ],
-        "type": 0
+        ]
     },
-    "spacemouse": {
-        "anchorMode": 1,
-        "centerCursor": false,
-        "deadzone": 0.0,
-        "enabled": true,
-        "navigationMode": 0,
-        "rotationSensitivity": 1.0,
-        "tdx": {
-            "autoPivot": false,
-            "autokeyAnimation": false,
-            "firstPersonEaseOut": 600,
-            "floorQueryRate": 1,
-            "lockHorizon": false,
-            "lockSketchPlane": true,
-            "lockTo3dViews": false,
-            "motionModel": "Examine",
-            "moveObjects": false,
-            "selectionFollower": true,
-            "suspendInput": false
-        },
-        "translationSensitivity": 1.0
-    },
-    "ssao": {
-        "bias": 0.007000000216066837,
-        "enabled": true,
-        "kernelSize": 64,
-        "power": 1.399999976158142,
-        "radius": 0.10999999940395355
-    },
-    "startup": {
-        "loadScene": false,
-        "sceneLoadingBehavior": 0,
-        "scenePath": "C:\\Users\\Benbrem\\Downloads\\DEMO\\Scenes\\POINT TEST\\POINT.scene"
-    },
-    "sun": {
-        "color": [
-            1.0,
-            0.9800000190734863,
-            0.949999988079071
-        ],
-        "direction": [
-            -0.40824833512306213,
-            -0.8164966702461243,
-            -0.40824833512306213
-        ],
-        "enabled": true,
-        "intensity": 0.1599999964237213
+    "stereo": {
+        "autoConvergence": true,
+        "convergence": 13.06039810180664,
+        "convergenceFactor": 1.2999999523162842,
+        "convergenceSmoothing": 1.2000000476837158,
+        "flipEyes": false,
+        "separation": 0.10999999940395355
     },
     "ui": {
-        "cursorBackgroundCacheDistance": 132.0,
-        "cursorBackgroundCacheMode": 2,
-        "cursorBackgroundCacheTime": 1.0,
-        "cursorKeepLastDepthOnBackground": true,
-        "darkTheme": true,
-        "enableSpawnAnimation": false,
-        "guiScaleFactor": 1.0,
-        "screenshotIncludeUI": false,
-        "show3DCursor": true,
-        "showFPS": true,
-        "stereoScreenshotMode": 1,
-        "theme": 0,
-        "vsync": false
+        "guiScale": 1.149999976158142,
+        "panels": {
+            "clipPlanes": false,
+            "cursor": false,
+            "diagnostics": false,
+            "inspector": true,
+            "pointClouds": true,
+            "scene": true,
+            "settings": true,
+            "slpk": true
+        },
+        "reduceMotion": false,
+        "showStatusBar": true,
+        "theme": 0
     },
-    "vct": {
-        "diffuseConeCount": 6,
-        "directLight": true,
-        "indirectDiffuseLight": true,
-        "indirectSpecularLight": true,
-        "shadowSampleCount": 18,
-        "shadowStepMultiplier": 0.15000000596046448,
-        "shadows": true,
-        "tracingMaxDistance": 1.4142135381698608,
-        "voxelSize": 0.015625
+    "version": 3,
+    "vr": {
+        "farPlane": 200.0,
+        "mirrorToWindow": true,
+        "nearPlane": 0.05000000074505806,
+        "useScenePlanes": true,
+        "worldScale": 1.0
     }
 }

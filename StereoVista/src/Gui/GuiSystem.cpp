@@ -9,10 +9,12 @@
 #include "Plugins/PluginManager.h"
 #include "Scene/Scene.h"
 
+#include "imgui/IconsFontAwesome5.h"
 #include "imgui/imgui.h"
 #include "imgui/imgui_internal.h" // DockBuilder* / BeginViewportSideBar
 
 #include <cstdio>
+#include <filesystem>
 #include <string>
 
 namespace Gui {
@@ -58,6 +60,51 @@ void commandMenu(Services& services, const char* category) {
     services.commands().forEachInCategory(
         category,
         [&](const core::Command& command) { commandMenuItem(services, command); });
+}
+
+// The replace-or-merge-or-ask modal (contract C8): a scene was opened while
+// the current one has content and the preference says "ask". The path waits
+// in Services::pendingSceneOpenPath until the user decides; "remember my
+// choice" persists it (Settings::Files::openSceneMode, resettable there).
+void drawSceneOpenModal(Services& services) {
+    const std::string& pending = services.pendingSceneOpenPath();
+    static bool remember = false;
+    if (pending.empty())
+        return;
+    if (!ImGui::IsPopupOpen("Open scene?")) {
+        remember = false;
+        ImGui::OpenPopup("Open scene?");
+    }
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Appearing,
+                            ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Open scene?", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        const std::string name =
+            std::filesystem::path(pending).filename().string();
+        ImGui::Text("Open \"%s\"?", name.c_str());
+        ImGui::TextDisabled("The current scene has content.");
+        ImGui::Spacing();
+        ImGui::Checkbox("Remember my choice", &remember);
+        if (remember)
+            ImGui::TextDisabled("Change it later under Settings > Files.");
+        ImGui::Spacing();
+        if (ImGui::Button("Replace scene", ImVec2(130.0f * UiKit::Scale(), 0))) {
+            services.resolvePendingSceneOpen(1, remember);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Merge into scene", ImVec2(130.0f * UiKit::Scale(), 0))) {
+            services.resolvePendingSceneOpen(2, remember);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            services.resolvePendingSceneOpen(0, false);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 }
 
 // "12,4M" style compact count for the status bar.
@@ -137,21 +184,57 @@ void GuiSystem::draw(Services& services) {
         // Plugin (tool) windows render inside the same ImGui frame.
         services.plugins().renderUI(services.pluginContext());
     }
+
+    // Scene-open decision modal (C8) — outside the master GUI toggle: a
+    // pending open must never be stuck invisible.
+    drawSceneOpenModal(services);
 }
 
 void GuiSystem::drawMenuBar(Services& services) {
     if (!ImGui::BeginMainMenuBar())
         return;
 
-    // File and Edit render generically from the registry (registration order
-    // + separatorBefore define the grouping).
+    // File renders from the registry, with ONE dynamic insert: the recent-
+    // scenes submenu right after "Open scene..." (every actionable row is
+    // still a command or Services call — same pattern as the View menu).
     if (ImGui::BeginMenu("File")) {
-        commandMenu(services, "File");
+        services.commands().forEachInCategory(
+            "File", [&](const core::Command& command) {
+                commandMenuItem(services, command);
+                if (command.id == "file.open_scene") {
+                    std::vector<std::string>& recents =
+                        services.settings().files.recentScenes;
+                    if (ImGui::BeginMenu("Open recent", !recents.empty())) {
+                        std::string clicked;
+                        for (const std::string& path : recents) {
+                            const std::string label =
+                                std::filesystem::path(path).filename().string();
+                            ImGui::PushID(path.c_str());
+                            if (ImGui::MenuItem(label.c_str()))
+                                clicked = path;
+                            if (ImGui::IsItemHovered())
+                                ImGui::SetTooltip("%s", path.c_str());
+                            ImGui::PopID();
+                        }
+                        ImGui::Separator();
+                        if (ImGui::MenuItem("Clear list"))
+                            recents.clear();
+                        ImGui::EndMenu();
+                        if (!clicked.empty())
+                            services.openSceneFile(clicked);
+                    }
+                }
+            });
         ImGui::EndMenu();
     }
 
     if (ImGui::BeginMenu("Edit")) {
         commandMenu(services, "Edit");
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("Select")) {
+        commandMenu(services, "Select");
         ImGui::EndMenu();
     }
 
@@ -274,6 +357,13 @@ void GuiSystem::drawStatusBar(Services& services) {
                                      : meshName);
             }
             ImGui::TextUnformatted(name.c_str());
+        }
+
+        // ── Isolate exit chip (§7.3): visible whenever isolation is active ──
+        if (services.isolateActive()) {
+            ImGui::SameLine(0.0f, UiKit::Space(7));
+            if (UiKit::Chip(ICON_FA_EYE "  Isolated - click to exit", true))
+                services.exitIsolate();
         }
 
         // ── Background activity ────────────────────────────────────────────

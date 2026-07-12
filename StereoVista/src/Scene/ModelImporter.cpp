@@ -408,6 +408,14 @@ bool importModelFile(const std::string& path, rhi::Device& device,
     const std::string filename =
         (lastSlash != std::string::npos) ? path.substr(lastSlash + 1) : path;
     out.name = filename.substr(0, filename.find_last_of('.'));
+    // Absolute source path: Duplicate rebuilds from it, and the v3 scene
+    // format stores it (scene-relative primary + this absolute fallback).
+    {
+        std::error_code ec;
+        out.sourcePath = fs::absolute(path, ec).string();
+        if (ec || out.sourcePath.empty())
+            out.sourcePath = path;
+    }
     processNode(ctx, aiScene_->mRootNode, out, glm::mat4(1.0f));
 
     if (out.meshes.empty()) {

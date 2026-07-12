@@ -312,12 +312,23 @@ Vulkan GLSL in `assets/shaders_vk/`.
   post-processing — Voxel Cone Tracing, DDGI, BVH ray-traced Radiance, Bloom, SSAO.
   These were deleted from the tree (git history is the reference); the app ships
   **Shadow Mapping only**, and the VCT/Radiance lighting-mode options are dropped.
-- **GUI/UX remake in progress (docs/UI_REDESIGN.md):** Pass 0 (Foundation)
-  landed — UiKit design system (`Gui/UiKit.h`), CommandRegistry-driven menus +
-  rebindable shortcuts (`Core/CommandRegistry.h`, `Core/Shortcuts.h`),
+- **GUI/UX remake in progress (docs/UI_REDESIGN.md):** Passes 0–2 landed. **P0
+  (Foundation):** UiKit design system (`Gui/UiKit.h`), CommandRegistry-driven
+  menus + rebindable shortcuts (`Core/CommandRegistry.h`, `Core/Shortcuts.h`),
   `Gui::Settings` ⇄ `preferences.json` persistence (`Gui/Preferences.h`,
-  incl. `PluginContext::preferences()`), and the status-bar shell. See the
-  plan's Status Board for per-pass state.
+  incl. `PluginContext::preferences()`), and the status-bar shell. **P1 (Outliner
+  + editable scene):** stable `uint64_t` ObjectIds + `scene::SceneItemRef`/
+  `Selection` (`Scene/SceneItems.h`), `scene::SceneDocument` v1/v2/v3 load + v3
+  save/merge (`Scene/SceneDocument.h`), user groups, the Outliner tree
+  (`panels/ScenePanel.cpp` + the `Gui/Outliner.h` provider registry), and the
+  one-undo-each item-op surface on `Gui::Services`; point clouds live on
+  `scene::Scene::pointClouds`. **P2 (Inspector):** a per-kind **editor registry**
+  (`Gui/Inspector.h` + `src/Gui/Inspector.cpp`, mirroring the Outliner provider
+  registry) behind the `InspectorPanel` shell — header card, GLOBAL cards, per-kind
+  editors (Model/Mesh, PointCloud, PointLight, Sun, Environment, and the I3S
+  SceneLayer editor in `src/Gui/inspectors/LayerInspector.cpp`), multi-edit as one
+  undo gesture (`Inspector::EditRow<T>`), per-section `ResetGlyph`. See the plan's
+  Status Board for per-pass state and deviations.
 - **Not yet ported (tracked as a separate scope):** the full production GUI
   (in progress via the UI redesign passes above), `SceneManager`
   scene save/load/merge + hierarchy, cursor-preset persistence, 3DConnexion

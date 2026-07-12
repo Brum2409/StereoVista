@@ -23,10 +23,12 @@
 
 #include "Gui/Settings.h"
 #include "Plugins/PluginContext.h" // Plugins::ToastLevel
+#include "Scene/SceneItems.h"      // scene::SceneItemRef / scene::Selection
 
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 // Forward declarations keep this header light.
 class Camera;
@@ -197,11 +199,56 @@ public:
     virtual std::string xrRuntimeOverride() const = 0;
     virtual void        setXRRuntimeOverride(const std::string& manifestPath) = 0;
 
-    // ── Selection (index into scene().models; mesh -1 = whole model) ─────────
+    // ── Selection (UI redesign Pass 1: the application-wide multi-select) ───
+    // The ordered ObjectId-based selection every panel reads and writes
+    // (contract C3). The legacy index-based accessors below map onto its
+    // PRIMARY item and stay for simple consumers (Inspector until Pass 2).
+    virtual scene::Selection& selection() = 0;
     virtual int  selectedModel() const = 0;
     virtual int  selectedMesh() const = 0;
     virtual void setSelection(int model, int mesh = -1) = 0;
     virtual void clearSelection() = 0;
+
+    // ── Outliner item operations (Pass 1) ────────────────────────────────────
+    // All mutations are one undoable step per call (contract C4), applied to
+    // the given refs (typically the selection, or one row). Unsupported refs
+    // in a batch are skipped with a toast where that matters.
+    virtual void deleteItems(const std::vector<scene::SceneItemRef>& refs) = 0;
+    virtual void duplicateItems(const std::vector<scene::SceneItemRef>& refs) = 0;
+    virtual void setItemsVisible(const std::vector<scene::SceneItemRef>& refs,
+                                 bool visible) = 0;
+    virtual void setItemsLocked(const std::vector<scene::SceneItemRef>& refs,
+                                bool locked) = 0;
+    // Groups the refs into a new group (returns its id, 0 on failure).
+    virtual uint64_t groupItems(const std::vector<scene::SceneItemRef>& refs) = 0;
+    virtual void ungroupItems(const std::vector<scene::SceneItemRef>& refs) = 0;
+    // Move refs into an existing group (0 = scene root). Grouping a Group ref
+    // reparents it.
+    virtual void moveItemsToGroup(const std::vector<scene::SceneItemRef>& refs,
+                                  uint64_t groupId) = 0;
+    virtual void renameItem(const scene::SceneItemRef& ref,
+                            const std::string& name) = 0;
+    // Fly the active viewport's camera to frame the refs' union bounds.
+    virtual void frameItems(const std::vector<scene::SceneItemRef>& refs) = 0;
+    // Isolate: hide everything except refs (one undo step); the status bar
+    // shows an exit chip while active.
+    virtual bool isolateActive() const = 0;
+    virtual void isolateItems(const std::vector<scene::SceneItemRef>& refs) = 0;
+    virtual void exitIsolate() = 0;
+
+    // ── Scene document (Pass 1: new/open/save/save-as/merge + recents) ──────
+    virtual void newScene() = 0;
+    virtual void openSceneDialog() = 0;
+    // Open `path`, honoring the replace-or-merge-or-ask preference; the ask
+    // flow parks the path in pendingSceneOpenPath() for the GuiSystem modal.
+    virtual void openSceneFile(const std::string& path) = 0;
+    virtual void mergeSceneDialog() = 0;
+    virtual bool saveScene() = 0;   // current path, else save-as dialog
+    virtual bool saveSceneAs() = 0;
+    virtual const std::string& currentScenePath() const = 0; // "" = untitled
+    virtual const std::string& pendingSceneOpenPath() const = 0; // "" = none
+    // action: 0 = cancel, 1 = replace, 2 = merge; remember persists the choice.
+    virtual void resolvePendingSceneOpen(int action, bool remember) = 0;
 
     // ── Transform gizmo (behind the facade so panels avoid the Tools header) ─
     virtual bool gizmoEnabled() const = 0;
@@ -233,6 +280,17 @@ public:
     // Returns nullptr when the (model, mesh) pair is invalid.
     virtual renderer::gpu::MaterialData* materialForMesh(int model, int mesh) = 0;
 
+    // ── Textures (Inspector Pass 2: load + assign a material texture slot) ───
+    // Open an image file dialog; returns the chosen path ("" = cancelled).
+    virtual std::string pickTextureFile() = 0;
+    // Load `path` (Vulkan upload) and assign it to a material slot of the
+    // (model, mesh)'s material — mesh = -1 targets every mesh of the model.
+    // slot: 0 albedo (sRGB) · 1 normal · 2 metallic · 3 roughness · 4 ao.
+    // Returns false on load failure (and toasts). Not undoable (a load; revert
+    // with the per-slot Clear, which is a plain index write).
+    virtual bool applyMaterialTexture(int model, int mesh, int slot,
+                                      const std::string& path) = 0;
+
     // ── Point clouds ────────────────────────────────────────────────────────
     virtual size_t             pointCloudCount() const = 0;
     virtual const std::string& pointCloudName(size_t i) const = 0;
@@ -242,6 +300,11 @@ public:
     virtual double             pointCloudVramMB(size_t i) const = 0;
     virtual PointCloudProgress pointCloudProgress(size_t i) const = 0;
     virtual void               unloadPointCloud(size_t i) = 0;
+    // Export cloud `i` (Inspector Pass 2 Export section; ExportService lands in
+    // Pass 7). Opens a save dialog and writes the format (0 XYZ · 1 PCB · 2 HDF5
+    // · 3 PLY), baking the transform when applyTransform; toasts the result.
+    virtual void               exportPointCloud(size_t i, int format,
+                                                bool applyTransform, bool plyBinary) = 0;
 
     // ── Theme ───────────────────────────────────────────────────────────────
     virtual int         themeCount() const = 0;

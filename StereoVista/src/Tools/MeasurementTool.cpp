@@ -84,19 +84,19 @@ void MeasurementTool::undoLastPoint() {
 
 void MeasurementTool::commitActive() {
     if (!m_active.points.empty())
-        m_measurements.push_back(std::move(m_active));
+        storeRef().push_back(std::move(m_active));
     m_hasActive = false;
     m_active = Engine::Measurement();
 }
 
 void MeasurementTool::deleteMeasurement(int index) {
-    if (index >= 0 && index < static_cast<int>(m_measurements.size()))
-        m_measurements.erase(m_measurements.begin() + index);
+    if (index >= 0 && index < static_cast<int>(storeRef().size()))
+        storeRef().erase(storeRef().begin() + index);
 }
 
 void MeasurementTool::clearAll() {
     cancelActive();
-    m_measurements.clear();
+    storeRef().clear();
 }
 
 std::string MeasurementTool::formatLength(float worldLength) const {
@@ -130,7 +130,7 @@ bool MeasurementTool::exportToCSV(const std::string& path) const {
     };
 
     file << "Name,Type,Summary,Unit,PointIndex,X,Y,Z\n";
-    for (const auto& m : m_measurements) {
+    for (const auto& m : storeRef()) {
         const char* typeName =
             (m.type == Engine::Measurement::Type::Angle) ? "Angle" :
             (m.type == Engine::Measurement::Type::Point) ? "Point" :
@@ -208,7 +208,7 @@ void MeasurementTool::appendTo(OverlayDrawList& list, const glm::vec3* previewPo
         };
 
         // Committed measurements (fills first so outlines/markers sit on top).
-        for (const Engine::Measurement& m : m_measurements) {
+        for (const Engine::Measurement& m : storeRef()) {
             if (!m.visible) continue;
             const bool areaClosed =
                 m.type == Engine::Measurement::Type::Area && m.points.size() >= 3;
@@ -326,7 +326,7 @@ void MeasurementTool::drawLabels(const glm::mat4& viewProj,
         }
     };
 
-    for (const Engine::Measurement& m : m_measurements)
+    for (const Engine::Measurement& m : storeRef())
         if (m.visible) measure(m);
     if (m_hasActive) measure(m_active);
 

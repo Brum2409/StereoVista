@@ -160,6 +160,8 @@ void InlineIcon(const char* icon, const ImVec4& color) {
     }
 }
 
+ImFont* IconFont() { return g_Fonts.icons; }
+
 void SectionHeader(const char* label) {
     const float scale = Scale();
     ImGui::Spacing();

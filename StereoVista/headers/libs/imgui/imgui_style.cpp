@@ -726,7 +726,14 @@ static void ApplyStyleGeometry(ImGuiStyle &style) {
   style.Alpha = 1.0f;
   style.DisabledAlpha = 0.5f;
   style.WindowPadding = ImVec2(15 * scale, 12 * scale);
-  style.WindowRounding = 10.0f * scale;
+  // Flat, not rounded: docked panels sit flush against the menu bar, the
+  // status bar and each other, so any corner rounding on the outer window
+  // frame reads as a visual defect (a gap where the panel "disconnects"
+  // from whatever it's flush against) rather than a design flourish — the
+  // rounded-corner look only works for a window with visible space all
+  // around it, which a docked panel never has. Kept unconditional (not just
+  // when ViewportsEnable is set) since docked panels need this regardless.
+  style.WindowRounding = 0.0f;
   style.WindowBorderSize = 1.0f * scale;
   style.WindowMinSize = ImVec2(32 * scale, 32 * scale);
   style.WindowTitleAlign = ImVec2(0.5f, 0.5f);

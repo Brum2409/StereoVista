@@ -1,306 +1,187 @@
 {
-    "activeProfile": "Default",
-    "profiles": [
-        {
-            "bindings": {
-                "CenterView": [
-                    {
-                        "alt": false,
-                        "ctrl": false,
-                        "keyCode": 67,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "ClearIrradianceCache": [
-                    {
-                        "alt": false,
-                        "ctrl": true,
-                        "keyCode": 73,
-                        "mouseButton": -1,
-                        "shift": true
-                    }
-                ],
-                "CycleLighting": [
-                    {
-                        "alt": false,
-                        "ctrl": false,
-                        "keyCode": 76,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "DeleteObject": [
-                    {
-                        "alt": false,
-                        "ctrl": false,
-                        "keyCode": 261,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "GizmoModeMove": [
-                    {
-                        "alt": false,
-                        "ctrl": false,
-                        "keyCode": 49,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "GizmoModeRotate": [
-                    {
-                        "alt": false,
-                        "ctrl": false,
-                        "keyCode": 50,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "GizmoModeScale": [
-                    {
-                        "alt": false,
-                        "ctrl": false,
-                        "keyCode": 51,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "GizmoToggleSpace": [
-                    {
-                        "alt": false,
-                        "ctrl": false,
-                        "keyCode": 52,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "ImportPointCloud": [
-                    {
-                        "alt": false,
-                        "ctrl": false,
-                        "keyCode": 73,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "OpenClipPlaneTool": [
-                    {
-                        "alt": false,
-                        "ctrl": false,
-                        "keyCode": 80,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "OpenMeasurementTool": [
-                    {
-                        "alt": false,
-                        "ctrl": false,
-                        "keyCode": 77,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "Redo": [
-                    {
-                        "alt": false,
-                        "ctrl": true,
-                        "keyCode": 89,
-                        "mouseButton": -1,
-                        "shift": false
-                    },
-                    {
-                        "alt": false,
-                        "ctrl": true,
-                        "keyCode": 90,
-                        "mouseButton": -1,
-                        "shift": true
-                    }
-                ],
-                "ResetCamera": [
-                    {
-                        "alt": false,
-                        "ctrl": false,
-                        "keyCode": 84,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "TakeScreenshot": [
-                    {
-                        "alt": false,
-                        "ctrl": false,
-                        "keyCode": 301,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "ToggleCircleCursor": [
-                    {
-                        "alt": false,
-                        "ctrl": false,
-                        "keyCode": 85,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "ToggleGUI": [
-                    {
-                        "alt": false,
-                        "ctrl": false,
-                        "keyCode": 71,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "ToggleHDR": [
-                    {
-                        "alt": false,
-                        "ctrl": false,
-                        "keyCode": 74,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "TogglePlaneCursor": [
-                    {
-                        "alt": false,
-                        "ctrl": false,
-                        "keyCode": 79,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "ToggleRadar": [
-                    {
-                        "alt": false,
-                        "ctrl": false,
-                        "keyCode": 82,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "ToggleShadows": [
-                    {
-                        "alt": false,
-                        "ctrl": false,
-                        "keyCode": 75,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "ToggleVoxelViz": [
-                    {
-                        "alt": false,
-                        "ctrl": false,
-                        "keyCode": 86,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "ToggleWireframe": [
-                    {
-                        "alt": false,
-                        "ctrl": false,
-                        "keyCode": 81,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "ToggleZeroPlane": [
-                    {
-                        "alt": false,
-                        "ctrl": false,
-                        "keyCode": 78,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "Undo": [
-                    {
-                        "alt": false,
-                        "ctrl": true,
-                        "keyCode": 90,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "Unknown": [
-                    {
-                        "alt": false,
-                        "ctrl": true,
-                        "keyCode": 77,
-                        "mouseButton": -1,
-                        "shift": true
-                    }
-                ],
-                "ViewBack": [
-                    {
-                        "alt": false,
-                        "ctrl": true,
-                        "keyCode": 321,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "ViewBottom": [
-                    {
-                        "alt": false,
-                        "ctrl": true,
-                        "keyCode": 327,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "ViewFront": [
-                    {
-                        "alt": false,
-                        "ctrl": false,
-                        "keyCode": 321,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "ViewIso": [
-                    {
-                        "alt": false,
-                        "ctrl": false,
-                        "keyCode": 325,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "ViewLeft": [
-                    {
-                        "alt": false,
-                        "ctrl": true,
-                        "keyCode": 323,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "ViewRight": [
-                    {
-                        "alt": false,
-                        "ctrl": false,
-                        "keyCode": 323,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ],
-                "ViewTop": [
-                    {
-                        "alt": false,
-                        "ctrl": false,
-                        "keyCode": 327,
-                        "mouseButton": -1,
-                        "shift": false
-                    }
-                ]
+    "bindings": {
+        "edit.delete_selected": [
+            {
+                "alt": false,
+                "ctrl": false,
+                "keyCode": 261,
+                "shift": false
+            }
+        ],
+        "edit.duplicate": [
+            {
+                "alt": false,
+                "ctrl": true,
+                "keyCode": 68,
+                "shift": false
+            }
+        ],
+        "edit.group": [
+            {
+                "alt": false,
+                "ctrl": true,
+                "keyCode": 71,
+                "shift": false
+            }
+        ],
+        "edit.redo": [
+            {
+                "alt": false,
+                "ctrl": true,
+                "keyCode": 89,
+                "shift": false
             },
-            "name": "Default"
-        }
-    ],
-    "version": 1
+            {
+                "alt": false,
+                "ctrl": true,
+                "keyCode": 90,
+                "shift": true
+            }
+        ],
+        "edit.undo": [
+            {
+                "alt": false,
+                "ctrl": true,
+                "keyCode": 90,
+                "shift": false
+            }
+        ],
+        "edit.ungroup": [
+            {
+                "alt": false,
+                "ctrl": true,
+                "keyCode": 71,
+                "shift": true
+            }
+        ],
+        "file.import_pointcloud": [
+            {
+                "alt": false,
+                "ctrl": false,
+                "keyCode": 73,
+                "shift": false
+            }
+        ],
+        "file.new_scene": [
+            {
+                "alt": false,
+                "ctrl": true,
+                "keyCode": 78,
+                "shift": false
+            }
+        ],
+        "file.open_scene": [
+            {
+                "alt": false,
+                "ctrl": true,
+                "keyCode": 79,
+                "shift": false
+            }
+        ],
+        "file.save_scene": [
+            {
+                "alt": false,
+                "ctrl": true,
+                "keyCode": 83,
+                "shift": false
+            }
+        ],
+        "file.save_scene_as": [
+            {
+                "alt": false,
+                "ctrl": true,
+                "keyCode": 83,
+                "shift": true
+            }
+        ],
+        "file.screenshot": [
+            {
+                "alt": false,
+                "ctrl": false,
+                "keyCode": 301,
+                "shift": false
+            }
+        ],
+        "gizmo.rotate": [
+            {
+                "alt": false,
+                "ctrl": false,
+                "keyCode": 50,
+                "shift": false
+            }
+        ],
+        "gizmo.scale": [
+            {
+                "alt": false,
+                "ctrl": false,
+                "keyCode": 51,
+                "shift": false
+            }
+        ],
+        "gizmo.toggle_space": [
+            {
+                "alt": false,
+                "ctrl": false,
+                "keyCode": 52,
+                "shift": false
+            }
+        ],
+        "gizmo.translate": [
+            {
+                "alt": false,
+                "ctrl": false,
+                "keyCode": 49,
+                "shift": false
+            }
+        ],
+        "select.all": [
+            {
+                "alt": false,
+                "ctrl": true,
+                "keyCode": 65,
+                "shift": false
+            }
+        ],
+        "select.clear": [
+            {
+                "alt": false,
+                "ctrl": false,
+                "keyCode": 256,
+                "shift": false
+            }
+        ],
+        "view.center": [
+            {
+                "alt": false,
+                "ctrl": false,
+                "keyCode": 67,
+                "shift": false
+            }
+        ],
+        "view.frame_selected": [
+            {
+                "alt": false,
+                "ctrl": false,
+                "keyCode": 70,
+                "shift": false
+            }
+        ],
+        "view.toggle_gui": [
+            {
+                "alt": false,
+                "ctrl": false,
+                "keyCode": 71,
+                "shift": false
+            }
+        ],
+        "view.wireframe": [
+            {
+                "alt": false,
+                "ctrl": false,
+                "keyCode": 81,
+                "shift": false
+            }
+        ]
+    },
+    "version": 2
 }

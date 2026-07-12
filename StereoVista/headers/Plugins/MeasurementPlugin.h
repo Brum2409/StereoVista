@@ -24,6 +24,11 @@ class MeasurementPlugin : public Plugin {
 public:
     PluginInfo info() const override;
 
+    // Binds the tool's measurement storage to scene::Scene::measurements
+    // ("one heart", UI redesign Pass 1) so the Outliner and the scene document
+    // see exactly what the tool creates.
+    void onRegister(PluginContext& ctx) override;
+
     void onBuildOverlay(PluginContext& ctx) override;
     void onRenderUI(PluginContext& ctx) override;
     void onRenderMenu(PluginContext& ctx) override;

@@ -30,7 +30,9 @@ bool pickModelAtPoint(const Scene& scene, const glm::vec3& worldPoint, RayHit& o
     float bestVolume = FLT_MAX;
     for (size_t mi = 0; mi < scene.models.size(); ++mi) {
         const Model& model = scene.models[mi];
-        if (!model.visible)
+        // Effective visibility: an object hidden by its group chain is not
+        // drawn, so it must not be pickable either.
+        if (!model.visible || !scene.groupChainVisible(model.groupId))
             continue;
 
         // Transform the world point once into the model's local space, so the

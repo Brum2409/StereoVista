@@ -78,43 +78,44 @@ void drawPointCloudPanel(Services& services, bool* open) {
     ImGui::Text("Upload ring: %.1f / %.0f MB in flight", services.uploadRingUsedMB(),
                 services.uploadRingCapacityMB());
 
-    ImGui::SeparatorText("Loaded clouds");
-    if (services.pointCloudCount() == 0)
-        ImGui::TextDisabled("(none loaded)");
+    // The per-cloud LISTING dissolved into the Outliner in UI redesign Pass 1
+    // (C10: selection/visibility/rename/delete live on the Scene panel rows).
+    // What remains here is the read-only load telemetry the Outliner's badges
+    // compress away (VRAM, batches, exact stream rates) — until the Pass-2
+    // Inspector takes it over. No new features land in this panel.
+    ImGui::SeparatorText("Load status");
+    if (services.pointCloudCount() == 0) {
+        ImGui::TextDisabled("(no clouds loaded - manage them in the Scene panel)");
+    } else {
+        ImGui::TextDisabled("Clouds are managed in the Scene panel.");
+        for (size_t i = 0; i < services.pointCloudCount(); ++i) {
+            ImGui::PushID(static_cast<int>(i));
+            ImGui::Bullet();
+            ImGui::SameLine();
+            ImGui::TextUnformatted(services.pointCloudName(i).c_str());
 
-    size_t unloadIdx = SIZE_MAX;
-    for (size_t i = 0; i < services.pointCloudCount(); ++i) {
-        ImGui::PushID(static_cast<int>(i));
-        ImGui::Checkbox("##visible", &services.pointCloudVisible(i));
-        ImGui::SameLine();
-        ImGui::TextUnformatted(services.pointCloudName(i).c_str());
+            const double vram = services.pointCloudVramMB(i);
+            if (vram > 0.0)
+                ImGui::Text("  VRAM %.1f MB, %u batches", vram,
+                            services.pointCloudBatches(i));
 
-        const double vram = services.pointCloudVramMB(i);
-        if (vram > 0.0)
-            ImGui::Text("VRAM %.1f MB, %u batches", vram, services.pointCloudBatches(i));
-
-        const PointCloudProgress progress = services.pointCloudProgress(i);
-        if (progress.active) {
-            char overlay[96];
-            std::snprintf(overlay, sizeof(overlay), "%u / %u pts (%.1f M/s)",
-                          progress.pointsLoaded, progress.pointsTotal,
-                          progress.pointsPerSecond / 1e6);
-            ImGui::ProgressBar(progress.fraction, ImVec2(-80.0f, 0.0f), overlay);
-            if (progress.resorting) {
-                ImGui::SameLine();
-                ImGui::TextUnformatted("resorting...");
+            const PointCloudProgress progress = services.pointCloudProgress(i);
+            if (progress.active) {
+                char overlay[96];
+                std::snprintf(overlay, sizeof(overlay), "%u / %u pts (%.1f M/s)",
+                              progress.pointsLoaded, progress.pointsTotal,
+                              progress.pointsPerSecond / 1e6);
+                ImGui::ProgressBar(progress.fraction, ImVec2(-80.0f, 0.0f), overlay);
+                if (progress.resorting) {
+                    ImGui::SameLine();
+                    ImGui::TextUnformatted("resorting...");
+                }
+            } else {
+                ImGui::Text("  %u points loaded", services.pointCloudPoints(i));
             }
-        } else {
-            ImGui::Text("%u points loaded", services.pointCloudPoints(i));
+            ImGui::PopID();
         }
-
-        if (ImGui::SmallButton("Unload"))
-            unloadIdx = i;
-        ImGui::Separator();
-        ImGui::PopID();
     }
-    if (unloadIdx != SIZE_MAX)
-        services.unloadPointCloud(unloadIdx);
 
     ImGui::End();
 }

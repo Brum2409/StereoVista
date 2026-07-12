@@ -106,6 +106,13 @@ KindStyle StyleFor(ObjectKind kind);
 // merged-font path), cursor kept on the same line for a following label.
 void InlineIcon(const char* icon, const ImVec4& color);
 
+// The dedicated FontAwesome icon font (nullptr if it failed to load). For
+// callers that need to draw an icon at an explicit size/position via the
+// draw list directly — e.g. a tree row's enlarged, vertically-centered kind
+// icon — where InlineIcon's fixed text-size layout doesn't fit. Prefer
+// InlineIcon for normal, body-text-size inline icons.
+ImFont* IconFont();
+
 // Section header: accent bar + title + thin separator.
 void SectionHeader(const char* label);
 

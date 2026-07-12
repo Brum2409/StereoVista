@@ -106,6 +106,9 @@ public:
     const i3s::SlpkArchive& archive() const { return *archive_; }
 
     // ---- identity / state ----
+    uint64_t id = 0;      // persistent ObjectId (scene::Scene counter; C3)
+    uint64_t groupId = 0; // owning user group (0 = none)
+    bool locked = false;  // outliner lock
     std::string sourcePath;
     std::string name;
     bool visible = true;

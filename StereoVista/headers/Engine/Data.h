@@ -107,6 +107,9 @@ namespace Engine {
     struct PointCloudStream;
 
     struct PointCloud {
+        uint64_t id = 0;      // persistent ObjectId (scene::Scene counter; C3)
+        uint64_t groupId = 0; // owning user group (0 = none)
+        bool locked = false;  // outliner lock
         std::string name;
         std::string filePath;
         std::string sourceScenePath = ""; // Path to the scene file this object was loaded from (empty = manually created)
@@ -214,6 +217,8 @@ namespace Engine {
             Area     = 3  // closed polygon (>= 3 points): planar surface area
         };
 
+        uint64_t id = 0;     // persistent ObjectId (scene::Scene counter; C3)
+        bool locked = false; // outliner lock
         Type type = Type::Distance;
         std::string name;
         std::vector<glm::vec3> points;
@@ -288,6 +293,8 @@ namespace Engine {
     // of the scene and serialized to/from scene files by SceneManager, exactly
     // like Measurement.
     struct ClipPlane {
+        uint64_t    id = 0;      // persistent ObjectId (scene::Scene counter; C3)
+        bool        locked = false; // outliner lock
         glm::vec3   position = glm::vec3(0.0f);            // a point on the plane
         glm::vec3   normal   = glm::vec3(0.0f, 1.0f, 0.0f); // unit normal (kept side)
         bool        enabled  = true;

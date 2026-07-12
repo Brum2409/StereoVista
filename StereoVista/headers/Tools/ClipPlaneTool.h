@@ -33,12 +33,29 @@ namespace Tools {
         // Undo entries (add/delete/flip/gizmo-edit) go through this if set.
         void setUndoManager(core::UndoManager* undo) { m_undo = undo; }
 
+        // Bind the tool to an externally owned plane vector — since UI redesign
+        // Pass 1 that is scene::Scene::clipPlanes ("one heart"): the Outliner
+        // and the scene document see exactly the planes this tool edits. The
+        // pointed-to vector must outlive the tool (Application guarantees it:
+        // scene_ is a member). Unbound, the tool falls back to a private
+        // vector (keeps old call sites working).
+        void bindStorage(std::vector<Engine::ClipPlane>* store) {
+            m_store = store;
+            clampActiveIndex();
+        }
+        // The bound storage's contents were replaced wholesale (scene load/
+        // new/merge/undo): re-validate the active index.
+        void notifyStorageChanged() {
+            m_activeIndex = -1;
+            clampActiveIndex();
+        }
+
         void setEnabled(bool enabled) { m_enabled = enabled; }
         bool isEnabled() const { return m_enabled; }
 
-        const std::vector<Engine::ClipPlane>& planes() const { return m_planes; }
-        std::vector<Engine::ClipPlane>& planes() { return m_planes; }
-        void clearPlanes() { m_planes.clear(); m_activeIndex = -1; }
+        const std::vector<Engine::ClipPlane>& planes() const { return planesRef(); }
+        std::vector<Engine::ClipPlane>& planes() { return planesRef(); }
+        void clearPlanes() { planesRef().clear(); m_activeIndex = -1; }
 
         // ── Active-plane selection ───────────────────────────────────────────
         int  activeIndex() const { return m_activeIndex; }
@@ -78,8 +95,16 @@ namespace Tools {
         bool validIndex(int index) const;
         void clampActiveIndex();
 
+        std::vector<Engine::ClipPlane>& planesRef() {
+            return m_store ? *m_store : m_ownPlanes;
+        }
+        const std::vector<Engine::ClipPlane>& planesRef() const {
+            return m_store ? *m_store : m_ownPlanes;
+        }
+
         core::UndoManager* m_undo = nullptr;
-        std::vector<Engine::ClipPlane> m_planes; // owned (persistence later)
+        std::vector<Engine::ClipPlane>* m_store = nullptr; // scene storage
+        std::vector<Engine::ClipPlane> m_ownPlanes;        // unbound fallback
         int  m_activeIndex = -1;
         bool m_enabled = false;
         int  m_nameCounter = 0;

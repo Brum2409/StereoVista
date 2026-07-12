@@ -18,6 +18,8 @@
 #include "Renderer/OverlayDrawList.h"
 #include "Renderer/Renderer.h"
 #include "Scene/Scene.h"
+#include "Scene/SceneDocument.h" // scene::PendingLayerState / load results
+#include "Scene/SceneItems.h"    // scene::SceneItemRef / scene::Selection
 #include "Tools/ClipPlaneTool.h"
 #include "Tools/TransformGizmo.h"
 
@@ -99,6 +101,48 @@ private:
     void handleDroppedFiles();         // route window drag-drop by extension
     void handleResize();
     void loadScene();
+
+    // ---- Scene document (UI redesign Pass 1; implemented in SceneOps.cpp) ----
+    // new / open / save / save-as / merge over scene::SceneDocument, with the
+    // replace-or-merge-or-ask flow (remembered via Settings::Files, C8), a
+    // recents list, and async SLPK re-open with saved identity/display state.
+    void newScene();
+    void openSceneDialog();
+    void openSceneFile(const std::string& path); // honors openSceneMode
+    void mergeSceneDialog();
+    bool saveScene();       // current path, else save-as dialog
+    bool saveSceneAs();
+    void resolvePendingSceneOpen(int action, bool remember); // 0/1/2 = cancel/replace/merge
+    void replaceSceneFromFile(const std::string& path);
+    void mergeSceneFromFile(const std::string& path);
+    void addRecentScene(const std::string& path);
+    // Drop every object from scene_ safely (I3S GPU release + device idle) —
+    // shared by New and Replace.
+    void clearSceneContent();
+    // Toast the load report's warnings (asset misses are never silent).
+    void reportSceneLoad(const scene::SceneLoadReport& report);
+    // Apply a loaded camera pose / scene-authored sun+sky (Application.cpp).
+    void applyLoadedCamera(const scene::SceneCameraState& cam);
+    void applyLoadedEnvironment(const scene::SceneEnvironmentState& env);
+
+    // ---- Outliner item operations (Pass 1; SceneOps.cpp) ----
+    // Each call = one undoable step (C4); refs resolve by ObjectId (C3).
+    void deleteItems(const std::vector<scene::SceneItemRef>& refs);
+    void duplicateItems(const std::vector<scene::SceneItemRef>& refs);
+    void setItemsVisible(const std::vector<scene::SceneItemRef>& refs, bool visible);
+    void setItemsLocked(const std::vector<scene::SceneItemRef>& refs, bool locked);
+    uint64_t groupItems(const std::vector<scene::SceneItemRef>& refs);
+    void ungroupItems(const std::vector<scene::SceneItemRef>& refs);
+    void moveItemsToGroup(const std::vector<scene::SceneItemRef>& refs,
+                          uint64_t groupId);
+    void renameItem(const scene::SceneItemRef& ref, const std::string& name);
+    void frameItems(const std::vector<scene::SceneItemRef>& refs);
+    void isolateItems(const std::vector<scene::SceneItemRef>& refs);
+    void exitIsolate();
+    // Esc cascade (select.clear command): exit the active tool first (clip
+    // editing; the measurement plugin consumes Esc itself), then clear the
+    // selection. Returns false when there was nothing to do.
+    bool escapeAction();
     // ---- Docked viewports (GUI rework; up to renderer::kMaxViewports) ----
     // Reconcile the renderer's offscreen viewport outputs with the desired
     // config at a frame boundary (before ImGui::NewFrame — the last frame's
@@ -257,10 +301,26 @@ private:
     std::string prefsSnapshot_;
     double prefsNextCheckTime_ = 0.0;
 
-    // Loaded point clouds (Phase 4: parsers + GPU upload). Owned here until the
-    // full SceneManager returns; streaming clouds are pumped every frame before
+    // Point clouds live on scene_.pointClouds since UI redesign Pass 1 ("one
+    // heart"); streaming clouds are still pumped every frame before
     // renderFrame. Render/load options live in settings_.pointCloud.
-    std::vector<Engine::PointCloud> pointClouds_;
+
+    // ---- Scene document state (Pass 1) ----
+    std::string scenePath_;       // current document ("" = untitled)
+    std::string pendingOpenPath_; // parked while the ask-modal is up (C8)
+    // Saved identity/display state for layers whose async SLPK re-open is in
+    // flight (scene load + delete-undo); consumed by pumpSlpkLoads on adopt.
+    std::vector<scene::PendingLayerState> pendingLayerStates_;
+    // Open jobs whose result should be dropped on adoption (a redo re-deleted
+    // a layer whose undo re-open was still parsing). Matched by source path.
+    std::vector<std::string> cancelledLayerOpens_;
+    // Isolate (Outliner): saved visibility to restore on exit.
+    struct IsolateEntry { scene::SceneItemRef ref; bool visible; };
+    struct IsolateState {
+        bool active = false;
+        std::vector<IsolateEntry> saved;
+    };
+    IsolateState isolate_;
 
     // In-flight SLPK opens: one worker thread each, joined + adopted by
     // pumpSlpkLoads() (or shutdown()). unique_ptr keeps the atomic in place.
@@ -360,30 +420,52 @@ private:
     // 3D-cursor show/type live in settings_.cursor; zoom/orbit-around-cursor in
     // settings_.camera.
 
-    // ---- Selection, undo, plugins (Phase 6) ----
-    // Selection into scene_.models; mesh -1 = whole model, else a specific
-    // sub-mesh. Picked with the depth-point + AABB test (no per-triangle work).
-    struct Selection { int model = -1; int mesh = -1; };
-    Selection selection_;
+    // ---- Selection, undo, plugins (Phase 6 → Pass 1 multi-select) ----
+    // The application-wide, ObjectId-based, ordered multi-selection (grown
+    // from the old {int model; int mesh;} seed — contract C3). Primary = last
+    // added; the gizmo binds to it. Legacy index-based consumers go through
+    // selectedModelIndex()/selectedMeshIndex().
+    scene::Selection selection_;
+    // Primary-selection index shims (resolve by id each call; -1 = none).
+    int selectedModelIndex() const;
+    int selectedMeshIndex() const;
+    void setSelectionIndices(int model, int mesh); // build a ref from indices
 
     // Undo/redo owned here and handed to tools/plugins through the context.
     core::UndoManager undo_;
 
-    // Transform gizmo: bound to the selected model each frame, edits its
-    // position/rotation/scale in place. Drag lifecycle + undo owned by the app.
+    // Transform gizmo: bound to the PRIMARY selected object (model or point
+    // cloud) each frame, edits its transform in place; the primary's per-drag
+    // delta is mirrored onto every other selected transformable each frame
+    // (multi-select transforms, §7.1). Drag lifecycle + undo owned by the app:
+    // the snapshot below captures every selected transform at drag start —
+    // entry 0 is the primary — and the whole drag records as ONE undo step by
+    // ObjectId (C4).
     Tools::TransformGizmo gizmo_;
     bool gizmoDragging_ = false;
-    int gizmoUndoModel_ = -1;              // model captured at drag start
-    glm::vec3 gizmoUndoPos_{ 0.0f };
-    glm::vec3 gizmoUndoRot_{ 0.0f };
-    glm::vec3 gizmoUndoScale_{ 1.0f };
+    struct GizmoSnapshot {
+        scene::SceneItemRef ref;
+        glm::vec3 pos{ 0.0f };
+        glm::vec3 rot{ 0.0f };
+        glm::vec3 scale{ 1.0f };
+    };
+    std::vector<GizmoSnapshot> gizmoUndo_;
+    // Mirror the primary's delta since drag start onto the other snapshot
+    // entries (translate: add; rotate: add Euler degrees about each object's
+    // own pivot; scale: multiply component-wise).
+    void applyGizmoDeltaToSelection();
     // (The gizmo mode keys and Ctrl+Z/Y are rebindable commands now — see
     // registerCommands/dispatchShortcuts; the old per-key edge flags are gone.)
 
     // Action-key edges dispatched to plugins (Enter / KP-Enter / Delete /
-    // Backspace) — e.g. the MeasurementPlugin's finish / cancel / undo-point.
+    // Backspace / Escape) — e.g. the MeasurementPlugin's finish / cancel /
+    // undo-point / exit. A key a plugin consumed is suppressed for this
+    // frame's shortcut dispatch (Esc must exit the measurement tool WITHOUT
+    // also clearing the selection).
     bool prevEnter_ = false, prevKpEnter_ = false;
     bool prevDelete_ = false, prevBackspace_ = false;
+    bool prevEscape_ = false;
+    std::vector<int> pluginConsumedKeys_; // GLFW keys eaten this frame
 
     // Clip / section planes. Editing reuses the gizmo (translate = slide the
     // plane, rotate = steer the normal); the packed planes feed

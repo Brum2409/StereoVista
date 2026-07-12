@@ -29,6 +29,9 @@
 
 #include "Renderer/FrameSubmission.h" // renderer::SunState, renderer::SkyState
 
+#include <string>
+#include <vector>
+
 namespace Gui {
 
 struct Settings {
@@ -122,6 +125,17 @@ struct Settings {
                                   // debugging aid).
     } render;
 
+    // ── Files / scene document (UI redesign Pass 1) ─────────────────────────
+    struct Files {
+        // Opening a scene while the current one has content: 0 = ask,
+        // 1 = replace, 2 = merge. The ask dialog's "remember my choice"
+        // writes 1/2 here (contract C8); Settings can reset it to 0.
+        int openSceneMode = 0;
+        // Most-recent-first, absolute paths, capped at kMaxRecentScenes.
+        std::vector<std::string> recentScenes;
+        static constexpr int kMaxRecentScenes = 10;
+    } files;
+
     // ── Interface (UI redesign Pass 0) ──────────────────────────────────────
     struct Ui {
         int   theme = 0;        // GuiTheme index (imgui_sytle.h; append-only enum)
@@ -139,6 +153,22 @@ struct Settings {
             bool diagnostics = false;
             bool slpk        = true;
         } panels;
+        // Inspector per-kind section collapsed state (UI redesign Pass 2 §8:
+        // "collapsed state persisted"). Each bool is bound to a CollapsingHeader
+        // (seeded once, read back every frame); defaults = the sections shown
+        // open on a fresh profile.
+        struct Inspector {
+            bool transform     = true;
+            bool material      = true;
+            bool textures      = false;
+            bool display       = true;
+            bool info          = false;
+            bool exportSection = false;
+            bool lightProps    = true;
+            bool sun           = true;
+            bool sky           = true;
+            bool layer         = true;
+        } inspector;
     } ui;
 };
 

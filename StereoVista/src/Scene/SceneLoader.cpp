@@ -7,40 +7,16 @@
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
-#include <json.h>
-
 #include <cmath>
-#include <filesystem>
-#include <fstream>
 #include <iostream>
-#include <stdexcept>
 
-// office.scene-style JSON, parsing the same keys the GL SceneManager writes
-// (src/Core/SceneManager.cpp saveScene/loadScene). Only the render-relevant
-// subset is consumed here: primitive + file models with transform/material,
-// point lights, and the camera pose. Point clouds, spot lights (never lit by
-// the GL renderer either — playbook C.4), clip planes and per-mesh texture
-// overrides return with the full SceneManager in later phases.
+// Scene host building blocks: primitive/mesh construction, the built-in
+// default scene, and the scene::Scene identity/lookup/bounds methods.
+// File I/O (v1/v2/v3 .scene load, v3 save) lives in SceneDocument.cpp.
 
 namespace scene {
 
 namespace {
-
-using nlohmann::json;
-
-glm::vec3 readVec3(const json& j, const char* key, glm::vec3 fallback) {
-    if (!j.contains(key) || !j[key].is_array() || j[key].size() < 3)
-        return fallback;
-    return { j[key][0].get<float>(), j[key][1].get<float>(), j[key][2].get<float>() };
-}
-
-PrimitiveType primitiveFromString(const std::string& name) {
-    if (name == "sphere") return PrimitiveType::Sphere;
-    if (name == "cylinder") return PrimitiveType::Cylinder;
-    if (name == "plane") return PrimitiveType::Plane;
-    if (name == "torus") return PrimitiveType::Torus;
-    return PrimitiveType::Cube; // GL loader's default
-}
 
 // Uploads the geometry and computes the local bounds the shadow fit needs.
 ModelMesh makeMesh(rhi::Device& device, const renderer::MeshData& data,
@@ -54,6 +30,26 @@ ModelMesh makeMesh(rhi::Device& device, const renderer::MeshData& data,
     }
     mesh.buffer.create(device, data, mesh.name.c_str());
     return mesh;
+}
+
+const char* primitiveTypeName(PrimitiveType type) {
+    switch (type) {
+    case PrimitiveType::Sphere:   return "sphere";
+    case PrimitiveType::Cylinder: return "cylinder";
+    case PrimitiveType::Plane:    return "plane";
+    case PrimitiveType::Torus:    return "torus";
+    default:                      return "cube";
+    }
+}
+
+} // namespace
+
+PrimitiveType primitiveTypeFromString(const std::string& name) {
+    if (name == "sphere") return PrimitiveType::Sphere;
+    if (name == "cylinder") return PrimitiveType::Cylinder;
+    if (name == "plane") return PrimitiveType::Plane;
+    if (name == "torus") return PrimitiveType::Torus;
+    return PrimitiveType::Cube; // GL loader's default
 }
 
 Model makePrimitiveModel(rhi::Device& device, renderer::MaterialSystem& materials,
@@ -75,12 +71,11 @@ Model makePrimitiveModel(rhi::Device& device, renderer::MaterialSystem& material
     Model model;
     model.name = name;
     model.emissive = emissive;
+    model.primitiveType = primitiveTypeName(type);
     model.meshes.push_back(makeMesh(device, buildPrimitive(type), name,
                                     materials.addMaterial(material)));
     return model;
 }
-
-} // namespace
 
 glm::mat4 Model::modelMatrix() const {
     // GL parity (main.cpp renderModels): T * Rx * Ry * Rz * S, degrees.
@@ -101,30 +96,186 @@ glm::mat3 Model::normalMatrix(const glm::mat4& model) const {
     return glm::inverseTranspose(glm::mat3(model));
 }
 
+// ── Identity ─────────────────────────────────────────────────────────────────
+
+void Scene::ensureIds() {
+    for (Model& m : models)
+        if (m.id == 0) m.id = allocateId();
+    for (Engine::PointCloud& pc : pointClouds)
+        if (pc.id == 0) pc.id = allocateId();
+    for (std::unique_ptr<I3SSceneLayer>& layer : i3sLayers)
+        if (layer && layer->id == 0) layer->id = allocateId();
+    for (PointLight& light : pointLights)
+        if (light.id == 0) light.id = allocateId();
+    for (Engine::Measurement& m : measurements)
+        if (m.id == 0) m.id = allocateId();
+    for (Engine::ClipPlane& p : clipPlanes)
+        if (p.id == 0) p.id = allocateId();
+    for (Group& g : groups)
+        if (g.id == 0) g.id = allocateId();
+}
+
+// ── Lookups ──────────────────────────────────────────────────────────────────
+
+namespace {
+template <typename Vec, typename IdOf>
+int indexOfId(const Vec& vec, uint64_t id, IdOf idOf) {
+    if (id == 0)
+        return -1;
+    for (size_t i = 0; i < vec.size(); ++i)
+        if (idOf(vec[i]) == id)
+            return static_cast<int>(i);
+    return -1;
+}
+} // namespace
+
+int Scene::modelIndexOf(uint64_t id) const {
+    return indexOfId(models, id, [](const Model& m) { return m.id; });
+}
+int Scene::pointCloudIndexOf(uint64_t id) const {
+    return indexOfId(pointClouds, id,
+                     [](const Engine::PointCloud& pc) { return pc.id; });
+}
+int Scene::layerIndexOf(uint64_t id) const {
+    return indexOfId(i3sLayers, id,
+                     [](const std::unique_ptr<I3SSceneLayer>& l) {
+                         return l ? l->id : uint64_t(0);
+                     });
+}
+int Scene::lightIndexOf(uint64_t id) const {
+    return indexOfId(pointLights, id, [](const PointLight& l) { return l.id; });
+}
+int Scene::measurementIndexOf(uint64_t id) const {
+    return indexOfId(measurements, id,
+                     [](const Engine::Measurement& m) { return m.id; });
+}
+int Scene::clipPlaneIndexOf(uint64_t id) const {
+    return indexOfId(clipPlanes, id,
+                     [](const Engine::ClipPlane& p) { return p.id; });
+}
+
+Group* Scene::findGroup(uint64_t id) {
+    if (id == 0)
+        return nullptr;
+    for (Group& g : groups)
+        if (g.id == id)
+            return &g;
+    return nullptr;
+}
+const Group* Scene::findGroup(uint64_t id) const {
+    return const_cast<Scene*>(this)->findGroup(id);
+}
+
+bool Scene::resolve(SceneItemRef& ref) const {
+    using Kind = SceneItemRef::Kind;
+    switch (ref.kind) {
+    case Kind::Model:
+        ref.index = modelIndexOf(ref.id);
+        return ref.index >= 0;
+    case Kind::Mesh: {
+        ref.index = modelIndexOf(ref.id);
+        if (ref.index < 0)
+            return false;
+        return ref.sub >= 0 &&
+               ref.sub < static_cast<int>(models[ref.index].meshes.size());
+    }
+    case Kind::PointCloud:
+        ref.index = pointCloudIndexOf(ref.id);
+        return ref.index >= 0;
+    case Kind::SceneLayer:
+        ref.index = layerIndexOf(ref.id);
+        return ref.index >= 0;
+    case Kind::PointLight:
+        ref.index = lightIndexOf(ref.id);
+        return ref.index >= 0;
+    case Kind::Measurement:
+        ref.index = measurementIndexOf(ref.id);
+        return ref.index >= 0;
+    case Kind::ClipPlane:
+        ref.index = clipPlaneIndexOf(ref.id);
+        return ref.index >= 0;
+    case Kind::Group:
+        return findGroup(ref.id) != nullptr;
+    case Kind::Sun:
+    case Kind::Environment:
+        return true; // singletons — always resolvable
+    default:
+        return false;
+    }
+}
+
+// ── Effective (group-aware) flags ────────────────────────────────────────────
+
+bool Scene::groupChainVisible(uint64_t groupId) const {
+    int guard = 0; // corrupt files could form a parent cycle — never hang
+    while (groupId != 0 && guard++ < 64) {
+        const Group* g = findGroup(groupId);
+        if (!g)
+            return true;
+        if (!g->visible)
+            return false;
+        groupId = g->parentId;
+    }
+    return true;
+}
+
+bool Scene::groupChainLocked(uint64_t groupId) const {
+    int guard = 0;
+    while (groupId != 0 && guard++ < 64) {
+        const Group* g = findGroup(groupId);
+        if (!g)
+            return false;
+        if (g->locked)
+            return true;
+        groupId = g->parentId;
+    }
+    return false;
+}
+
+// ── Bounds ───────────────────────────────────────────────────────────────────
+
 void Scene::computeWorldBounds() {
     glm::vec3 minB(FLT_MAX), maxB(-FLT_MAX);
+    auto unionCorners = [&](const glm::mat4& m, glm::vec3 lo, glm::vec3 hi) {
+        for (int corner = 0; corner < 8; ++corner) {
+            const glm::vec3 local((corner & 1) ? hi.x : lo.x,
+                                  (corner & 2) ? hi.y : lo.y,
+                                  (corner & 4) ? hi.z : lo.z);
+            const glm::vec3 world = glm::vec3(m * glm::vec4(local, 1.0f));
+            minB = glm::min(minB, world);
+            maxB = glm::max(maxB, world);
+        }
+    };
+
     for (const Model& model : models) {
-        if (!model.visible)
+        // Effective visibility: own flag AND the group chain (Pass 1 groups).
+        if (!model.visible || !groupChainVisible(model.groupId))
             continue;
         const glm::mat4 m = model.modelMatrix();
         for (const ModelMesh& mesh : model.meshes) {
             if (mesh.boundsMin.x > mesh.boundsMax.x)
                 continue; // empty mesh
-            for (int corner = 0; corner < 8; ++corner) {
-                const glm::vec3 local((corner & 1) ? mesh.boundsMax.x : mesh.boundsMin.x,
-                                      (corner & 2) ? mesh.boundsMax.y : mesh.boundsMin.y,
-                                      (corner & 4) ? mesh.boundsMax.z : mesh.boundsMin.z);
-                const glm::vec3 world = glm::vec3(m * glm::vec4(local, 1.0f));
-                minB = glm::min(minB, world);
-                maxB = glm::max(maxB, world);
-            }
+            unionCorners(m, mesh.boundsMin, mesh.boundsMax);
         }
+    }
+    // Point clouds are scene content since Pass 1 (they live here now); the
+    // GL app never counted them into the world bounds — improvement, not port.
+    for (const Engine::PointCloud& pc : pointClouds) {
+        if (!pc.visible || !groupChainVisible(pc.groupId) || !pc.hasBounds())
+            continue;
+        glm::mat4 m(1.0f);
+        m = glm::translate(m, pc.position);
+        m = glm::rotate(m, glm::radians(pc.rotation.x), glm::vec3(1, 0, 0));
+        m = glm::rotate(m, glm::radians(pc.rotation.y), glm::vec3(0, 1, 0));
+        m = glm::rotate(m, glm::radians(pc.rotation.z), glm::vec3(0, 0, 1));
+        m = glm::scale(m, pc.scale);
+        unionCorners(m, pc.boundsMin, pc.boundsMax);
     }
     for (const std::unique_ptr<I3SSceneLayer>& layer : i3sLayers) {
         // Inspector-only layer types draw nothing — their (possibly planetary)
         // bounds must not stretch the sun-shadow fit over the real scene.
         if (!layer || !layer->visible || layer->nodeBoxes.empty() ||
-            !layer->rendersAnything())
+            !layer->rendersAnything() || !groupChainVisible(layer->groupId))
             continue;
         minB = glm::min(minB, layer->boundsMin);
         maxB = glm::max(maxB, layer->boundsMax);
@@ -135,79 +286,7 @@ void Scene::computeWorldBounds() {
     }
 }
 
-Scene loadSceneFile(const std::string& path, rhi::Device& device,
-                    renderer::MaterialSystem& materials) {
-    std::ifstream file(path);
-    if (!file)
-        throw std::runtime_error("cannot open scene file: " + path);
-    json sceneJson;
-    try {
-        file >> sceneJson;
-    } catch (const std::exception& e) {
-        throw std::runtime_error("malformed scene JSON in " + path + ": " + e.what());
-    }
-
-    Scene scene;
-    scene.sourcePath = path;
-    const std::filesystem::path sceneDir = std::filesystem::path(path).parent_path();
-
-    if (sceneJson.contains("camera")) {
-        const json& cam = sceneJson["camera"];
-        scene.camera.position = readVec3(cam, "position", scene.camera.position);
-        scene.camera.front =
-            glm::normalize(readVec3(cam, "front", scene.camera.front));
-        scene.camera.valid = true;
-    }
-
-    for (const json& modelJson : sceneJson.value("models", json::array())) {
-        try {
-            Model model;
-            if (modelJson.contains("localPath") && !modelJson.contains("primitiveType")) {
-                const std::filesystem::path modelPath =
-                    sceneDir / modelJson["localPath"].get<std::string>();
-                if (!importModelFile(modelPath.string(), device, materials, model))
-                    continue; // importer already logged the reason
-            } else {
-                const glm::vec3 color = readVec3(modelJson, "color", glm::vec3(0.8f));
-                model = makePrimitiveModel(
-                    device, materials,
-                    primitiveFromString(modelJson.value("primitiveType", "cube")),
-                    modelJson.value("name", std::string("Primitive")), color,
-                    modelJson.value("metallicFactor", 0.0f),
-                    modelJson.value("roughnessFactor", 0.5f),
-                    modelJson.value("emissive", 0.0f));
-            }
-
-            model.name = modelJson.value("name", model.name);
-            model.position = readVec3(modelJson, "position", glm::vec3(0.0f));
-            model.rotationDeg = readVec3(modelJson, "rotation", glm::vec3(0.0f));
-            model.scale = readVec3(modelJson, "scale", glm::vec3(1.0f));
-            model.visible = modelJson.value("visible", true);
-            model.emissive = modelJson.value("emissive", model.emissive);
-            scene.models.push_back(std::move(model));
-        } catch (const std::exception& e) {
-            std::cerr << "WARNING: skipping model in " << path << ": " << e.what()
-                      << "\n";
-        }
-    }
-
-    for (const json& lightJson : sceneJson.value("pointLights", json::array())) {
-        PointLight light;
-        light.position = readVec3(lightJson, "position", glm::vec3(0.0f));
-        light.color = readVec3(lightJson, "color", glm::vec3(1.0f));
-        light.intensity = lightJson.value("intensity", 1.0f);
-        light.attenLinear = lightJson.value("linear", light.attenLinear);
-        light.attenQuadratic = lightJson.value("quadratic", light.attenQuadratic);
-        light.castsShadows = lightJson.value("castShadows", true);
-        light.radius = lightJson.value("radius", light.radius); // not in GL scenes
-        scene.pointLights.push_back(light);
-    }
-
-    scene.computeWorldBounds();
-    std::cout << "Loaded scene " << path << " (" << scene.models.size() << " models, "
-              << scene.pointLights.size() << " point lights)\n";
-    return scene;
-}
+// ── Default scene ────────────────────────────────────────────────────────────
 
 Scene createDefaultScene(rhi::Device& device, renderer::MaterialSystem& materials) {
     Scene scene;
@@ -236,6 +315,7 @@ Scene createDefaultScene(rhi::Device& device, renderer::MaterialSystem& material
     scene.models.push_back(std::move(torus));
 
     PointLight light;
+    light.name = "Point light";
     light.position = { 1.5f, 3.0f, 2.0f };
     light.color = { 1.0f, 0.95f, 0.9f };
     light.intensity = 2.5f;
@@ -245,6 +325,7 @@ Scene createDefaultScene(rhi::Device& device, renderer::MaterialSystem& material
     scene.camera.position = { 4.0f, 3.0f, 6.0f };
     scene.camera.front = glm::normalize(glm::vec3(-0.55f, -0.35f, -0.76f));
 
+    scene.ensureIds();
     scene.computeWorldBounds();
     std::cout << "No scene file found - using the built-in default scene\n";
     return scene;

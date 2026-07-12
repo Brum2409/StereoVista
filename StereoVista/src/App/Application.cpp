@@ -22,6 +22,7 @@
 #include "imgui/imgui_sytle.h"
 
 #include <portable-file-dialogs.h>
+#include <stb_image.h>
 
 #include <algorithm>
 #include <cfloat>
@@ -144,11 +145,12 @@ public:
         return scene::pickModelAtPoint(app_.scene_, point, out);
     }
 
-    int  selectedModel() const override { return app_.selection_.model; }
-    int  selectedMesh() const override  { return app_.selection_.mesh; }
+    // Plugin selection API stays index-based (its public contract); it reads
+    // and writes the PRIMARY item of the app-wide multi-selection.
+    int  selectedModel() const override { return app_.selectedModelIndex(); }
+    int  selectedMesh() const override  { return app_.selectedMeshIndex(); }
     void setSelection(int model, int mesh) override {
-        app_.selection_.model = model;
-        app_.selection_.mesh = mesh;
+        app_.setSelectionIndices(model, mesh);
     }
 
     // 3D-viewport-local input (docked viewport image or the full framebuffer
@@ -367,13 +369,70 @@ public:
         Engine::setXRRuntimeOverride(manifestPath);
     }
 
-    int selectedModel() const override { return app_.selection_.model; }
-    int selectedMesh() const override { return app_.selection_.mesh; }
+    scene::Selection& selection() override { return app_.selection_; }
+    int selectedModel() const override { return app_.selectedModelIndex(); }
+    int selectedMesh() const override { return app_.selectedMeshIndex(); }
     void setSelection(int model, int mesh) override {
-        app_.selection_.model = model;
-        app_.selection_.mesh = mesh;
+        app_.setSelectionIndices(model, mesh);
     }
-    void clearSelection() override { app_.selection_ = Application::Selection{}; }
+    void clearSelection() override { app_.selection_.clear(); }
+
+    // ---- Outliner item operations (Pass 1; Application methods in SceneOps.cpp) ----
+    void deleteItems(const std::vector<scene::SceneItemRef>& refs) override {
+        app_.deleteItems(refs);
+    }
+    void duplicateItems(const std::vector<scene::SceneItemRef>& refs) override {
+        app_.duplicateItems(refs);
+    }
+    void setItemsVisible(const std::vector<scene::SceneItemRef>& refs,
+                         bool visible) override {
+        app_.setItemsVisible(refs, visible);
+    }
+    void setItemsLocked(const std::vector<scene::SceneItemRef>& refs,
+                        bool locked) override {
+        app_.setItemsLocked(refs, locked);
+    }
+    uint64_t groupItems(const std::vector<scene::SceneItemRef>& refs) override {
+        return app_.groupItems(refs);
+    }
+    void ungroupItems(const std::vector<scene::SceneItemRef>& refs) override {
+        app_.ungroupItems(refs);
+    }
+    void moveItemsToGroup(const std::vector<scene::SceneItemRef>& refs,
+                          uint64_t groupId) override {
+        app_.moveItemsToGroup(refs, groupId);
+    }
+    void renameItem(const scene::SceneItemRef& ref,
+                    const std::string& name) override {
+        app_.renameItem(ref, name);
+    }
+    void frameItems(const std::vector<scene::SceneItemRef>& refs) override {
+        app_.frameItems(refs);
+    }
+    bool isolateActive() const override { return app_.isolate_.active; }
+    void isolateItems(const std::vector<scene::SceneItemRef>& refs) override {
+        app_.isolateItems(refs);
+    }
+    void exitIsolate() override { app_.exitIsolate(); }
+
+    // ---- Scene document (Pass 1) ----
+    void newScene() override { app_.newScene(); }
+    void openSceneDialog() override { app_.openSceneDialog(); }
+    void openSceneFile(const std::string& path) override {
+        app_.openSceneFile(path);
+    }
+    void mergeSceneDialog() override { app_.mergeSceneDialog(); }
+    bool saveScene() override { return app_.saveScene(); }
+    bool saveSceneAs() override { return app_.saveSceneAs(); }
+    const std::string& currentScenePath() const override {
+        return app_.scenePath_;
+    }
+    const std::string& pendingSceneOpenPath() const override {
+        return app_.pendingOpenPath_;
+    }
+    void resolvePendingSceneOpen(int action, bool remember) override {
+        app_.resolvePendingSceneOpen(action, remember);
+    }
 
     bool gizmoEnabled() const override { return app_.gizmo_.enabled; }
     void setGizmoEnabled(bool on) override { app_.gizmo_.enabled = on; }
@@ -393,40 +452,30 @@ public:
 
     void importModelDialog() override { app_.openModelDialog(); }
     void openPointCloudDialog() override { app_.openPointCloudDialog(); }
-    bool sceneSaveAvailable() const override { return false; } // SceneManager pending
+    bool sceneSaveAvailable() const override { return true; } // Pass 1 landed
     void deleteModel(int model) override {
+        // Undoable path shared with the Outliner (one step, by ObjectId).
         if (model < 0 || model >= static_cast<int>(app_.scene_.models.size()))
             return;
-        // The gizmo holds raw pointers into the model being erased; detach it and
-        // fix the selection index around the removal (rebinds next frame).
-        app_.gizmo_.clearTarget();
-        app_.gizmoDragging_ = false;
-        if (app_.selection_.model == model)
-            app_.selection_ = Application::Selection{};
-        else if (app_.selection_.model > model)
-            --app_.selection_.model;
-        app_.scene_.models.erase(app_.scene_.models.begin() + model);
-        app_.scene_.computeWorldBounds();
+        scene::SceneItemRef ref;
+        ref.kind = scene::SceneItemRef::Kind::Model;
+        ref.id = app_.scene_.models[model].id;
+        ref.index = model;
+        app_.deleteItems({ ref });
     }
     void openSlpkDialog() override { app_.openSlpkDialog(); }
     size_t slpkLoadsInFlight() const override { return app_.slpkJobs_.size(); }
     void frameI3SLayer(size_t index) override { app_.frameI3SLayer(index); }
     void unloadI3SLayer(size_t index) override {
-        if (index >= app_.scene_.i3sLayers.size())
+        // Undoable path shared with the Outliner (undo re-opens the package).
+        if (index >= app_.scene_.i3sLayers.size() ||
+            !app_.scene_.i3sLayers[index])
             return;
-        // Cancel staged-but-unflushed ring copies + hand bindless texture
-        // slots and material entries back BEFORE the layer (and its buffers)
-        // dies — M1 leaked the slots here. Then the layer's remaining live
-        // MeshBuffers may still be referenced by an in-flight frame; unload
-        // is rare, so a full device wait is the simple safe answer (same
-        // class of hitch as a swapchain rebuild).
-        app_.scene_.i3sLayers[index]->releaseGpu(app_.renderer_.materials(),
-                                                 app_.renderer_.uploadRing(),
-                                                 app_.renderer_.frameRetireValue());
-        app_.device_.waitIdle();
-        app_.scene_.i3sLayers.erase(app_.scene_.i3sLayers.begin() +
-                                    static_cast<std::ptrdiff_t>(index));
-        app_.scene_.computeWorldBounds();
+        scene::SceneItemRef ref;
+        ref.kind = scene::SceneItemRef::Kind::SceneLayer;
+        ref.id = app_.scene_.i3sLayers[index]->id;
+        ref.index = static_cast<int>(index);
+        app_.deleteItems({ ref });
     }
 
     void focusCameraOn(int model) override {
@@ -457,26 +506,94 @@ public:
         return &app_.renderer_.materials().material(idx);
     }
 
-    size_t pointCloudCount() const override { return app_.pointClouds_.size(); }
-    const std::string& pointCloudName(size_t i) const override {
-        return app_.pointClouds_[i].name;
+    std::string pickTextureFile() override {
+        const std::vector<std::string> sel =
+            pfd::open_file("Select texture", "",
+                           { "Images", "*.png *.jpg *.jpeg *.bmp *.tga *.hdr",
+                             "All files", "*" })
+                .result();
+        return sel.empty() ? std::string() : sel[0];
     }
-    bool& pointCloudVisible(size_t i) override { return app_.pointClouds_[i].visible; }
+
+    bool applyMaterialTexture(int model, int mesh, int slot,
+                              const std::string& path) override {
+        if (model < 0 || model >= static_cast<int>(app_.scene_.models.size()))
+            return false;
+        const scene::Model& m = app_.scene_.models[model];
+        if (m.meshes.empty())
+            return false;
+        if (!app_.renderer_.materials().textureSlotAvailable()) {
+            app_.pushToast("Texture capacity is full", Plugins::ToastLevel::Warning);
+            return false;
+        }
+        // Load once (stb), assign the shared bindless index to every target slot.
+        stbi_set_flip_vertically_on_load(false);
+        int w = 0, h = 0, comp = 0;
+        uint8_t* data = stbi_load(path.c_str(), &w, &h, &comp, 4);
+        if (!data) {
+            app_.pushToast("Failed to load texture: " + path,
+                           Plugins::ToastLevel::Warning);
+            return false;
+        }
+        const bool srgb = (slot == 0); // albedo is sRGB; data maps are UNORM
+        rhi::TextureDesc desc{};
+        desc.format = srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+        desc.extent = { uint32_t(w), uint32_t(h) };
+        desc.mipLevels = rhi::computeMipCount(uint32_t(w), uint32_t(h));
+        desc.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+        desc.debugName = "inspector_texture";
+        rhi::Texture tex;
+        tex.create(app_.device_, desc);
+        tex.upload(data, size_t(w) * size_t(h) * 4);
+        stbi_image_free(data);
+        const uint32_t index = app_.renderer_.materials().addTexture(std::move(tex));
+
+        auto assign = [&](int meshIdx) {
+            renderer::gpu::MaterialData* mat = materialForMesh(model, meshIdx);
+            if (!mat)
+                return;
+            switch (slot) {
+            case 0: mat->albedoTexture = index; break;
+            case 1: mat->normalTexture = index; break;
+            case 2: mat->metallicTexture = index; break;
+            case 3: mat->roughnessTexture = index; break;
+            case 4: mat->aoTexture = index; break;
+            default: break;
+            }
+        };
+        if (mesh >= 0)
+            assign(mesh);
+        else
+            for (int j = 0; j < static_cast<int>(m.meshes.size()); ++j)
+                assign(j);
+        return true;
+    }
+
+    size_t pointCloudCount() const override {
+        return app_.scene_.pointClouds.size();
+    }
+    const std::string& pointCloudName(size_t i) const override {
+        return app_.scene_.pointClouds[i].name;
+    }
+    bool& pointCloudVisible(size_t i) override {
+        return app_.scene_.pointClouds[i].visible;
+    }
     uint32_t pointCloudBatches(size_t i) const override {
-        return app_.pointClouds_[i].numBatches;
+        return app_.scene_.pointClouds[i].numBatches;
     }
     uint32_t pointCloudPoints(size_t i) const override {
-        return app_.pointClouds_[i].totalPointCount;
+        return app_.scene_.pointClouds[i].totalPointCount;
     }
     double pointCloudVramMB(size_t i) const override {
-        const Engine::PointCloud& pc = app_.pointClouds_[i];
+        const Engine::PointCloud& pc = app_.scene_.pointClouds[i];
         if (pc.gpu && pc.gpu->valid())
             return double(pc.gpu->storage.size()) / (1024.0 * 1024.0);
         return 0.0;
     }
     Gui::PointCloudProgress pointCloudProgress(size_t i) const override {
         const Engine::PointCloudLoader::StreamProgress p =
-            Engine::PointCloudLoader::getStreamProgress(app_.pointClouds_[i]);
+            Engine::PointCloudLoader::getStreamProgress(
+                app_.scene_.pointClouds[i]);
         Gui::PointCloudProgress out;
         out.active = p.active;
         out.resorting = p.resorting;
@@ -487,9 +604,44 @@ public:
         return out;
     }
     void unloadPointCloud(size_t i) override {
-        if (i < app_.pointClouds_.size())
-            app_.pointClouds_.erase(app_.pointClouds_.begin() +
-                                    static_cast<std::ptrdiff_t>(i));
+        // Undoable path shared with the Outliner.
+        if (i >= app_.scene_.pointClouds.size())
+            return;
+        scene::SceneItemRef ref;
+        ref.kind = scene::SceneItemRef::Kind::PointCloud;
+        ref.id = app_.scene_.pointClouds[i].id;
+        ref.index = static_cast<int>(i);
+        app_.deleteItems({ ref });
+    }
+    void exportPointCloud(size_t i, int format, bool applyTransform,
+                          bool plyBinary) override {
+        if (i >= app_.scene_.pointClouds.size())
+            return;
+        const Engine::PointCloud& pc = app_.scene_.pointClouds[i];
+        const char* ext = format == 0 ? "xyz"
+                          : format == 1 ? "pcb"
+                          : format == 2 ? "h5"
+                                        : "ply";
+        const std::string base = pc.name.empty() ? std::string("pointcloud") : pc.name;
+        const std::string dest =
+            pfd::save_file("Export point cloud", base + "." + ext,
+                           { std::string("Point cloud"), std::string("*.") + ext,
+                             std::string("All files"), std::string("*") })
+                .result();
+        if (dest.empty())
+            return;
+        bool ok = false;
+        switch (format) {
+        case 0: ok = Engine::PointCloudLoader::exportToXYZ(pc, dest, applyTransform); break;
+        case 1: ok = Engine::PointCloudLoader::exportToBinary(pc, dest, applyTransform); break;
+        case 2: ok = Engine::PointCloudLoader::exportToHDF5(pc, dest, applyTransform); break;
+        case 3:
+            ok = Engine::PointCloudLoader::exportToPLY(pc, dest, applyTransform, plyBinary);
+            break;
+        default: break;
+        }
+        app_.pushToast(ok ? ("Exported to " + dest) : std::string("Export failed (see console)"),
+                       ok ? Plugins::ToastLevel::Info : Plugins::ToastLevel::Warning);
     }
 
     int themeCount() const override { return GetGuiThemeCount(); }
@@ -615,8 +767,14 @@ void Application::init() {
             warpMouseToViewportCenter();
     };
 
-    // Tools record through the app-owned undo stack.
+    // Tools record through the app-owned undo stack and edit scene-owned
+    // storage ("one heart": scene_.clipPlanes is what the Outliner lists and
+    // the scene document serializes; scene_ is a member, so the binding
+    // outlives every load — loads replace the vector's CONTENTS, not the
+    // vector). The measurement tool binds itself in MeasurementPlugin::
+    // onRegister via the plugin context.
     clipPlaneTool_.setUndoManager(&undo_);
+    clipPlaneTool_.bindStorage(&scene_.clipPlanes);
 
     // Sun defaults follow the GL app (dimmed warm directional); the repo
     // skybox becomes the background when its faces resolve. Loaded
@@ -636,39 +794,81 @@ void Application::init() {
 }
 
 void Application::loadScene() {
+    // Startup scene: office.scene next to the executable (a GL-era v1 file —
+    // it loads through the same SceneDocument path as every other version).
     const std::filesystem::path scenePath = Platform::resolveAssetPath("office.scene");
+    bool loaded = false;
     if (!scenePath.empty()) {
         try {
-            scene_ = scene::loadSceneFile(scenePath.string(), device_,
-                                          renderer_.materials());
+            scene::SceneLoadResult result = scene::loadSceneDocument(
+                scenePath.string(), device_, renderer_.materials(),
+                settings_.pointCloud.downsample, settings_.pointCloud.mortonResort);
+            scene_ = std::move(result.scene);
+            applyLoadedCamera(result.camera);
+            applyLoadedEnvironment(result.environment);
+            for (const scene::PendingLayerState& layer : result.layers) {
+                pendingLayerStates_.push_back(layer);
+                openSlpk(layer.sourcePath);
+            }
+            reportSceneLoad(result.report);
+            scenePath_ = scenePath.string();
+            loaded = true;
         } catch (const std::exception& e) {
             std::cerr << "ERROR: " << e.what() << "\n";
         }
     }
-    if (scene_.models.empty())
+    if (!loaded && scene_.models.empty())
         scene_ = scene::createDefaultScene(device_, renderer_.materials());
 
-    if (scene_.camera.valid) {
-        // Build the Camera's quaternion orientation directly from the saved
-        // look direction (its Euler convention has a 90° yaw offset, so a
-        // lookAt-style basis is the robust way to seed it — same construction
-        // the Camera uses internally for centering animations).
-        Camera::CameraState st = camera_.GetState();
-        st.position = scene_.camera.position;
-        const glm::vec3 f = glm::normalize(scene_.camera.front);
+    // Recorded ids/selection no longer match a freshly loaded scene.
+    selection_.clear();
+    gizmo_.clearTarget();
+    gizmoDragging_ = false;
+    clipPlaneTool_.notifyStorageChanged();
+    undo_.clear();
+}
+
+// Seed the quaternion camera from a loaded pose: the saved orientation wins
+// when present (v2/v3 files); otherwise build a lookAt basis from the front
+// vector (the Camera's Euler convention has a 90° yaw offset, so this is the
+// robust construction — same one the Camera uses for centering animations).
+void Application::applyLoadedCamera(const scene::SceneCameraState& cam) {
+    if (!cam.valid)
+        return;
+    Camera::CameraState st = camera_.GetState();
+    st.position = cam.position;
+    if (cam.hasOrientation) {
+        st.orientation = glm::normalize(cam.orientation);
+        st.front = cam.front;
+        st.up = cam.up;
+        st.yaw = cam.yaw;
+        st.pitch = cam.pitch;
+        st.zoom = cam.zoom;
+    } else {
+        const glm::vec3 f = glm::normalize(cam.front);
         const glm::vec3 r = glm::normalize(glm::cross(f, glm::vec3(0.0f, 1.0f, 0.0f)));
         const glm::vec3 u = glm::normalize(glm::cross(r, f));
         st.orientation = glm::normalize(glm::quat_cast(glm::mat3(r, u, -f)));
-        camera_.SetState(st);
-        camera_.SetOrbitPoint(camera_.OrbitDistance);
     }
+    camera_.SetState(st);
+    camera_.SetOrbitPoint(camera_.OrbitDistance);
+}
 
-    // Recorded indices/selection no longer match a freshly loaded scene.
-    selection_ = Selection{};
-    gizmo_.clearTarget();
-    gizmoDragging_ = false;
-    clipPlaneTool_.clearPlanes();
-    undo_.clear();
+// Scene-authored sun/sky override the session's settings (the file is the
+// author's intent); files without the blocks leave the user's settings alone.
+void Application::applyLoadedEnvironment(const scene::SceneEnvironmentState& env) {
+    if (env.hasSun)
+        settings_.lighting.sun = env.sun;
+    if (env.hasSky) {
+        settings_.sky = env.sky;
+        // A persisted mode whose source isn't available falls back (same
+        // guard init() applies to preferences).
+        if ((settings_.sky.mode == renderer::SkyMode::Cubemap &&
+             !renderer_.skybox().hasCubemap()) ||
+            (settings_.sky.mode == renderer::SkyMode::Equirect &&
+             !renderer_.skybox().hasEquirect()))
+            settings_.sky.mode = renderer::SkyMode::Gradient;
+    }
 }
 
 void Application::beginNavCapture() {
@@ -731,14 +931,14 @@ void Application::updateCamera(float dt) {
 
     // World size of the scene content — scales the adaptive-speed and scroll
     // distance curves. Models + rendered I3S layers come from the precomputed
-    // scene world bounds; loaded point clouds live outside scene_, so union
-    // their (scaled) boxes in. The GL version only measured the FIRST model's
-    // untransformed vertices.
+    // scene world bounds; still-streaming point clouds may have grown since
+    // the last computeWorldBounds, so union their (scaled) boxes in. The GL
+    // version only measured the FIRST model's untransformed vertices.
     float sceneSize = 0.0f;
     {
         const glm::vec3 sceneDim = scene_.worldBoundsMax - scene_.worldBoundsMin;
         sceneSize = glm::max(sceneDim.x, glm::max(sceneDim.y, sceneDim.z));
-        for (const Engine::PointCloud& pc : pointClouds_) {
+        for (const Engine::PointCloud& pc : scene_.pointClouds) {
             if (!pc.visible || !pc.hasBounds())
                 continue;
             const glm::vec3 dim = (pc.boundsMax - pc.boundsMin) * glm::abs(pc.scale);
@@ -791,6 +991,8 @@ void Application::updateCamera(float dt) {
             gizmo_.updateDrag(ray.origin, ray.direction, camera.Position, shiftHeld);
             if (gizmoTargetPlane_)
                 clipPlaneTool_.syncActiveNormalFromGizmo(); // rotate -> plane normal
+            else
+                applyGizmoDeltaToSelection(); // multi-select: mirror the delta
         } else {
             gizmo_.endDrag();
             if (gizmoTargetPlane_) clipPlaneTool_.recordGizmoUndo();
@@ -992,21 +1194,27 @@ void Application::updateCamera(float dt) {
         camera.isMoving = flying;
 
         // Dispatch action keys to plugins (edge-triggered): the MeasurementPlugin
-        // uses Enter (finish), Delete (cancel), Backspace (undo last point).
-        // Plugins keep receiving GLFW keycodes (their public contract), and
-        // keep first refusal on these keys (dispatched before the shortcuts).
+        // uses Enter (finish), Delete (cancel), Backspace (undo last point),
+        // Escape (exit the tool). Plugins keep receiving GLFW keycodes (their
+        // public contract) and keep first refusal on these keys: a key a
+        // plugin CONSUMES is withheld from this frame's shortcut dispatch, so
+        // Esc exits the measurement tool without also clearing the selection
+        // (§7.1: tool first, selection second).
+        pluginConsumedKeys_.clear();
         if (pluginContext_) {
             auto keyEdge = [&](ImGuiKey key, int glfwKey, bool& prev) {
                 const bool down = ImGui::IsKeyDown(key);
-                if (down && !prev)
+                if (down && !prev &&
                     pluginManager_.dispatchKey(*pluginContext_, glfwKey, 0,
-                                               GLFW_PRESS, mods);
+                                               GLFW_PRESS, mods))
+                    pluginConsumedKeys_.push_back(glfwKey);
                 prev = down;
             };
             keyEdge(ImGuiKey_Enter, GLFW_KEY_ENTER, prevEnter_);
             keyEdge(ImGuiKey_KeypadEnter, GLFW_KEY_KP_ENTER, prevKpEnter_);
             keyEdge(ImGuiKey_Delete, GLFW_KEY_DELETE, prevDelete_);
             keyEdge(ImGuiKey_Backspace, GLFW_KEY_BACKSPACE, prevBackspace_);
+            keyEdge(ImGuiKey_Escape, GLFW_KEY_ESCAPE, prevEscape_);
         }
 
         // Rebindable shortcuts -> commands (UI redesign Pass 0). Replaces the
@@ -1314,7 +1522,7 @@ rhi::PresentResult Application::renderXRFrame(renderer::FrameSubmission& submiss
     const bool shouldRender = xr.beginFrame();
 
     // Stream point clouds regardless of XR visibility.
-    for (Engine::PointCloud& pc : pointClouds_)
+    for (Engine::PointCloud& pc : scene_.pointClouds)
         Engine::PointCloudLoader::updateStreaming(pc);
 
     // Scene draws / lights / sky / clip-planes (fills mono cameras; the eye
@@ -1492,7 +1700,8 @@ void Application::buildFrameSubmission(renderer::FrameSubmission& submission) co
     submission.draws.clear();
     submission.draws.reserve(scene_.models.size() * 2);
     for (const scene::Model& model : scene_.models) {
-        if (!model.visible)
+        // Effective visibility: own flag AND the group chain (Pass 1 groups).
+        if (!model.visible || !scene_.groupChainVisible(model.groupId))
             continue;
         const glm::mat4 modelMatrix = model.modelMatrix();
         const glm::mat3 normalMatrix = model.normalMatrix(modelMatrix);
@@ -1531,6 +1740,8 @@ void Application::buildFrameSubmission(renderer::FrameSubmission& submission) co
     submission.pointLights.clear();
     submission.pointLights.reserve(scene_.pointLights.size());
     for (const scene::PointLight& light : scene_.pointLights) {
+        if (!light.visible || !scene_.groupChainVisible(light.groupId))
+            continue;
         renderer::PointLightState state;
         state.position = light.position;
         state.color = light.color;
@@ -1551,8 +1762,9 @@ void Application::buildFrameSubmission(renderer::FrameSubmission& submission) co
 
     // ---- Point clouds (Phase 5: Schütz compute rasterizer) ----
     submission.pointClouds.clear();
-    for (const Engine::PointCloud& pc : pointClouds_) {
-        if (!pc.visible || !pc.gpu || !pc.gpu->valid() || pc.numBatches == 0)
+    for (const Engine::PointCloud& pc : scene_.pointClouds) {
+        if (!pc.visible || !scene_.groupChainVisible(pc.groupId) || !pc.gpu ||
+            !pc.gpu->valid() || pc.numBatches == 0)
             continue;
         renderer::PointCloudDrawItem item;
         item.addresses = pc.gpu->addresses;
@@ -1592,8 +1804,8 @@ void Application::buildFrameSubmission(renderer::FrameSubmission& submission) co
     for (uint32_t v = 0; v < std::max(renderer_.viewportOutputCount(), 1u); ++v)
         sseHeight = std::max(sseHeight, renderer_.sceneExtent(v).height);
     for (const std::unique_ptr<scene::I3SSceneLayer>& layer : scene_.i3sLayers)
-        if (layer)
-            layer->submitDraws(submission, sseHeight);
+        if (layer && scene_.groupChainVisible(layer->groupId))
+            layer->submitDraws(submission, sseHeight); // checks its own `visible`
 
     // Global wireframe toggle (M4): flag every draw — scene models and the
     // I3S layers alike (per-layer wireframe is set in the layers' emitDraw).
@@ -1799,6 +2011,11 @@ void Application::run() {
         pumpSlpkLoads();
         pumpI3SLayers();
 
+        // Identity sweep (contract C3): anything created this frame without
+        // an ObjectId — tool-committed measurements, clip planes, imports —
+        // gets one. A handful of integer compares per object.
+        scene_.ensureIds();
+
         const double now = glfwGetTime();
         const float dt = std::min(float(now - lastFrameTime_), 0.1f);
         lastFrameTime_ = now;
@@ -1898,7 +2115,7 @@ void Application::run() {
 
             // Pump streaming point clouds: stages this frame's chunk copies into
             // the upload ring; renderFrame records them at the top of the frame.
-            for (Engine::PointCloud& pc : pointClouds_)
+            for (Engine::PointCloud& pc : scene_.pointClouds)
                 Engine::PointCloudLoader::updateStreaming(pc);
 
             buildFrameSubmission(submission);
@@ -1965,6 +2182,7 @@ void Application::importModelFiles(const std::vector<std::string>& files) {
     for (const std::string& path : files) {
         scene::Model model;
         if (scene::importModelFile(path, device_, renderer_.materials(), model)) {
+            model.id = scene_.allocateId();
             scene_.models.push_back(std::move(model));
             ++added;
         } else {
@@ -2001,6 +2219,10 @@ void Application::loadPointCloudFiles(const std::vector<std::string>& files) {
     // one centre so tiles stay aligned); everything else loads synchronously
     // through the format-dispatching text/binary loaders.
     std::vector<std::string> lasFiles;
+    auto adopt = [this](Engine::PointCloud&& pc) {
+        pc.id = scene_.allocateId();
+        scene_.pointClouds.push_back(std::move(pc));
+    };
     for (const std::string& path : files) {
         std::string ext = std::filesystem::path(path).extension().string();
         std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
@@ -2011,7 +2233,7 @@ void Application::loadPointCloudFiles(const std::vector<std::string>& files) {
         Engine::PointCloud pc =
             Engine::PointCloudLoader::loadPointCloudFile(path, downsample);
         if (pc.isLoaded())
-            pointClouds_.push_back(std::move(pc));
+            adopt(std::move(pc));
         else
             std::cerr << "[app] failed to load point cloud: " << path << "\n";
     }
@@ -2019,7 +2241,7 @@ void Application::loadPointCloudFiles(const std::vector<std::string>& files) {
         Engine::PointCloud pc = Engine::PointCloudLoader::beginLoadLASProgressive(
             lasFiles[0], downsample, nullptr, settings_.pointCloud.mortonResort);
         if (pc.isLoaded())
-            pointClouds_.push_back(std::move(pc));
+            adopt(std::move(pc));
         else
             std::cerr << "[app] failed to start streaming: " << lasFiles[0] << "\n";
     } else if (lasFiles.size() > 1) {
@@ -2027,8 +2249,9 @@ void Application::loadPointCloudFiles(const std::vector<std::string>& files) {
             Engine::PointCloudLoader::beginLoadLASMultipleProgressive(
                 lasFiles, downsample, settings_.pointCloud.mortonResort);
         for (Engine::PointCloud& pc : clouds)
-            pointClouds_.push_back(std::move(pc));
+            adopt(std::move(pc));
     }
+    scene_.computeWorldBounds();
 }
 
 // ---- SLPK / I3S scene layers (M0: open + inspect) ----
@@ -2076,6 +2299,18 @@ void Application::pumpSlpkLoads() {
                       Plugins::ToastLevel::Error);
             continue;
         }
+        // A redo re-deleted this layer while its (undo-triggered) re-open was
+        // still parsing: drop the result silently (pure CPU state — no GPU
+        // residency exists before startStreaming).
+        {
+            const auto cancelled =
+                std::find(cancelledLayerOpens_.begin(),
+                          cancelledLayerOpens_.end(), layer->sourcePath);
+            if (cancelled != cancelledLayerOpens_.end()) {
+                cancelledLayerOpens_.erase(cancelled);
+                continue;
+            }
+        }
         if (!layer->info.sr.isGeographic() && layer->info.sr.wkid == 0)
             pushToast("Unknown CRS — layer loads in its own local space",
                       Plugins::ToastLevel::Warning);
@@ -2093,10 +2328,36 @@ void Application::pumpSlpkLoads() {
             pushToast(layer->name + ": layerType \"" + layer->info.typeString +
                           "\" has no renderer yet — node tree/bounds inspector only",
                       Plugins::ToastLevel::Warning);
+
+        // Scene-document re-open (load / merge / delete-undo): re-apply the
+        // saved identity + display state parked for this source path, so the
+        // layer keeps its ObjectId, group, name and visibility across the
+        // async round trip. Fresh user opens get a fresh id.
+        bool restored = false;
+        for (size_t p = 0; p < pendingLayerStates_.size(); ++p) {
+            if (pendingLayerStates_[p].sourcePath != layer->sourcePath)
+                continue;
+            const scene::PendingLayerState& st = pendingLayerStates_[p];
+            layer->id = st.id;
+            layer->groupId = st.groupId;
+            layer->visible = st.visible;
+            layer->locked = st.locked;
+            layer->showGeometry = st.showGeometry;
+            if (!st.name.empty())
+                layer->name = st.name;
+            pendingLayerStates_.erase(pendingLayerStates_.begin() +
+                                      static_cast<std::ptrdiff_t>(p));
+            restored = true;
+            break;
+        }
+        if (layer->id == 0)
+            layer->id = scene_.allocateId();
+
         scene_.i3sLayers.push_back(std::move(layer));
         scene_.i3sLayers.back()->startStreaming(); // M1: spawn decode workers
         scene_.computeWorldBounds();
-        if (renderable)
+        // Restored layers keep the user's current view; fresh opens frame.
+        if (renderable && !restored)
             frameI3SLayer(scene_.i3sLayers.size() - 1);
     }
 }
@@ -2241,9 +2502,12 @@ void Application::shutdown() {
         if (job && job->thread.joinable())
             job->thread.join();
     slpkJobs_.clear();
-    // Scene + point-cloud GPU buffers must go before the renderer/device they
-    // live on (cloud destruction also joins any still-streaming worker).
-    pointClouds_.clear();
+    // Undo closures can own deleted objects (their GPU residency included —
+    // see SceneOps.cpp deleteItems), so the stack clears here, while the
+    // device is idle and still alive. Then the scene's GPU buffers (models,
+    // point clouds, layers) go before the renderer/device they live on
+    // (cloud destruction also joins any still-streaming worker).
+    undo_.clear();
     scene_ = scene::Scene{};
     renderer_.shutdown();
     swapchain_.shutdown();
@@ -2262,8 +2526,10 @@ void Application::performSelectionClick() {
         layer->pickedNode = -1;
         layer->pickedFeature = scene::I3SSceneLayer::PickedFeature{};
     }
+    const bool additive = (currentMods() & GLFW_MOD_SHIFT) != 0; // Ctrl+Shift
     if (!clickCursorValid_) {
-        selection_ = Selection{};
+        if (!additive)
+            selection_.clear();
         return;
     }
     scene::RayHit hit;
@@ -2284,67 +2550,146 @@ void Application::performSelectionClick() {
                 break;
             }
         }
-        selection_ = Selection{};
+        if (!additive)
+            selection_.clear();
         return;
     }
-    // First click selects the whole model; clicking again within the SAME model
-    // (that has sub-meshes) drills to the specific mesh under the cursor.
-    const bool sameModel = (hit.modelIndex == selection_.model);
-    const bool hasSubMeshes =
-        hit.modelIndex >= 0 && hit.modelIndex < int(scene_.models.size()) &&
-        scene_.models[hit.modelIndex].meshes.size() > 1;
-    if (sameModel && hasSubMeshes && selection_.mesh < 0) {
-        selection_.mesh = hit.meshIndex;
-    } else if (sameModel && hasSubMeshes) {
-        selection_.mesh = hit.meshIndex; // move between sub-meshes
+
+    scene::Model& model = scene_.models[hit.modelIndex];
+    // Locked objects are not viewport-selectable (outliner lock).
+    if (model.locked || scene_.groupChainLocked(model.groupId))
+        return;
+
+    scene::SceneItemRef modelRef;
+    modelRef.kind = scene::SceneItemRef::Kind::Model;
+    modelRef.id = model.id;
+    modelRef.index = hit.modelIndex;
+
+    // Ctrl+Shift+click toggles membership in the multi-selection; a plain
+    // Ctrl+click keeps the GL single-select feel: first click selects the
+    // whole model, clicking the SAME model again drills to the sub-mesh.
+    if (additive) {
+        selection_.toggle(modelRef);
+        return;
+    }
+    const scene::SceneItemRef primary = selection_.primary();
+    const bool sameModel =
+        (primary.kind == scene::SceneItemRef::Kind::Model ||
+         primary.kind == scene::SceneItemRef::Kind::Mesh) &&
+        primary.id == model.id;
+    const bool hasSubMeshes = model.meshes.size() > 1;
+    if (sameModel && hasSubMeshes && hit.meshIndex >= 0) {
+        scene::SceneItemRef meshRef = modelRef;
+        meshRef.kind = scene::SceneItemRef::Kind::Mesh;
+        meshRef.sub = hit.meshIndex;
+        selection_.selectOne(meshRef);
     } else {
-        selection_.model = hit.modelIndex;
-        selection_.mesh = -1;
+        selection_.selectOne(modelRef);
     }
 }
 
 void Application::appendSelectionOverlay() {
-    if (selection_.model < 0 || selection_.model >= int(scene_.models.size()))
+    // Outline every selected item; the PRIMARY draws brighter/wider so the
+    // gizmo target reads at a glance. Measurements/clip planes draw themselves.
+    const std::vector<scene::SceneItemRef>& items = selection_.items();
+    if (items.empty())
         return;
-    const scene::Model& model = scene_.models[selection_.model];
-    if (!model.visible || model.meshes.empty())
-        return;
+    const scene::SceneItemRef primaryRef = selection_.primary();
 
-    // Local-space AABB: the selected sub-mesh, or the union of every mesh.
-    glm::vec3 lo(FLT_MAX), hi(-FLT_MAX);
-    if (selection_.mesh >= 0 && selection_.mesh < int(model.meshes.size())) {
-        lo = model.meshes[selection_.mesh].boundsMin;
-        hi = model.meshes[selection_.mesh].boundsMax;
-    } else {
-        for (const scene::ModelMesh& mesh : model.meshes) {
-            if (mesh.boundsMin.x > mesh.boundsMax.x)
-                continue;
-            lo = glm::min(lo, mesh.boundsMin);
-            hi = glm::max(hi, mesh.boundsMax);
+    auto drawBox = [&](const glm::mat4& m, glm::vec3 lo, glm::vec3 hi,
+                       const glm::vec4& color, float width) {
+        if (lo.x > hi.x)
+            return;
+        glm::vec3 corner[8];
+        for (int i = 0; i < 8; ++i) {
+            const glm::vec3 local((i & 1) ? hi.x : lo.x, (i & 2) ? hi.y : lo.y,
+                                  (i & 4) ? hi.z : lo.z);
+            corner[i] = glm::vec3(m * glm::vec4(local, 1.0f));
+        }
+        auto edge = [&](int a, int b) {
+            overlay_.line(corner[a], corner[b], color, width,
+                          renderer::OverlayDepth::Always);
+        };
+        edge(0, 1); edge(2, 3); edge(4, 5); edge(6, 7); // X
+        edge(0, 2); edge(1, 3); edge(4, 6); edge(5, 7); // Y
+        edge(0, 4); edge(1, 5); edge(2, 6); edge(3, 7); // Z
+    };
+
+    for (scene::SceneItemRef ref : items) {
+        if (!scene_.resolve(ref))
+            continue;
+        const bool isPrimary = (ref == primaryRef);
+        const float width = isPrimary ? 2.0f : 1.5f;
+        using Kind = scene::SceneItemRef::Kind;
+        switch (ref.kind) {
+        case Kind::Model:
+        case Kind::Mesh: {
+            const scene::Model& model = scene_.models[ref.index];
+            if (!model.visible || model.meshes.empty())
+                break;
+            glm::vec3 lo(FLT_MAX), hi(-FLT_MAX);
+            if (ref.kind == Kind::Mesh) {
+                lo = model.meshes[ref.sub].boundsMin;
+                hi = model.meshes[ref.sub].boundsMax;
+            } else {
+                for (const scene::ModelMesh& mesh : model.meshes) {
+                    if (mesh.boundsMin.x > mesh.boundsMax.x)
+                        continue;
+                    lo = glm::min(lo, mesh.boundsMin);
+                    hi = glm::max(hi, mesh.boundsMax);
+                }
+            }
+            // Sub-mesh outline is cyan; whole-model is orange (secondary
+            // selection dimmed toward grey).
+            glm::vec4 color = (ref.kind == Kind::Mesh)
+                                  ? glm::vec4(0.20f, 0.90f, 1.00f, 1.0f)
+                                  : glm::vec4(1.00f, 0.60f, 0.10f, 1.0f);
+            if (!isPrimary)
+                color = glm::vec4(glm::mix(glm::vec3(color), glm::vec3(0.85f), 0.35f),
+                                  0.9f);
+            drawBox(model.modelMatrix(), lo, hi, color, width);
+            break;
+        }
+        case Kind::PointCloud: {
+            const Engine::PointCloud& pc = scene_.pointClouds[ref.index];
+            if (!pc.visible || !pc.hasBounds())
+                break;
+            glm::mat4 m(1.0f);
+            m = glm::translate(m, pc.position);
+            m = glm::rotate(m, glm::radians(pc.rotation.x), glm::vec3(1, 0, 0));
+            m = glm::rotate(m, glm::radians(pc.rotation.y), glm::vec3(0, 1, 0));
+            m = glm::rotate(m, glm::radians(pc.rotation.z), glm::vec3(0, 0, 1));
+            m = glm::scale(m, pc.scale);
+            const glm::vec4 color(0.45f, 0.75f, 1.00f, isPrimary ? 1.0f : 0.85f);
+            drawBox(m, pc.boundsMin, pc.boundsMax, color, width);
+            break;
+        }
+        case Kind::SceneLayer: {
+            const scene::I3SSceneLayer& layer = *scene_.i3sLayers[ref.index];
+            if (!layer.visible || layer.nodeBoxes.empty())
+                break;
+            drawBox(glm::mat4(1.0f), layer.boundsMin, layer.boundsMax,
+                    glm::vec4(0.35f, 0.85f, 0.75f, isPrimary ? 1.0f : 0.85f),
+                    width);
+            break;
+        }
+        case Kind::PointLight: {
+            // Small world-space cross marker at the emitter.
+            const glm::vec3 p = scene_.pointLights[ref.index].position;
+            const float s = 0.25f;
+            const glm::vec4 color(1.00f, 0.78f, 0.40f, 1.0f);
+            overlay_.line(p - glm::vec3(s, 0, 0), p + glm::vec3(s, 0, 0), color,
+                          width, renderer::OverlayDepth::Always);
+            overlay_.line(p - glm::vec3(0, s, 0), p + glm::vec3(0, s, 0), color,
+                          width, renderer::OverlayDepth::Always);
+            overlay_.line(p - glm::vec3(0, 0, s), p + glm::vec3(0, 0, s), color,
+                          width, renderer::OverlayDepth::Always);
+            break;
+        }
+        default:
+            break; // Sun/Environment/Group/annotations: no box outline
         }
     }
-    if (lo.x > hi.x)
-        return;
-
-    // Transform the 8 local corners to world space (oriented box, not a loose
-    // world AABB) and draw the 12 edges on top of the scene.
-    const glm::mat4 m = model.modelMatrix();
-    glm::vec3 corner[8];
-    for (int i = 0; i < 8; ++i) {
-        const glm::vec3 local((i & 1) ? hi.x : lo.x, (i & 2) ? hi.y : lo.y,
-                              (i & 4) ? hi.z : lo.z);
-        corner[i] = glm::vec3(m * glm::vec4(local, 1.0f));
-    }
-    // Sub-mesh outline is cyan; whole-model is orange.
-    const glm::vec4 color = (selection_.mesh >= 0)
-                                ? glm::vec4(0.20f, 0.90f, 1.00f, 1.0f)
-                                : glm::vec4(1.00f, 0.60f, 0.10f, 1.0f);
-    auto edge = [&](int a, int b) {
-        overlay_.line(corner[a], corner[b], color, 2.0f, renderer::OverlayDepth::Always);
-    };
-    edge(0, 1); edge(2, 3); edge(4, 5); edge(6, 7); // X
-    edge(0, 2); edge(1, 3); edge(4, 6); edge(5, 7); // Y
-    edge(0, 4); edge(1, 5); edge(2, 6); edge(3, 7); // Z
 }
 
 void Application::pushToast(const std::string& message, Plugins::ToastLevel level) {
@@ -2432,40 +2777,61 @@ void Application::registerCommands() {
         c.action = [services] { services->openSlpkDialog(); };
         add(std::move(c));
     }
-    // Scene document ops are registered now (stable ids, menu placement) but
-    // stay disabled until the Pass-1 scene-document work lands.
-    const char* sceneOpsTooltip =
-        "Scene load / save / merge returns with the scene-document work "
-        "(UI redesign Pass 1).";
+    // Scene document ops (UI redesign Pass 1: scene::SceneDocument).
+    {
+        Command c;
+        c.id = "file.new_scene";
+        c.title = "New scene";
+        c.category = "File";
+        c.keywords = "clear empty document";
+        c.separatorBefore = true;
+        c.action = [services] { services->newScene(); };
+        add(std::move(c));
+        shortcuts_.registerDefault("file.new_scene",
+                                   ShortcutBinding{ GLFW_KEY_N, true });
+    }
     {
         Command c;
         c.id = "file.open_scene";
         c.title = "Open scene...";
         c.category = "File";
-        c.tooltip = sceneOpsTooltip;
-        c.separatorBefore = true;
-        c.enabled = [services] { return services->sceneSaveAvailable(); };
-        c.action = [] {};
+        c.keywords = "load document";
+        c.action = [services] { services->openSceneDialog(); };
         add(std::move(c));
+        shortcuts_.registerDefault("file.open_scene",
+                                   ShortcutBinding{ GLFW_KEY_O, true });
     }
     {
         Command c;
         c.id = "file.save_scene";
-        c.title = "Save scene...";
+        c.title = "Save scene";
         c.category = "File";
-        c.tooltip = sceneOpsTooltip;
-        c.enabled = [services] { return services->sceneSaveAvailable(); };
-        c.action = [] {};
+        c.keywords = "write document";
+        c.action = [services] { services->saveScene(); };
         add(std::move(c));
+        shortcuts_.registerDefault("file.save_scene",
+                                   ShortcutBinding{ GLFW_KEY_S, true });
+    }
+    {
+        Command c;
+        c.id = "file.save_scene_as";
+        c.title = "Save scene as...";
+        c.category = "File";
+        c.keywords = "write copy document";
+        c.action = [services] { services->saveSceneAs(); };
+        add(std::move(c));
+        shortcuts_.registerDefault(
+            "file.save_scene_as",
+            ShortcutBinding{ GLFW_KEY_S, true, false, true }); // Ctrl+Shift+S
     }
     {
         Command c;
         c.id = "file.merge_scene";
         c.title = "Merge scene...";
         c.category = "File";
-        c.tooltip = sceneOpsTooltip;
-        c.enabled = [services] { return services->sceneSaveAvailable(); };
-        c.action = [] {};
+        c.keywords = "combine append import document";
+        c.tooltip = "Add another scene file's objects to the current scene.";
+        c.action = [services] { services->mergeSceneDialog(); };
         add(std::move(c));
     }
     {
@@ -2583,33 +2949,104 @@ void Application::registerCommands() {
     }
     {
         Command c;
-        c.id = "select.clear";
-        c.title = "Clear selection";
+        c.id = "edit.duplicate";
+        c.title = "Duplicate";
         c.category = "Edit";
-        c.keywords = "deselect escape";
+        c.keywords = "copy clone";
         c.separatorBefore = true;
-        c.enabled = [this] { return selection_.model >= 0; };
-        c.action = [this] { selection_ = Selection{}; };
+        c.enabled = [this] { return !selection_.empty(); };
+        c.action = [this] { duplicateItems(selection_.items()); };
         add(std::move(c));
-        shortcuts_.registerDefault("select.clear",
-                                   ShortcutBinding{ GLFW_KEY_ESCAPE });
+        shortcuts_.registerDefault("edit.duplicate",
+                                   ShortcutBinding{ GLFW_KEY_D, true });
+    }
+    {
+        Command c;
+        c.id = "edit.group";
+        c.title = "Group selection";
+        c.category = "Edit";
+        c.keywords = "folder organize";
+        c.enabled = [this] { return !selection_.empty(); };
+        c.action = [this] { groupItems(selection_.items()); };
+        add(std::move(c));
+        shortcuts_.registerDefault("edit.group",
+                                   ShortcutBinding{ GLFW_KEY_G, true });
+    }
+    {
+        Command c;
+        c.id = "edit.ungroup";
+        c.title = "Ungroup";
+        c.category = "Edit";
+        c.keywords = "dissolve folder";
+        c.enabled = [this] { return !selection_.empty(); };
+        c.action = [this] { ungroupItems(selection_.items()); };
+        add(std::move(c));
+        shortcuts_.registerDefault(
+            "edit.ungroup",
+            ShortcutBinding{ GLFW_KEY_G, true, false, true }); // Ctrl+Shift+G
     }
     {
         Command c;
         c.id = "edit.delete_selected";
-        c.title = "Delete selected model";
+        c.title = "Delete selection";
         c.category = "Edit";
         c.keywords = "remove";
         // Unbound by default (the GL app used Delete, but plugins own that
-        // key here: the MeasurementPlugin's cancel). Bindable by the user.
-        c.enabled = [this] {
-            return selection_.model >= 0 &&
-                   selection_.model < int(scene_.models.size());
-        };
-        c.action = [this, services] {
-            services->deleteModel(selection_.model);
+        // key here: the MeasurementPlugin's cancel). Bindable by the user;
+        // the Outliner's context menu also routes here.
+        c.enabled = [this] { return !selection_.empty(); };
+        c.action = [this] { deleteItems(selection_.items()); };
+        add(std::move(c));
+    }
+
+    // ── Select ───────────────────────────────────────────────────────────
+    {
+        Command c;
+        c.id = "select.all";
+        c.title = "Select all";
+        c.category = "Select";
+        c.keywords = "everything";
+        c.action = [this] {
+            std::vector<scene::SceneItemRef> refs;
+            using Kind = scene::SceneItemRef::Kind;
+            auto push = [&](Kind kind, uint64_t id, int index) {
+                scene::SceneItemRef ref;
+                ref.kind = kind;
+                ref.id = id;
+                ref.index = index;
+                refs.push_back(ref);
+            };
+            for (size_t i = 0; i < scene_.models.size(); ++i)
+                push(Kind::Model, scene_.models[i].id, int(i));
+            for (size_t i = 0; i < scene_.pointClouds.size(); ++i)
+                push(Kind::PointCloud, scene_.pointClouds[i].id, int(i));
+            for (size_t i = 0; i < scene_.i3sLayers.size(); ++i)
+                if (scene_.i3sLayers[i])
+                    push(Kind::SceneLayer, scene_.i3sLayers[i]->id, int(i));
+            for (size_t i = 0; i < scene_.pointLights.size(); ++i)
+                push(Kind::PointLight, scene_.pointLights[i].id, int(i));
+            selection_.set(std::move(refs));
         };
         add(std::move(c));
+        shortcuts_.registerDefault("select.all",
+                                   ShortcutBinding{ GLFW_KEY_A, true });
+    }
+    {
+        Command c;
+        c.id = "select.clear";
+        c.title = "Clear selection";
+        c.category = "Select";
+        c.keywords = "deselect escape cancel exit tool";
+        c.tooltip = "Exits the active tool first, then clears the selection.";
+        // The Esc cascade (§7.1): active tool first (the measurement plugin
+        // consumes Esc itself before this runs), then the selection.
+        c.enabled = [this] {
+            return clipPlaneTool_.isEnabled() || !selection_.empty();
+        };
+        c.action = [this] { escapeAction(); };
+        add(std::move(c));
+        shortcuts_.registerDefault("select.clear",
+                                   ShortcutBinding{ GLFW_KEY_ESCAPE });
     }
 
     // ── View: panel toggles (checkable; state lives in Settings::Ui) ─────
@@ -2697,6 +3134,18 @@ void Application::registerCommands() {
     }
     {
         Command c;
+        c.id = "view.frame_selected";
+        c.title = "Frame selection";
+        c.category = "View";
+        c.keywords = "focus zoom fit look at";
+        c.enabled = [this] { return !selection_.empty(); };
+        c.action = [this] { frameItems(selection_.items()); };
+        add(std::move(c));
+        shortcuts_.registerDefault("view.frame_selected",
+                                   ShortcutBinding{ GLFW_KEY_F });
+    }
+    {
+        Command c;
         c.id = "view.add_viewport";
         c.title = "Add viewport";
         c.category = "View";
@@ -2738,6 +3187,10 @@ void Application::dispatchShortcuts() {
         if (binding.ctrl != io.KeyCtrl || binding.alt != io.KeyAlt ||
             binding.shift != io.KeyShift)
             return; // exact modifier match (Ctrl+Z must not fire Ctrl+Shift+Z)
+        // Keys a plugin consumed this frame stay with the plugin.
+        for (int consumed : pluginConsumedKeys_)
+            if (consumed == binding.keyCode)
+                return;
         const ImGuiKey key = imGuiKeyFromGlfw(binding.keyCode);
         if (key == ImGuiKey_None || !ImGui::IsKeyPressed(key, false))
             return;
@@ -2757,8 +3210,8 @@ void Application::centerViewOnCursor() {
         cam.StartCenteringAnimation(cursorManager_.getCursorPosition());
         return;
     }
-    if (selection_.model >= 0 && selection_.model < int(scene_.models.size())) {
-        guiServices_->focusCameraOn(selection_.model);
+    if (!selection_.empty()) {
+        frameItems(selection_.items());
         return;
     }
     if (scene_.worldBoundsMax.x >= scene_.worldBoundsMin.x)
@@ -2811,16 +3264,123 @@ int Application::currentMods() const {
     return mods;
 }
 
-// ---- Transform gizmo glue (Phase 6b) ----
+// ---- Selection shims (index-based consumers over the multi-selection) ----
+
+int Application::selectedModelIndex() const {
+    const scene::SceneItemRef ref = selection_.primary();
+    if (ref.kind != scene::SceneItemRef::Kind::Model &&
+        ref.kind != scene::SceneItemRef::Kind::Mesh)
+        return -1;
+    return scene_.modelIndexOf(ref.id);
+}
+
+int Application::selectedMeshIndex() const {
+    scene::SceneItemRef ref = selection_.primary();
+    if (ref.kind != scene::SceneItemRef::Kind::Mesh)
+        return -1;
+    return scene_.resolve(ref) ? ref.sub : -1;
+}
+
+void Application::setSelectionIndices(int model, int mesh) {
+    if (model < 0 || model >= int(scene_.models.size())) {
+        selection_.clear();
+        return;
+    }
+    scene::SceneItemRef ref;
+    ref.id = scene_.models[model].id;
+    ref.index = model;
+    if (mesh >= 0 && mesh < int(scene_.models[model].meshes.size())) {
+        ref.kind = scene::SceneItemRef::Kind::Mesh;
+        ref.sub = mesh;
+    } else {
+        ref.kind = scene::SceneItemRef::Kind::Model;
+    }
+    selection_.selectOne(ref);
+}
+
+// ---- Transform gizmo glue (Phase 6b; multi-select since Pass 1) ----
+
+// The transform pointers behind a ref (nullptr pos = not transformable):
+// models (a Mesh ref edits its whole model — meshes have no transform of
+// their own), point clouds, and point lights (translate only). Locked
+// objects return not-transformable.
+namespace {
+struct TransformPtrs {
+    glm::vec3* pos = nullptr;
+    glm::vec3* rot = nullptr;
+    glm::vec3* scale = nullptr;
+    bool valid() const { return pos != nullptr; }
+};
+
+TransformPtrs transformPtrsFor(scene::Scene& scene, scene::SceneItemRef ref) {
+    TransformPtrs out;
+    if (!scene.resolve(ref))
+        return out;
+    using Kind = scene::SceneItemRef::Kind;
+    if (ref.kind == Kind::Model || ref.kind == Kind::Mesh) {
+        scene::Model& m = scene.models[ref.index];
+        if (m.locked || scene.groupChainLocked(m.groupId))
+            return out;
+        out.pos = &m.position;
+        out.rot = &m.rotationDeg;
+        out.scale = &m.scale;
+    } else if (ref.kind == Kind::PointCloud) {
+        Engine::PointCloud& pc = scene.pointClouds[ref.index];
+        if (pc.locked || scene.groupChainLocked(pc.groupId))
+            return out;
+        out.pos = &pc.position;
+        out.rot = &pc.rotation;
+        out.scale = &pc.scale;
+    } else if (ref.kind == Kind::PointLight) {
+        scene::PointLight& l = scene.pointLights[ref.index];
+        if (l.locked || scene.groupChainLocked(l.groupId))
+            return out;
+        out.pos = &l.position; // translate only
+    }
+    return out;
+}
+} // namespace
 
 void Application::bindGizmoToSelection() {
-    if (selection_.model >= 0 && selection_.model < int(scene_.models.size())) {
-        scene::Model& model = scene_.models[selection_.model];
-        // The gizmo edits the whole Model's transform (a sub-mesh selection is a
-        // highlight/material target, not a separate transform in scene::Model).
-        gizmo_.setTarget(&model.position, &model.rotationDeg, &model.scale);
-    } else {
+    // The gizmo binds to the PRIMARY selected transformable.
+    const scene::SceneItemRef ref = selection_.primary();
+    const TransformPtrs t = transformPtrsFor(scene_, ref);
+    if (t.valid())
+        gizmo_.setTarget(t.pos, t.rot, t.scale);
+    else
         gizmo_.clearTarget();
+}
+
+void Application::applyGizmoDeltaToSelection() {
+    // Entry 0 of the drag snapshot is the primary (the object the gizmo edits
+    // in place); mirror its delta onto every other snapshot entry. Rotation
+    // and scale apply about each object's OWN pivot — simple, predictable,
+    // and exactly right for translate (the dominant multi-select edit).
+    if (gizmoUndo_.size() < 2)
+        return;
+    const TransformPtrs primary = transformPtrsFor(scene_, gizmoUndo_[0].ref);
+    if (!primary.valid())
+        return;
+    const glm::vec3 dPos = *primary.pos - gizmoUndo_[0].pos;
+    const glm::vec3 dRot =
+        primary.rot ? (*primary.rot - gizmoUndo_[0].rot) : glm::vec3(0.0f);
+    glm::vec3 scaleRatio(1.0f);
+    if (primary.scale) {
+        for (int a = 0; a < 3; ++a) {
+            const float before = gizmoUndo_[0].scale[a];
+            if (std::abs(before) > 1e-8f)
+                scaleRatio[a] = (*primary.scale)[a] / before;
+        }
+    }
+    for (size_t i = 1; i < gizmoUndo_.size(); ++i) {
+        const TransformPtrs t = transformPtrsFor(scene_, gizmoUndo_[i].ref);
+        if (!t.valid())
+            continue;
+        *t.pos = gizmoUndo_[i].pos + dPos;
+        if (t.rot)
+            *t.rot = gizmoUndo_[i].rot + dRot;
+        if (t.scale)
+            *t.scale = gizmoUndo_[i].scale * scaleRatio;
     }
 }
 
@@ -2837,47 +3397,84 @@ void Application::updateGizmoBinding() {
 }
 
 void Application::beginGizmoUndo() {
-    gizmoUndoModel_ = selection_.model;
-    if (gizmoUndoModel_ >= 0 && gizmoUndoModel_ < int(scene_.models.size())) {
-        const scene::Model& model = scene_.models[gizmoUndoModel_];
-        gizmoUndoPos_ = model.position;
-        gizmoUndoRot_ = model.rotationDeg;
-        gizmoUndoScale_ = model.scale;
-    }
+    // Snapshot EVERY selected transformable at drag start; entry 0 is the
+    // primary (the object the gizmo edits directly).
+    gizmoUndo_.clear();
+    auto capture = [&](scene::SceneItemRef ref) {
+        // A mesh selection edits its whole model's transform — normalize so a
+        // model and one of its meshes dedupe to one snapshot entry.
+        if (ref.kind == scene::SceneItemRef::Kind::Mesh) {
+            ref.kind = scene::SceneItemRef::Kind::Model;
+            ref.sub = -1;
+        }
+        for (const GizmoSnapshot& snap : gizmoUndo_)
+            if (snap.ref == ref)
+                return;
+        const TransformPtrs t = transformPtrsFor(scene_, ref);
+        if (!t.valid())
+            return;
+        GizmoSnapshot snap;
+        snap.ref = ref;
+        snap.pos = *t.pos;
+        if (t.rot) snap.rot = *t.rot;
+        if (t.scale) snap.scale = *t.scale;
+        gizmoUndo_.push_back(snap);
+    };
+    capture(selection_.primary());
+    for (const scene::SceneItemRef& ref : selection_.items())
+        capture(ref);
 }
 
 void Application::finishGizmoUndo() {
-    const int idx = gizmoUndoModel_;
-    if (idx < 0 || idx >= int(scene_.models.size()))
+    // Whole drag = ONE undo entry covering every selected transformable
+    // (contract C4); records resolve by ObjectId so later adds/deletes can't
+    // corrupt the replay (C3).
+    if (gizmoUndo_.empty())
         return;
-    const scene::Model& model = scene_.models[idx];
-    const glm::vec3 beforePos = gizmoUndoPos_, beforeRot = gizmoUndoRot_,
-                    beforeScale = gizmoUndoScale_;
-    const glm::vec3 afterPos = model.position, afterRot = model.rotationDeg,
-                    afterScale = model.scale;
-    if (beforePos == afterPos && beforeRot == afterRot && beforeScale == afterScale)
+    struct Delta {
+        scene::SceneItemRef ref;
+        glm::vec3 beforePos, beforeRot, beforeScale;
+        glm::vec3 afterPos, afterRot, afterScale;
+    };
+    std::vector<Delta> deltas;
+    for (const GizmoSnapshot& snap : gizmoUndo_) {
+        const TransformPtrs t = transformPtrsFor(scene_, snap.ref);
+        if (!t.valid())
+            continue;
+        Delta d;
+        d.ref = snap.ref;
+        d.beforePos = snap.pos;
+        d.beforeRot = snap.rot;
+        d.beforeScale = snap.scale;
+        d.afterPos = *t.pos;
+        d.afterRot = t.rot ? *t.rot : snap.rot;
+        d.afterScale = t.scale ? *t.scale : snap.scale;
+        if (d.beforePos != d.afterPos || d.beforeRot != d.afterRot ||
+            d.beforeScale != d.afterScale)
+            deltas.push_back(d);
+    }
+    gizmoUndo_.clear();
+    if (deltas.empty())
         return; // a click with no drag — nothing changed, nothing to record
 
-    // Whole drag = one undo entry. Lambdas re-validate the index (the scene can
-    // change between record and replay).
+    const std::string label =
+        deltas.size() == 1
+            ? "Transform object"
+            : "Transform " + std::to_string(deltas.size()) + " objects";
+    auto apply = [this](const std::vector<Delta>& all, bool before) {
+        for (const Delta& d : all) {
+            const TransformPtrs t = transformPtrsFor(scene_, d.ref);
+            if (!t.valid())
+                continue;
+            *t.pos = before ? d.beforePos : d.afterPos;
+            if (t.rot) *t.rot = before ? d.beforeRot : d.afterRot;
+            if (t.scale) *t.scale = before ? d.beforeScale : d.afterScale;
+        }
+        scene_.computeWorldBounds();
+    };
     undo_.record(
-        "Transform " + model.name,
-        [this, idx, beforePos, beforeRot, beforeScale]() {
-            if (idx < int(scene_.models.size())) {
-                scene::Model& m = scene_.models[idx];
-                m.position = beforePos;
-                m.rotationDeg = beforeRot;
-                m.scale = beforeScale;
-            }
-        },
-        [this, idx, afterPos, afterRot, afterScale]() {
-            if (idx < int(scene_.models.size())) {
-                scene::Model& m = scene_.models[idx];
-                m.position = afterPos;
-                m.rotationDeg = afterRot;
-                m.scale = afterScale;
-            }
-        });
+        label, [apply, deltas]() { apply(deltas, true); },
+        [apply, deltas]() { apply(deltas, false); });
 }
 
 } // namespace app

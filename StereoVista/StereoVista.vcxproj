@@ -401,6 +401,7 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
   <ItemGroup>
     <!-- Vulkan application (active) -->
     <ClCompile Include="src\App\Application.cpp" />
+    <ClCompile Include="src\App\SceneOps.cpp" />
     <ClCompile Include="src\App\main.cpp" />
     <ClCompile Include="src\Platform\Window.cpp" />
     <ClCompile Include="src\Platform\FileMapping.cpp" />
@@ -428,6 +429,7 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClCompile Include="src\Scene\Primitives.cpp" />
     <ClCompile Include="src\Scene\ModelImporter.cpp" />
     <ClCompile Include="src\Scene\SceneLoader.cpp" />
+    <ClCompile Include="src\Scene\SceneDocument.cpp" />
     <ClCompile Include="src\Scene\ScenePicking.cpp" />
     <ClCompile Include="src\Scene\I3SSceneLayer.cpp" />
     <ClCompile Include="src\Engine\Screenshot.cpp" />
@@ -570,9 +572,6 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClCompile Include="src\Gui\CursorPreview3D.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
-    <ClCompile Include="src\Engine\OctreePointCloudManager.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
     <ClCompile Include="src\Engine\XRSession.cpp" />
     <ClCompile Include="src\Engine\ShortcutManager.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
@@ -611,6 +610,9 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClCompile Include="src\Plugins\Examples\CrosshairPlugin.cpp" />
     <ClCompile Include="src\Gui\GuiSystem.cpp" />
     <ClCompile Include="src\Gui\UiKit.cpp" />
+    <ClCompile Include="src\Gui\Outliner.cpp" />
+    <ClCompile Include="src\Gui\Inspector.cpp" />
+    <ClCompile Include="src\Gui\inspectors\LayerInspector.cpp" />
     <ClCompile Include="src\Gui\Preferences.cpp" />
     <ClCompile Include="src\Gui\panels\ScenePanel.cpp" />
     <ClCompile Include="src\Gui\panels\InspectorPanel.cpp" />
@@ -736,6 +738,8 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClInclude Include="headers\Renderer\passes\SkyboxPass.h" />
     <ClInclude Include="headers\Renderer\passes\OverlayPass.h" />
     <ClInclude Include="headers\Scene\Scene.h" />
+    <ClInclude Include="headers\Scene\SceneDocument.h" />
+    <ClInclude Include="headers\Scene\SceneItems.h" />
     <ClInclude Include="headers\libs\spirv_reflect\spirv_reflect.h" />
     <ClInclude Include="headers\libs\volk\volk.h" />
     <ClInclude Include="headers\libs\vma\vk_mem_alloc.h" />
@@ -939,6 +943,8 @@ IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     <ClInclude Include="headers\Gui\GuiSystem.h" />
     <ClInclude Include="headers\Gui\Panels.h" />
     <ClInclude Include="headers\Gui\UiKit.h" />
+    <ClInclude Include="headers\Gui\Outliner.h" />
+    <ClInclude Include="headers\Gui\Inspector.h" />
     <ClInclude Include="headers\Gui\Preferences.h" />
   </ItemGroup>
   <ItemGroup>

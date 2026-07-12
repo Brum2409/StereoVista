@@ -51,7 +51,7 @@ glm::vec3 ClipPlaneTool::normalFromEuler(const glm::vec3& eulerDeg) {
 
 // ── Selection ────────────────────────────────────────────────────────────────
 bool ClipPlaneTool::validIndex(int index) const {
-    return index >= 0 && index < static_cast<int>(m_planes.size());
+    return index >= 0 && index < static_cast<int>(planesRef().size());
 }
 
 bool ClipPlaneTool::hasActivePlane() const { return validIndex(m_activeIndex); }
@@ -61,14 +61,14 @@ void ClipPlaneTool::setActiveIndex(int index) {
 }
 
 void ClipPlaneTool::clampActiveIndex() {
-    if (m_planes.empty()) { m_activeIndex = -1; return; }
-    if (m_activeIndex >= static_cast<int>(m_planes.size()))
-        m_activeIndex = static_cast<int>(m_planes.size()) - 1;
+    if (planesRef().empty()) { m_activeIndex = -1; return; }
+    if (m_activeIndex >= static_cast<int>(planesRef().size()))
+        m_activeIndex = static_cast<int>(planesRef().size()) - 1;
 }
 
 // ── Creation / editing ───────────────────────────────────────────────────────
 int ClipPlaneTool::addPlane(const glm::vec3& position, const glm::vec3& normal) {
-    if (static_cast<int>(m_planes.size()) >= Engine::MAX_CLIP_PLANES) {
+    if (static_cast<int>(planesRef().size()) >= Engine::MAX_CLIP_PLANES) {
         std::cerr << "[ClipPlaneTool] clip-plane budget full ("
                   << Engine::MAX_CLIP_PLANES << ")\n";
         return -1;
@@ -81,12 +81,12 @@ int ClipPlaneTool::addPlane(const glm::vec3& position, const glm::vec3& normal) 
     p.enabled = true;
     p.name = "Plane " + std::to_string(++m_nameCounter);
 
-    m_planes.push_back(p);
-    const int idx = static_cast<int>(m_planes.size()) - 1;
+    planesRef().push_back(p);
+    const int idx = static_cast<int>(planesRef().size()) - 1;
     m_activeIndex = idx;
 
     if (m_undo) {
-        std::vector<Engine::ClipPlane>* planes = &m_planes;
+        std::vector<Engine::ClipPlane>* planes = &planesRef();
         const Engine::ClipPlane val = p;
         m_undo->record(
             "Add clip plane",
@@ -110,9 +110,9 @@ int ClipPlaneTool::addAxisAlignedPlane(int axis, const glm::vec3& center) {
 
 void ClipPlaneTool::deletePlane(int index) {
     if (!validIndex(index)) return;
-    std::vector<Engine::ClipPlane>* planes = &m_planes;
-    const Engine::ClipPlane val = m_planes[index];
-    m_planes.erase(m_planes.begin() + index);
+    std::vector<Engine::ClipPlane>* planes = &planesRef();
+    const Engine::ClipPlane val = planesRef()[index];
+    planesRef().erase(planesRef().begin() + index);
     clampActiveIndex();
 
     if (m_undo) {
@@ -131,10 +131,10 @@ void ClipPlaneTool::deletePlane(int index) {
 
 void ClipPlaneTool::flipNormal(int index) {
     if (!validIndex(index)) return;
-    m_planes[index].normal = -m_planes[index].normal;
+    planesRef()[index].normal = -planesRef()[index].normal;
 
     if (m_undo) {
-        std::vector<Engine::ClipPlane>* planes = &m_planes;
+        std::vector<Engine::ClipPlane>* planes = &planesRef();
         auto flip = [planes, index]() {
             if (index < static_cast<int>(planes->size()))
                 (*planes)[index].normal = -(*planes)[index].normal;
@@ -145,14 +145,14 @@ void ClipPlaneTool::flipNormal(int index) {
 
 void ClipPlaneTool::nudgeActive(float distance) {
     if (!hasActivePlane()) return;
-    Engine::ClipPlane& p = m_planes[m_activeIndex];
+    Engine::ClipPlane& p = planesRef()[m_activeIndex];
     p.position += p.unitNormal() * distance;
 }
 
 // ── FrameSubmission integration ──────────────────────────────────────────────
 int ClipPlaneTool::collectEnabledPlanes(glm::vec4 out[]) const {
     int n = 0;
-    for (const Engine::ClipPlane& p : m_planes) {
+    for (const Engine::ClipPlane& p : planesRef()) {
         if (!p.enabled) continue;
         if (n >= Engine::MAX_CLIP_PLANES) break;
         out[n++] = p.packed();
@@ -163,7 +163,7 @@ int ClipPlaneTool::collectEnabledPlanes(glm::vec4 out[]) const {
 // ── Gizmo glue ───────────────────────────────────────────────────────────────
 bool ClipPlaneTool::bindGizmo(TransformGizmo& gizmo) {
     if (!hasActivePlane()) return false;
-    Engine::ClipPlane& p = m_planes[m_activeIndex];
+    Engine::ClipPlane& p = planesRef()[m_activeIndex];
     // Refresh the Euler scratch from the normal while not dragging so the gizmo's
     // rotation handles show the plane's true orientation.
     if (!gizmo.isDragging())
@@ -174,14 +174,14 @@ bool ClipPlaneTool::bindGizmo(TransformGizmo& gizmo) {
 
 void ClipPlaneTool::syncActiveNormalFromGizmo() {
     if (!hasActivePlane()) return;
-    m_planes[m_activeIndex].normal = normalFromEuler(m_gizmoEuler);
+    planesRef()[m_activeIndex].normal = normalFromEuler(m_gizmoEuler);
 }
 
 void ClipPlaneTool::captureGizmoUndo() {
     if (!hasActivePlane()) { m_undoIndex = -1; return; }
     m_undoIndex = m_activeIndex;
-    m_undoPos = m_planes[m_activeIndex].position;
-    m_undoNormal = m_planes[m_activeIndex].normal;
+    m_undoPos = planesRef()[m_activeIndex].position;
+    m_undoNormal = planesRef()[m_activeIndex].normal;
 }
 
 void ClipPlaneTool::recordGizmoUndo() {
@@ -189,12 +189,12 @@ void ClipPlaneTool::recordGizmoUndo() {
     const int idx = m_undoIndex;
     m_undoIndex = -1;
     const glm::vec3 beforePos = m_undoPos, beforeN = m_undoNormal;
-    const glm::vec3 afterPos = m_planes[idx].position;
-    const glm::vec3 afterN = m_planes[idx].normal;
+    const glm::vec3 afterPos = planesRef()[idx].position;
+    const glm::vec3 afterN = planesRef()[idx].normal;
     if (beforePos == afterPos && beforeN == afterN) return; // no-op drag
     if (!m_undo) return;
 
-    std::vector<Engine::ClipPlane>* planes = &m_planes;
+    std::vector<Engine::ClipPlane>* planes = &planesRef();
     m_undo->record(
         "Edit clip plane",
         [planes, idx, beforePos, beforeN]() {
@@ -213,11 +213,11 @@ void ClipPlaneTool::recordGizmoUndo() {
 
 // ── Overlay rendering ─────────────────────────────────────────────────────────
 void ClipPlaneTool::appendTo(OverlayDrawList& list) const {
-    if (!m_enabled || m_planes.empty()) return;
+    if (!m_enabled || planesRef().empty()) return;
     const float S = displaySize;
 
-    for (int i = 0; i < static_cast<int>(m_planes.size()); ++i) {
-        const Engine::ClipPlane& p = m_planes[i];
+    for (int i = 0; i < static_cast<int>(planesRef().size()); ++i) {
+        const Engine::ClipPlane& p = planesRef()[i];
         const bool active = (i == m_activeIndex);
 
         const glm::vec3 n = p.unitNormal();

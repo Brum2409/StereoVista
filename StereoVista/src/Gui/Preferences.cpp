@@ -124,6 +124,10 @@ json toJson(const Settings& s) {
     render["wireframe"] = s.render.wireframe;
     render["asyncCompute"] = s.render.asyncCompute;
 
+    json& files = doc["files"];
+    files["openSceneMode"] = s.files.openSceneMode;
+    files["recentScenes"] = s.files.recentScenes;
+
     json& ui = doc["ui"];
     ui["theme"] = s.ui.theme;
     ui["guiScale"] = s.ui.guiScale;
@@ -138,6 +142,18 @@ json toJson(const Settings& s) {
     panels["clipPlanes"] = s.ui.panels.clipPlanes;
     panels["diagnostics"] = s.ui.panels.diagnostics;
     panels["slpk"] = s.ui.panels.slpk;
+    // Inspector per-kind section collapsed state (UI redesign Pass 2 §8).
+    json& insp = ui["inspector"];
+    insp["transform"] = s.ui.inspector.transform;
+    insp["material"] = s.ui.inspector.material;
+    insp["textures"] = s.ui.inspector.textures;
+    insp["display"] = s.ui.inspector.display;
+    insp["info"] = s.ui.inspector.info;
+    insp["exportSection"] = s.ui.inspector.exportSection;
+    insp["lightProps"] = s.ui.inspector.lightProps;
+    insp["sun"] = s.ui.inspector.sun;
+    insp["sky"] = s.ui.inspector.sky;
+    insp["layer"] = s.ui.inspector.layer;
 
     return doc;
 }
@@ -218,6 +234,15 @@ void fromJson(const json& doc, Settings& s) {
         get(*render, "wireframe", s.render.wireframe);
         get(*render, "asyncCompute", s.render.asyncCompute);
     }
+    if (const json* files = section(doc, "files")) {
+        get(*files, "openSceneMode", s.files.openSceneMode);
+        s.files.openSceneMode = std::clamp(s.files.openSceneMode, 0, 2);
+        get(*files, "recentScenes", s.files.recentScenes);
+        if (s.files.recentScenes.size() >
+            static_cast<size_t>(Settings::Files::kMaxRecentScenes))
+            s.files.recentScenes.resize(
+                static_cast<size_t>(Settings::Files::kMaxRecentScenes));
+    }
     if (const json* ui = section(doc, "ui")) {
         get(*ui, "theme", s.ui.theme);
         s.ui.theme = std::max(s.ui.theme, 0); // upper bound clamped at apply
@@ -234,6 +259,18 @@ void fromJson(const json& doc, Settings& s) {
             get(*panels, "clipPlanes", s.ui.panels.clipPlanes);
             get(*panels, "diagnostics", s.ui.panels.diagnostics);
             get(*panels, "slpk", s.ui.panels.slpk);
+        }
+        if (const json* insp = section(*ui, "inspector")) {
+            get(*insp, "transform", s.ui.inspector.transform);
+            get(*insp, "material", s.ui.inspector.material);
+            get(*insp, "textures", s.ui.inspector.textures);
+            get(*insp, "display", s.ui.inspector.display);
+            get(*insp, "info", s.ui.inspector.info);
+            get(*insp, "exportSection", s.ui.inspector.exportSection);
+            get(*insp, "lightProps", s.ui.inspector.lightProps);
+            get(*insp, "sun", s.ui.inspector.sun);
+            get(*insp, "sky", s.ui.inspector.sky);
+            get(*insp, "layer", s.ui.inspector.layer);
         }
     }
 }

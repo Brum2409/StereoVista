@@ -5,6 +5,8 @@
 #include "Plugins/MeasurementPlugin.h"
 #include "Plugins/PluginRegistry.h"
 
+#include "Scene/Scene.h"
+
 #include "imgui/imgui.h"
 #include <GLFW/glfw3.h>
 #include <portable-file-dialogs.h>
@@ -13,6 +15,13 @@
 #include <string>
 
 namespace Plugins {
+
+void MeasurementPlugin::onRegister(PluginContext& ctx) {
+    // Measurements live on the scene since UI redesign Pass 1 (they are scene
+    // objects: Outliner rows, ObjectIds, v3 serialization). The tool keeps
+    // owning the interaction; the data is the scene's.
+    m_tool.bindStorage(&ctx.scene().measurements);
+}
 
 PluginInfo MeasurementPlugin::info() const {
     PluginInfo meta;
@@ -139,6 +148,18 @@ bool MeasurementPlugin::onMouseButton(PluginContext& ctx, int button, int action
 bool MeasurementPlugin::onKey(PluginContext& /*ctx*/, int key, int /*scancode*/,
                               int action, int /*mods*/) {
     if (action != GLFW_PRESS) return false;
+
+    // Esc exits the active tool before anything else gets it (§7.1: tool
+    // first, selection second — the host suppresses the shortcut dispatch for
+    // a key a plugin consumed, so this Esc never also clears the selection).
+    if (key == GLFW_KEY_ESCAPE && m_tool.isEnabled()) {
+        if (m_tool.hasActive())
+            m_tool.cancelActive();
+        else
+            m_tool.setEnabled(false);
+        return true;
+    }
+
     if (!(m_tool.isEnabled() && m_tool.hasActive())) return false;
 
     if (key == GLFW_KEY_ENTER || key == GLFW_KEY_KP_ENTER) {
