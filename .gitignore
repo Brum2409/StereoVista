@@ -114,3 +114,7 @@ StereoVista/imgui.ini
 !/StereoVista/testdata/make_synthetic_slpk.py
 !/StereoVista/testdata/make_ktx2_testdata.py
 !/StereoVista/testdata/make_lepcc_blobs.cpp
+
+# Snapshot scene files written at runtime (UI redesign Pass 3)
+snapshots/
+StereoVista/snapshots/
