@@ -261,8 +261,15 @@ requests. Mono compiles to the same work as before (view loop of 1).
 
 ## H. Deferred GI / post-FX — re-add natively (was "Phase 9")
 
-Deleted during the migration (git history is the reference); re-implement with modern
-Vulkan rather than porting the GL SSBO/FBO versions:
+> **Superseded by a dedicated roadmap:** the full researched, phased,
+> multi-agent build-out — IBL, GTAO, SSR, procedural sky + volumetric clouds +
+> froxel fog, and the RT tier (LOD-driven acceleration structures for
+> photogrammetry, ray-traced shadows/AO/reflections, DDGI) with a hardware
+> fallback ladder — now lives in **`docs/RENDERING_ROADMAP.md`**. Do rendering
+> work from that plan; the list below stays as the original gap analysis.
+
+Re-implement with modern native Vulkan (inline `ray_query`, compute, async
+builds) rather than any legacy SSBO/FBO approach:
 - ✳️ **SSAO** and **Bloom/HDR bloom** as Vulkan **compute** passes.
 - ✳️ **Ray-traced shadows / AO / reflections** via **`VK_KHR_ray_query`** from inside
   the existing fragment/compute shaders (fall back to shadow maps where RT is absent)
