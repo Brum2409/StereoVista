@@ -223,30 +223,41 @@ bindless textures, per-object data via push constants / BDA, `.spv` verified in
 `$(OutDir)`, every new source wired into `.vcxproj` + `.filters`. Nothing above
 the RHI includes a Vulkan header except the new AS manager (which lives in RHI).
 
-### C6 — Vendor neutrality (hard constraint)
-The RT tier is built **only** on cross-vendor Khronos extensions —
-`VK_KHR_acceleration_structure`, `VK_KHR_ray_query`, `VK_KHR_deferred_host_operations`,
-`bufferDeviceAddress` — which run on **AMD (RDNA2+), Intel Arc, and NVIDIA RTX**
-under any conformant driver. **No feature may hard-depend on a vendor-exclusive
-extension or API** (no `VK_NV_*` / `VK_AMD_*` ray-tracing paths, no NVAPI, no
-tensor-core / cooperative-vector neural paths, no Shader Execution Reordering,
-no Opacity/Displacement Micromaps). The RT-pipeline extension
-(`VK_KHR_ray_tracing_pipeline`) is deliberately *not* used — inline `ray_query`
-only, which has the broadest driver coverage.
+### C6 — Cross-vendor baseline + optional vendor accelerators (hard constraint)
+**The baseline must run, and be actively optimized, on ALL GPU vendors — AMD
+(RDNA2+), Intel Arc, and NVIDIA RTX.** It is built only on cross-vendor Khronos
+extensions — `VK_KHR_acceleration_structure`, `VK_KHR_ray_query`,
+`VK_KHR_deferred_host_operations`, `bufferDeviceAddress` — using **inline
+`ray_query`** (the RT-pipeline extension is deliberately not used; ray_query has
+the broadest driver coverage). Every feature must run correctly *and perform well*
+through this baseline **with no vendor-exclusive extension as a hard dependency**;
+the app is fully functional and looks correct on a GPU that exposes only the KHR
+set. "Optimized for all cards" is a requirement, not an aspiration — profile and
+tune the baseline per-vendor (subgroup width, wave/subgroup ops, memory access
+patterns), not just on NVIDIA.
+
+**Vendor-specific features are welcome — as optional, runtime-detected
+accelerators, never as the only path.** If a card offers more (NVIDIA Shader
+Execution Reordering, Opacity/Displacement Micromaps, the RTXGI v2 Neural Radiance
+Cache, cooperative-vector / tensor paths; AMD or Intel equivalents), **enable it as
+a progressive-enhancement fast-path or quality boost behind an identical
+cross-vendor fallback**, detected at runtime (`vkEnumerateDeviceExtensionProperties`
+/ feature query) and defaulting safely off where absent. The contract is only:
+(a) the KHR baseline alone looks correct and runs well on every vendor, and (b) no
+vendor path is ever *required*. So NVIDIA users can get extra speed/quality while
+AMD/Intel users still get the full feature — that asymmetry is fine and expected.
 
 Consequences for the reference implementations (§9): NVIDIA-**authored** libraries
-(NRD, RTXGI-DDGI) are **fully vendored and integrated as the primary path** — this
-is safe because their cores are **plain SPIR-V compute + standard KHR `ray_query`
-and genuinely run cross-vendor** (NRD's ReBLUR/ReLAX/SIGMA and RTXGI-DDGI's
-`DDGIVolume` have no hard NVIDIA-hardware dependency). The **only** things
-disallowed as hard dependencies are the handful of truly vendor-locked
-sub-features — RTXGI **v2**'s Neural Radiance Cache (tensor/cooperative-vector),
-Shader Execution Reordering, Opacity/Displacement Micromaps, NVAPI — leave those
-off (or behind an optional, runtime-detected accelerator with an identical KHR
-fallback). A homegrown replacement (e.g. SVGF) is only the plan if a needed
-library genuinely can't be built cross-vendor. **Acceptance requires each
-integrated library, and the RT tier as a whole, to run and look correct on at
-least one AMD *and* one NVIDIA GPU** (Intel Arc too where available).
+(NRD, RTXGI-DDGI) are **fully vendored and integrated as the primary path** — safe
+because their cores are plain SPIR-V compute + standard KHR `ray_query` and
+genuinely run cross-vendor (NRD's ReBLUR/ReLAX/SIGMA, RTXGI-DDGI's `DDGIVolume`
+have no hard NVIDIA-hardware dependency). Their optional vendor sub-features (RTXGI
+v2's Neural Radiance Cache, any NRD vendor fast-paths) may be **exposed as opt-in
+accelerators** on capable cards behind the cross-vendor default. A homegrown
+replacement (e.g. SVGF) is the plan only if a needed library's *baseline* can't be
+built cross-vendor. **Acceptance requires each integrated library, and the RT tier
+as a whole, to run, look correct, and perform well on at least one AMD *and* one
+NVIDIA GPU** (Intel Arc too where available).
 
 ---
 
@@ -473,15 +484,16 @@ reverse-Z, multiview), then optimize. Check each license before vendoring.
 | **SSR** | [Filament](https://github.com/google/filament) stochastic SSR / standard Hi-Z trace | Roughness importance sampling; fade to IBL. |
 | **RT AS + ray_query** | [nvpro-samples/vk_raytracing_tutorial_KHR](https://github.com/nvpro-samples/vk_raytracing_tutorial_KHR) · [AnKi minimalist AS-only RT](https://anki3d.org/minimalist-ray-tracing-leveraging-only-acceleration-structures/) | BLAS/TLAS build + compaction + inline ray_query patterns. |
 | **RT denoise** | [NVIDIA-RTX/NRD](https://github.com/NVIDIA-RTX/NRD) · [nvpro-samples/vk_denoise_nrd](https://github.com/nvpro-samples/vk_denoise_nrd) | **Fully vendor + integrate** ReBLUR (AO/refl/GI) + SIGMA (shadows). Cross-vendor SPIR-V compute; verify on AMD (C6). Homegrown SVGF only if it hits a wall. |
-| **DDGI** | [NVIDIAGameWorks/RTXGI-DDGI](https://github.com/NVIDIAGameWorks/RTXGI-DDGI) (`DDGIVolume`, Vulkan) · [RTXGI v2](https://github.com/NVIDIA-RTX/RTXGI) | **Fully vendor + integrate** the `DDGIVolume` + probe-update shaders (standard `ray_query`); add cascades for scale. Skip v2's Neural Radiance Cache (NVIDIA-locked) per C6. |
+| **DDGI** | [NVIDIAGameWorks/RTXGI-DDGI](https://github.com/NVIDIAGameWorks/RTXGI-DDGI) (`DDGIVolume`, Vulkan) · [RTXGI v2](https://github.com/NVIDIA-RTX/RTXGI) | **Fully vendor + integrate** the `DDGIVolume` + probe-update shaders (standard `ray_query`); add cascades for scale. v2's Neural Radiance Cache = optional NVIDIA-only accelerator behind the cross-vendor DDGI default (C6). |
 | **Meshlets/quantization (opt.)** | [meshoptimizer](https://github.com/zeux/meshoptimizer) | If mesh LOD/vertex-cache work helps AS build cost. |
 
 *Vendor neutrality (C6):* several libraries are NVIDIA-authored. That is fine —
 we **fully vendor and integrate them** because their cores are cross-vendor SPIR-V
 compute / standard KHR `ray_query`; we never take a proprietary extension as a
-hard dependency, and skip the few genuinely vendor-locked sub-features. Everything
-here targets AMD, Intel, and NVIDIA equally; acceptance verifies on AMD **and**
-NVIDIA.
+hard dependency, and expose vendor-locked sub-features **only as optional,
+runtime-detected accelerators behind the cross-vendor default** (so a stronger
+card can do more). Everything here targets AMD, Intel, and NVIDIA equally, and is
+optimized for all of them; acceptance verifies on AMD **and** NVIDIA.
 
 *Future direction (not v1):* ReSTIR DI/GI (Ouyang et al., HPG 2021,
 [paper](https://d1qx31qr3h6wln.cloudfront.net/publications/ReSTIR%20GI.pdf)) for
