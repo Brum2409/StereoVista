@@ -17,15 +17,18 @@
 > stereo, bindless, BDA, async compute). When an agent changes the plan, it
 > updates the Status Board (§10) and this doc.
 >
-> **Implementation philosophy — copy proven code.** Every work package names a
-> canonical open-source reference implementation to *adapt*, not invent (§9).
-> Stay close to the reference to minimize risk; port mechanically first, then
-> optimize. Agents are free to **vendor any library** (SDK, shader pack, tool)
-> that fits — but must fully self-contain it: download + extract into
-> `headers/libs/` and/or `dependencies/`, wire include/lib dirs and every source
-> file into `StereoVista.vcxproj` **and** `.vcxproj.filters`, and post-build-copy
-> any runtime DLL, exactly like the existing vendored deps. CI/MSBuild compile
-> only what is listed.
+> **Implementation philosophy — fully integrate proven libraries, don't rewrite.**
+> Every work package names a canonical open-source implementation (§9).
+> **Prefer vendoring and fully wiring up the real library/SDK over
+> reimplementing it** — proven code is lower-risk and better-tested than a
+> from-scratch rewrite. Only hand-roll a system when no suitable library exists,
+> or when the only available one can't be made cross-vendor (C6). When a library
+> *is* adopted, integrate it properly (not a token subset): download + extract
+> into `headers/libs/` and/or `dependencies/`, wire include/lib dirs and every
+> source file into `StereoVista.vcxproj` **and** `.vcxproj.filters`, and
+> post-build-copy any runtime DLL, exactly like the existing vendored deps.
+> CI/MSBuild compile only what is listed. **The one hard gate on every library is
+> C6: it must run on all GPU vendors (AMD, Intel, NVIDIA).**
 >
 > Companion docs: `docs/TODO.md` §H (the gap this replaces), `CLAUDE.md`
 > (architecture + house rules), `docs/SLPK_ROADMAP.md` (the streaming LOD system
@@ -85,7 +88,9 @@ These come from the actual code (`headers/Renderer/*`, `src/RHI/Device.cpp`,
    `ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY` + `SHADER_DEVICE_ADDRESS`**
    usage. We use **inline ray queries** (no RT pipeline / SBT) — enough for
    shadows, AO, reflections, and GI probe updates from existing frag/compute
-   shaders.
+   shaders. These are **cross-vendor Khronos extensions** — the RT tier targets
+   AMD (RDNA2+), Intel Arc, and NVIDIA RTX equally, with **no vendor-proprietary
+   extension as a hard dependency** (contract C6).
 4. **Massive, out-of-core, LOD-streamed geometry** (SLPK/I3S; photogrammetry with
    very high triangle counts). Residency churns every frame with timeline-based
    deferred destruction (`MaterialSystem` graveyard, `MeshBuffer::createForStreaming`).
@@ -217,6 +222,31 @@ shared C++/GLSL structs in ONE `layout(scalar)` header + `static_assert`,
 bindless textures, per-object data via push constants / BDA, `.spv` verified in
 `$(OutDir)`, every new source wired into `.vcxproj` + `.filters`. Nothing above
 the RHI includes a Vulkan header except the new AS manager (which lives in RHI).
+
+### C6 — Vendor neutrality (hard constraint)
+The RT tier is built **only** on cross-vendor Khronos extensions —
+`VK_KHR_acceleration_structure`, `VK_KHR_ray_query`, `VK_KHR_deferred_host_operations`,
+`bufferDeviceAddress` — which run on **AMD (RDNA2+), Intel Arc, and NVIDIA RTX**
+under any conformant driver. **No feature may hard-depend on a vendor-exclusive
+extension or API** (no `VK_NV_*` / `VK_AMD_*` ray-tracing paths, no NVAPI, no
+tensor-core / cooperative-vector neural paths, no Shader Execution Reordering,
+no Opacity/Displacement Micromaps). The RT-pipeline extension
+(`VK_KHR_ray_tracing_pipeline`) is deliberately *not* used — inline `ray_query`
+only, which has the broadest driver coverage.
+
+Consequences for the reference implementations (§9): NVIDIA-**authored** libraries
+(NRD, RTXGI-DDGI) are **fully vendored and integrated as the primary path** — this
+is safe because their cores are **plain SPIR-V compute + standard KHR `ray_query`
+and genuinely run cross-vendor** (NRD's ReBLUR/ReLAX/SIGMA and RTXGI-DDGI's
+`DDGIVolume` have no hard NVIDIA-hardware dependency). The **only** things
+disallowed as hard dependencies are the handful of truly vendor-locked
+sub-features — RTXGI **v2**'s Neural Radiance Cache (tensor/cooperative-vector),
+Shader Execution Reordering, Opacity/Displacement Micromaps, NVAPI — leave those
+off (or behind an optional, runtime-detected accelerator with an identical KHR
+fallback). A homegrown replacement (e.g. SVGF) is only the plan if a needed
+library genuinely can't be built cross-vendor. **Acceptance requires each
+integrated library, and the RT tier as a whole, to run and look correct on at
+least one AMD *and* one NVIDIA GPU** (Intel Arc too where available).
 
 ---
 
@@ -362,8 +392,8 @@ fade at screen edges; no-RT tier now visually complete.
 
 🧪 **Gate:** RT shadows + AO on a ≥50-M-triangle photogrammetry scene *within
 frame budget* on RTX-2060-class (Tracy-verified: AS memory under cap, no build
-spikes); flip the GPU/quality to no-RT and confirm identical scene falls back
-cleanly.
+spikes); **the same scene runs correctly on an AMD RDNA2+ GPU** (C6 cross-vendor
+check); flip the GPU/quality to no-RT and confirm the scene falls back cleanly.
 
 ### Phase 5 — RT reflections 🎯
 - **WP5.1** ray_query reflection rays from the G-buffer; shade hits via the
@@ -393,10 +423,12 @@ scene.
 ## 7. Cross-cutting workstreams (owned continuously)
 
 - **Denoising & temporal library** ⚡ — shared by shadows/AO/reflections/GI/clouds.
-  Either **vendor NVIDIA NRD** (ReBLUR for AO/refl/GI, SIGMA for shadows; Vulkan
-  integration via `nvpro-samples/vk_denoise_nrd`) or grow a homegrown SVGF-class
-  denoiser on the WP0.4 temporal base. Decide in Phase 4; NRD is lower-risk and
-  matches "copy proven code," at the cost of vendoring a bigger SDK.
+  **Primary path: fully vendor + integrate NVIDIA NRD** (ReBLUR for AO/refl/GI,
+  SIGMA for shadows; Vulkan integration via `nvpro-samples/vk_denoise_nrd`) — it
+  is proven, and its core is plain cross-vendor SPIR-V compute (runs on AMD/Intel;
+  verify on AMD as part of the WP). A homegrown SVGF-class denoiser on the WP0.4
+  temporal base is the **fallback only** if NRD integration hits a wall. Decide at
+  the start of Phase 4.
 - **Quality/settings spine** — WP0.1 is never "done"; every phase registers its
   toggles, budgets, and `Auto` heuristics here.
 - **Profiling (Tracy)** ⚡ — GPU zones on every pass; a HUD budget line per tier.
@@ -440,9 +472,16 @@ reverse-Z, multiview), then optimize. Check each license before vendoring.
 | **Froxel volumetric fog** | Wronski, "Volumetric Fog" (SIGGRAPH 2014) · a readable engine impl (e.g. Godot's volumetric fog) | View-frustum 3D texture inject/scatter compute. |
 | **SSR** | [Filament](https://github.com/google/filament) stochastic SSR / standard Hi-Z trace | Roughness importance sampling; fade to IBL. |
 | **RT AS + ray_query** | [nvpro-samples/vk_raytracing_tutorial_KHR](https://github.com/nvpro-samples/vk_raytracing_tutorial_KHR) · [AnKi minimalist AS-only RT](https://anki3d.org/minimalist-ray-tracing-leveraging-only-acceleration-structures/) | BLAS/TLAS build + compaction + inline ray_query patterns. |
-| **RT denoise** | [NVIDIA-RTX/NRD](https://github.com/NVIDIA-RTX/NRD) · [nvpro-samples/vk_denoise_nrd](https://github.com/nvpro-samples/vk_denoise_nrd) | ReBLUR (AO/refl/GI), SIGMA (shadows); or homegrown SVGF. |
-| **DDGI** | [NVIDIAGameWorks/RTXGI-DDGI](https://github.com/NVIDIAGameWorks/RTXGI-DDGI) (`DDGIVolume`, Vulkan) · [RTXGI v2](https://github.com/NVIDIA-RTX/RTXGI) | Adapt the volume + probe-update shaders; add cascades for scale. |
+| **RT denoise** | [NVIDIA-RTX/NRD](https://github.com/NVIDIA-RTX/NRD) · [nvpro-samples/vk_denoise_nrd](https://github.com/nvpro-samples/vk_denoise_nrd) | **Fully vendor + integrate** ReBLUR (AO/refl/GI) + SIGMA (shadows). Cross-vendor SPIR-V compute; verify on AMD (C6). Homegrown SVGF only if it hits a wall. |
+| **DDGI** | [NVIDIAGameWorks/RTXGI-DDGI](https://github.com/NVIDIAGameWorks/RTXGI-DDGI) (`DDGIVolume`, Vulkan) · [RTXGI v2](https://github.com/NVIDIA-RTX/RTXGI) | **Fully vendor + integrate** the `DDGIVolume` + probe-update shaders (standard `ray_query`); add cascades for scale. Skip v2's Neural Radiance Cache (NVIDIA-locked) per C6. |
 | **Meshlets/quantization (opt.)** | [meshoptimizer](https://github.com/zeux/meshoptimizer) | If mesh LOD/vertex-cache work helps AS build cost. |
+
+*Vendor neutrality (C6):* several libraries are NVIDIA-authored. That is fine —
+we **fully vendor and integrate them** because their cores are cross-vendor SPIR-V
+compute / standard KHR `ray_query`; we never take a proprietary extension as a
+hard dependency, and skip the few genuinely vendor-locked sub-features. Everything
+here targets AMD, Intel, and NVIDIA equally; acceptance verifies on AMD **and**
+NVIDIA.
 
 *Future direction (not v1):* ReSTIR DI/GI (Ouyang et al., HPG 2021,
 [paper](https://d1qx31qr3h6wln.cloudfront.net/publications/ReSTIR%20GI.pdf)) for
