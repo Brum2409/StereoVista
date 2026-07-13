@@ -20,6 +20,8 @@
 #include <cstdio>
 #include <filesystem>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace Gui {
 
@@ -32,6 +34,26 @@ void menuHint(const char* text) {
     ImGui::TextDisabled("(?)");
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         ImGui::SetTooltip("%s", text);
+}
+
+// A physical "keycap": the shortcut label in a rounded, bordered, filled box so
+// it reads as a key rather than a dim run of text. Lays out at the cursor and
+// advances by its own size (usable inside a table cell / on a SameLine).
+void keycap(const char* label) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float padX = UiKit::Space(3);
+    const float padY = UiKit::Space(1);
+    const ImVec2 ts = ImGui::CalcTextSize(label);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const ImVec2 size(ts.x + padX * 2.0f, ImGui::GetFontSize() + padY * 2.0f);
+    const float r = UiKit::RadiusInner();
+    dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y),
+                      ImGui::GetColorU32(ImGuiCol_FrameBg), r);
+    dl->AddRect(p, ImVec2(p.x + size.x, p.y + size.y),
+                ImGui::GetColorU32(ImGuiCol_Border), r);
+    dl->AddText(ImVec2(p.x + padX, p.y + padY),
+                ImGui::GetColorU32(ImGuiCol_Text), label);
+    ImGui::Dummy(size);
 }
 
 // One registry command as a menu item: title from the registration, shortcut
@@ -130,8 +152,15 @@ std::string compactCount(unsigned long long n) {
 void GuiSystem::draw(Services& services) {
     ImGuiViewport* viewport = ImGui::GetMainViewport();
 
-    // UiKit reads the motion preference once per frame (§15 reduceMotion).
-    UiKit::SetReduceMotion(services.settings().ui.reduceMotion);
+    // UiKit reads the motion preferences once per frame (§15), then animates the
+    // style's hovered/active colour entries against whatever ImGui reports as the
+    // hovered/active item. That single call is what gives EVERY stock widget in
+    // the app — buttons, sliders, combos, tabs, tree rows, menu items, scrollbars
+    // — an eased hover and press, without a widget or a call site being rewritten.
+    // It must run before anything is submitted this frame.
+    const Settings::Ui& ui = services.settings().ui;
+    UiKit::SetMotion(ui.reduceMotion, ui.motionSpeed, ui.motionBounce);
+    UiKit::BeginFrameMotion();
 
     // Menu bar, then status bar — both reserve their strip of the viewport
     // work area, so the dockspace below fits between them.
@@ -244,33 +273,91 @@ void GuiSystem::drawShortcutOverlay(Services& services) {
         if (shortcutOverlayPinned_ && ImGui::IsKeyPressed(ImGuiKey_Escape))
             shortcutOverlayPinned_ = false;
         ImGui::Separator();
+        ImGui::Spacing();
 
-        // Group the BOUND commands by category — read live, so a rebind in
-        // Settings ▸ Shortcuts is reflected instantly.
-        const char* categories[] = { "File",  "Edit",  "Create", "Select",
-                                     "View",  "Tools", "Help" };
-        ImGui::Columns(3, "##shortcutCols", false);
-        for (const char* category : categories) {
-            bool headerDrawn = false;
+        // Gather the BOUND commands per category — read live, so a rebind in
+        // Settings ▸ Shortcuts is reflected here instantly.
+        struct Category {
+            const char* name;
+            std::vector<std::pair<std::string, std::string>> rows; // title, key
+        };
+        const char* categoryNames[] = { "File",  "Edit",  "Create", "Select",
+                                        "View",  "Tools", "Help" };
+        std::vector<Category> categories;
+        for (const char* name : categoryNames) {
+            Category cat{ name, {} };
             services.commands().forEachInCategory(
-                category, [&](const core::Command& command) {
-                    const std::string key = services.shortcuts().label(command.id);
-                    if (key.empty())
-                        return; // unbound commands live in the palette, not here
-                    if (!headerDrawn) {
-                        UiKit::SectionHeader(category);
-                        headerDrawn = true;
-                    }
-                    ImGui::TextUnformatted(command.title.c_str());
-                    ImGui::SameLine();
-                    const float w = ImGui::CalcTextSize(key.c_str()).x;
-                    ImGui::SameLine(ImGui::GetColumnWidth() - w - UiKit::Space(4));
-                    ImGui::TextDisabled("%s", key.c_str());
+                name, [&](const core::Command& command) {
+                    std::string key = services.shortcuts().label(command.id);
+                    if (!key.empty()) // unbound commands live in the palette
+                        cat.rows.emplace_back(command.title, std::move(key));
                 });
-            if (headerDrawn)
-                ImGui::NextColumn();
+            if (!cat.rows.empty())
+                categories.push_back(std::move(cat));
         }
-        ImGui::Columns(1);
+
+        // One category = a titled, zebra-striped two-column table: the action on
+        // the left, its shortcut as a keycap on the right, so the pairing is
+        // unmistakable (the old flat "title … dim-key" run was hard to read).
+        const float padY = UiKit::Space(1);
+        auto drawCategory = [&](const Category& cat) {
+            UiKit::SectionHeader(cat.name);
+            const ImGuiTableFlags tf = ImGuiTableFlags_RowBg |
+                                       ImGuiTableFlags_PadOuterX |
+                                       ImGuiTableFlags_NoClip;
+            std::string tableId = std::string("##sc_") + cat.name;
+            if (ImGui::BeginTable(tableId.c_str(), 2, tf)) {
+                ImGui::TableSetupColumn("Action",
+                                        ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("Key",
+                                        ImGuiTableColumnFlags_WidthFixed);
+                for (const auto& row : cat.rows) {
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    // Nudge the label down so it sits centred against the keycap.
+                    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + padY);
+                    ImGui::TextUnformatted(row.first.c_str());
+                    ImGui::TableSetColumnIndex(1);
+                    keycap(row.second.c_str());
+                }
+                ImGui::EndTable();
+            }
+            ImGui::Spacing();
+            ImGui::Spacing();
+        };
+
+        // Lay the categories out in a responsive, load-balanced set of columns
+        // (each category kept whole in one column), so a tall list stays
+        // readable instead of running off the bottom of the screen.
+        const float scale = UiKit::Scale();
+        const float avail = ImGui::GetContentRegionAvail().x;
+        const float colMinW = 340.0f * scale;
+        int colCount = static_cast<int>(avail / colMinW);
+        colCount = std::max(1, std::min(colCount, 3));
+
+        std::vector<std::vector<const Category*>> columns(colCount);
+        std::vector<int> load(colCount, 0);
+        for (const Category& cat : categories) {
+            int best = 0;
+            for (int i = 1; i < colCount; ++i)
+                if (load[i] < load[best])
+                    best = i;
+            columns[best].push_back(&cat);
+            load[best] += static_cast<int>(cat.rows.size()) + 2; // +header/gap
+        }
+
+        const float gap = UiKit::Space(6);
+        const float colW = (avail - gap * (colCount - 1)) / colCount;
+        for (int i = 0; i < colCount; ++i) {
+            if (i > 0)
+                ImGui::SameLine(0.0f, gap);
+            std::string colId = std::string("##scCol") + std::to_string(i);
+            ImGui::BeginChild(colId.c_str(), ImVec2(colW, 0.0f),
+                              ImGuiChildFlags_AutoResizeY);
+            for (const Category* cat : columns[i])
+                drawCategory(*cat);
+            ImGui::EndChild();
+        }
     }
     ImGui::End();
 }
@@ -639,35 +726,49 @@ bool GuiSystem::drawViewportToolbar(Services& services, unsigned int index,
     static bool popupOpen[8] = {};
     const unsigned slot = index < 8 ? index : 7;
 
-    const float pad = UiKit::Space(3);
-    const float height = ImGui::GetFrameHeight() + pad * 2.0f;
-    const float width = std::min(imageW - UiKit::Space(5) * 2.0f,
-                                 460.0f * UiKit::Scale());
+    const float pad = UiKit::Space(4);    // padding inside each bubble
+    const float gap = UiKit::Space(4);    // spacing between items in a bubble
+    const float margin = UiKit::Space(4); // inset from the viewport edges
+    const float barH = ImGui::GetFrameHeight() + pad * 2.0f;
 
-    ImGui::SetCursorScreenPos(
-        ImVec2(imageX + (imageW - width) * 0.5f, imageY + UiKit::Space(4)));
-
+    // Floating bubbles over the viewport — rounded like every other free-floating
+    // element (the unified corner radius).
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, UiKit::RadiusCard());
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(gap, 0.0f));
     ImVec4 bg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
-    bg.w = 0.88f;
+    bg.w = 0.90f;
     ImGui::PushStyleColor(ImGuiCol_ChildBg, bg);
 
-    bool owns = false;
-    if (ImGui::BeginChild("##vpToolbar", ImVec2(width, height), ImGuiChildFlags_None,
-                          ImGuiWindowFlags_NoScrollbar |
-                              ImGuiWindowFlags_NoScrollWithMouse |
-                              ImGuiWindowFlags_NoSavedSettings)) {
-        // Gizmo mode (the 1/2/3 hotkeys, as a segmented control).
-        int mode = services.gizmoMode();
-        const char* modes[] = { "Move", "Rotate", "Scale" };
-        ImGui::SetNextItemWidth(180.0f * UiKit::Scale());
-        if (UiKit::SegmentedControl("gizmo", modes, 3, &mode)) {
-            services.setGizmoMode(mode);
-            services.setGizmoEnabled(true);
-        }
-        ImGui::SameLine();
+    // AlwaysUseWindowPadding is essential: a non-bordered child ignores
+    // WindowPadding, which is what made the old single bar cram its items into
+    // the top-left corner. AutoResizeX sizes each bubble to its content so it
+    // never stretches past its buttons.
+    const ImGuiWindowFlags wflags = ImGuiWindowFlags_NoScrollbar |
+                                    ImGuiWindowFlags_NoScrollWithMouse |
+                                    ImGuiWindowFlags_NoSavedSettings;
 
+    // A thin, vertically-centered divider between logical groups in a bubble.
+    auto divider = [&]() {
+        ImGui::SameLine(0.0f, gap);
+        const float h = ImGui::GetFrameHeight();
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        ImVec4 c = ImGui::GetStyleColorVec4(ImGuiCol_Separator);
+        ImGui::GetWindowDrawList()->AddLine(
+            ImVec2(p.x, p.y + h * 0.18f), ImVec2(p.x, p.y + h * 0.82f),
+            ImGui::GetColorU32(c), 1.0f);
+        ImGui::Dummy(ImVec2(1.0f, h));
+        ImGui::SameLine(0.0f, gap);
+    };
+
+    bool owns = false;
+
+    // ── Left bubble (top-left corner): view / frame / shading / tools / hide ──
+    ImGui::SetCursorScreenPos(ImVec2(imageX + margin, imageY + margin));
+    if (ImGui::BeginChild("##vpToolbarL", ImVec2(0.0f, barH),
+                          ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeX |
+                              ImGuiChildFlags_AlwaysUseWindowPadding,
+                          wflags)) {
         // View ▾ — standard views, on THIS viewport's camera.
         if (UiKit::IconButton("view", ICON_FA_CUBE, "Standard views"))
             ImGui::OpenPopup("##viewMenu");
@@ -694,32 +795,66 @@ bool GuiSystem::drawViewportToolbar(Services& services, unsigned int index,
         if (UiKit::IconButton("shading", ICON_FA_IMAGE,
                               wireframe ? "Shading: wireframe" : "Shading: solid"))
             services.commands().run("view.wireframe");
-        ImGui::SameLine();
 
         // Tools: the ToolManager segment (Pass 7) — every registered tool.
-        for (const core::Tool& tool : services.tools().tools()) {
-            ImGui::PushID(tool.id.c_str());
-            const bool active = tool.isActive && tool.isActive();
-            if (UiKit::Chip(tool.icon ? tool.icon : "T", active))
-                services.commands().run(tool.id);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("%s", tool.title.c_str());
-            ImGui::PopID();
-            ImGui::SameLine();
+        if (!services.tools().tools().empty()) {
+            divider();
+            bool firstTool = true;
+            for (const core::Tool& tool : services.tools().tools()) {
+                if (!firstTool)
+                    ImGui::SameLine();
+                firstTool = false;
+                ImGui::PushID(tool.id.c_str());
+                const bool active = tool.isActive && tool.isActive();
+                if (UiKit::Chip(tool.icon ? tool.icon : "T", active))
+                    services.commands().run(tool.id);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", tool.title.c_str());
+                ImGui::PopID();
+            }
         }
+
+        divider();
 
         // Hide the UI (G) — the last thing on the bar, like every 3D app.
         if (UiKit::IconButton("hideui", ICON_FA_EYE_SLASH, "Hide interface (G)"))
             services.commands().run("view.toggle_gui");
 
-        owns = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows |
+        owns = owns ||
+               ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows |
                                       ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) ||
                ImGui::IsAnyItemActive() || popupOpen[slot];
     }
     ImGui::EndChild();
 
+    // ── Right bubble (top-right corner): the transform gizmo mode ──
+    const char* modes[] = { "Move", "Rotate", "Scale" };
+    const ImVec2 fp = ImGui::GetStyle().FramePadding;
+    float segW = 0.0f;
+    for (int i = 0; i < 3; ++i)
+        segW += ImGui::CalcTextSize(modes[i]).x + fp.x * 2.0f;
+    segW += 2.0f * UiKit::Space(2);             // the two inter-segment gaps
+    const float gizmoW = segW + pad * 2.0f + 2.0f; // + window padding + epsilon
+    ImGui::SetCursorScreenPos(
+        ImVec2(imageX + imageW - margin - gizmoW, imageY + margin));
+    if (ImGui::BeginChild("##vpToolbarR", ImVec2(gizmoW, barH),
+                          ImGuiChildFlags_Borders |
+                              ImGuiChildFlags_AlwaysUseWindowPadding,
+                          wflags)) {
+        int mode = services.gizmoMode();
+        if (UiKit::SegmentedControl("gizmo", modes, 3, &mode)) {
+            services.setGizmoMode(mode);
+            services.setGizmoEnabled(true);
+        }
+        owns = owns ||
+               ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows |
+                                      ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) ||
+               ImGui::IsAnyItemActive();
+    }
+    ImGui::EndChild();
+
     ImGui::PopStyleColor();
-    ImGui::PopStyleVar(2);
+    ImGui::PopStyleVar(3);
     return owns;
 }
 

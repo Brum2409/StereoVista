@@ -8,8 +8,6 @@
 #include <glm/glm.hpp>
 #include <memory>
 
-struct GLFWwindow;
-
 namespace renderer {
 class OverlayDrawList;
 struct FragmentCursorState;
@@ -28,6 +26,13 @@ public:
   CursorManager();
   ~CursorManager();
 
+  // What the last pick wants the OS cursor to do. The manager does NOT touch
+  // GLFW itself: Application owns OS-cursor visibility (it has to, because the
+  // ImGui backend rewrites the GLFW cursor mode every NewFrame and must be told
+  // about it — see Application::setOsCursorHidden). `Unchanged` means the pick
+  // learned nothing this frame and the current visibility must be left alone.
+  enum class OsCursorRequest { Unchanged, Hide, Show };
+
   // Initialize all cursor types
   void initialize();
 
@@ -37,17 +42,20 @@ public:
   // pixels, viewportPx the render-target size (the depth readback's extent
   // space). mouseInViewport=false while the GUI owns the mouse (hovering a
   // panel / outside the viewport image) — the OS cursor is restored and the
-  // pick is skipped, keeping the last cursor state. hostWindow is the OS
-  // window hosting the 3D view (OS-cursor show/hide only). `depth` is
+  // pick is skipped, keeping the last cursor state. `depth` is
   // Renderer::depthSamples() (one frame stale — same class as the GL
   // glReadPixels path); proj/view are the CURRENT camera matrices (used only
-  // for the background-plane fallback, like the GL version).
-  void updateCursorPosition(GLFWwindow *hostWindow, const glm::vec2 &mousePx,
+  // for the background-plane fallback, like the GL version). Read
+  // osCursorRequest() afterwards and apply it.
+  void updateCursorPosition(const glm::vec2 &mousePx,
                             const glm::vec2 &viewportPx, bool mouseInViewport,
                             const glm::mat4 &projection, const glm::mat4 &view,
                             const Camera &camera,
                             const renderer::DepthReadback &depth,
                             bool forceRecalculate);
+
+  // OS-cursor visibility the last updateCursorPosition() asks for.
+  OsCursorRequest osCursorRequest() const { return m_osCursorRequest; }
 
   // Reset frame calculation flag (call at start of each frame)
   void resetFrameCalculationFlag();
@@ -99,6 +107,14 @@ public:
   void setForcedCursorPosition(const glm::vec3 &position,
                                const glm::vec3 &cameraPosition);
 
+  // Re-seat every cursor type on the shared world point and refresh the
+  // sphere's distance-scaled radius, WITHOUT running a pick and WITHOUT
+  // touching the OS cursor mode. Used whenever the cursor is pinned and no
+  // pick runs — during a camera drag (the caller owns the OS capture) and
+  // during a centering glide. Without this the radius goes stale while the
+  // camera moves and then POPS the moment picking resumes.
+  void syncPinnedCursor(const Camera &camera);
+
   // Enhanced cursor position setter that integrates with synchronization system
   void setCapturedCursorPositionWithSync(const glm::vec3 &position,
                                          bool enableSync = true) {
@@ -125,9 +141,9 @@ public:
   // the background; it stays at the last valid depth (see GL-era comments).
   void setKeepLastDepthOnBackground(bool keep) {
     m_keepLastDepthOnBackground = keep;
-    if (!keep) {
-      m_hasLastValidDepth = false;
-    }
+    // Keep m_lastValidDepth around even when the toggle is off: the background
+    // cursor fallback (calculateBackgroundCursorPosition) reprojects at it so
+    // zoom-to-cursor stays anchored near geometry over holes/background.
   }
   bool isKeepLastDepthOnBackground() const {
     return m_keepLastDepthOnBackground;
@@ -180,19 +196,24 @@ private:
   // Position locking
   bool m_positionLocked;
 
+  // OS-cursor visibility the last pick asks for (applied by Application).
+  OsCursorRequest m_osCursorRequest = OsCursorRequest::Unchanged;
+
   // Last-known-depth caching (reverse-Z [0,1] depth values now)
-  bool m_keepLastDepthOnBackground = false;
+  bool m_keepLastDepthOnBackground = true;
   float m_lastValidDepth = 0.5f;
   bool m_hasLastValidDepth = false;
-  int m_backgroundCacheMode = 0;            // Cursor::BackgroundCacheMode
+  int m_backgroundCacheMode = CURSOR_CACHE_DISTANCE; // Cursor::BackgroundCacheMode
   float m_backgroundCacheTime = 1.0f;       // seconds (timed mode)
-  float m_backgroundCacheDistance = 250.0f; // screen pixels (distance mode)
+  float m_backgroundCacheDistance = 100.0f; // screen pixels (distance mode)
   double m_lastHitTime = 0.0;               // glfwGetTime() at the last hit
   float m_lastHitScreenX = 0.0f;
   float m_lastHitScreenY = 0.0f;
 
-  // Helper function to calculate background cursor position
-  glm::vec3 calculateBackgroundCursorPosition(const glm::mat4 &projection,
-                                              const glm::mat4 &view);
+  // Background cursor position (a point along the mouse ray at the last valid
+  // surface depth). Takes the caller's already-computed inverse view-projection
+  // and mouse NDC — it must not invert a mat4 of its own.
+  glm::vec3 calculateBackgroundCursorPosition(const glm::mat4 &invViewProj,
+                                              float ndcX, float ndcY);
 };
 } // namespace Cursor

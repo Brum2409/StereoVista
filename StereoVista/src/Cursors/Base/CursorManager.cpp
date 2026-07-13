@@ -54,8 +54,7 @@ void CursorManager::initialize() {
   m_planeCursor->initialize();
 }
 
-void CursorManager::updateCursorPosition(GLFWwindow *hostWindow,
-                                         const glm::vec2 &mousePx,
+void CursorManager::updateCursorPosition(const glm::vec2 &mousePx,
                                          const glm::vec2 &viewportPx,
                                          bool mouseInViewport,
                                          const glm::mat4 &projection,
@@ -63,6 +62,10 @@ void CursorManager::updateCursorPosition(GLFWwindow *hostWindow,
                                          const Camera &camera,
                                          const renderer::DepthReadback &depth,
                                          bool forceRecalculate) {
+  // Nothing learned yet this call: every early-out below leaves the OS cursor's
+  // current visibility alone (see OsCursorRequest).
+  m_osCursorRequest = OsCursorRequest::Unchanged;
+
   // Already resolved this frame (unless a caller forces a recompute).
   if (m_cursorPositionCalculatedThisFrame && !forceRecalculate)
     return;
@@ -70,7 +73,7 @@ void CursorManager::updateCursorPosition(GLFWwindow *hostWindow,
   // The GUI owns the mouse (hovering a panel / outside the docked viewport
   // image): show the OS cursor, keep the last cursor state.
   if (!mouseInViewport) {
-    glfwSetInputMode(hostWindow, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    m_osCursorRequest = OsCursorRequest::Show;
     return;
   }
   if (!m_cursorInsideWindow)
@@ -82,24 +85,13 @@ void CursorManager::updateCursorPosition(GLFWwindow *hostWindow,
     return;
   }
 
-  // Orbiting: the shared cursor stays at the captured world point; just keep
-  // the per-type cursors and the sphere radius in sync with it.
-  if (camera.IsOrbiting) {
-    if (m_cursorPositionValid) {
-      m_sphereCursor->setPosition(m_cursorPosition);
-      m_sphereCursor->setPositionValid(true);
-      m_fragmentCursor->setPosition(m_cursorPosition);
-      m_fragmentCursor->setPositionValid(true);
-      m_planeCursor->setPosition(m_cursorPosition);
-      m_planeCursor->setPositionValid(true);
-      m_sphereCursor->calculateRadius(camera.Position);
-    }
-    m_cursorPositionCalculatedThisFrame = true;
-    return;
-  }
-
-  if (camera.IsAnimating)
-    return;
+  // NOTE: there is deliberately no IsOrbiting / IsAnimating handling here. This
+  // function's single job is "resolve the cursor from a FRESH mouse depth
+  // sample". Whenever the cursor is pinned instead (camera drag, gizmo,
+  // free-move, centering glide, post-warp sync-hold) the caller owns it: it
+  // suppresses the depth QUERY and drives syncPinnedCursor/setForcedCursorPosition
+  // itself. Duplicating that state machine in here is what let the two drift
+  // apart in the first place.
 
   // Current mouse position (viewport-local render-target pixels). The actual
   // geometry pick uses the renderer's depth readback rect (queued last frame);
@@ -129,21 +121,52 @@ void CursorManager::updateCursorPosition(GLFWwindow *hostWindow,
   // top -> -1), reused by the cache re-projection and background fallback.
   const float ndcX = (m_lastX / m_viewportW) * 2.0f - 1.0f;
   const float ndcY = (m_lastY / m_viewportH) * 2.0f - 1.0f;
-  const glm::mat4 currentInvVP = glm::inverse(projection * view);
 
-  // --- Geometry pick from the renderer's depth readback (one frame stale) ---
-  // The renderer copied a small rect at last frame's mouse pixel and published
-  // it with the invViewProj/extent of THAT frame; reconstructing with those
-  // (not the live camera) keeps the picked point from smearing under motion.
+  // The inverse view-projection is LAZY: the common path (cursor on geometry)
+  // reconstructs from the readback's own invViewProj and never needs it, so
+  // eagerly inverting a mat4 every frame was pure waste — and the background
+  // path used to invert a SECOND time inside calculateBackgroundCursorPosition.
+  // One inverse, computed at most once per frame, only when actually needed.
+  bool haveInvVP = false;
+  glm::mat4 cachedInvVP(1.0f);
+  auto invVP = [&]() -> const glm::mat4 & {
+    if (!haveInvVP) {
+      cachedInvVP = glm::inverse(projection * view);
+      haveInvVP = true;
+    }
+    return cachedInvVP;
+  };
+
+  // --- Geometry pick from the renderer's depth readback (a few frames stale) ---
+  // Look the MOUSE rect up by id. It is absent whenever the pick was suppressed
+  // when that frame was submitted (a camera or gizmo drag owned the mouse, the
+  // pointer was off the view, side-by-side). No fresh mouse sample => we know
+  // NOTHING about what is under the cursor: keep the current cursor state and
+  // the current OS cursor mode untouched, and try again next frame.
+  //
+  // Taking rects[0] here instead (as this did) grabbed the CENTRE-depth block
+  // whenever the mouse rect was missing — parking the 3D cursor at the screen
+  // centre for a few frames after every drag, and flashing the Windows cursor
+  // whenever that centre sample happened to miss.
+  size_t mouseBase = 0;
+  const renderer::DepthQueryRect *mouseRect =
+      depth.findRect(renderer::kDepthQueryMouse, &mouseBase);
+  if (!mouseRect) {
+    m_cursorPositionCalculatedThisFrame = true;
+    return;
+  }
+
+  // The renderer copied the rect at that frame's mouse pixel and published it
+  // with the invViewProj/extent of THAT frame; reconstructing with those (not
+  // the live camera) keeps the picked point from smearing under motion.
   bool isHit = false;
   glm::vec3 worldPos(0.0f);
-  if (depth.valid && !depth.rects.empty()) {
-    const renderer::DepthQueryRect &rect = depth.rects[0];
-    const glm::ivec2 centerPixel = rect.origin + rect.size / 2;
-    float sampled = 0.0f;
-    if (depth.sample(centerPixel, sampled) && sampled > kBackgroundDepthEps) {
+  {
+    const glm::ivec2 pickPixel = mouseRect->origin + mouseRect->size / 2;
+    const float sampled = depth.depths[mouseBase];
+    if (sampled > kBackgroundDepthEps) {
       worldPos = reconstructWorld(
-          depth.invViewProj, glm::vec2(centerPixel) + 0.5f,
+          depth.invViewProj, glm::vec2(pickPixel) + 0.5f,
           glm::vec2(static_cast<float>(depth.extent.width),
                     static_cast<float>(depth.extent.height)),
           sampled);
@@ -175,7 +198,7 @@ void CursorManager::updateCursorPosition(GLFWwindow *hostWindow,
       // Re-project the CURRENT mouse at the cached depth with the CURRENT
       // camera, so the cursor keeps tracking the mouse at that distance until
       // it hits geometry again (or the cache expires).
-      const glm::vec4 h = currentInvVP * glm::vec4(ndcX, ndcY, m_lastValidDepth, 1.0f);
+      const glm::vec4 h = invVP() * glm::vec4(ndcX, ndcY, m_lastValidDepth, 1.0f);
       worldPos = glm::vec3(h) / h.w;
       isHit = true;
     }
@@ -202,7 +225,7 @@ void CursorManager::updateCursorPosition(GLFWwindow *hostWindow,
       m_cursorPositionCalculatedThisFrame = true;
       return;
     }
-    glfwSetInputMode(hostWindow, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
+    m_osCursorRequest = OsCursorRequest::Hide;
   } else {
     m_cursorPositionValid = false;
     m_sphereCursor->setPositionValid(false);
@@ -210,14 +233,15 @@ void CursorManager::updateCursorPosition(GLFWwindow *hostWindow,
     m_planeCursor->setPositionValid(false);
 
     // Background cursor (a point along the mouse ray) for zoom/orbit fallback.
-    m_backgroundCursorPosition = calculateBackgroundCursorPosition(projection, view);
+    m_backgroundCursorPosition =
+        calculateBackgroundCursorPosition(invVP(), ndcX, ndcY);
     m_hasBackgroundCursorPosition = true;
 
     if (camera.IsPanning) {
       m_cursorPositionCalculatedThisFrame = true;
       return;
     }
-    glfwSetInputMode(hostWindow, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    m_osCursorRequest = OsCursorRequest::Show;
   }
 
   m_cursorPositionCalculatedThisFrame = true;
@@ -243,6 +267,20 @@ void CursorManager::setForcedCursorPosition(const glm::vec3 &position,
   // We have an authoritative 3D point this frame; drop any stale background
   // fallback so it can't override the forced position downstream.
   m_hasBackgroundCursorPosition = false;
+}
+
+void CursorManager::syncPinnedCursor(const Camera &camera) {
+  if (!m_cursorPositionValid)
+    return;
+  m_sphereCursor->setPosition(m_cursorPosition);
+  m_sphereCursor->setPositionValid(true);
+  m_fragmentCursor->setPosition(m_cursorPosition);
+  m_fragmentCursor->setPositionValid(true);
+  m_planeCursor->setPosition(m_cursorPosition);
+  m_planeCursor->setPositionValid(true);
+  // The camera keeps moving while the cursor is pinned, so the distance-scaled
+  // sphere radius must track it — otherwise it pops when picking resumes.
+  m_sphereCursor->calculateRadius(camera.Position);
 }
 
 void CursorManager::renderCursors(renderer::OverlayDrawList &list,
@@ -277,16 +315,27 @@ void CursorManager::renderOrbitCenter(renderer::OverlayDrawList &list,
                                     m_orbitCenterColor);
 }
 
-glm::vec3
-CursorManager::calculateBackgroundCursorPosition(const glm::mat4 &projection,
-                                                 const glm::mat4 &view) {
-  // NDC (Vulkan convention: top -> -1; the projection carries the Y-flip).
-  const float x = (m_lastX / m_viewportW) * 2.0f - 1.0f;
-  const float y = (m_lastY / m_viewportH) * 2.0f - 1.0f;
+glm::vec3 CursorManager::calculateBackgroundCursorPosition(
+    const glm::mat4 &invViewProj, float x, float y) {
+  // NDC (x, y) of the mouse and the inverse view-projection are both supplied by
+  // the caller — it already has them, and re-deriving them here meant a second
+  // mat4 inverse on the background path every frame.
+
+  // Prefer the depth of the last real surface hit: reprojecting the current
+  // mouse ray at that depth anchors the background cursor near the geometry the
+  // user was just over. This keeps zoom-to-cursor / orbit gentle when the mouse
+  // skims across a hole in a sparse point cloud — the old mid-frustum guess sat
+  // at ~half the far plane, ballooning the zoom reference so the camera blasted
+  // straight through the gap. Falls back to mid-frustum only before the first
+  // surface hit of the session (m_lastValidDepth is recorded on every hit,
+  // independent of the keep-last-depth toggle).
+  if (m_hasLastValidDepth) {
+    glm::vec4 h = invViewProj * glm::vec4(x, y, m_lastValidDepth, 1.0f);
+    return glm::vec3(h) / h.w;
+  }
 
   // Reverse-Z: near plane -> 1, far plane -> 0. Mix the two ray hits to land a
   // point mid-frustum along the mouse ray.
-  const glm::mat4 invViewProj = glm::inverse(projection * view);
   glm::vec4 nearWorld = invViewProj * glm::vec4(x, y, 1.0f, 1.0f);
   glm::vec4 farWorld = invViewProj * glm::vec4(x, y, 0.0f, 1.0f);
   nearWorld /= nearWorld.w;

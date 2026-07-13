@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cfloat>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -396,6 +397,12 @@ bool drawRow(Services& services, const Item& item, bool asTreeNode,
     ImGui::PopStyleColor(3);
     const ImVec2 rowMin = ImGui::GetItemRectMin();
     const ImVec2 rowMax = ImGui::GetItemRectMax();
+    // Latched HERE, immediately after the node: the drag-drop source and the
+    // context menu below submit their own items, so by the time the row is
+    // painted "the last item" is no longer this row.
+    const ImGuiID rowId = ImGui::GetItemID();
+    const bool rowPressed = ImGui::IsItemActivated();
+    const bool rowActive = ImGui::IsItemActive();
     const bool rowHovered =
         ImGui::IsMouseHoveringRect(rowMin, rowMax) &&
         ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
@@ -469,17 +476,32 @@ bool drawRow(Services& services, const Item& item, bool asTreeNode,
     // transparent above, so this is the only fill that shows). Selection is
     // a solid filled pill (not a faint tint + thin bar) — reads as a clear,
     // deliberate "this is selected" state rather than a subtle hint. ──────
-    if (isSelected) {
+    //
+    // Both states are ANIMATED off the row's ImGui id: selection WIPES in from
+    // the row's left edge on a spring (so a selection visibly travels to the row
+    // you picked rather than teleporting), hover eases, and a click leaves a
+    // ripple. The row also arrives with a pop the first time it is seen — which,
+    // because the motion store forgets ids that stop being queried, is exactly
+    // when an object is added to the scene or the panel is reopened.
+    const float selT = UiKit::Spring(rowId, isSelected ? 1.0f : 0.0f, 5.4f, 0.62f);
+    const float hovT =
+        UiKit::Anim01(rowId ^ 0xB5297A4Du, rowHovered ? 1.0f : 0.0f, 0.11f);
+    const float rowW = rowMax.x - rowMin.x;
+    if (selT > 0.01f) {
         ImVec4 fill = UiKit::Color(UiKit::Semantic::Accent);
         fill.w = 0.55f;
-        dl->AddRectFilled(rowMin, rowMax, ImGui::GetColorU32(fill),
-                          UiKit::RadiusInner());
-    } else if (rowHovered) {
+        const float wipe = rowW * std::min(std::max(selT, 0.0f), 1.0f);
+        dl->AddRectFilled(rowMin, ImVec2(rowMin.x + wipe, rowMax.y),
+                          ImGui::GetColorU32(fill), UiKit::RadiusInner());
+    }
+    if (hovT > 0.01f && selT < 0.99f) {
         ImVec4 fill = UiKit::Color(UiKit::Semantic::Accent);
-        fill.w = 0.08f;
+        fill.w = 0.08f * hovT * (1.0f - selT);
         dl->AddRectFilled(rowMin, rowMax, ImGui::GetColorU32(fill),
                           UiKit::RadiusInner());
     }
+    UiKit::ItemFxAt(rowId, rowMin, rowMax, UiKit::ItemFx_Press,
+                    UiKit::RadiusInner(), rowHovered, rowPressed, rowActive);
 
     // ── Icon: same nominal size as body text (matches InlineIcon/NavItem —
     // the convention every other icon in the GUI already uses), in a fixed
@@ -498,7 +520,10 @@ bool drawRow(Services& services, const Item& item, bool asTreeNode,
     // every row regardless of whether ImGui drew an expand arrow before it
     // (leaf rows like Sun/lights have none; Group/multi-mesh Model rows do)
     // — without it, content sat flush against rowMin.x with no gutter.
-    const float leftPad = UiKit::Space(3);
+    // Hovering nudges the row's contents toward the reader (and selection holds
+    // them there) — the same "the row leans into you" language NavItem uses.
+    const float slide = (2.0f * hovT + 2.0f * std::min(selT, 1.0f)) * scale;
+    const float leftPad = UiKit::Space(3) + slide;
     const float iconSlotX = rowMin.x + leftPad;
     const float iconSize = fontSize;
     const float iconSlotW = iconSize + UiKit::Space(3);
@@ -572,7 +597,12 @@ bool drawRow(Services& services, const Item& item, bool asTreeNode,
     const float btnPad = padY * 0.5f;
     const float btnH = fontSize + btnPad * 2.0f;
     const float btnGap = UiKit::Space(2);
-    float right = rowMax.x - UiKit::Space(4);
+    // Inset the whole right-side cluster (count badge + eye/lock) from the panel
+    // border so it reads as a tidy right-aligned column with breathing room,
+    // rather than jammed against the edge. This X is measured from the row's
+    // right edge (window WorkRect, constant for every row), so the badge stays
+    // in the same column whether an item is top-level or nested in a group.
+    float right = rowMax.x - UiKit::Space(6);
 
     // Lock (right-most): visible on hover or while locked.
     if (item.canLock) {
@@ -665,18 +695,105 @@ void drawChildBand(ImDrawList* dl, const ChildBand& b) {
                1.0f * UiKit::Scale());
 }
 
+// ── Rolling the children of an expandable row open and shut ─────────────────
+//
+// Same construction as UiKit::BeginSection: an outer child whose height IS the
+// animation, wrapping an auto-sized inner child that always lays the children out
+// at their natural full height — so the height we animate toward is ImGui's OWN
+// number for those children and the roll can land on it exactly.
+//
+// The children keep being laid out while the node is rolling SHUT (the caller has
+// already been told the node is closed), clipped away as the outer child shrinks.
+
+// The children's measured height, keyed by the row. Small and bounded (one entry
+// per expandable model/group), so it needs no sweeping.
+std::unordered_map<ImGuiID, float>& rollHeights() {
+    static std::unordered_map<ImGuiID, float> heights;
+    return heights;
+}
+
+// A key derived from the item's REF, not from ImGui's id stack: the roll's state
+// must survive the row moving to a different depth (dragged into a group), which
+// changes its ImGui id but not its identity.
+ImGuiID rollKey(const SceneItemRef& ref) {
+    ImGuiID hash = 2166136261u;
+    auto mix = [&hash](uint64_t value) {
+        for (int i = 0; i < 8; ++i) {
+            hash ^= ImGuiID((value >> (i * 8)) & 0xFF);
+            hash *= 16777619u;
+        }
+    };
+    mix(uint64_t(int(ref.kind)));
+    mix(ref.id);
+    mix(uint64_t(uint32_t(ref.sub)));
+    return hash;
+}
+
+// Returns true while the children should be laid out (open, or still rolling
+// shut). Pair with endChildRoll() ONLY when it returned true.
+bool beginChildRoll(ImGuiID key, bool open) {
+    // A critically-damped SPRING, not an exponential ease-out. Ease-out has its
+    // highest speed at t=0, so a tall group would dump most of its height in the
+    // first two frames and then crawl — which reads as "it just snapped open".
+    // A spring starts at zero velocity (a gentle ease-IN) and decelerates into
+    // place, and its rate does not scale with the group's height, so a group of
+    // forty rows opens with the same unhurried feel as a group of three. Clamped
+    // to [0,1] so any overshoot from a high bounce preference caps at the full
+    // height (an invisible settle) instead of showing empty space past the rows.
+    const float raw =
+        UiKit::Spring(key ^ 0x5EC10011u, open ? 1.0f : 0.0f, 4.0f, 1.0f);
+    const float t = std::clamp(raw, 0.0f, 1.0f);
+    if (!open && t <= 0.002f)
+        return false;
+
+    const float measured = rollHeights()[key];
+    const bool settled = UiKit::ReduceMotion() || (open && t >= 0.999f);
+    const float clipH = std::max(1.0f, measured * t);
+
+    // Zero the spacing AROUND the clip child (it is an item in the tree, and that
+    // gap would otherwise pop in and out at full size at either end of the roll),
+    // and restore the real spacing inside for the child rows.
+    const ImVec2 spacing = ImGui::GetStyle().ItemSpacing;
+    ImGui::PushID(reinterpret_cast<void*>(static_cast<uintptr_t>(key)));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(spacing.x, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
+    ImGui::BeginChild("##rollClip", ImVec2(0.0f, settled ? 0.0f : clipH),
+                      settled ? ImGuiChildFlags_AutoResizeY : ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoScrollbar |
+                          ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::BeginChild("##rollBody", ImVec2(0.0f, 0.0f), ImGuiChildFlags_AutoResizeY,
+                      ImGuiWindowFlags_NoScrollbar |
+                          ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, spacing);
+    return true;
+}
+
+// Closes the roll and leaves the CLIP child as the last item, so the caller can
+// read its (animated) rect for the hierarchy guide line.
+void endChildRoll(ImGuiID key) {
+    ImGui::PopStyleVar(); // ItemSpacing (the restored one)
+    ImGui::EndChild();    // ##rollBody — auto-sized: ImGui's own height
+    const float measured = ImGui::GetItemRectSize().y;
+    if (measured > 1.0f)
+        rollHeights()[key] = measured;
+    ImGui::EndChild();     // ##rollClip
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2); // WindowPadding, the zeroed ItemSpacing
+    ImGui::PopID();
+}
+
 // Model row + its expandable mesh children.
 void drawModelRow(Services& services, const Item& item) {
     scene::Scene& scene = services.scene();
     const bool asTree = item.meshCount > 1;
-    if (!drawRow(services, item, asTree, !asTree))
-        return;
-    ImGui::Indent(indentStep());
-    const float guideX = ImGui::GetCursorScreenPos().x - indentStep() * 0.5f;
-    const float startY = ImGui::GetCursorScreenPos().y;
+    const bool opened = drawRow(services, item, asTree, !asTree);
+
     // Children: the model's meshes (sub-index refs — contract C3).
-    SceneItemRef modelRef = item.ref;
-    if (scene.resolve(modelRef)) {
+    auto drawMeshes = [&] {
+        SceneItemRef modelRef = item.ref;
+        if (!scene.resolve(modelRef))
+            return;
         const scene::Model& model = scene.models[modelRef.index];
         for (int mi = 0; mi < int(model.meshes.size()); ++mi) {
             Item mesh;
@@ -696,9 +813,35 @@ void drawModelRow(Services& services, const Item& item) {
             mesh.canGroup = false;
             drawRow(services, mesh, false, true);
         }
+    };
+
+    // A single-mesh model is a LEAF: it has no disclosure arrow, so there is
+    // nothing to roll — it never changes state, and wrapping it in a clip child
+    // would only cost two windows per model.
+    if (!asTree) {
+        if (!opened)
+            return;
+        ImGui::Indent(indentStep());
+        const float guideX = ImGui::GetCursorScreenPos().x - indentStep() * 0.5f;
+        const float startY = ImGui::GetCursorScreenPos().y;
+        drawMeshes();
+        pendingBands().push_back(
+            { guideX, startY, ImGui::GetCursorScreenPos().y - rowGap() });
+        ImGui::Unindent(indentStep());
+        return;
     }
-    pendingBands().push_back(
-        { guideX, startY, ImGui::GetCursorScreenPos().y - rowGap() });
+
+    const ImGuiID key = rollKey(item.ref);
+    ImGui::Indent(indentStep());
+    const float guideX = ImGui::GetCursorScreenPos().x - indentStep() * 0.5f;
+    if (beginChildRoll(key, opened)) {
+        drawMeshes();
+        endChildRoll(key);
+        // The guide line spans the CLIP child, so it rolls with the children
+        // instead of hanging below them mid-collapse.
+        pendingBands().push_back({ guideX, ImGui::GetItemRectMin().y,
+                                   ImGui::GetItemRectMax().y - rowGap() });
+    }
     ImGui::Unindent(indentStep());
 }
 
@@ -782,19 +925,21 @@ void drawSceneObjects(Services& services, const std::vector<Item>& items) {
                 if (sub.parentId == group.id)
                     ++members;
             item.badge = std::to_string(members);
-            if (drawRow(services, item, true, false)) {
-                ImGui::Indent(indentStep());
-                const float guideX =
-                    ImGui::GetCursorScreenPos().x - indentStep() * 0.5f;
-                const float startY = ImGui::GetCursorScreenPos().y;
+            const bool opened = drawRow(services, item, true, false);
+            const ImGuiID key = rollKey(item.ref);
+            ImGui::Indent(indentStep());
+            const float guideX =
+                ImGui::GetCursorScreenPos().x - indentStep() * 0.5f;
+            if (beginChildRoll(key, opened)) {
                 drawLevel(group.id);
                 for (const Item& candidate : items)
                     if (candidate.groupId == group.id)
                         drawItemRow(services, candidate);
-                pendingBands().push_back(
-                    { guideX, startY, ImGui::GetCursorScreenPos().y - rowGap() });
-                ImGui::Unindent(indentStep());
+                endChildRoll(key);
+                pendingBands().push_back({ guideX, ImGui::GetItemRectMin().y,
+                                           ImGui::GetItemRectMax().y - rowGap() });
             }
+            ImGui::Unindent(indentStep());
         }
     };
     drawLevel(0);

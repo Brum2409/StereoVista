@@ -35,14 +35,24 @@ namespace {
 
 constexpr uint32_t kInvalidTexture = 0xFFFFFFFFu; // renderer::kInvalidTexture
 
-// CollapsingHeader bound to a persisted open flag: seed once from the flag,
-// read the live state back every frame so Gui::Preferences persists it (§8).
-bool section(bool& persistedOpen, const char* label) {
-    ImGui::SetNextItemOpen(persistedOpen, ImGuiCond_Once);
-    const bool open = ImGui::CollapsingHeader(label);
-    persistedOpen = open;
-    return open;
-}
+// A grouped collapsible section bound to a persisted open flag (§8): the body
+// is indented under a left accent guide so it reads as one block with its
+// header (UiKit::BeginSection/EndSection). RAII so any early `return` inside an
+// open section still closes it. Use in an if-condition so the scope spans the
+// body: `if (SectionScope sec{flag, "Transform"}) { ... }`, or as a named guard
+// before an early return: `SectionScope sec{flag, "X"}; if (!sec) return;`.
+struct SectionScope {
+    bool open_;
+    SectionScope(bool& persistedOpen, const char* label)
+        : open_(UiKit::BeginSection(label, &persistedOpen)) {}
+    ~SectionScope() {
+        if (open_)
+            UiKit::EndSection();
+    }
+    explicit operator bool() const { return open_; }
+    SectionScope(const SectionScope&) = delete;
+    SectionScope& operator=(const SectionScope&) = delete;
+};
 
 std::string compactCount(unsigned long long n) {
     char buf[32];
@@ -126,7 +136,8 @@ const char* slotName(int slot) {
 template <class PosF, class RotF, class SclF>
 void drawTransformSection(EditContext& ctx, bool& open, PosF posPtr, RotF rotPtr,
                           SclF sclPtr) {
-    if (!section(open, "Transform"))
+    SectionScope sec(open, "Transform");
+    if (!sec)
         return;
     Services* svc = &ctx.services;
     std::function<void()> resync = [svc]() { svc->scene().computeWorldBounds(); };
@@ -146,55 +157,27 @@ void drawTransformSection(EditContext& ctx, bool& open, PosF posPtr, RotF rotPtr
                            return ImGui::DragFloat3("##v", &v.x, 0.01f, 0.0001f, 10000.0f);
                        },
                        resync);
-
-    // Undoable reset-to-identity for the whole triple.
-    struct Xf { glm::vec3 p, r, s; };
-    bool modified = false;
-    for (const EditHandle& h : handles) {
-        glm::vec3* p = posPtr(h);
-        glm::vec3* r = rotPtr(h);
-        glm::vec3* s = sclPtr(h);
-        if ((p && *p != glm::vec3(0.0f)) || (r && *r != glm::vec3(0.0f)) ||
-            (s && *s != glm::vec3(1.0f))) {
-            modified = true;
-            break;
-        }
-    }
-    ImGui::SameLine();
-    SectionReset<Xf>(
-        ctx, "rstXf", "Reset transform", modified, handles,
-        [posPtr, rotPtr, sclPtr](const EditHandle& h) {
-            Xf x{};
-            if (glm::vec3* p = posPtr(h)) x.p = *p;
-            if (glm::vec3* r = rotPtr(h)) x.r = *r;
-            if (glm::vec3* s = sclPtr(h)) x.s = *s;
-            return x;
-        },
-        [posPtr, rotPtr, sclPtr](const EditHandle& h, const Xf& x) {
-            if (glm::vec3* p = posPtr(h)) *p = x.p;
-            if (glm::vec3* r = rotPtr(h)) *r = x.r;
-            if (glm::vec3* s = sclPtr(h)) *s = x.s;
-        },
-        Xf{ glm::vec3(0.0f), glm::vec3(0.0f), glm::vec3(1.0f) }, resync);
 }
 
 // Gizmo quick controls (mirrors the 1/2/3 hotkeys; GL DrawTransformGizmoControls).
 void drawGizmoControls(Services& services) {
     bool on = services.gizmoEnabled();
-    if (ImGui::Checkbox("Show gizmo", &on))
+    if (UiKit::ToggleSwitch("Show gizmo", &on))
         services.setGizmoEnabled(on);
     if (!on)
         return;
+    ImGui::Spacing();
     int mode = services.gizmoMode();
     const char* modes[] = { "Move", "Rotate", "Scale" };
     if (UiKit::SegmentedControl("gizmoMode", modes, 3, &mode))
         services.setGizmoMode(mode);
+    ImGui::Spacing();
     bool local = services.gizmoLocalSpace();
-    if (ImGui::Checkbox("Local", &local))
+    if (UiKit::ToggleSwitch("Local", &local))
         services.setGizmoLocalSpace(local);
-    ImGui::SameLine();
+    ImGui::SameLine(0.0f, UiKit::Space(6));
     bool snap = services.gizmoSnap();
-    if (ImGui::Checkbox("Snap (Shift)", &snap))
+    if (UiKit::ToggleSwitch("Snap (Shift)", &snap))
         services.setGizmoSnap(snap);
 }
 
@@ -203,7 +186,8 @@ void drawMaterialSection(EditContext& ctx, bool& open) {
     const std::vector<EditHandle> targets = materialHandles(ctx);
     if (targets.empty())
         return;
-    if (!section(open, "Material"))
+    SectionScope sec(open, "Material");
+    if (!sec)
         return;
     Services* svc = &ctx.services;
     auto baseColor = [svc](const EditHandle& h) -> glm::vec4* {
@@ -257,7 +241,8 @@ void drawMaterialSection(EditContext& ctx, bool& open) {
 // with filename-suffix slot detection, §8). Assignment routes through the app
 // (Vulkan upload); clearing a slot is a plain index write.
 void drawTexturesSection(EditContext& ctx, bool& open) {
-    if (!section(open, "Textures"))
+    SectionScope sec(open, "Textures");
+    if (!sec)
         return;
     Services& services = ctx.services;
     scene::Scene& scene = services.scene();
@@ -360,16 +345,18 @@ void modelEditor(EditContext& ctx) {
     drawTexturesSection(ctx, s.textures);
 
     // Info (single-selection only; a per-object read-out).
-    if (!ctx.multi() && section(s.info, "Info")) {
-        const scene::SceneItemRef prim = ctx.primary();
-        const int i = svc->scene().modelIndexOf(prim.id);
-        if (i >= 0) {
-            const scene::Model& m = svc->scene().models[size_t(i)];
-            infoRow("Meshes", std::to_string(m.meshes.size()));
-            if (!m.primitiveType.empty())
-                infoRow("Primitive", m.primitiveType);
-            if (!m.sourcePath.empty())
-                infoRow("Source", m.sourcePath);
+    if (!ctx.multi()) {
+        if (SectionScope sec{ s.info, "Info" }) {
+            const scene::SceneItemRef prim = ctx.primary();
+            const int i = svc->scene().modelIndexOf(prim.id);
+            if (i >= 0) {
+                const scene::Model& m = svc->scene().models[size_t(i)];
+                infoRow("Meshes", std::to_string(m.meshes.size()));
+                if (!m.primitiveType.empty())
+                    infoRow("Primitive", m.primitiveType);
+                if (!m.sourcePath.empty())
+                    infoRow("Source", m.sourcePath);
+            }
         }
     }
 }
@@ -395,7 +382,7 @@ void pointCloudEditor(EditContext& ctx) {
     drawGizmoControls(ctx.services);
 
     // Display: base point size (per-object, undoable).
-    if (section(s.display, "Display")) {
+    if (SectionScope sec{ s.display, "Display" }) {
         auto pointSize = [svc](const EditHandle& h) -> float* {
             const int i = svc->scene().pointCloudIndexOf(h.id);
             return i >= 0 ? &svc->scene().pointClouds[size_t(i)].basePointSize : nullptr;
@@ -407,42 +394,46 @@ void pointCloudEditor(EditContext& ctx) {
     // Info (single-selection).
     const scene::SceneItemRef prim = ctx.primary();
     const int pi = scene.pointCloudIndexOf(prim.id);
-    if (!ctx.multi() && pi >= 0 && section(s.info, "Info")) {
-        const Engine::PointCloud& pc = scene.pointClouds[size_t(pi)];
-        infoRow("Points", compactCount(pc.totalPointCount));
-        infoRow("Batches", std::to_string(pc.numBatches));
-        infoRow("VRAM", [&] {
-            char b[32];
-            std::snprintf(b, sizeof(b), "%.1f MB", svc->pointCloudVramMB(size_t(pi)));
-            return std::string(b);
-        }());
-        if (pc.hasBounds()) {
-            const glm::vec3 ext = pc.boundsMax - pc.boundsMin;
-            char b[64];
-            std::snprintf(b, sizeof(b), "%.2f x %.2f x %.2f m", ext.x, ext.y, ext.z);
-            infoRow("Extent", b);
+    if (!ctx.multi() && pi >= 0) {
+        if (SectionScope sec{ s.info, "Info" }) {
+            const Engine::PointCloud& pc = scene.pointClouds[size_t(pi)];
+            infoRow("Points", compactCount(pc.totalPointCount));
+            infoRow("Batches", std::to_string(pc.numBatches));
+            infoRow("VRAM", [&] {
+                char b[32];
+                std::snprintf(b, sizeof(b), "%.1f MB", svc->pointCloudVramMB(size_t(pi)));
+                return std::string(b);
+            }());
+            if (pc.hasBounds()) {
+                const glm::vec3 ext = pc.boundsMax - pc.boundsMin;
+                char b[64];
+                std::snprintf(b, sizeof(b), "%.2f x %.2f x %.2f m", ext.x, ext.y, ext.z);
+                infoRow("Extent", b);
+            }
+            if (!pc.filePath.empty())
+                infoRow("Source", pc.filePath);
         }
-        if (!pc.filePath.empty())
-            infoRow("Source", pc.filePath);
     }
 
     // Export (single-selection; routes through the app-layer exporter).
-    if (!ctx.multi() && pi >= 0 && section(s.exportSection, "Export")) {
-        static int format = 0; // 0 XYZ · 1 PCB · 2 HDF5 · 3 PLY
-        static bool applyTransform = true;
-        static bool plyBinary = true;
-        const char* fmts[] = { "XYZ", "Binary (.pcb)", "HDF5", "PLY" };
-        for (int f = 0; f < 4; ++f) {
-            if (f) ImGui::SameLine();
-            ImGui::RadioButton(fmts[f], &format, f);
+    if (!ctx.multi() && pi >= 0) {
+        if (SectionScope sec{ s.exportSection, "Export" }) {
+            static int format = 0; // 0 XYZ · 1 PCB · 2 HDF5 · 3 PLY
+            static bool applyTransform = true;
+            static bool plyBinary = true;
+            const char* fmts[] = { "XYZ", "Binary (.pcb)", "HDF5", "PLY" };
+            for (int f = 0; f < 4; ++f) {
+                if (f) ImGui::SameLine();
+                ImGui::RadioButton(fmts[f], &format, f);
+            }
+            if (format == 3)
+                ImGui::Checkbox("Binary PLY", &plyBinary);
+            ImGui::Checkbox("Apply transform", &applyTransform);
+            UiKit::HelpMarker("On: bake position/rotation/scale into the exported "
+                              "coordinates. Off: raw local-space points.");
+            if (ImGui::Button("Export point cloud\xE2\x80\xA6", ImVec2(-FLT_MIN, 0.0f)))
+                svc->exportPointCloud(size_t(pi), format, applyTransform, plyBinary);
         }
-        if (format == 3)
-            ImGui::Checkbox("Binary PLY", &plyBinary);
-        ImGui::Checkbox("Apply transform", &applyTransform);
-        UiKit::HelpMarker("On: bake position/rotation/scale into the exported "
-                          "coordinates. Off: raw local-space points.");
-        if (ImGui::Button("Export point cloud\xE2\x80\xA6", ImVec2(-FLT_MIN, 0.0f)))
-            svc->exportPointCloud(size_t(pi), format, applyTransform, plyBinary);
     }
 }
 
@@ -455,7 +446,7 @@ void pointLightEditor(EditContext& ctx) {
         const int i = svc->scene().lightIndexOf(h.id);
         return i >= 0 ? &svc->scene().pointLights[size_t(i)].position : nullptr;
     };
-    if (section(s.transform, "Transform")) {
+    if (SectionScope sec{ s.transform, "Transform" }) {
         Services* s2 = svc;
         std::function<void()> resync = [s2]() { s2->scene().computeWorldBounds(); };
         EditRow<glm::vec3>(ctx, "Position", "pos", handles, pos,
@@ -464,7 +455,7 @@ void pointLightEditor(EditContext& ctx) {
         drawGizmoControls(ctx.services);
     }
 
-    if (section(s.lightProps, "Light")) {
+    if (SectionScope sec{ s.lightProps, "Light" }) {
         auto color = [svc](const EditHandle& h) -> glm::vec3* {
             const int i = svc->scene().lightIndexOf(h.id);
             return i >= 0 ? &svc->scene().pointLights[size_t(i)].color : nullptr;
@@ -500,7 +491,7 @@ void pointLightEditor(EditContext& ctx) {
         EditRow<float>(ctx, "Atten. quadratic", "qua", handles, quad,
                        [](float& v) { return ImGui::DragFloat("##v", &v, 0.001f, 0.0f, 4.0f, "%.3f"); });
         EditRow<bool>(ctx, "Cast shadows", "shd", handles, shadows,
-                      [](bool& v) { return ImGui::Checkbox("##v", &v); });
+                      [](bool& v) { return UiKit::ToggleSwitch("##v", &v); });
     }
 }
 
@@ -509,10 +500,9 @@ void pointLightEditor(EditContext& ctx) {
 void sunEditor(EditContext& ctx) {
     Settings& st = ctx.services.settings();
     renderer::SunState& sun = st.lighting.sun;
-    static const renderer::SunState kDef{};
 
-    if (section(st.ui.inspector.sun, "Sun")) {
-        ImGui::Checkbox("Enabled", &sun.enabled);
+    if (SectionScope sec{ st.ui.inspector.sun, "Sun" }) {
+        UiKit::ToggleSwitch("Enabled", &sun.enabled);
         UiKit::PropertyRow("Color");
         ImGui::ColorEdit3("##suncol", &sun.color.x);
         UiKit::PropertyRow("Intensity");
@@ -525,23 +515,14 @@ void sunEditor(EditContext& ctx) {
         }
         UiKit::PropertyRow("Angular size");
         ImGui::SliderFloat("##sunang", &sun.angularSizeDeg, 0.1f, 10.0f, "%.2f\xC2\xB0");
-
-        const bool modified = sun.enabled != kDef.enabled || sun.color != kDef.color ||
-                              sun.intensity != kDef.intensity ||
-                              sun.direction != kDef.direction ||
-                              sun.angularSizeDeg != kDef.angularSizeDeg;
-        ImGui::SameLine();
-        if (UiKit::ResetGlyph("rstSun", modified))
-            sun = kDef;
     }
 }
 
 void environmentEditor(EditContext& ctx) {
     Settings& st = ctx.services.settings();
     renderer::SkyState& sky = st.sky;
-    static const renderer::SkyState kDef{};
 
-    if (section(st.ui.inspector.sky, "Sky")) {
+    if (SectionScope sec{ st.ui.inspector.sky, "Sky" }) {
         const char* modes[] = { "Cubemap", "Equirectangular", "Solid color", "Gradient" };
         int mode = int(sky.mode);
         UiKit::PropertyRow("Mode");
@@ -568,13 +549,6 @@ void environmentEditor(EditContext& ctx) {
             UiKit::PropertyRow("Bottom");
             ImGui::ColorEdit3("##skybot", &sky.gradientBottom.x);
         }
-        const bool modified = sky.mode != kDef.mode || sky.intensity != kDef.intensity ||
-                              sky.solidColor != kDef.solidColor ||
-                              sky.gradientTop != kDef.gradientTop ||
-                              sky.gradientBottom != kDef.gradientBottom;
-        ImGui::SameLine();
-        if (UiKit::ResetGlyph("rstSky", modified))
-            sky = kDef;
     }
 }
 

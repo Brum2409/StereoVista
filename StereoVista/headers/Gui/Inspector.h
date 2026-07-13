@@ -117,6 +117,15 @@ bool sameSnapshot(const std::vector<std::pair<EditHandle, T>>& a,
     return true;
 }
 
+// The value each row showed last frame, so EditRow can tell a change it made
+// itself from one that arrived from somewhere else (an undo, the gizmo, a preset)
+// and flash only the latter. One map per property type T, like pendingStore.
+template <class T>
+std::unordered_map<ImGuiID, T>& lastShownStore() {
+    static std::unordered_map<ImGuiID, T> store;
+    return store;
+}
+
 } // namespace detail
 
 // Draw a labeled property row bound to a shared property across `handles`.
@@ -163,6 +172,19 @@ bool EditRow(EditContext& ctx, const char* label, const char* strId,
     T edited = value;
     const bool changed = widget(edited);
     const ImGuiID widgetId = ImGui::GetItemID();
+
+    // Flash the row when its value moved WITHOUT this widget being the one that
+    // moved it — an undo, a redo, a gizmo drag in the viewport, a section reset.
+    // That is precisely the change the user can otherwise miss, and because every
+    // Inspector row funnels through here, every Inspector row gets it for free.
+    // A change the row made itself (`changed`, or a drag in flight) must stay
+    // quiet, or the flash would just be noise trailing the pointer.
+    auto& lastShown = detail::lastShownStore<T>();
+    const auto shownIt = lastShown.find(widgetId);
+    const bool external = shownIt != lastShown.end() && !(shownIt->second == value) &&
+                          !changed && !ImGui::IsItemActive();
+    lastShown[widgetId] = changed ? edited : value;
+    UiKit::ItemFlash(external);
     ImGui::PopID();
 
     if (changed) {

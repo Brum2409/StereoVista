@@ -10,6 +10,7 @@
 #include "imgui/IconsFontAwesome5.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -196,10 +197,18 @@ void draw(Services& services, bool* open) {
 
     ImGuiViewport* viewport = ImGui::GetMainViewport();
 
+    // The palette OPENS: the scrim washes in and the panel springs down from just
+    // above its resting place, so Ctrl+K reads as summoning something rather than
+    // as a window blinking on. Both replay on every open (`justOpened` resets
+    // them), because the palette is the one surface people invoke over and over.
+    const ImGuiID animId = ImGui::GetID("##paletteAnim");
+    const float openT = UiKit::Appear(animId, justOpened, 4.6f, 0.62f);
+    const float scrim = UiKit::Appear(animId ^ 0x77u, justOpened, 9.0f, 1.0f);
+
     // Dimmed scrim (its own window so the palette, focused, draws above it).
     ImGui::SetNextWindowPos(viewport->Pos);
     ImGui::SetNextWindowSize(viewport->Size);
-    ImGui::SetNextWindowBgAlpha(0.45f);
+    ImGui::SetNextWindowBgAlpha(0.45f * scrim);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.02f, 0.02f, 0.04f, 1.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     if (ImGui::Begin("##paletteScrim", nullptr,
@@ -279,13 +288,18 @@ void draw(Services& services, bool* open) {
 
     // ── The palette window ──────────────────────────────────────────────────
     const float width = 640.0f * UiKit::Scale();
+    // The spring can overshoot past 1, which is exactly the little drop-and-settle
+    // we want on the Y — but alpha has to stay a real alpha.
+    const float drop = (1.0f - openT) * 40.0f * UiKit::Scale();
+    const float fade = std::min(std::max(scrim, 0.0f), 1.0f);
     ImGui::SetNextWindowPos(
         ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f,
-               viewport->Pos.y + viewport->Size.y * 0.18f),
+               viewport->Pos.y + viewport->Size.y * 0.18f - drop),
         ImGuiCond_Always, ImVec2(0.5f, 0.0f));
     ImGui::SetNextWindowSize(ImVec2(width, 0.0f), ImGuiCond_Always);
     if (justOpened)
         ImGui::SetNextWindowFocus();
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, fade);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, UiKit::RadiusCard());
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
                         ImVec2(UiKit::Space(5), UiKit::Space(5)));
@@ -295,7 +309,7 @@ void draw(Services& services, bool* open) {
                           ImGuiWindowFlags_NoSavedSettings |
                           ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::End();
-        ImGui::PopStyleVar(2);
+        ImGui::PopStyleVar(3);
         return;
     }
 
@@ -329,6 +343,18 @@ void draw(Services& services, bool* open) {
     const float rowHeight = ImGui::GetTextLineHeightWithSpacing() + UiKit::Space(3);
     const float listHeight = std::min(float(hits.size()), 9.0f) * rowHeight;
     ImGui::BeginChild("paletteList", ImVec2(0.0f, listHeight), false);
+
+    // ONE highlight that slides between rows on a spring, rather than a per-row
+    // fill that blinks from one to the next: arrowing down the list now reads as
+    // moving a cursor, which is what it is. Selectable's own fill is suppressed.
+    const ImGuiID selAnimId = ImGui::GetID("##paletteSel");
+    const float selF = UiKit::ReduceMotion()
+                           ? float(selected)
+                           : UiKit::Spring(selAnimId, float(selected), 6.0f, 0.7f);
+    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0, 0, 0, 0));
+
     for (size_t i = 0; i < hits.size(); ++i) {
         const Item& item = *hits[i].item;
         const UiKit::KindStyle style = UiKit::StyleFor(item.kind);
@@ -341,6 +367,31 @@ void draw(Services& services, bool* open) {
             selected = int(i);
             activate = true;
         }
+        const ImVec2 rowMin = ImGui::GetItemRectMin();
+        const ImVec2 rowMax = ImGui::GetItemRectMax();
+        const bool rowHovered = ImGui::IsItemHovered();
+
+        // How much of the sliding highlight lands on THIS row (1 at rest on it,
+        // partial while it is travelling past).
+        const float cover =
+            std::max(0.0f, 1.0f - std::fabs(selF - float(i)));
+        if (cover > 0.01f) {
+            ImVec4 fill = UiKit::Color(UiKit::Semantic::Accent);
+            fill.w = 0.30f * cover;
+            ImGui::GetWindowDrawList()->AddRectFilled(
+                rowMin, rowMax, ImGui::GetColorU32(fill), UiKit::RadiusInner());
+            ImVec4 bar = UiKit::Color(UiKit::Semantic::Accent);
+            bar.w = cover;
+            ImGui::GetWindowDrawList()->AddRectFilled(
+                rowMin, ImVec2(rowMin.x + 2.5f * UiKit::Scale(), rowMax.y),
+                ImGui::GetColorU32(bar), 1.0f);
+        } else if (rowHovered) {
+            ImVec4 fill = UiKit::Color(UiKit::Semantic::Accent);
+            fill.w = 0.08f;
+            ImGui::GetWindowDrawList()->AddRectFilled(
+                rowMin, rowMax, ImGui::GetColorU32(fill), UiKit::RadiusInner());
+        }
+
         if (isSelected && (justOpened || ImGui::IsKeyPressed(ImGuiKey_DownArrow) ||
                            ImGui::IsKeyPressed(ImGuiKey_UpArrow)))
             ImGui::SetScrollHereY(0.5f);
@@ -372,6 +423,7 @@ void draw(Services& services, bool* open) {
         }
         ImGui::PopID();
     }
+    ImGui::PopStyleColor(3);
     ImGui::EndChild();
 
     if (hits.empty()) {
@@ -398,7 +450,7 @@ void draw(Services& services, bool* open) {
         *open = false;
 
     ImGui::End();
-    ImGui::PopStyleVar(2);
+    ImGui::PopStyleVar(3);
 
     if (!*open)
         wasOpen = false; // re-arm the just-opened seeding

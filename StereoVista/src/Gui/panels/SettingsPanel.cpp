@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 // ============================================================================
@@ -83,6 +84,10 @@ void endFlash(const char* label) {
         ImGui::PopStyleColor();
 }
 
+// On/off preferences read better as a switch than a checkbox (UiKit §6.1); this
+// is the standard bool widget for a Settings row.
+inline bool boolToggle(bool& v) { return UiKit::ToggleSwitch("##v", &v); }
+
 // A plain Settings row: modified dot + label + widget + reset glyph.
 // `widget(value)` returns true when it edited (the return is unused today, but
 // keeps the shape ready for side-effect rows).
@@ -97,8 +102,12 @@ void row(Ctx& ctx, const char* label, const char* keywords, T& value, const T& d
     beginFlash(label);
     UiKit::Dot(modified);
     ImGui::SameLine();
-    UiKit::PropertyRow(label);
+    UiKit::PropertyRow(label, 0.42f, UiKit::ResetGutter());
     widget(value);
+    // Wash the control when its value moves without this widget moving it — the
+    // reset glyph beside it, a Reset-All, a deep-linked change from the palette.
+    if constexpr (std::is_arithmetic_v<T>)
+        UiKit::ItemChangeFlash(static_cast<float>(value));
     ImGui::SameLine();
     if (UiKit::ResetGlyph("##reset", modified))
         value = def;
@@ -118,7 +127,7 @@ void sideRow(Ctx& ctx, const char* label, const char* keywords, bool modified,
     beginFlash(label);
     UiKit::Dot(modified);
     ImGui::SameLine();
-    UiKit::PropertyRow(label);
+    UiKit::PropertyRow(label, 0.42f, UiKit::ResetGutter());
     draw();
     endFlash(label);
     ImGui::PopID();
@@ -183,12 +192,34 @@ void drawInterface(Ctx& ctx) {
     section(ctx, "Interface");
     row(ctx, "Status bar", "footer stats fps", ui.showStatusBar,
         kDefaults.ui.showStatusBar,
-        [](bool& v) { return ImGui::Checkbox("##v", &v); });
-    row(ctx, "Reduce motion", "animation accessibility disable",
+        boolToggle);
+
+    section(ctx, "Motion");
+    row(ctx, "Reduce motion", "animation accessibility disable still",
         ui.reduceMotion, kDefaults.ui.reduceMotion,
-        [](bool& v) { return ImGui::Checkbox("##v", &v); });
+        boolToggle);
     if (visible(ctx, "Reduce motion", ""))
-        help("Disables interface micro-animations (toggles, hover fades).");
+        help("Snaps every interface animation straight to its end state — hover "
+             "fades, toggles, sliding selections, rolling sections, toasts.");
+
+    // Both feed UiKit's shared motion primitives, so they retune every animated
+    // widget in the app at once. Greyed out while motion is off, rather than
+    // hidden: the reason they do nothing should be on screen (C9).
+    ImGui::BeginDisabled(ui.reduceMotion);
+    row(ctx, "Animation speed", "motion fast slow duration tempo",
+        ui.motionSpeed, kDefaults.ui.motionSpeed, [](float& v) {
+            return ImGui::SliderFloat("##v", &v, 0.25f, 3.0f, "%.2fx");
+        });
+    if (visible(ctx, "Animation speed", ""))
+        help("How quickly animations play. Higher is snappier.");
+    row(ctx, "Bounciness", "motion spring overshoot bounce playful",
+        ui.motionBounce, kDefaults.ui.motionBounce, [](float& v) {
+            return ImGui::SliderFloat("##v", &v, 0.0f, 2.0f, "%.2f");
+        });
+    if (visible(ctx, "Bounciness", ""))
+        help("How far springy animations overshoot before they settle. 0 removes "
+             "the overshoot and leaves a plain ease.");
+    ImGui::EndDisabled();
 }
 
 void drawCamera(Ctx& ctx) {
@@ -207,7 +238,7 @@ void drawCamera(Ctx& ctx) {
 
     section(ctx, "Navigation");
     row(ctx, "Distance-adaptive speed", "adaptive fly speed auto", c.adaptiveSpeed,
-        d.adaptiveSpeed, [](bool& v) { return ImGui::Checkbox("##v", &v); });
+        d.adaptiveSpeed, boolToggle);
     if (visible(ctx, "Distance-adaptive speed", ""))
         help("Scales fly/zoom speed by the distance to the surface at the screen "
              "centre: fast in open space, gentle near geometry.");
@@ -222,13 +253,13 @@ void drawCamera(Ctx& ctx) {
     row(ctx, "Look sensitivity", "mouse look", c.sensitivity, d.sensitivity,
         [](float& v) { return ImGui::SliderFloat("##v", &v, 0.01f, 0.5f, "%.3f"); });
     row(ctx, "Zoom to cursor", "scroll zoom", c.zoomToCursor, d.zoomToCursor,
-        [](bool& v) { return ImGui::Checkbox("##v", &v); });
+        boolToggle);
     row(ctx, "Orbit around cursor", "rotate pivot", c.orbitAroundCursor,
-        d.orbitAroundCursor, [](bool& v) { return ImGui::Checkbox("##v", &v); });
+        d.orbitAroundCursor, boolToggle);
 
     section(ctx, "Scrolling");
     row(ctx, "Smooth scrolling", "momentum scroll wheel", c.useSmoothScrolling,
-        d.useSmoothScrolling, [](bool& v) { return ImGui::Checkbox("##v", &v); });
+        d.useSmoothScrolling, boolToggle);
     row(ctx, "Momentum", "scroll smooth", c.scrollMomentum, d.scrollMomentum,
         [](float& v) { return ImGui::SliderFloat("##v", &v, 0.05f, 2.0f, "%.2f"); });
     row(ctx, "Deceleration", "scroll smooth", c.scrollDeceleration,
@@ -261,7 +292,7 @@ void drawStereo(Ctx& ctx) {
     row(ctx, "Convergence", "stereo zero parallax", st.convergence, d.convergence,
         [](float& v) { return ImGui::SliderFloat("##v", &v, 0.1f, 40.0f, "%.2f"); });
     row(ctx, "Auto convergence", "stereo focus", st.autoConvergence, d.autoConvergence,
-        [](bool& v) { return ImGui::Checkbox("##v", &v); });
+        boolToggle);
     row(ctx, "Focus factor", "stereo convergence", st.convergenceFactor,
         d.convergenceFactor,
         [](float& v) { return ImGui::SliderFloat("##v", &v, 0.1f, 3.0f, "%.2f"); });
@@ -269,7 +300,7 @@ void drawStereo(Ctx& ctx) {
         d.convergenceSmoothing,
         [](float& v) { return ImGui::SliderFloat("##v", &v, 0.5f, 20.0f, "%.1f"); });
     row(ctx, "Flip eyes", "stereo swap left right", st.flipEyes, d.flipEyes,
-        [](bool& v) { return ImGui::Checkbox("##v", &v); });
+        boolToggle);
     if (!ctx.searching) {
         ImGui::EndDisabled();
         ImGui::Separator();
@@ -309,7 +340,7 @@ void drawVr(Ctx& ctx) {
     }
 
     row(ctx, "Mirror left eye to window", "vr desktop preview", vr.mirrorToWindow,
-        d.mirrorToWindow, [](bool& v) { return ImGui::Checkbox("##v", &v); });
+        d.mirrorToWindow, boolToggle);
 
     section(ctx, "Comfort");
     row(ctx, "World scale", "vr metres per unit", vr.worldScale, d.worldScale,
@@ -318,7 +349,7 @@ void drawVr(Ctx& ctx) {
                                       ImGuiSliderFlags_Logarithmic);
         });
     row(ctx, "VR uses desktop near/far", "vr planes", vr.useScenePlanes,
-        d.useScenePlanes, [](bool& v) { return ImGui::Checkbox("##v", &v); });
+        d.useScenePlanes, boolToggle);
     row(ctx, "VR near plane", "vr clip", vr.nearPlane, d.nearPlane,
         [](float& v) { return ImGui::SliderFloat("##v", &v, 0.01f, 1.0f, "%.3f"); });
     row(ctx, "VR far plane", "vr clip", vr.farPlane, d.farPlane,
@@ -417,12 +448,12 @@ void drawRendering(Ctx& ctx) {
     if (!ctx.searching)
         ImGui::BeginDisabled(!wireSupported);
     row(ctx, "Wireframe", "debug lines mesh", r.wireframe, d.wireframe,
-        [](bool& v) { return ImGui::Checkbox("##v", &v); });
+        boolToggle);
     if (!ctx.searching)
         ImGui::EndDisabled();
     row(ctx, "Async compute", "queue overlap performance point cloud",
         r.asyncCompute, d.asyncCompute,
-        [](bool& v) { return ImGui::Checkbox("##v", &v); });
+        boolToggle);
     if (visible(ctx, "Async compute", ""))
         help("Runs the compute passes on the GPU's async queue, overlapped with "
              "graphics work. No-op when the GPU exposes no second queue.");
@@ -440,9 +471,9 @@ void drawEnvironment(Ctx& ctx) {
 
     section(ctx, "Shadows");
     row(ctx, "Shadows", "shadow map", l.shadows, dl.shadows,
-        [](bool& v) { return ImGui::Checkbox("##v", &v); });
+        boolToggle);
     row(ctx, "Soft shadows (PCSS)", "shadow contact hardening", l.softShadows,
-        dl.softShadows, [](bool& v) { return ImGui::Checkbox("##v", &v); });
+        dl.softShadows, boolToggle);
     row(ctx, "Point shadow range", "shadow cube far", l.pointShadowRange,
         dl.pointShadowRange, [](float& v) {
             return ImGui::SliderFloat("##v", &v, 5.0f, 500.0f, "%.0f m",
@@ -451,7 +482,7 @@ void drawEnvironment(Ctx& ctx) {
 
     section(ctx, "Sun");
     row(ctx, "Sun enabled", "sun directional light", l.sun.enabled, dl.sun.enabled,
-        [](bool& v) { return ImGui::Checkbox("##v", &v); });
+        boolToggle);
     row(ctx, "Sun direction", "sun angle", l.sun.direction, dl.sun.direction,
         [](glm::vec3& v) {
             const bool changed = ImGui::SliderFloat3("##v", &v.x, -1.0f, 1.0f);
@@ -520,22 +551,22 @@ void drawPointClouds(Ctx& ctx) {
             return changed;
         });
     row(ctx, "Morton resort", "las laz order streaming", pc.mortonResort,
-        d.mortonResort, [](bool& v) { return ImGui::Checkbox("##v", &v); });
+        d.mortonResort, boolToggle);
 
     section(ctx, "Rendering");
     row(ctx, "High-quality shading", "hqs averaging", pc.hqs, d.hqs,
-        [](bool& v) { return ImGui::Checkbox("##v", &v); });
+        boolToggle);
     row(ctx, "HQS depth window", "hqs threshold", pc.hqsThreshold, d.hqsThreshold,
         [](float& v) {
             return ImGui::SliderFloat("##v", &v, 0.001f, 0.1f, "%.3f",
                                       ImGuiSliderFlags_Logarithmic);
         });
     row(ctx, "Adaptive splats", "splat hole filling", pc.splatEnabled, d.splatEnabled,
-        [](bool& v) { return ImGui::Checkbox("##v", &v); });
+        boolToggle);
     row(ctx, "Splat max radius", "splat pixels", pc.splatMaxRadius, d.splatMaxRadius,
         [](int& v) { return ImGui::SliderInt("##v", &v, 1, 8); });
     row(ctx, "Density LOD", "lod thinning budget", pc.lodEnabled, d.lodEnabled,
-        [](bool& v) { return ImGui::Checkbox("##v", &v); });
+        boolToggle);
     row(ctx, "Points per pixel", "lod density budget", pc.lodPointsPerPixel,
         d.lodPointsPerPixel, [](float& v) {
             return ImGui::SliderFloat("##v", &v, 0.25f, 8.0f, "%.2f",
@@ -556,11 +587,11 @@ void drawFiles(Ctx& ctx) {
         });
     row(ctx, "Safety snapshot before replace", "backup checkpoint destructive",
         f.safetySnapshotBeforeReplace, d.safetySnapshotBeforeReplace,
-        [](bool& v) { return ImGui::Checkbox("##v", &v); });
+        boolToggle);
 
     section(ctx, "Autosave");
     row(ctx, "Autosave", "backup recovery crash", f.autosaveEnabled, d.autosaveEnabled,
-        [](bool& v) { return ImGui::Checkbox("##v", &v); });
+        boolToggle);
     row(ctx, "Autosave interval", "minutes backup", f.autosaveMinutes,
         d.autosaveMinutes,
         [](int& v) { return ImGui::SliderInt("##v", &v, 1, 60, "%d min"); });
@@ -569,7 +600,7 @@ void drawFiles(Ctx& ctx) {
 
     section(ctx, "Welcome");
     row(ctx, "Show Welcome Hub", "start empty scene hub", f.showWelcomeHub,
-        d.showWelcomeHub, [](bool& v) { return ImGui::Checkbox("##v", &v); });
+        d.showWelcomeHub, boolToggle);
 
     if (ctx.searching)
         return;
@@ -683,6 +714,8 @@ void resetCategory(Services& services, SettingsCategory category) {
     case SettingsCategory::Interface:
         s.ui.showStatusBar = kDefaults.ui.showStatusBar;
         s.ui.reduceMotion = kDefaults.ui.reduceMotion;
+        s.ui.motionSpeed = kDefaults.ui.motionSpeed;
+        s.ui.motionBounce = kDefaults.ui.motionBounce;
         services.setTheme(kDefaults.ui.theme);
         services.setGuiScaleFactor(kDefaults.ui.guiScale);
         break;
@@ -773,6 +806,8 @@ const std::vector<SettingsIndexEntry>& settingsIndex() {
         { "GUI scale", "size dpi zoom text", SettingsCategory::Interface },
         { "Status bar", "footer stats", SettingsCategory::Interface },
         { "Reduce motion", "animation accessibility", SettingsCategory::Interface },
+        { "Animation speed", "motion tempo duration", SettingsCategory::Interface },
+        { "Bounciness", "motion spring overshoot", SettingsCategory::Interface },
         { "Field of view", "fov lens", SettingsCategory::Camera },
         { "Fly speed", "wasd navigation", SettingsCategory::Camera },
         { "Look sensitivity", "mouse", SettingsCategory::Camera },
@@ -781,6 +816,8 @@ const std::vector<SettingsIndexEntry>& settingsIndex() {
         { "Zoom to cursor", "scroll", SettingsCategory::Camera },
         { "Show 3D cursor", "cursor", SettingsCategory::Cursor },
         { "Cursor type", "sphere plane fragment", SettingsCategory::Cursor },
+        { "Show while orbiting", "orbit centre center marker pivot",
+          SettingsCategory::Cursor },
         { "Stereo mode", "3d quad buffer side by side", SettingsCategory::Stereo },
         { "Eye separation", "ipd stereo", SettingsCategory::Stereo },
         { "Convergence", "zero parallax", SettingsCategory::Stereo },

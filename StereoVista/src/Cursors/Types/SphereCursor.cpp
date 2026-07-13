@@ -30,17 +30,23 @@ namespace Cursor {
         m_transparency(0.7f),
         m_edgeSoftness(0.8f),
         m_centerTransparency(0.2f),
-        m_showInnerSphere(false),
+        m_showInnerSphere(true),
         m_innerSphereColor(0.0f, 1.0f, 0.0f, 1.0f),
         m_innerSphereFactor(0.1f)
     {
         m_name = "SphereCursor";
+        // Sphere-specific default: the base size feeds appendTo's model scale on
+        // top of the fixed-radius baked mesh (m_meshRadius), so a value of ~1.0
+        // gives the intended on-screen size. Other cursors keep BaseCursor's 0.05.
+        setBaseSize(1.0f);
     }
 
     SphereCursor::~SphereCursor() = default;
 
     void SphereCursor::initialize() {
-        m_meshRadius = getBaseSize();
+        // Bake the mesh at the fixed m_meshRadius (NOT getBaseSize()): the base
+        // size is applied once as a model scale in appendTo. Baking it in here as
+        // well would square it, which made the default cursor far too small.
         generateMesh(m_meshRadius, 32, 32);
     }
 

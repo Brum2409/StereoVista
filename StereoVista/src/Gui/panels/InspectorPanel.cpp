@@ -330,8 +330,8 @@ void drawGlobalCards(Services& services, const std::vector<Kind>& kinds) {
         UiKit::BeginGlobalCard("gcPointCloud");
         UiKit::SectionHeader("Point cloud rendering");
         Settings::PointCloud& pc = services.settings().pointCloud;
-        ImGui::Checkbox("High-quality shading", &pc.hqs);
-        ImGui::Checkbox("Density LOD", &pc.lodEnabled);
+        UiKit::ToggleSwitch("High-quality shading", &pc.hqs);
+        UiKit::ToggleSwitch("Density LOD", &pc.lodEnabled);
         if (pc.lodEnabled) {
             ImGui::SetNextItemWidth(140.0f * UiKit::Scale());
             ImGui::SliderFloat("Points / pixel", &pc.lodPointsPerPixel, 0.25f, 8.0f, "%.2f",
@@ -346,10 +346,10 @@ void drawGlobalCards(Services& services, const std::vector<Kind>& kinds) {
         UiKit::BeginGlobalCard("gcLighting");
         UiKit::SectionHeader("Lighting");
         Settings::Lighting& lt = services.settings().lighting;
-        ImGui::Checkbox("Shadows", &lt.shadows);
+        UiKit::ToggleSwitch("Shadows", &lt.shadows);
         if (lt.shadows) {
-            ImGui::SameLine();
-            ImGui::Checkbox("Soft (PCSS)", &lt.softShadows);
+            ImGui::SameLine(0.0f, UiKit::Space(6));
+            UiKit::ToggleSwitch("Soft (PCSS)", &lt.softShadows);
         }
         ImGui::SetNextItemWidth(140.0f * UiKit::Scale());
         ImGui::SliderFloat("Ambient", &lt.ambient, 0.0f, 0.5f, "%.3f");

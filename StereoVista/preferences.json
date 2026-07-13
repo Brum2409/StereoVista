@@ -1,23 +1,23 @@
 {
     "camera": {
         "adaptiveSpeed": true,
-        "farPlane": 60366.5078125,
-        "fovDeg": 48.1510009765625,
-        "maxScrollVelocity": 4.0,
-        "nearPlane": 0.009999999776482582,
+        "farPlane": 1000.0,
+        "fovDeg": 60.0,
+        "maxScrollVelocity": 3.0,
+        "nearPlane": 0.10000000149011612,
         "orbitAroundCursor": true,
-        "scrollDeceleration": 2.0,
-        "scrollMomentum": 0.12999999523162842,
-        "sensitivity": 0.07999999821186066,
-        "speed": 459.14404296875,
+        "scrollDeceleration": 5.0,
+        "scrollMomentum": 0.44999998807907104,
+        "sensitivity": 0.05999999865889549,
+        "speed": 4.0,
         "speedFactor": 1.0,
         "useSmoothScrolling": true,
         "zoomToCursor": true
     },
     "commandFrecency": {
         "create.cube": {
-            "lastUse": 1783882179,
-            "score": 1.0
+            "lastUse": 1783898341,
+            "score": 2.9901649101782946
         },
         "edit.redo": {
             "lastUse": 1783860664,
@@ -28,12 +28,12 @@
             "score": 1.0
         },
         "edit.undo": {
-            "lastUse": 1783882530,
-            "score": 7.931847048707908
+            "lastUse": 1783900419,
+            "score": 11.847093214413743
         },
         "file.import_files": {
-            "lastUse": 1783882278,
-            "score": 1.9997943003936713
+            "lastUse": 1783896756,
+            "score": 7.9738431726051875
         },
         "file.import_pointcloud": {
             "lastUse": 1783863439,
@@ -44,8 +44,8 @@
             "score": 1.0
         },
         "file.new_scene": {
-            "lastUse": 1783881845,
-            "score": 1.9892421849350432
+            "lastUse": 1783898328,
+            "score": 3.9670114969158647
         },
         "file.open_slpk": {
             "lastUse": 1783864668,
@@ -60,60 +60,64 @@
             "score": 1.0
         },
         "gizmo.rotate": {
-            "lastUse": 1783882527,
-            "score": 1.9872352231377866
+            "lastUse": 1783895314,
+            "score": 5.962349919279072
         },
         "gizmo.scale": {
             "lastUse": 1783860109,
             "score": 2.99999828088579
         },
         "gizmo.translate": {
-            "lastUse": 1783882548,
-            "score": 2.9747425997621333
+            "lastUse": 1783895384,
+            "score": 4.94689769153417
         },
         "help.about": {
-            "lastUse": 1783882466,
-            "score": 2.9783589388079603
+            "lastUse": 1783899215,
+            "score": 3.94990993075118
         },
         "help.shortcuts": {
-            "lastUse": 1783882459,
-            "score": 1.0
+            "lastUse": 1783899234,
+            "score": 27.952950967167006
         },
         "palette.open": {
-            "lastUse": 1783881882,
-            "score": 11.970426411630289
+            "lastUse": 1783898320,
+            "score": 21.827154281358165
         },
         "select.all": {
-            "lastUse": 1783876556,
-            "score": 14.904213631532746
+            "lastUse": 1783897418,
+            "score": 15.727098632419683
         },
         "select.clear": {
-            "lastUse": 1783882892,
-            "score": 2.9995748507436684
+            "lastUse": 1783899223,
+            "score": 28.924412567486893
         },
         "tool.clipplane": {
-            "lastUse": 1783881374,
-            "score": 2.999992550519428
+            "lastUse": 1783895376,
+            "score": 3.9760178728539826
         },
         "tool.stereovista.measurement": {
-            "lastUse": 1783881525,
-            "score": 1.0
+            "lastUse": 1783898954,
+            "score": 6.976751941808334
         },
         "view.add_viewport": {
-            "lastUse": 1783882331,
-            "score": 4.987189754237807
+            "lastUse": 1783898983,
+            "score": 8.936531956217394
         },
         "view.center": {
-            "lastUse": 1783882492,
-            "score": 1.9815817901901691
+            "lastUse": 1783897897,
+            "score": 12.945450926369697
         },
         "view.frame_selected": {
-            "lastUse": 1783881945,
-            "score": 2.9999232143363175
+            "lastUse": 1783892064,
+            "score": 15.970233951990304
         },
         "view.panel.cursor": {
-            "lastUse": 1783881738,
-            "score": 1.9970040680201386
+            "lastUse": 1783893988,
+            "score": 4.976125893026983
+        },
+        "view.panel.diagnostics": {
+            "lastUse": 1783896848,
+            "score": 1.9983584478915368
         },
         "view.panel.history": {
             "lastUse": 1783881570,
@@ -124,12 +128,12 @@
             "score": 1.0
         },
         "view.panel.settings": {
-            "lastUse": 1783881448,
-            "score": 1.0
+            "lastUse": 1783899944,
+            "score": 8.958266065452316
         },
         "view.panel.snapshots": {
-            "lastUse": 1783877343,
-            "score": 1.99903203398076
+            "lastUse": 1783899932,
+            "score": 3.9728654124865526
         },
         "view.reset_layout": {
             "lastUse": 1783882495,
@@ -140,35 +144,36 @@
             "score": 2.9966076341577836
         },
         "view.toggle_gui": {
-            "lastUse": 1783882258,
-            "score": 11.999940977228412
+            "lastUse": 1783898889,
+            "score": 21.870373016303194
         },
         "view.wireframe": {
-            "lastUse": 1783881362,
-            "score": 3.99999770784761
+            "lastUse": 1783896978,
+            "score": 15.895033906694406
         }
     },
     "cursor": {
         "show": true,
-        "type": 1
+        "showOrbitCenterWhileOrbiting": false,
+        "type": 0
     },
     "files": {
-        "autosaveEnabled": false,
-        "autosaveMinutes": 1,
-        "autosaveSlots": 1,
+        "autosaveEnabled": true,
+        "autosaveMinutes": 5,
+        "autosaveSlots": 3,
         "openSceneMode": 0,
         "recentScenes": [
             "C:\\Users\\benta\\Downloads\\Stereo Demo\\StereoVista\\snapshots\\snap_0.scene",
             "C:\\Users\\benta\\Downloads\\Stereo Demo\\StereoVista\\office.scene"
         ],
         "safetySnapshotBeforeReplace": true,
-        "showWelcomeHub": false
+        "showWelcomeHub": true
     },
     "lighting": {
         "ambient": 0.029999999329447746,
         "pointShadowRange": 50.0,
         "shadows": true,
-        "softShadows": false,
+        "softShadows": true,
         "sun": {
             "angularSizeDeg": 1.5,
             "color": [
@@ -190,10 +195,10 @@
         "hqs": false,
         "hqsThreshold": 0.009999999776482582,
         "lodEnabled": true,
-        "lodPointsPerPixel": 1.7599999904632568,
+        "lodPointsPerPixel": 2.0,
         "mortonResort": true,
         "splatEnabled": true,
-        "splatMaxRadius": 3
+        "splatMaxRadius": 4
     },
     "render": {
         "asyncCompute": true,
@@ -220,34 +225,39 @@
     },
     "stereo": {
         "autoConvergence": true,
-        "convergence": 25.118534088134766,
-        "convergenceFactor": 1.2999999523162842,
-        "convergenceSmoothing": 1.2000000476837158,
+        "convergence": 2.5999999046325684,
+        "convergenceFactor": 1.0,
+        "convergenceSmoothing": 5.0,
         "flipEyes": false,
-        "separation": 0.10999999940395355
+        "separation": 0.5
     },
     "ui": {
-        "guiScale": 1.2899999618530273,
+        "guiScale": 1.100000023841858,
         "hints": {
-            "dismissed": [],
+            "dismissed": [
+                "hint.frame_selected",
+                "hint.measurements"
+            ],
             "enabled": true
         },
         "inspector": {
             "display": true,
-            "exportSection": false,
-            "info": true,
+            "exportSection": true,
+            "info": false,
             "layer": true,
             "lightProps": false,
             "material": true,
             "sky": true,
             "sun": true,
-            "textures": false,
+            "textures": true,
             "transform": true
         },
+        "motionBounce": 1.0,
+        "motionSpeed": 0.8999999761581421,
         "panels": {
             "clipPlanes": false,
             "cursor": false,
-            "diagnostics": false,
+            "diagnostics": true,
             "history": true,
             "inspector": true,
             "pointClouds": false,

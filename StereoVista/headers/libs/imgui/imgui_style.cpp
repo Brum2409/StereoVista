@@ -19,6 +19,28 @@ GuiScaleSettings g_GuiScale;
 CustomStyleColors g_StyleColors;
 int g_currentTheme = GUI_THEME_MODERN_DARK;
 
+// Glyph range for the text fonts. ImGui's default range is Basic Latin +
+// Latin-1 only, so typographic glyphs the UI uses — the ellipsis "…" in
+// "Import model…", the arrows "↑↓" in the palette footer — fall outside it and
+// render as the missing-glyph box ("?"). We extend the range to cover General
+// Punctuation and the Arrows block so those characters resolve everywhere.
+// The pointer handed to ImGui must outlive Build(), so the storage is static.
+static const ImWchar *TextFontGlyphRanges() {
+  static ImVector<ImWchar> ranges;
+  if (ranges.empty()) {
+    static const ImWchar extra[] = {
+        0x2000, 0x206F, // General Punctuation (… – — ‘ ’ “ ” • …)
+        0x2190, 0x21FF, // Arrows (↑ ↓ ← → and friends)
+        0,
+    };
+    ImFontGlyphRangesBuilder builder;
+    builder.AddRanges(ImGui::GetIO().Fonts->GetGlyphRangesDefault());
+    builder.AddRanges(extra);
+    builder.BuildRanges(&ranges);
+  }
+  return ranges.Data;
+}
+
 // ===========================================================================
 // Color themes
 // ===========================================================================
@@ -173,6 +195,8 @@ bool InitializeImGuiWithFonts(GLFWwindow *window, bool isDarkTheme) {
   fontConfig.OversampleV = 3;
   fontConfig.PixelSnapH = true;
   fontConfig.RasterizerMultiply = 1.2f;
+  // Cover the ellipsis/arrows the UI uses, not just Basic Latin (see above).
+  fontConfig.GlyphRanges = TextFontGlyphRanges();
 
   // Modern font paths to try (in order of preference)
   const char *fontPaths[] = {// Windows fonts
@@ -499,6 +523,8 @@ void RebuildImGuiFontAtlas(bool isDarkTheme) {
   fontConfig.OversampleV = 3;
   fontConfig.PixelSnapH = true;
   fontConfig.RasterizerMultiply = 1.2f;
+  // Cover the ellipsis/arrows the UI uses, not just Basic Latin (see above).
+  fontConfig.GlyphRanges = TextFontGlyphRanges();
 
   // Modern font paths to try (in order of preference)
   const char *fontPaths[] = {// Windows fonts
@@ -726,24 +752,26 @@ static void ApplyStyleGeometry(ImGuiStyle &style) {
   style.Alpha = 1.0f;
   style.DisabledAlpha = 0.5f;
   style.WindowPadding = ImVec2(15 * scale, 12 * scale);
-  // Flat, not rounded: docked panels sit flush against the menu bar, the
-  // status bar and each other, so any corner rounding on the outer window
-  // frame reads as a visual defect (a gap where the panel "disconnects"
-  // from whatever it's flush against) rather than a design flourish — the
-  // rounded-corner look only works for a window with visible space all
-  // around it, which a docked panel never has. Kept unconditional (not just
-  // when ViewportsEnable is set) since docked panels need this regardless.
-  style.WindowRounding = 0.0f;
+  // ONE rounding for every rectangular element (windows, frames, children/cards,
+  // popups, tooltips, grabs, tabs, scrollbars) so the UI reads as one system.
+  //
+  // Docked panels and dragged-out OS windows still render SQUARE automatically:
+  // ImGui forces WindowRounding to 0 for any window where DockIsActive (so
+  // docked panels seat flush) or ViewportOwned (so a real OS window's corners
+  // aren't left uncovered/black) — see imgui.cpp Begin(). So we can round the
+  // style freely here and only free-floating windows + tooltips pick it up.
+  const float kRounding = 6.0f * scale;
+  style.WindowRounding = kRounding;
   style.WindowBorderSize = 1.0f * scale;
   style.WindowMinSize = ImVec2(32 * scale, 32 * scale);
   style.WindowTitleAlign = ImVec2(0.5f, 0.5f);
   style.WindowMenuButtonPosition = ImGuiDir_Left;
-  style.ChildRounding = 8.0f * scale;
+  style.ChildRounding = kRounding;
   style.ChildBorderSize = 1.0f * scale;
-  style.PopupRounding = 8.0f * scale;
+  style.PopupRounding = kRounding;
   style.PopupBorderSize = 1.0f * scale;
   style.FramePadding = ImVec2(10 * scale, 7 * scale);
-  style.FrameRounding = 7.0f * scale;
+  style.FrameRounding = kRounding;
   style.FrameBorderSize = 0.0f;
   style.ItemSpacing = ImVec2(10 * scale, 9 * scale);
   style.ItemInnerSpacing = ImVec2(8 * scale, 6 * scale);
@@ -751,25 +779,15 @@ static void ApplyStyleGeometry(ImGuiStyle &style) {
   style.IndentSpacing = 22.0f * scale;
   style.ColumnsMinSpacing = 6.0f * scale;
   style.ScrollbarSize = 14.0f * scale;
-  style.ScrollbarRounding = 12.0f * scale;
+  style.ScrollbarRounding = kRounding;
   style.GrabMinSize = 14.0f * scale;
-  style.GrabRounding = 8.0f * scale;
-  style.TabRounding = 8.0f * scale;
+  style.GrabRounding = kRounding;
+  style.TabRounding = kRounding;
   style.TabBorderSize = 0.0f;
   style.TabMinWidthForCloseButton = 0.0f;
   style.ColorButtonPosition = ImGuiDir_Right;
   style.ButtonTextAlign = ImVec2(0.5f, 0.5f);
   style.SelectableTextAlign = ImVec2(0.0f, 0.0f);
-
-  // Multi-viewport: a window dragged out of the main window becomes a real,
-  // opaque OS window. Rounded window corners would leave that window's
-  // framebuffer corners uncovered (rendering as black), so square off
-  // top-level windows when viewports are enabled. This also matches the
-  // docked-panel aesthetic. Inner widgets keep their rounding.
-  if (ImGui::GetCurrentContext() &&
-      (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable)) {
-    style.WindowRounding = 0.0f;
-  }
 }
 
 // Dark-theme color engine. Reads the four background levels and accents from

@@ -36,6 +36,18 @@ constexpr float RING_PICK   = 0.07f;
 constexpr float SCALE_TIP   = 0.085f; // cube half-extent at shaft end
 constexpr float CENTER_HALF = 0.11f;
 
+// ── Magnetic help zone (updateHover) ───────────────────────────────────────
+// Gizmo handles are only a few pixels wide on screen, which makes them fiddly
+// to hit. SNAP_ZONE widens every handle's pick tolerance; inside that slack the
+// handle still highlights and the 3D cursor snaps onto it. The gizmo holds a
+// constant apparent size (gizmoScale), so 1.0 unit ~= 18% of the viewport
+// half-height: on a 1000px-tall view the strict axis tolerance (0.10) is ~9px
+// and the help zone stretches it to ~22px.
+constexpr float SNAP_ZONE = 2.5f;
+// Deadband, in the same units (~3px), for engaging/releasing the magnet. Small
+// enough to feel immediate, large enough that hand jitter can't flicker it.
+constexpr float SNAP_HYSTERESIS = 0.03f;
+
 const glm::vec3 kAxisColor[3] = {
     glm::vec3(0.91f, 0.27f, 0.30f),   // X red
     glm::vec3(0.45f, 0.82f, 0.27f),   // Y green
@@ -147,11 +159,13 @@ void TransformGizmo::clearTarget() {
     m_hover = Handle::None;
     m_hasInteractionPoint = false;
     m_interactionLatched = false;
+    resetSnap();
 }
 
 void TransformGizmo::setMode(Mode m) {
     m_mode = m;
     m_interactionLatched = false;
+    resetSnap(); // different handles under the cursor: re-arm the magnet
 }
 
 void TransformGizmo::cycleMode() {
@@ -159,6 +173,7 @@ void TransformGizmo::cycleMode() {
            : (m_mode == Mode::Rotate)    ? Mode::Scale
                                          : Mode::Translate;
     m_interactionLatched = false;
+    resetSnap();
 }
 
 TransformGizmo::Mode TransformGizmo::effectiveMode() const {
@@ -200,12 +215,22 @@ float TransformGizmo::gizmoScale(const glm::vec3& cameraPos) const {
 
 // ────────────────────────────────────────────────────────────────────────────
 // Hit testing
+//
+// pickHandle() is the single source of truth: it measures the distance from the
+// ray to every handle of the current mode, normalised by the gizmo's world scale
+// (so the numbers read as screen-space and behave identically at any zoom), and
+// widens each handle's tolerance by `tolScale`.
+//
+// Selection deliberately has two tiers. A STRICT hit (inside the real geometry
+// tolerance) wins on DEPTH, so an axis passing in front of a plane quad still
+// picks the axis exactly as before. Only when nothing is strictly hit does the
+// help zone speak, and there the NEAREST handle wins — that is what "magnetic"
+// means: from empty space, the thing you were clearly aiming at.
 // ────────────────────────────────────────────────────────────────────────────
-TransformGizmo::Handle
-TransformGizmo::hitTest(const glm::vec3& o, const glm::vec3& d,
-                        const glm::vec3& cameraPos,
-                        glm::vec3* outHitPoint) const {
-    if (!enabled || !hasTarget()) return Handle::None;
+bool TransformGizmo::pickHandle(const glm::vec3& o, const glm::vec3& d,
+                                const glm::vec3& cameraPos, float tolScale,
+                                Pick& out) const {
+    if (!enabled || !hasTarget()) return false;
 
     const glm::vec3 pivot = *m_position;
     const float s = gizmoScale(cameraPos);
@@ -213,30 +238,51 @@ TransformGizmo::hitTest(const glm::vec3& o, const glm::vec3& d,
     glm::vec3 axes[3];
     computeAxes(axes, m);
 
-    Handle best = Handle::None;
-    float bestDepth = std::numeric_limits<float>::max();
-    auto consider = [&](Handle h, float depth) {
-        if (depth > 0.0f && depth < bestDepth) { bestDepth = depth; best = h; }
+    // Absolute slack (in gizmo units) the help zone adds around every handle.
+    // Applied as a PAD rather than a multiplier so fat handles (plane quads) and
+    // thin ones (axis shafts, rings) all gain the same reach — a multiplier
+    // would make the already-easy targets balloon and swallow the hard ones.
+    const float pad = (tolScale - 1.0f) * AXIS_PICK_R;
+
+    Pick best;
+    bool have = false;
+    // Strict hits beat help-zone hits outright; among equals, strict compares by
+    // depth (front-most) and help-zone compares by distance (nearest).
+    auto consider = [&](Handle h, float depth, float dist, bool exact,
+                        const glm::vec3& point) {
+        if (depth <= 0.0f) return;
+        // With no pad (tolScale == 1) there IS no help zone: only strict hits
+        // count, so hitTest() stays byte-for-byte the query it always was.
+        if (!exact && pad <= 0.0f) return;
+        Pick c;
+        c.handle = h; c.depth = depth; c.dist = dist; c.exact = exact;
+        c.point = point;
+        if (!have) { best = c; have = true; return; }
+        if (best.exact != c.exact) {           // strict always outranks help-zone
+            if (c.exact) best = c;
+            return;
+        }
+        if (c.exact ? (c.depth < best.depth) : (c.dist < best.dist))
+            best = c;
     };
 
     if (m == Mode::Rotate) {
         const Handle ringH[3] = {Handle::RingX, Handle::RingY, Handle::RingZ};
-        glm::vec3 bestHit(0.0f);
         for (int i = 0; i < 3; ++i) {
             glm::vec3 hit; float t;
             if (!rayPlane(o, d, pivot, axes[i], hit, t)) continue;
-            float radial = glm::length(hit - pivot);
-            if (std::fabs(radial - RING_R * s) < RING_PICK * s) {
-                consider(ringH[i], t);
-                if (best == ringH[i]) {
-                    bestHit = (radial > 1e-5f)
-                                  ? pivot + (hit - pivot) * (RING_R * s / radial)
-                                  : hit;
-                }
-            }
+            const float radial = glm::length(hit - pivot);
+            // Distance to the ring's circle, not to its plane.
+            const float dist = std::fabs(radial - RING_R * s) / s;
+            if (dist >= RING_PICK + pad) continue;
+            const glm::vec3 onRing =
+                (radial > 1e-5f) ? pivot + (hit - pivot) * (RING_R * s / radial)
+                                 : hit;
+            consider(ringH[i], t, dist, dist < RING_PICK, onRing);
         }
-        if (outHitPoint && best != Handle::None) *outHitPoint = bestHit;
-        return best;
+        if (!have) return false;
+        out = best;
+        return true;
     }
 
     // Translate & Scale share single-axis shafts.
@@ -247,10 +293,16 @@ TransformGizmo::hitTest(const glm::vec3& o, const glm::vec3& d,
         float sRay, tLine;
         closestRayLine(o, d, pivot, axes[i], sRay, tLine);
         if (sRay <= 0.0f) continue;
-        if (tLine < AXIS_MIN_T * s || tLine > axisLen) continue;
-        glm::vec3 pRay = o + d * sRay;
-        glm::vec3 pAxis = pivot + axes[i] * tLine;
-        if (glm::length(pRay - pAxis) < AXIS_PICK_R * s) consider(axisH[i], sRay);
+        // Clamp along the shaft so the magnet still reaches a cursor sitting just
+        // off either END of the axis, instead of only off its side.
+        const float tClamped = glm::clamp(tLine, AXIS_MIN_T * s, axisLen);
+        const glm::vec3 pAxis = pivot + axes[i] * tClamped;
+        const glm::vec3 pRay = o + d * sRay;
+        const float dist = glm::length(pRay - pAxis) / s;
+        if (dist >= AXIS_PICK_R + pad) continue;
+        const bool exact = dist < AXIS_PICK_R && tLine >= AXIS_MIN_T * s &&
+                           tLine <= axisLen;
+        consider(axisH[i], sRay, dist, exact, pAxis);
     }
 
     if (m == Mode::Translate) {
@@ -262,49 +314,136 @@ TransformGizmo::hitTest(const glm::vec3& o, const glm::vec3& d,
         for (int k = 0; k < 3; ++k) {
             glm::vec3 hit; float t;
             if (!rayPlane(o, d, pivot, axes[nk[k]], hit, t)) continue;
-            float u = glm::dot(hit - pivot, axes[ai[k]]);
-            float v = glm::dot(hit - pivot, axes[aj[k]]);
-            float lo = (PLANE_OFF - PLANE_HALF) * s;
-            float hi = (PLANE_OFF + PLANE_HALF) * s;
-            if (u > lo && u < hi && v > lo && v < hi) consider(planeH[k], t);
+            const float u = glm::dot(hit - pivot, axes[ai[k]]);
+            const float v = glm::dot(hit - pivot, axes[aj[k]]);
+            const float lo = (PLANE_OFF - PLANE_HALF) * s;
+            const float hi = (PLANE_OFF + PLANE_HALF) * s;
+            // Distance to the quad in its own plane (zero inside it).
+            const float du = std::max(0.0f, std::max(lo - u, u - hi));
+            const float dv = std::max(0.0f, std::max(lo - v, v - hi));
+            const bool inside = (du == 0.0f && dv == 0.0f);
+            const float dist = std::sqrt(du * du + dv * dv) / s;
+            if (!inside && dist >= pad) continue;
+            const glm::vec3 onQuad = pivot +
+                                     axes[ai[k]] * glm::clamp(u, lo, hi) +
+                                     axes[aj[k]] * glm::clamp(v, lo, hi);
+            consider(planeH[k], t, dist, inside, onQuad);
         }
     }
 
-    // Centre handle (sphere pick).
+    // Centre handle (sphere).
     {
-        glm::vec3 oc = o - pivot;
-        float r = CENTER_HALF * 1.35f * s;
-        float b = glm::dot(oc, d);
-        float c = glm::dot(oc, oc) - r * r;
-        float disc = b * b - c;
-        if (disc >= 0.0f) {
-            float t = -b - std::sqrt(disc);
-            if (t > 0.0f) {
-                if (m == Mode::Scale) consider(Handle::ScaleUniform, t);
-                else if (m == Mode::Translate) consider(Handle::ScreenMove, t);
+        const Handle h = (m == Mode::Scale)     ? Handle::ScaleUniform
+                         : (m == Mode::Translate) ? Handle::ScreenMove
+                                                  : Handle::None;
+        const float r = CENTER_HALF * 1.35f * s;
+        // Closest approach of the ray to the pivot gives both the surface
+        // distance (for the help zone) and, when it hits, the sphere's front
+        // intersection — which is the depth the strict pick must order by, so a
+        // handle in front of the centre box still wins as it always did.
+        const float tc = glm::dot(pivot - o, d);
+        if (h != Handle::None && tc > 0.0f) {
+            const float perp = glm::length((o + d * tc) - pivot);
+            const bool exact = perp <= r;
+            const float dist = std::max(0.0f, perp - r) / s;
+            if (exact || dist < pad) {
+                const float depth =
+                    exact ? tc - std::sqrt(std::max(0.0f, r * r - perp * perp))
+                          : tc;
+                consider(h, depth, dist, exact, pivot);
             }
         }
     }
 
-    if (outHitPoint && best != Handle::None)
-        *outHitPoint = o + d * bestDepth;
-    return best;
+    if (!have) return false;
+    out = best;
+    return true;
+}
+
+TransformGizmo::Handle
+TransformGizmo::hitTest(const glm::vec3& o, const glm::vec3& d,
+                        const glm::vec3& cameraPos,
+                        glm::vec3* outHitPoint) const {
+    Pick p;
+    if (!pickHandle(o, d, cameraPos, 1.0f, p)) return Handle::None;
+    if (outHitPoint) *outHitPoint = p.point;
+    return p.handle;
+}
+
+void TransformGizmo::resetSnap() {
+    m_snapHandle = Handle::None;
+    m_snapTracked = Handle::None;
+    m_snapBlocked = false;
+    m_snapMinDist = 0.0f;
+    m_snapMaxDist = 0.0f;
 }
 
 TransformGizmo::Handle
 TransformGizmo::updateHover(const glm::vec3& o, const glm::vec3& d,
                             const glm::vec3& cameraPos) {
     if (isDragging()) return m_activeHandle;
-    glm::vec3 hitPoint;
-    m_hover = hitTest(o, d, cameraPos, &hitPoint);
-    if (m_hover != Handle::None) {
-        m_interactionPoint = hitPoint;
+
+    auto noHover = [&]() {
+        m_hover = Handle::None;
+        if (!m_interactionLatched) m_hasInteractionPoint = false;
+        return Handle::None;
+    };
+    auto hoverAt = [&](Handle h, const glm::vec3& point) {
+        m_hover = h;
+        m_interactionPoint = point;   // ON the handle: the 3D cursor snaps to it
         m_hasInteractionPoint = true;
         m_interactionLatched = false;
-    } else if (!m_interactionLatched) {
-        m_hasInteractionPoint = false;
+        return h;
+    };
+
+    Pick p;
+    if (!pickHandle(o, d, cameraPos, SNAP_ZONE, p)) {
+        resetSnap(); // left the help zone entirely: the magnet re-arms
+        return noHover();
     }
-    return m_hover;
+
+    if (p.exact) {
+        // Genuinely on the handle — no magnet needed, and being here re-arms it.
+        m_snapHandle = p.handle;
+        m_snapTracked = p.handle;
+        m_snapBlocked = false;
+        m_snapMinDist = p.dist;
+        return hoverAt(p.handle, p.point);
+    }
+
+    // Inside the help zone but not on the handle: the magnet decides.
+    if (p.handle != m_snapTracked) {
+        // Just entered THIS handle's zone — entering is by definition an
+        // approach, so snap straight away.
+        m_snapTracked = p.handle;
+        m_snapBlocked = false;
+        m_snapHandle = p.handle;
+        m_snapMinDist = p.dist;
+    } else if (m_snapBlocked) {
+        // The user pulled away from this handle. Stay off it until they clearly
+        // move back TOWARD it — otherwise the magnet fights every attempt to
+        // leave, which is the whole annoyance we're avoiding.
+        m_snapMaxDist = std::max(m_snapMaxDist, p.dist);
+        if (p.dist < m_snapMaxDist - SNAP_HYSTERESIS) {
+            m_snapBlocked = false;
+            m_snapHandle = p.handle;
+            m_snapMinDist = p.dist;
+        }
+    } else if (m_snapHandle == p.handle) {
+        // Held by the magnet. Track the closest approach and let go only once
+        // the cursor has retreated measurably from it (the deadband keeps hand
+        // jitter from flickering the snap on and off).
+        m_snapMinDist = std::min(m_snapMinDist, p.dist);
+        if (p.dist > m_snapMinDist + SNAP_HYSTERESIS) {
+            m_snapHandle = Handle::None;
+            m_snapBlocked = true;
+            m_snapMaxDist = p.dist;
+        }
+    }
+
+    if (m_snapHandle != Handle::None)
+        return hoverAt(m_snapHandle, p.point);
+    return noHover();
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -403,7 +542,10 @@ void TransformGizmo::updateDrag(const glm::vec3& o, const glm::vec3& d,
     case Handle::AxisX: case Handle::AxisY: case Handle::AxisZ: {
         float sRay, tLine;
         closestRayLine(o, d, pivot, m_dragAxis, sRay, tLine);
-        if (sRay > 0.0f) m_interactionPoint = o + d * sRay;
+        // Keep the 3D cursor ON the axis (not out at the ray, which sits wherever
+        // the mouse drifted perpendicular to it). Matches the snapped hover, so
+        // engaging the drag doesn't pop the cursor off the line.
+        if (sRay > 0.0f) m_interactionPoint = pivot + m_dragAxis * tLine;
         float delta = tLine - m_startProj;
         if (effectiveMode() == Mode::Scale && m_scale) {
             float factor = 1.0f + delta / m_gizmoScaleAtDrag;
@@ -491,6 +633,9 @@ void TransformGizmo::endDrag() {
     // Latch the final interaction point so a co-located 3D cursor stays where
     // the drag finished instead of snapping back to scene depth on mouse-up.
     m_interactionLatched = true;
+    // Re-arm the magnet: the next hover re-decides from a clean slate rather
+    // than inheriting approach state from before the drag.
+    resetSnap();
 }
 
 // ────────────────────────────────────────────────────────────────────────────

@@ -44,19 +44,122 @@ float Space(int step);
 float RadiusInner();
 float RadiusCard();
 
-// Motion standards (§15): micro interactions 120–150 ms, panel-level
-// 200–250 ms. Anim01 below uses these; a "reduce motion" preference snaps
-// every animation to its target instantly.
+// ── Motion (§15) ────────────────────────────────────────────────────────────
+//
+// Motion standards: micro interactions 120–150 ms, panel-level 200–250 ms.
+// Every animation in the GUI runs through the primitives below, so a single
+// "reduce motion" preference snaps all of them to their target instantly and
+// the speed/bounce preferences retune all of them at once.
+//
+// The state behind every primitive is keyed by an ImGuiID (use ImGui::GetID, or
+// ImGui::GetItemID after a widget) and garbage-collected when it stops being
+// queried, so it is safe to animate throw-away, per-frame ids.
 inline constexpr float kMotionMicroSec = 0.14f;
 inline constexpr float kMotionPanelSec = 0.22f;
-void SetReduceMotion(bool reduce); // synced from Settings once per frame
-bool ReduceMotion();
 
-// Per-ID eased animation value in [0,1]: eases toward `target` at the micro
-// (default) or a caller-chosen rate, returns the current value. The ONLY
-// animation mechanism (§15) — state is keyed by `id` (use ImGui::GetID) and
-// garbage-collected when unused. With reduce-motion on it returns the target.
+// Synced from Settings once per frame (GuiSystem::draw). `speed` scales every
+// duration (>1 = snappier), `bounce` scales the overshoot of the springy curves
+// (0 = no overshoot at all, 1 = the shipped feel).
+void  SetMotion(bool reduce, float speed, float bounce);
+void  SetReduceMotion(bool reduce);
+bool  ReduceMotion();
+float MotionBounce();
+
+// Seconds since startup, for ambient/idle motion (a bobbing empty-state icon, a
+// breathing badge). Stops advancing under reduce-motion, so anything driven by
+// it holds still.
+float MotionTime();
+
+// Exponential ease toward `target`, clamped to [0,1]. The workhorse for
+// hover/selection fades — no overshoot, never surprises. With reduce-motion on
+// it returns the target.
 float Anim01(ImGuiID id, float target, float durationSec = kMotionMicroSec);
+
+// A real spring toward `target`: carries velocity across frames, so it
+// overshoots and settles instead of easing flatly into place. This is what
+// makes a knob, a pill or a pop feel physical. `freq` is roughly the
+// oscillations/sec and `damp` the damping ratio (1 = critical, no overshoot;
+// the live bounce preference scales the under-damping). The returned value
+// deliberately LEAVES [0,1] while it overshoots — that is the bounce — so clamp
+// it yourself where a value out of range would break (an alpha, a fraction).
+float Spring(ImGuiID id, float target, float freq = 4.0f, float damp = 0.62f,
+             float* outVelocity = nullptr);
+
+// Springs 0 -> 1 the FIRST time `id` is seen — the entrance animation for a
+// panel, a card, an overlay. (Spring() deliberately starts settled at its target,
+// so it can't be used for this.) Anything that stops being drawn is forgotten, so
+// closing and reopening replays the entrance; pass reset = true to replay it
+// explicitly for something that never went away.
+float Appear(ImGuiID id, bool reset = false, float freq = 5.0f, float damp = 0.62f);
+
+// One-shot impulse. Kick() sets it to `strength`; Kicked() reads it and decays
+// it toward 0. The click-feedback / arrival-pop / "look at me" primitive.
+void  Kick(ImGuiID id, float strength = 1.0f);
+float Kicked(ImGuiID id, float decaySec = 0.40f);
+
+// Kicks `id` whenever `value` differs from what it was last frame, and returns
+// the decaying flash. This is the "a value changed under me" animation — an
+// undo, a gizmo drag writing back, a preset load — and it works for a value the
+// user did NOT touch, which is exactly when a flash earns its keep.
+float ChangeFlash(ImGuiID id, float value, float decaySec = 0.55f);
+
+// Easing curves over t in [0,1]. EaseOutBack overshoots past 1 and settles back
+// (scaled by the bounce preference); EaseOutElastic wobbles in.
+float EaseOutCubic(float t);
+float EaseOutBack(float t);
+float EaseOutElastic(float t);
+
+// ── Generic item FX: animates ANY ImGui widget ──────────────────────────────
+//
+// Call IMMEDIATELY after submitting a widget (ImGui::Button, a Selectable, a
+// TreeNode, a MenuItem, …). It reads the item ImGui just drew — its rect, id and
+// hover/active state — and composites the animation on top of it, so a plain
+// ImGui widget gains an eased hover wash, a click ripple that spreads from the
+// press point, and an accent focus ring without being rewritten. No-op under
+// reduce-motion.
+enum ItemFxFlags_ {
+    ItemFx_None  = 0,
+    ItemFx_Hover = 1 << 0, // eased wash over the item rect
+    ItemFx_Press = 1 << 1, // ripple from the press point, clipped to the item
+    ItemFx_Focus = 1 << 2, // accent ring while the item is active
+    ItemFx_Default = ItemFx_Hover | ItemFx_Press,
+    ItemFx_All = ItemFx_Hover | ItemFx_Press | ItemFx_Focus,
+};
+// `rounding` < 0 takes the style's frame rounding.
+void ItemFx(int flags = ItemFx_Default, float rounding = -1.0f);
+
+// The same effects for a caller that captured the item's id, rect and state
+// itself. Needed whenever the FX cannot be drawn immediately after the widget —
+// a custom-drawn row that submits a drag-drop source, a context menu or its own
+// content in between would otherwise have ItemFx read the wrong "last item".
+void ItemFxAt(ImGuiID id, const ImVec2& rectMin, const ImVec2& rectMax, int flags,
+              float rounding, bool hovered, bool pressed, bool active);
+
+// Wash the LAST item with the accent, decaying over ~half a second. Call it
+// EVERY frame (it also draws the decay); pass trigger = true on the frame the
+// change happened. This is the "a value changed under me" animation — an undo, a
+// gizmo drag writing back, a preset load — and it is the caller's job to know
+// that the change did not come from dragging this very widget, which would make
+// the flash noise instead of signal.
+void ItemFlash(bool trigger);
+
+// The same thing for a call site that can hand over a plain number: detects the
+// change itself, and stays quiet while the user is actively driving the widget.
+void ItemChangeFlash(float value);
+
+// ── Global widget-color motion (no call sites at all) ───────────────────────
+//
+// ImGui only ever has ONE hovered item and ONE active item, so the hovered/active
+// entries of the style palette can be animated against them: every button,
+// slider, checkbox, combo, tab, tree row, menu item, scrollbar and resize grip in
+// the app then eases its hover and press tint in, with no widget rewritten and no
+// call site touched. Call BeginFrameMotion() once at the top of the GUI frame
+// (before any widget is submitted).
+//
+// The pristine palette is snapshotted the first time and re-snapshotted whenever
+// the theme changes, so a theme switch never bakes an interpolated colour in.
+void BeginFrameMotion();
+void InvalidateStyleBaseline(); // force a re-snapshot (after a manual restyle)
 
 // Semantic theme colors (the live theme's palette; never hard-code these).
 enum class Semantic { Primary, Accent, Success, Warning, Danger, Info };
@@ -112,6 +215,17 @@ void InlineIcon(const char* icon, const ImVec4& color);
 // icon — where InlineIcon's fixed text-size layout doesn't fit. Prefer
 // InlineIcon for normal, body-text-size inline icons.
 ImFont* IconFont();
+
+// Draw an icon-font glyph rotated about its own centre — the animated chevron
+// of a section, the spinning ↺ of a reset. `angleRad` 0 = upright, positive =
+// clockwise. Draws nothing when the icon font failed to load.
+void DrawIconRotated(ImDrawList* dl, const char* icon, ImVec2 centre, float size,
+                     float angleRad, ImU32 color);
+
+// An indeterminate progress spinner (background work: streaming points, opening
+// a scene layer). Lays out at the cursor and advances by its own size, so it sits
+// inline in a status strip or a row.
+void Spinner(float radius, const ImVec4& color);
 
 // Section header: accent bar + title + thin separator.
 void SectionHeader(const char* label);
@@ -169,7 +283,31 @@ void EmptyState(const char* icon, const char* title, const char* hint);
 // Property row prologue: draws the label in a fixed-fraction left column and
 // puts the cursor in the value column with the item width set. Follow with
 // exactly one widget.
-void PropertyRow(const char* label, float labelFraction = 0.42f);
+//
+// `reserveRight` reserves room on the value widget's right edge:
+//    0 (default) — fill to the edge.
+//   >0           — reserve that many (scaled) pixels, e.g. ResetGutter() so a
+//                  trailing ResetGlyph lands flush instead of being clipped.
+void PropertyRow(const char* label, float labelFraction = 0.38f,
+                 float reserveRight = 0.0f);
+
+// The width of a reset gutter (one frame-height button + item spacing) — pass to
+// PropertyRow's reserveRight on rows that end in a ResetGlyph.
+float ResetGutter();
+
+// ── Grouped collapsible section (contract C6: header + its body read as one) ──
+//
+// A collapsible section whose OPEN body is visually bound to its header: the
+// header is the themed rounded bar; when open, the body is indented under a
+// left accent guide so the controls it holds clearly belong to it (a bare
+// CollapsingHeader leaves its content floating, disconnected from the header).
+//
+// `open` (optional) seeds the initial state and is written back each frame so a
+// Settings flag can persist it. Pair EVERY BeginSection with EndSection, but
+// call EndSection ONLY when BeginSection returned true:
+//     if (UiKit::BeginSection("Transform", &flag)) { ...; UiKit::EndSection(); }
+bool BeginSection(const char* label, bool* open = nullptr);
+void EndSection();
 
 // Reset affordance for a value row: a dim ↺ glyph that lights up while
 // `modified` and returns true when clicked (§12 resets). Draws nothing (but

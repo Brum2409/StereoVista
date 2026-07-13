@@ -62,6 +62,18 @@ struct DrawItem {
     float worldBoundsRadius = 0.0f;
 };
 
+// What a DepthQueryRect is FOR. Consumers must look their rect up by id, never
+// by index: a rect is only queued when its consumer wants it (the mouse pick is
+// skipped during a camera/gizmo drag) and the renderer silently DROPS rects that
+// clamp to zero size — so rects[0] is not reliably anybody's rect. (Assuming it
+// was the mouse rect is what made the 3D cursor snap to the screen centre, and
+// flash the Windows cursor, for a few frames after every drag.)
+enum DepthQueryId : uint32_t {
+    kDepthQueryNone = 0,
+    kDepthQueryMouse = 1,  // 1x1 at the mouse: the 3D-cursor geometry pick
+    kDepthQueryCenter = 2, // block at the view centre: adaptive speed + convergence
+};
+
 // A rectangle of the view-0 scene depth buffer to copy back to the CPU this
 // frame (pixel coordinates, top-left origin). Results surface one frame
 // later in Renderer::depthSamples() — the same one-frame staleness class as
@@ -69,6 +81,7 @@ struct DrawItem {
 struct DepthQueryRect {
     glm::ivec2 origin{ 0 };
     glm::ivec2 size{ 0 };
+    uint32_t id = kDepthQueryNone;
 };
 
 // Published depth-picking readback (see Renderer::depthSamples()).
@@ -104,6 +117,27 @@ struct DepthReadback {
         }
         return false;
     }
+
+    // Look a rect up by its DepthQueryId. Returns nullptr when this readback
+    // carries no rect of that purpose — e.g. the mouse pick, which isn't queued
+    // while a camera/gizmo drag owns the mouse. Consumers MUST handle null by
+    // keeping their previous state rather than falling back to another rect.
+    // `outBase`, when given, receives the rect's first element index in depths.
+    const DepthQueryRect* findRect(uint32_t queryId, size_t* outBase = nullptr) const {
+        if (!valid)
+            return nullptr;
+        size_t offset = 0;
+        for (const DepthQueryRect& rect : rects) {
+            const size_t count = size_t(rect.size.x) * size_t(rect.size.y);
+            if (rect.id == queryId && count > 0 && offset + count <= depths.size()) {
+                if (outBase)
+                    *outBase = offset;
+                return &rect;
+            }
+            offset += count;
+        }
+        return nullptr;
+    }
 };
 
 // Fragment (ring) cursor drawn by mesh.frag on scene surfaces (Phase 6 port
@@ -125,7 +159,7 @@ struct SunState {
     bool enabled = false;
     glm::vec3 direction{ -0.408f, -0.816f, -0.408f }; // travels this way
     glm::vec3 color{ 1.0f, 0.98f, 0.95f };
-    float intensity = 0.16f;
+    float intensity = 1.0f;
     // Apparent angular diameter in degrees; drives PCSS penumbra growth.
     // The real sun is ~0.53; the default is stylized for readable softness.
     float angularSizeDeg = 1.5f;

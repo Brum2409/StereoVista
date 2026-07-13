@@ -277,11 +277,39 @@ private:
     void startOrbit();
     void beginNavCapture();
     void endNavCapture();
-    // Move the OS mouse to the centre of the active viewport's 3D-view image
-    // (host-window client coords; works for docked and dragged-out panels).
-    // Fired by the double-click centering callback so the depth pick — and a
-    // following orbit — continue from the freshly centred point.
-    void warpMouseToViewportCenter();
+    // THE single owner of OS-cursor visibility over the 3D view. Records the
+    // intent (osCursorHidden_) and applies it to the window hosting the view —
+    // unless a nav capture owns the mode (GLFW_CURSOR_DISABLED), which is
+    // stronger than either. Everything that wants the Windows cursor gone over
+    // the 3D cursor goes through here; nothing else calls glfwSetInputMode with
+    // GLFW_CURSOR_HIDDEN/NORMAL. See pushOsCursorToImGui for why that matters.
+    void setOsCursorHidden(bool hidden);
+    // Re-assert osCursorHidden_ to ImGui right before ImGui_ImplGlfw_NewFrame.
+    // The ImGui GLFW backend rewrites the GLFW cursor mode from
+    // ImGui::GetMouseCursor() on every NewFrame (imgui_impl_glfw.cpp), and it
+    // only stands down for GLFW_CURSOR_DISABLED — so a plain HIDDEN set by us
+    // was flipped back to NORMAL at the top of the next frame and re-hidden
+    // later in it, flashing the Windows cursor for a frame (most visibly on the
+    // press/release edges of an orbit, where the mode leaves/returns to
+    // DISABLED). Asking for ImGuiMouseCursor_None instead makes the backend hide
+    // it FOR us: one owner, no fight, no flash.
+    void pushOsCursorToImGui() const;
+    // Move the OS mouse onto the screen projection of a world point in the
+    // active viewport. The GL CursorSynchronizer::worldToScreen + warp, made
+    // Vulkan-native (the projection already bakes the Y-flip). Returns false and
+    // does NOT move the mouse when the point is behind the eye or off-screen —
+    // the anchor is gone, and faking an edge-clamped one (as GL did) would pin
+    // the cursor to the wrong geometry.
+    bool warpMouseToWorldPoint(const glm::vec3& world);
+    // Pin the 3D cursor to a world point, re-anchor the OS mouse onto it, hide
+    // the OS cursor, and hold that state for a few frames to bridge the async
+    // depth-readback latency. The single choke-point for cursor continuity after
+    // orbit/pan/look, centering animations, and gizmo drags.
+    void syncCursorToWorld(const glm::vec3& world);
+    // Called at the end of an orbit/pan/look drag: sync to the pinned cursor
+    // point, or (nothing was under the cursor when the drag began) let the OS
+    // cursor show over the background — mirrors the GL release path.
+    void finishCameraOpCursor();
     bool navActive() const { return orbiting_ || panning_ || rmbLooking_; }
     void buildFrameSubmission(renderer::FrameSubmission& submission) const;
 
@@ -324,6 +352,14 @@ private:
     // undo entry for the whole drag at drag end (no-op if nothing changed).
     void beginGizmoUndo();
     void finishGizmoUndo();
+    // Ctrl+drag grab-to-move. beginModelDrag() latches the grab point + depth
+    // and snapshots the selection for undo; updateModelDrag() follows the cursor
+    // (and integrates the wheel's depth push) each frame; endModelDrag() commits
+    // the drag as one undo entry. Returns false from begin if nothing draggable
+    // is under the press (caller falls back to orbit).
+    bool beginModelDrag();
+    void updateModelDrag(float dt);
+    void endModelDrag();
     // World-space ray under the mouse / through a 3D-viewport pixel (render-
     // target pixels, top-left origin), using this frame's view + projection.
     Plugins::PickRay mouseRayCurrent() const;
@@ -488,6 +524,26 @@ private:
     double lastMouseY_ = 0.0;
     double lastFrameTime_ = 0.0;
 
+    // ---- 3D-cursor continuity (port of the GL CursorSynchronizer) ----
+    // After any view change that ends with the 3D cursor pinned to a world
+    // point (orbit/pan/look end, centering-animation end, gizmo-drag end), the
+    // OS mouse is re-anchored onto that point's screen projection and the cursor
+    // is HELD there for a few frames. The hold bridges the async depth
+    // readback's latency (the mouse-driven pick is ~kFramesInFlight frames
+    // stale) so the cursor never flashes the Windows cursor or jumps to whatever
+    // the stale sample reports before a fresh pick at the settled position
+    // lands. See syncCursorToWorld / updateCursorAndOverlay.
+    glm::vec3 cursorSyncWorld_{ 0.0f };
+    int cursorSyncHold_ = 0;
+    // Whether the Windows cursor should currently be invisible over the 3D view.
+    // Sticky across frames (a frame that resolves nothing keeps the last state)
+    // and re-asserted to ImGui every frame — see setOsCursorHidden /
+    // pushOsCursorToImGui.
+    bool osCursorHidden_ = false;
+    // World point a double-click centering glide is centring on; the completion
+    // callback syncs the cursor onto it (it ends up at the viewport centre).
+    glm::vec3 centeringTarget_{ 0.0f };
+
     // ---- 3D cursor + overlays (Phase 6) ----
     Cursor::CursorManager cursorManager_;
     renderer::OverlayDrawList overlay_; // rebuilt each frame; alive across renderFrame
@@ -552,24 +608,49 @@ private:
     Plugins::PluginManager pluginManager_;
     std::unique_ptr<Plugins::PluginContext> pluginContext_;
 
-    // Transient toast notifications (bottom-right overlay).
-    struct Toast { std::string text; Plugins::ToastLevel level; float ttl; };
+    // Transient toast notifications (bottom-right overlay). Each toast is its own
+    // ImGui window so it can slide in on its own and the stack can re-settle when
+    // one below it expires; `age` drives the entrance, `ttl` the exit, and `id`
+    // keeps the animation state attached to THIS toast as the vector shifts.
+    struct Toast {
+        std::string text;
+        Plugins::ToastLevel level;
+        float ttl = 0.0f;
+        float age = 0.0f;
+        unsigned long long id = 0;
+    };
     std::vector<Toast> toasts_;
+    unsigned long long nextToastId_ = 0;
 
     // This frame's mouse-wheel delta, captured in run() BEFORE ImGui::Render():
     // ImGui::EndFrame() zeroes io.MouseWheel, and updateCamera runs after the
     // GUI pass — reading io.MouseWheel there always saw 0 (dead scroll zoom).
     float wheelThisFrame_ = 0.0f;
 
-    // Mouse-button edge state for plugin input dispatch + click-vs-drag
-    // selection. "*Owned_" latches a button a plugin consumed until release.
+    // Mouse-button edge state for plugin input dispatch. A Ctrl+left press
+    // selects immediately (see performSelectionClick); "*Owned_" latches a
+    // button a plugin consumed until release.
     bool prevLmb_ = false, prevMmb_ = false, prevRmb_ = false;
     bool lmbOwned_ = false, mmbOwned_ = false, rmbOwned_ = false;
-    glm::vec2 lmbPressPos_{ 0.0f };
-    float lmbDragDist_ = 0.0f;       // accumulated |delta| during an LMB drag
-    bool lmbClickCandidate_ = false; // press started a potential (non-drag) click
     bool clickCursorValid_ = false;  // the 3D cursor was over geometry at press
     glm::vec3 clickCursorWorld_{ 0.0f };
+
+    // ---- Ctrl+drag "grab-to-move" (GL-parity: hold Ctrl to slide the selected
+    // object under the cursor; the wheel pushes it in depth). Reuses the gizmo
+    // undo machinery, so a whole drag is ONE undo entry and mirrors onto every
+    // selected transformable. Vulkan-native: the OS cursor stays visible and the
+    // object tracks it via a ray∩view-plane solve (no hidden-cursor warp hack,
+    // and depth stays under the cursor instead of drifting along camera-front as
+    // the GL build did). ----
+    bool draggingModel_ = false;      // a Ctrl+drag is actively moving the selection
+    float dragViewDepth_ = 0.0f;      // view-space depth of the drag plane (dist along Front)
+    glm::vec3 dragGrabOffset_{ 0.0f };// primary.position − grab point, held constant
+    float dragDepthVel_ = 0.0f;       // wheel-driven depth velocity (smooth push/pull)
+    // The grabbed spot ON the mesh, in world space, re-solved every frame — it
+    // rides the object (mouse AND wheel). The 3D cursor is pinned here for the
+    // whole drag, and held here on release, so it never jumps. Under the mouse
+    // by construction, which is why the Windows cursor can simply hide.
+    glm::vec3 dragGrabWorld_{ 0.0f };
 
     VkDescriptorPool imguiDescriptorPool_ = VK_NULL_HANDLE;
     // Backing store for ImGui_ImplVulkan_InitInfo::PipelineRenderingCreateInfo

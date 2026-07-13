@@ -55,7 +55,7 @@ struct Settings {
         float fovDeg    = 60.0f;
         float speed     = 4.0f;   // WASDQE fly speed (world units/s)
         float nearPlane = 0.1f;
-        float farPlane  = 500.0f;
+        float farPlane  = 1000.0f;
 
         // Look / zoom feel — pushed onto Core::Camera each frame.
         float sensitivity   = 0.06f; // mouse-look degrees per pixel
@@ -66,8 +66,8 @@ struct Settings {
                                      // app had this always on.
 
         bool  useSmoothScrolling = true;
-        float scrollMomentum     = 0.5f; // notches of zoom velocity added per wheel notch
-        float scrollDeceleration = 4.0f; // exponential ease-out rate (1/s; lower = longer glide)
+        float scrollMomentum     = 0.45f; // notches of zoom velocity added per wheel notch
+        float scrollDeceleration = 5.0f; // exponential ease-out rate (1/s; lower = longer glide)
         float maxScrollVelocity  = 3.0f; // velocity clamp when spinning the wheel
 
         bool  zoomToCursor      = true; // scroll zooms toward the 3D/background cursor
@@ -80,7 +80,7 @@ struct Settings {
     struct Stereo {
         float separation           = 0.5f; // eye separation, world units
         float convergence          = 2.6f; // zero-parallax distance, world units
-        bool  autoConvergence      = false;
+        bool  autoConvergence      = true;
         float convergenceFactor    = 1.0f; // convergence = focus distance * factor
         float convergenceSmoothing = 5.0f; // exp smoothing rate (higher = snappier)
         bool  flipEyes             = false;
@@ -127,6 +127,9 @@ struct Settings {
     struct Cursor {
         bool show = true;
         int  type = 0; // 0=Sphere, 1=Plane, 2=Fragment ring
+        // Orbit-centre marker: off during an orbit unless the user asks for it
+        // (the "always show" pin stays on CursorManager with the marker's look).
+        bool showOrbitCenterWhileOrbiting = false;
     } cursor;
 
     // ── Render toggles that aren't yet owned elsewhere ──────────────────────
@@ -166,9 +169,15 @@ struct Settings {
     // ── Interface (UI redesign Pass 0) ──────────────────────────────────────
     struct Ui {
         int   theme = 0;        // GuiTheme index (imgui_sytle.h; append-only enum)
-        float guiScale = 1.0f;  // user factor on the window-derived scale (0.5–2)
-        bool  showStatusBar = true;
-        bool  reduceMotion = false; // disables all UiKit micro-animation (§15)
+        float guiScale = 1.10f;  // user factor on the window-derived scale (0.5–2)
+        bool  showStatusBar = false;
+        // Motion (§15). reduceMotion snaps EVERY animation in the GUI to its
+        // target instantly (accessibility, and the honest choice for anyone who
+        // finds movement distracting); the other two retune the shared motion
+        // primitives, so they reach every animated widget at once.
+        bool  reduceMotion = false;
+        float motionSpeed  = 0.9f; // scales every duration (>1 = snappier)
+        float motionBounce = 1.0f; // scales the springs' overshoot (0 = none)
         // Contextual hints (Pass 8 §14): rate-limited, dismissible forever,
         // behind this master switch. Intelligence never nags.
         struct Hints {

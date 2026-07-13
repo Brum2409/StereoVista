@@ -128,6 +128,16 @@ void HintEngine::draw(Services& services, float viewportX, float viewportY,
         ImVec2(viewportX + viewportW * 0.5f, viewportY + viewportH - UiKit::Space(7)),
         ImGuiCond_Always, ImVec2(0.5f, 1.0f));
     ImGui::SetNextWindowBgAlpha(0.94f);
+    // Pin the width so the toast reads as a wide banner. The window is
+    // AlwaysAutoResize, and the toast card fills its parent while its text wraps
+    // at the available width — a circular dependency that otherwise collapses the
+    // width to ~1 character (an unreadable, very tall sliver). Fixing the width
+    // (height stays auto) breaks the cycle so the text wraps at a real column.
+    const float scale = UiKit::Scale();
+    const float hintW =
+        std::max(300.0f * scale, std::min(viewportW * 0.42f, 460.0f * scale));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(hintW, 0.0f),
+                                        ImVec2(hintW, FLT_MAX));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, UiKit::RadiusCard());
     if (ImGui::Begin("##hint", nullptr,
                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |

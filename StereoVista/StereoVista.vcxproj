@@ -146,6 +146,8 @@ copy "$(SolutionDir)dependencies\bin\LASzip64.dll" "$(OutDir)"
 copy "$(SolutionDir)dependencies\bin\openxr_loader.dll" "$(OutDir)"
 copy "$(SolutionDir)dependencies\bin\shaderc_shared.dll" "$(OutDir)"
 "%SystemRoot%\System32\robocopy.exe" "$(ProjectDir)assets" "$(OutDir)assets" /E /NJH /NJS /NFL /NDL
+IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0
+"%SystemRoot%\System32\robocopy.exe" "$(ProjectDir)fonts" "$(OutDir)fonts" /E /NJH /NJS /NFL /NDL
 IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
@@ -181,6 +183,8 @@ copy "$(SolutionDir)dependencies\bin\LASzip64.dll" "$(OutDir)"
 copy "$(SolutionDir)dependencies\bin\openxr_loader.dll" "$(OutDir)"
 copy "$(SolutionDir)dependencies\bin\shaderc_shared.dll" "$(OutDir)"
 "%SystemRoot%\System32\robocopy.exe" "$(ProjectDir)assets" "$(OutDir)assets" /E /NJH /NJS /NFL /NDL
+IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0
+"%SystemRoot%\System32\robocopy.exe" "$(ProjectDir)fonts" "$(OutDir)fonts" /E /NJH /NJS /NFL /NDL
 IF %ERRORLEVEL% LEQ 7 SET ERRORLEVEL=0</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>

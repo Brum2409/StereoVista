@@ -4,6 +4,7 @@
 #include "Gui/Panels.h"      // Gui::Windows titles (panel-toggle command labels)
 #include "Gui/Preferences.h" // Gui::Settings ⇄ preferences.json (Pass 0)
 #include "Gui/Services.h" // abstract facade implemented by MainGuiServices below
+#include "Gui/UiKit.h"    // toast styling + the shared motion primitives
 
 #include "Engine/Screenshot.h"
 #include "Engine/XRSession.h" // OpenXR (Vulkan binding); Windows-only, guarded inside
@@ -16,6 +17,7 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 
+#include "imgui/IconsFontAwesome5.h"
 #include "imgui/imgui.h"
 #include "imgui/backends/imgui_impl_glfw.h"
 #include "imgui/backends/imgui_impl_vulkan.h"
@@ -38,8 +40,21 @@ namespace app {
 
 namespace {
 
-constexpr float kClickThresholdPx = 6.0f; // max mouse travel that still counts
-                                          // as a click (vs. an orbit drag)
+// Ctrl+drag grab-to-move: the wheel pushes the grabbed object in depth with a
+// little momentum (GL parity), integrated with frame dt in updateModelDrag.
+constexpr float kModelDragDepthMomentum = 0.5f; // wheel notch -> depth velocity
+constexpr float kModelDragMaxDepthVel = 3.0f;   // velocity clamp
+constexpr float kModelDragDepthDecel = 5.0f;    // velocity decay per second
+// Keep the grabbed object in front of the eye: the GL build let the wheel drag
+// it back through the camera and invert it.
+constexpr float kMinDragDepth = 0.05f;
+
+// Frames to hold the 3D cursor pinned after a view change (orbit/pan/look,
+// centering animation, gizmo drag) while the async depth readback catches up to
+// the re-anchored mouse position. Must exceed the readback latency
+// (~kFramesInFlight); a couple of extra frames is imperceptible (<~80ms) and
+// guarantees a fresh pick is available before picking resumes.
+constexpr int kCursorSyncHoldFrames = 4;
 
 // Runtime configuration files, cwd-relative like the GL app (and like
 // pipeline_cache.bin / imgui.ini).
@@ -625,6 +640,8 @@ public:
         }
         const glm::vec3 local = (lo.x > hi.x) ? glm::vec3(0.0f) : (lo + hi) * 0.5f;
         const glm::vec3 world = glm::vec3(m.modelMatrix() * glm::vec4(local, 1.0f));
+        app_.centeringTarget_ = world; // completion callback syncs the cursor here
+        app_.cursorSyncHold_ = 0;
         app_.activeCamera().StartCenteringAnimation(world);
     }
 
@@ -918,7 +935,11 @@ void Application::init() {
     // copy in addViewport().
     camera_.centeringCompletedCallback = [this]() {
         if (sceneInput_.hovered)
-            warpMouseToViewportCenter();
+            // Sync the cursor onto the centred point (now at the viewport
+            // centre) and hold it across the readback latency — same continuity
+            // path as an orbit/gizmo release, so the cursor never blinks to the
+            // Windows cursor or jumps when the glide lands.
+            syncCursorToWorld(centeringTarget_);
     };
 
     // Tools record through the app-owned undo stack and edit scene-owned
@@ -979,6 +1000,8 @@ void Application::loadScene() {
     selection_.clear();
     gizmo_.clearTarget();
     gizmoDragging_ = false;
+    draggingModel_ = false; // a grab can't outlive the objects it was holding
+    dragDepthVel_ = 0.0f;
     clipPlaneTool_.notifyStorageChanged();
     undo_.clear();
 }
@@ -1026,33 +1049,140 @@ void Application::applyLoadedEnvironment(const scene::SceneEnvironmentState& env
     }
 }
 
+void Application::setOsCursorHidden(bool hidden) {
+    osCursorHidden_ = hidden;
+    GLFWwindow* host =
+        sceneInput_.hostWindow ? sceneInput_.hostWindow : window_.handle();
+    // A nav capture (DISABLED) already hides AND grabs the cursor; it outranks
+    // this and is released by endNavCapture, never here.
+    if (glfwGetInputMode(host, GLFW_CURSOR) == GLFW_CURSOR_DISABLED)
+        return;
+    glfwSetInputMode(host, GLFW_CURSOR,
+                     hidden ? GLFW_CURSOR_HIDDEN : GLFW_CURSOR_NORMAL);
+}
+
+void Application::pushOsCursorToImGui() const {
+    // Runs BEFORE ImGui_ImplGlfw_NewFrame (which reads GetMouseCursor() while it
+    // still holds the previous frame's value) and therefore decides what the
+    // backend does to the GLFW cursor mode this frame. Without this the backend
+    // sets NORMAL every frame and we set HIDDEN back a few ms later — the
+    // one-frame Windows-cursor flash. Only the hidden case is asserted: when the
+    // OS cursor is meant to be visible, ImGui's own shape/visibility handling
+    // (resize arrows over panel edges, text I-beams, …) is exactly what we want.
+    if (osCursorHidden_)
+        ImGui::SetMouseCursor(ImGuiMouseCursor_None);
+}
+
 void Application::beginNavCapture() {
     // Capture on the OS window hosting the 3D view (the main window, or the
     // ImGui-backend window when the Viewport panel is dragged out). Disabled
     // cursor = unbounded relative motion; record the baseline AFTER disabling
     // so the first frame's delta is zero (no view snap).
     navWindow_ = sceneInput_.hostWindow ? sceneInput_.hostWindow : window_.handle();
+    // Freeze the ImGui backend's cursor handling for the whole capture. It
+    // rewrites the GLFW cursor mode of EVERY viewport window each NewFrame and
+    // only exempts GLFW_CURSOR_DISABLED on the MAIN window — so with the Viewport
+    // panel dragged out to its own OS window it would knock our capture out of
+    // DISABLED (killing the unbounded relative motion the drag needs). Nothing
+    // needs a cursor shape while the mouse is captured anyway.
+    ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
     glfwSetInputMode(navWindow_, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
     glfwGetCursorPos(navWindow_, &lastMouseX_, &lastMouseY_);
+    cursorSyncHold_ = 0; // a new drag supersedes any pending cursor sync-hold
+    // DISABLED is invisible too, and the drag ends back on the 3D cursor: keep
+    // asking ImGui for no cursor throughout, so the frame that drops back to
+    // HIDDEN (endNavCapture) doesn't hand the backend an excuse to show one.
+    osCursorHidden_ = true;
 }
 
 void Application::endNavCapture() {
+    // Leave DISABLED via HIDDEN, NOT NORMAL: the drag ends with the 3D cursor
+    // still pinned to a world point, so we must not flash the Windows cursor.
+    // GLFW restores the pre-DISABLED mouse position here; finishCameraOpCursor
+    // then re-anchors it onto the world point (or switches to NORMAL if there
+    // was nothing under the cursor). Mirrors the GL release path.
     if (navWindow_)
-        glfwSetInputMode(navWindow_, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        glfwSetInputMode(navWindow_, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
     navWindow_ = nullptr;
+    osCursorHidden_ = true;
+    // Hand cursor handling back to ImGui. It resumes at the NEXT NewFrame, which
+    // reads the request pushOsCursorToImGui just made (None while osCursorHidden_)
+    // — so it re-hides rather than restoring the Windows cursor.
+    ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
 }
 
-void Application::warpMouseToViewportCenter() {
-    // sceneInput_.screenPos/screenSize are the 3D-view image rect in ImGui
-    // screen space (desktop coords with multi-viewport); glfwSetCursorPos
-    // wants client-area coords of the OS window hosting the view.
+bool Application::warpMouseToWorldPoint(const glm::vec3& world) {
+    glm::mat4 view(1.0f), proj(1.0f);
+    cameraMatrices(view, proj);
+    const glm::vec4 clip = proj * view * glm::vec4(world, 1.0f);
+    if (clip.w <= 1e-5f)
+        return false; // behind the eye: nothing to anchor to
+    const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+    if (ndc.x < -1.0f || ndc.x > 1.0f || ndc.y < -1.0f || ndc.y > 1.0f)
+        return false; // left the view
+
+    // NDC -> viewport-image pixels. The projection bakes the Y-flip (Vulkan
+    // convention: ndc.y = -1 is the TOP), so NDC maps straight into the
+    // top-left-origin screen rect — no extra flip (the GL version flipped Y
+    // here; ours must not). sceneInput_.screenPos/screenSize are the 3D-view
+    // image rect in ImGui screen space; glfwSetCursorPos wants client-area
+    // coords of the OS window hosting the view.
+    //
+    // Deliberately NOT clamped-with-margin like the GL CursorSynchronizer: that
+    // shoved the mouse up to 50px inward whenever the anchor sat near an edge,
+    // which (a) anchored the cursor to the WRONG geometry and (b) moved the
+    // mouse far enough to break ImGui's double-click slop. Out-of-view points
+    // return false above instead — an honest "the anchor is gone".
+    const glm::vec2 uv(ndc.x * 0.5f + 0.5f, ndc.y * 0.5f + 0.5f);
+    const glm::vec2 screen = sceneInput_.screenPos + uv * sceneInput_.screenSize;
     GLFWwindow* host =
         sceneInput_.hostWindow ? sceneInput_.hostWindow : window_.handle();
     int wx = 0, wy = 0;
     glfwGetWindowPos(host, &wx, &wy);
-    const glm::vec2 center =
-        sceneInput_.screenPos + sceneInput_.screenSize * 0.5f;
-    glfwSetCursorPos(host, double(center.x - wx), double(center.y - wy));
+    glfwSetCursorPos(host, double(screen.x - wx), double(screen.y - wy));
+
+    // glfwSetCursorPos does NOT update ImGui's mouse position until the next
+    // poll, so sceneInput_.mousePx (captured at the top of this frame) is now
+    // stale. Fix it up here: the depth query queued later THIS frame must land
+    // on the pixel we just warped to, or its readback would surface after the
+    // sync-hold and yank the cursor back to the pre-warp point. Same reasoning
+    // for anything else reading mousePx this frame (mouse rays, hit tests).
+    sceneInput_.mousePx = uv * sceneInput_.sizePx;
+    return true;
+}
+
+void Application::syncCursorToWorld(const glm::vec3& world) {
+    // Re-anchor the OS mouse onto the world point, pin the 3D cursor there, and
+    // hide the OS cursor. The HOLD keeps that state for a few frames so the
+    // stale mouse pick can't briefly miss — which would flash the Windows cursor
+    // / snap the 3D cursor — before a fresh depth sample at the settled mouse
+    // position arrives. This is the Vulkan-native heart of the fix: the GL app
+    // got away without a hold because glReadPixels was synchronous; ours is not.
+    if (!warpMouseToWorldPoint(world)) {
+        // The anchor left the view (e.g. orbited behind the camera). There is
+        // nothing to hold onto — drop the pin and let the normal pick resume.
+        cursorSyncHold_ = 0;
+        return;
+    }
+    cursorManager_.setForcedCursorPosition(world, activeCamera().Position);
+    if (sceneInput_.hovered)
+        setOsCursorHidden(true);
+    cursorSyncWorld_ = world;
+    cursorSyncHold_ = kCursorSyncHoldFrames;
+}
+
+void Application::finishCameraOpCursor() {
+    if (cursorManager_.isCursorPositionValid()) {
+        // The cursor was on a real surface when the drag began (and stayed
+        // pinned there through it): project that world point into the new view
+        // and hold the cursor on it — no jump, no Windows-cursor flash.
+        syncCursorToWorld(cursorManager_.getCursorPosition());
+    } else {
+        // Nothing was under the cursor: show the OS cursor over the background,
+        // like the GL release path.
+        setOsCursorHidden(false);
+        cursorSyncHold_ = 0;
+    }
 }
 
 void Application::startOrbit() {
@@ -1136,7 +1266,9 @@ void Application::updateCamera(float dt) {
 
     // ---- Transform gizmo: bound to the selected model; grabs the LMB press
     // when it lands on a handle (priority over orbit/selection). The gizmo drag
-    // keeps the OS cursor visible (it tracks the real mouse), unlike orbit. ----
+    // hides the OS cursor and glues the 3D cursor to the grab point, but keeps
+    // the mouse ABSOLUTE (HIDDEN, not orbit's DISABLED) so handle tracking via
+    // mouseRayCurrent() still works. ----
     if (!gizmoDragging_)
         updateGizmoBinding();
     bool gizmoTookLmb = false;
@@ -1149,27 +1281,36 @@ void Application::updateCamera(float dt) {
             else
                 applyGizmoDeltaToSelection(); // multi-select: mirror the delta
         } else {
+            // Capture the grab point BEFORE endDrag so we can leave the 3D
+            // cursor exactly where the gizmo was — no jump back to whatever the
+            // mouse now hovers (the classic "cursor jumps when the rotation drag
+            // ends" bug).
+            const bool hadPoint = gizmo_.hasInteractionPoint();
+            const glm::vec3 grabPoint = gizmo_.interactionPoint();
             gizmo_.endDrag();
             if (gizmoTargetPlane_) clipPlaneTool_.recordGizmoUndo();
             else finishGizmoUndo(); // record the whole drag as one undo entry
             gizmoDragging_ = false;
+            if (hadPoint)
+                syncCursorToWorld(grabPoint);
         }
         gizmoTookLmb = true;
     } else if (gizmo_.hasTarget() && hovered && !navActive()) {
         const Plugins::PickRay ray = mouseRayCurrent();
-        if (lmbPress) {
-            const Tools::TransformGizmo::Handle h =
-                gizmo_.hitTest(ray.origin, ray.direction, camera.Position);
-            if (h != Tools::TransformGizmo::Handle::None) {
-                if (gizmoTargetPlane_) clipPlaneTool_.captureGizmoUndo();
-                else beginGizmoUndo();
-                gizmo_.beginDrag(h, ray.origin, ray.direction, camera.Position);
-                gizmoDragging_ = true;
-                gizmoTookLmb = true;
-            }
-        }
-        if (!gizmoDragging_)
+        // Resolve the hover FIRST, then press on its result. updateHover applies
+        // the magnetic help zone (handles are only a few px wide), so a strict
+        // hitTest here would miss exactly the near-misses the magnet exists to
+        // catch — and the user would press on a highlighted handle and get
+        // nothing. What you see highlighted is what you grab.
+        const Tools::TransformGizmo::Handle h =
             gizmo_.updateHover(ray.origin, ray.direction, camera.Position);
+        if (lmbPress && h != Tools::TransformGizmo::Handle::None) {
+            if (gizmoTargetPlane_) clipPlaneTool_.captureGizmoUndo();
+            else beginGizmoUndo();
+            gizmo_.beginDrag(h, ray.origin, ray.direction, camera.Position);
+            gizmoDragging_ = true;
+            gizmoTookLmb = true;
+        }
     } else if (!gizmo_.hasTarget()) {
         gizmo_.clearInteractionPoint();
     }
@@ -1199,7 +1340,13 @@ void Application::updateCamera(float dt) {
     }
 
     // ---- Camera nav + click-to-select (skips the LMB the gizmo/plugin took) ----
-    if (!navActive() && !gizmoDragging_ && hovered) {
+    // A Ctrl+drag grab runs to release regardless of hover (like an orbit).
+    if (draggingModel_) {
+        if (lmb)
+            updateModelDrag(dt);
+        else
+            endModelDrag();
+    } else if (!navActive() && !gizmoDragging_ && hovered) {
         if (lmb && !lmbOwned_ && !gizmoTookLmb) {
             // Double LEFT click -> glide-centre the view on the point under
             // the mouse (the orbit pivot re-anchors there on completion, and
@@ -1220,23 +1367,57 @@ void Application::updateCamera(float dt) {
                     target = cursorManager_.getBackgroundCursorPosition();
                 else // nothing under the mouse at all: level toward ahead
                     target = camera.Position + camera.Front * camera.OrbitDistance;
+                // Pin the 3D cursor to the centering target so it stays put (and
+                // visible, not the Windows cursor) for the whole glide — the
+                // animation branch in updateCursorPosition holds it there, and
+                // the completion callback syncs the OS mouse onto it. Cancel any
+                // pending sync-hold from the click that preceded this.
+                centeringTarget_ = target;
+                cursorSyncHold_ = 0;
+                cursorManager_.setForcedCursorPosition(target, camera.Position);
                 camera.StartCenteringAnimation(target);
-                lmbClickCandidate_ = false;
             } else {
-                // Capture a click candidate: a CTRL+left press that releases
-                // without dragging becomes a selection at the 3D cursor's
-                // world point (GL parity — a plain left press only orbits).
-                lmbPressPos_ = sceneInput_.mousePx;
-                lmbDragDist_ = 0.0f;
-                lmbClickCandidate_ = (mods & GLFW_MOD_CONTROL) != 0;
+                // A CTRL+left press selects the object under the 3D cursor
+                // *immediately* on press (not on release), then grabs it: hold
+                // Ctrl and the object slides under the cursor, wheel pushes it
+                // in depth (see beginModelDrag). A plain left press only orbits,
+                // and a Ctrl press on empty space (or on something not
+                // draggable) falls back to orbit too.
                 clickCursorValid_ = cursorManager_.isCursorPositionValid();
                 clickCursorWorld_ = clickCursorValid_
                                         ? cursorManager_.getCursorPosition()
                                         : glm::vec3(0.0f);
-                startOrbit();
+                bool grabbed = false;
+                if ((mods & GLFW_MOD_CONTROL) != 0) {
+                    performSelectionClick();
+                    // Ctrl+Shift is a multi-select toggle — never a grab.
+                    if (!(mods & GLFW_MOD_SHIFT))
+                        grabbed = beginModelDrag();
+                }
+                if (!grabbed)
+                    startOrbit();
             }
         } else if (mmb && !mmbOwned_) {
-            camera.StartPanning();
+            // Pan at the depth of whatever the pointer is on, so the grabbed
+            // point tracks the mouse 1:1 (see Camera::StartPanning): the 3D
+            // cursor when it sits on geometry, else the background point along
+            // the mouse ray (what the user visually aimed at), else the camera's
+            // own distance reference. The on-screen view height is what the mouse
+            // deltas are measured against, so it — not the render-target size,
+            // which differs under a resolution scale — sets the pixel scale.
+            float grabDistance;
+            if (cursorManager_.isCursorPositionValid())
+                grabDistance = glm::length(cursorManager_.getCursorPosition() -
+                                           camera.Position);
+            else if (cursorManager_.hasBackgroundCursorPosition())
+                grabDistance = glm::length(
+                    cursorManager_.getBackgroundCursorPosition() - camera.Position);
+            else
+                grabDistance = camera.zoomReferenceDistance(nullptr);
+            const float viewHeightPx = sceneInput_.screenSize.y > 1.0f
+                                           ? sceneInput_.screenSize.y
+                                           : sceneInput_.sizePx.y;
+            camera.StartPanning(grabDistance, viewHeightPx);
             panning_ = true;
             beginNavCapture();
         } else if (rmb && !rmbOwned_) {
@@ -1250,20 +1431,18 @@ void Application::updateCamera(float dt) {
             camera.StopOrbiting();
             orbiting_ = false;
             endNavCapture();
-            // A Ctrl+left click that barely moved selects the object under it
-            // — the press started on the 3D view, so no GUI re-check on
-            // release. (While measuring, the MeasurementPlugin consumes the
-            // press, so no orbit candidate is started and this never runs.)
-            if (lmbClickCandidate_ && lmbDragDist_ < kClickThresholdPx)
-                performSelectionClick();
-            lmbClickCandidate_ = false;
+            finishCameraOpCursor();
+            // Selection already fired on the Ctrl+left press (see the press
+            // branch above); nothing to do on release.
         } else if (panning_ && !mmb) {
             camera.StopPanning();
             panning_ = false;
             endNavCapture();
+            finishCameraOpCursor();
         } else if (rmbLooking_ && !rmb) {
             rmbLooking_ = false;
             endNavCapture();
+            finishCameraOpCursor();
         } else {
             // Relative motion from the window that owns the capture.
             double cx = 0.0, cy = 0.0;
@@ -1272,8 +1451,6 @@ void Application::updateCamera(float dt) {
             const float dy = float(cy - lastMouseY_);
             lastMouseX_ = cx;
             lastMouseY_ = cy;
-            if (orbiting_)
-                lmbDragDist_ += std::abs(dx) + std::abs(dy);
             // Camera yoffset is +up; screen dy is +down.
             camera.ProcessMouseMovement(dx, -dy);
         }
@@ -1289,7 +1466,16 @@ void Application::updateCamera(float dt) {
     // io.MouseWheel, so reading io here always saw 0. Plugins get first refusal
     // (a tool may scrub a value); the camera zooms otherwise. Gated on the 3D
     // view being hovered — panels keep their own scrolling.
-    if (hovered && wheelThisFrame_ != 0.0f) {
+    if (draggingModel_) {
+        // A Ctrl+drag owns the wheel: it pushes the grabbed object along the
+        // view ray instead of zooming the camera (hover-independent, since the
+        // grab runs to release). updateModelDrag integrates this velocity.
+        if (wheelThisFrame_ != 0.0f) {
+            dragDepthVel_ += wheelThisFrame_ * kModelDragDepthMomentum;
+            dragDepthVel_ = glm::clamp(dragDepthVel_, -kModelDragMaxDepthVel,
+                                       kModelDragMaxDepthVel);
+        }
+    } else if (hovered && wheelThisFrame_ != 0.0f) {
         const bool consumed =
             pluginContext_ && pluginManager_.dispatchScroll(*pluginContext_, 0.0,
                                                             double(wheelThisFrame_));
@@ -1329,7 +1515,16 @@ void Application::updateCamera(float dt) {
 
         // Ctrl chords (undo / Ctrl+click select / …) never fly the camera, and
         // a gizmo drag owns Shift for its snapping modifier.
-        const bool canFly = !io.KeyCtrl && !gizmoDragging_;
+        //
+        // The pointer must also be ON the scene. A mouse resting over a panel
+        // means the user is working the interface, and a W typed there must not
+        // fly the camera underneath — hover alone is the signal, with no text
+        // field focused and nothing captured. `navActive()` keeps the classic
+        // hold-the-mouse-and-fly working: `hovered` goes false the moment the
+        // viewport item becomes active, which is precisely when someone is
+        // dragging to look around while holding W.
+        const bool pointerOnScene = sceneInput_.hovered || navActive();
+        const bool canFly = !io.KeyCtrl && !gizmoDragging_ && pointerOnScene;
         bool flying = false;
         auto fly = [&](bool down, Camera_Movement dir) {
             if (down && canFly) {
@@ -1405,30 +1600,60 @@ void Application::updateCameraDepth(float dt) {
     if (rb.viewport != activeViewport_)
         return;
 
-    const glm::ivec2 center(int(rb.extent.width) / 2, int(rb.extent.height) / 2);
-    float depth = 0.0f;
-    if (!rb.sample(center, depth))
-        return; // centre wasn't queried last frame (startup / mode switch)
+    // Scan the centre-depth BLOCK for the NEAREST valid sample (reverse-Z: larger
+    // depth = closer surface), so a hole between points doesn't read as empty
+    // space and spike the fly/zoom speed. Located by id — never by index.
+    size_t base = 0;
+    const renderer::DepthQueryRect* blockPtr =
+        rb.findRect(renderer::kDepthQueryCenter, &base);
+    if (!blockPtr)
+        return; // not queried in this readback (startup / mode switch)
+    const renderer::DepthQueryRect& block = *blockPtr;
 
-    // Reverse-Z: depth 0 = far plane (background/sky). A miss counts as
-    // "looking at empty space" at the far plane, like the GL path.
+    float nearestDepth = 0.0f;
+    glm::ivec2 nearestPixel(0);
+    for (int ly = 0; ly < block.size.y; ++ly) {
+        for (int lx = 0; lx < block.size.x; ++lx) {
+            const float d = rb.depths[base + size_t(ly) * block.size.x + lx];
+            if (d > nearestDepth) {
+                nearestDepth = d;
+                nearestPixel = block.origin + glm::ivec2(lx, ly);
+            }
+        }
+    }
+
+    // Reverse-Z: depth 0 = far plane (background/sky).
     const float farPlane = settings_.camera.farPlane;
-    float distance = farPlane;
-    if (depth > 1e-6f) {
-        const float ndcX = (center.x + 0.5f) / float(rb.extent.width) * 2.0f - 1.0f;
-        const float ndcY = (center.y + 0.5f) / float(rb.extent.height) * 2.0f - 1.0f;
-        const glm::vec4 h = rb.invViewProj * glm::vec4(ndcX, ndcY, depth, 1.0f);
+    Camera& camera = activeCamera();
+    float distance;
+    if (nearestDepth > 1e-6f) {
+        const float ndcX =
+            (nearestPixel.x + 0.5f) / float(rb.extent.width) * 2.0f - 1.0f;
+        const float ndcY =
+            (nearestPixel.y + 0.5f) / float(rb.extent.height) * 2.0f - 1.0f;
+        const glm::vec4 h = rb.invViewProj * glm::vec4(ndcX, ndcY, nearestDepth, 1.0f);
         const glm::vec3 world = glm::vec3(h) / h.w;
         distance = glm::length(world - rb.cameraPos);
+        camera.lastValidSceneDistance = distance;
+        camera.hasLastValidSceneDistance = true;
+    } else if (camera.hasLastValidSceneDistance) {
+        // Skimming over a hole / staring into open sky: HOLD the last real
+        // distance. Do NOT bleed it toward the far plane — that is exactly what
+        // made WASD "take off" when you pointed away from geometry (the fly
+        // speed is distance-proportional, so a growing reference runs away). The
+        // held local distance keeps the speed at the last sensible, local value
+        // until real geometry is seen again.
+        distance = camera.lastValidSceneDistance;
+    } else {
+        distance = farPlane; // no surface seen yet this session
     }
 
     // The distance feed also anchors the zoom reference distance, so scroll
     // zoom stays distance-proportional even when adaptive fly speed is
     // toggled off.
-    Camera& camera = activeCamera();
     camera.UpdateDistanceToObject(distance);
     if (settings_.camera.adaptiveSpeed)
-        camera.AdjustMovementSpeed(distance, farPlane, dt);
+        camera.AdjustMovementSpeed(distance, settings_.camera.nearPlane, farPlane, dt);
 }
 
 uint32_t Application::viewCameras(renderer::ViewCamera out[renderer::kMaxViews],
@@ -1769,12 +1994,28 @@ void Application::updateCursorAndOverlay(renderer::FrameSubmission& submission,
     cursorManager_.resetFrameCalculationFlag();
     submission.depthQueries.clear();
 
-    // While a camera drag owns the mouse (OS cursor disabled) or a gizmo drag is
-    // active, freeze the 3D cursor — the pick would fight the gizmo grab point.
-    // Side-by-side squishes each eye into a half-target, so the full-target
-    // depth pick can't line up; freeze it there too (quad-buffer / mono are
-    // full-target and pick normally).
-    if (!navActive() && !gizmoDragging_ && stereoMode_ != StereoMode::SideBySide) {
+    // Is the cursor PINNED this frame — i.e. owned by something other than the
+    // mouse pick? While pinned we must neither pick nor QUEUE a pick:
+    //   - camera drag  : the OS cursor is DISABLED, the mouse reports garbage;
+    //   - gizmo / free-move : the cursor is glued to the grab point;
+    //   - centering glide   : the cursor is pinned to the target while the camera
+    //                         flies, so a query would sample a stale pixel with a
+    //                         mid-flight camera and land on the wrong world point
+    //                         once it surfaced AFTER the glide;
+    //   - sync-hold    : we just warped the mouse, but ImGui only reports the new
+    //                    position next frame — a query now would use the PRE-warp
+    //                    pixel and yank the cursor there when it surfaced.
+    // Suppressing the QUERY (not just the pick) is what makes this airtight: a
+    // readback with no mouse rect makes CursorManager preserve state instead of
+    // mispicking, so the pinned cursor simply survives the gap. This is exactly
+    // why orbit was already correct — the glide just wasn't playing by the same
+    // rules.
+    const Camera& cam = activeCamera();
+    const bool pinned = navActive() || gizmoDragging_ || draggingModel_ ||
+                        cam.IsAnimating || cursorSyncHold_ > 0;
+    const bool canPick = !pinned && stereoMode_ != StereoMode::SideBySide;
+
+    if (canPick) {
         const int px = int(sceneInput_.mousePx.x);
         const int py = int(sceneInput_.mousePx.y);
         if (sceneInput_.hovered && px >= 0 && py >= 0 &&
@@ -1782,23 +2023,129 @@ void Application::updateCursorAndOverlay(renderer::FrameSubmission& submission,
             renderer::DepthQueryRect rect;
             rect.origin = glm::ivec2(px, py);
             rect.size = glm::ivec2(1, 1);
+            rect.id = renderer::kDepthQueryMouse;
             submission.depthQueries.push_back(rect);
         }
-        cursorManager_.updateCursorPosition(
-            sceneInput_.hostWindow ? sceneInput_.hostWindow : window_.handle(),
-            sceneInput_.mousePx, sceneInput_.sizePx, sceneInput_.hovered,
-            proj, view, activeCamera(), renderer_.depthSamples(),
-            /*forceRecalculate=*/true);
     }
 
-    // The scene depth at the screen centre feeds the distance-adaptive
+    // Cursor resolution priority (see docs: 3D-cursor continuity). Exactly one of
+    // these owns the cursor each frame; all but "normal pick" are `pinned` above
+    // and therefore queue no depth query.
+    //   1. Free-move          -> glue the cursor to the grabbed spot on the mesh.
+    //   2. Gizmo drag         -> glue the cursor to the gizmo grab point.
+    //   3. Sync-hold          -> hold on the just-synced world point until ImGui
+    //                            has reported the warped mouse and a fresh sample
+    //                            at it can land. NEVER shows the Windows cursor.
+    //   4. Normal pick        -> depth-buffer pick under the mouse.
+    //   5. Camera drag /      -> no pick; keep the pinned cursor + its
+    //      centering glide       distance-scaled radius tracking the moving
+    //                            camera so nothing pops when picking resumes.
+    if (draggingModel_) {
+        // Ctrl+drag free-move: the cursor sticks to the point on the mesh the
+        // user grabbed and rides it — including through wheel depth changes,
+        // where a re-picked cursor would instead crawl over the surface. The
+        // grab point is always under the mouse, so hiding the Windows cursor
+        // leaves the 3D cursor sitting exactly where the pointer is.
+        cursorManager_.setForcedCursorPosition(dragGrabWorld_,
+                                               activeCamera().Position);
+        // HIDDEN (not orbit's DISABLED): the mouse stays absolute, so the drag
+        // keeps tracking it. Unconditional — do NOT gate this on sceneInput_
+        // .hovered: ImGui's IsItemHovered() reads false while an item is active,
+        // so `hovered` drops the moment a drag begins (it is the gate for
+        // STARTING an interaction, not a live "pointer is over the view" test).
+        // Gating here would flash the Windows cursor back on at press. The drag
+        // owns the mouse until release; the pick resuming afterwards restores the
+        // right mode on its own.
+        setOsCursorHidden(true);
+    } else if (gizmoDragging_ && gizmo_.hasInteractionPoint()) {
+        cursorManager_.setForcedCursorPosition(gizmo_.interactionPoint(),
+                                               activeCamera().Position);
+        // Hide the Windows cursor so only the 3D cursor rides the gizmo. HIDDEN
+        // (not DISABLED) keeps the mouse absolute, so handle dragging via
+        // mouseRayCurrent() still tracks correctly. Unconditional, for the same
+        // reason as the free-move above: `hovered` goes false as soon as the
+        // drag becomes active, so gating on it would un-hide the cursor exactly
+        // when the object starts moving.
+        setOsCursorHidden(true);
+    } else if (sceneInput_.hovered && !navActive() &&
+               gizmo_.hoveredHandle() != Tools::TransformGizmo::Handle::None &&
+               gizmo_.hasInteractionPoint()) {
+        // Hovering a gizmo handle — including via its magnetic help zone, where
+        // the ray is merely NEAR the handle. Pull the 3D cursor onto the handle
+        // itself: that IS the snap the user sees, and it makes the thin axis
+        // lines reachable. It also previews the grab point, so pressing here
+        // engages exactly what the cursor is sitting on.
+        cursorManager_.setForcedCursorPosition(gizmo_.interactionPoint(),
+                                               activeCamera().Position);
+        setOsCursorHidden(true);
+    } else if (cursorSyncHold_ > 0) {
+        cursorManager_.setForcedCursorPosition(cursorSyncWorld_,
+                                               activeCamera().Position);
+        // Not gated on `hovered`: on the release frame of a drag the viewport
+        // item is still ACTIVE, so hovered reads false (see the free-move note
+        // above) — and un-hiding here is precisely the flash this hold exists to
+        // prevent. The mouse was just warped onto the pinned point inside the
+        // view, so it IS over the view by construction.
+        setOsCursorHidden(true);
+        --cursorSyncHold_;
+    } else if (canPick) {
+        cursorManager_.updateCursorPosition(
+            sceneInput_.mousePx, sceneInput_.sizePx, sceneInput_.hovered, proj,
+            view, activeCamera(), renderer_.depthSamples(),
+            /*forceRecalculate=*/true);
+        // The manager only reports what the pick concluded (cursor on geometry ->
+        // hide, background/GUI -> show, nothing learned -> leave as is); applying
+        // it is ours, so all OS-cursor changes stay in one place.
+        switch (cursorManager_.osCursorRequest()) {
+        case Cursor::CursorManager::OsCursorRequest::Hide:
+            setOsCursorHidden(true);
+            break;
+        case Cursor::CursorManager::OsCursorRequest::Show:
+            setOsCursorHidden(false);
+            break;
+        case Cursor::CursorManager::OsCursorRequest::Unchanged:
+            break;
+        }
+    } else if (navActive() || cam.IsAnimating) {
+        // No pick runs: keep the pinned cursor (and its distance-scaled radius)
+        // tracking the moving camera so nothing pops when picking resumes.
+        cursorManager_.syncPinnedCursor(activeCamera());
+        // A camera drag already owns the OS cursor (DISABLED). A centering glide
+        // does not, so hide it explicitly for the duration — otherwise the
+        // Windows cursor sits on top of the pinned 3D cursor the whole flight.
+        if (cam.IsAnimating && sceneInput_.hovered &&
+            cursorManager_.isCursorPositionValid())
+            setOsCursorHidden(true);
+    } else {
+        // Nothing owns the cursor and nothing can pick (side-by-side: the depth
+        // pick is meaningless with two eyes side by side in one image). No 3D
+        // cursor to stand in for it, so the Windows cursor must be visible —
+        // stated explicitly because osCursorHidden_ is sticky.
+        setOsCursorHidden(false);
+    }
+
+    // The scene depth around the screen centre feeds the distance-adaptive
     // fly/zoom speed (updateCameraDepth) and stereo auto-convergence. Queried
     // every frame regardless of nav (both consumers keep tracking while
-    // orbiting) and read back one frame later; a 1x1 rect costs nothing.
+    // orbiting) and read back one frame later. A small BLOCK (not a single
+    // texel) so a gap between points in a sparse cloud doesn't read as empty
+    // space and spike the speed — updateCameraDepth takes the nearest valid
+    // sample in it. A few hundred floats read back is free. Found by id
+    // (kDepthQueryCenter), never by index.
     {
+        // Kept deliberately small: bridging a gap between splats only needs a few
+        // texels of slack, and the benefit saturates fast while cost grows as the
+        // SQUARE of the edge. 15x15 = 225 texels (~900 B) vs 31x31 = 961 (~3.8 KB)
+        // for no extra robustness — and this is copied + scanned every frame.
+        const int minDim = int(glm::min(extent.width, extent.height));
+        int block = glm::clamp(minDim / 40, 7, 15);
+        block |= 1; // odd -> symmetric about the centre texel
         renderer::DepthQueryRect rect;
-        rect.origin = glm::ivec2(int(extent.width) / 2, int(extent.height) / 2);
-        rect.size = glm::ivec2(1, 1);
+        rect.size = glm::ivec2(block, block);
+        rect.origin = glm::max(glm::ivec2(0),
+                               glm::ivec2(int(extent.width) / 2 - block / 2,
+                                          int(extent.height) / 2 - block / 2));
+        rect.id = renderer::kDepthQueryCenter;
         submission.depthQueries.push_back(rect);
     }
 
@@ -1812,10 +2159,11 @@ void Application::updateCursorAndOverlay(renderer::FrameSubmission& submission,
     overlay_.clear();
     if (settings_.cursor.show)
         cursorManager_.renderCursors(overlay_, activeCamera());
-    // The orbit-centre marker shows during an orbit (or always, if the user
-    // pinned it on).
-    cursorManager_.setShowOrbitCenter(orbiting_ ||
-                                      cursorManager_.isAlwaysShowOrbitCenter());
+    // The orbit-centre marker is off by default: it shows during an orbit only
+    // if the user opted in, or always if they pinned it on.
+    cursorManager_.setShowOrbitCenter(
+        (orbiting_ && settings_.cursor.showOrbitCenterWhileOrbiting) ||
+        cursorManager_.isAlwaysShowOrbitCenter());
     cursorManager_.renderOrbitCenter(overlay_, activeCamera().OrbitPoint);
 
     // Selection outline + transform gizmo + clip planes + plugin annotations
@@ -2036,8 +2384,10 @@ void Application::updateSceneInput() {
     if (renderer_.viewportOutputActive()) {
         // The hovered viewport becomes the interaction target. Never retarget
         // while a drag owns the mouse — the drag finishes against the camera
-        // and pick space it started in.
-        if (!navActive() && !gizmoDragging_) {
+        // and pick space it started in. That includes a Ctrl+drag grab: it
+        // solves against the camera it grabbed in, so dragging an object across
+        // a second viewport must not hand it a new one mid-flight.
+        if (!navActive() && !gizmoDragging_ && !draggingModel_) {
             for (size_t i = 0; i < viewports_.size(); ++i) {
                 if (viewports_[i].ui.shown && viewports_[i].ui.hovered) {
                     activeViewport_ = static_cast<uint32_t>(i);
@@ -2232,6 +2582,11 @@ void Application::run() {
             RescaleImGuiFonts(window_.handle(), IsGuiThemeDark(g_currentTheme));
         }
 
+        // Hand the OS-cursor decision to the ImGui backend BEFORE its NewFrame
+        // reads it — otherwise it restores GLFW_CURSOR_NORMAL here and we hide
+        // it again mid-frame, flashing the Windows cursor.
+        pushOsCursorToImGui();
+
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
@@ -2259,6 +2614,11 @@ void Application::run() {
             // VR owns the scene submission + HMD present. The desktop window
             // still receives ImGui (+ optional left-eye mirror) inside
             // renderXRFrame, so the VR toggle stays reachable.
+            // No desktop depth pick runs in XR, so no 3D cursor tracks the
+            // mouse: the desktop window keeps its normal Windows cursor for the
+            // UI (updateCursorAndOverlay — the only thing that clears this — is
+            // skipped on this path, and osCursorHidden_ is sticky).
+            setOsCursorHidden(false);
             presentResult = renderXRFrame(submission);
         } else {
             // Depth-driven stereo convergence (before the eye matrices are built).
@@ -2836,15 +3196,22 @@ void Application::appendSelectionOverlay() {
 }
 
 void Application::pushToast(const std::string& message, Plugins::ToastLevel level) {
-    toasts_.push_back({ message, level, 3.5f });
+    toasts_.push_back({ message, level, 3.5f, 0.0f, ++nextToastId_ });
     if (toasts_.size() > 6)
         toasts_.erase(toasts_.begin());
 }
 
+// Each toast is its own window: it flies in from off the right edge, holds, then
+// fades — and because every toast springs toward its slot in the stack rather
+// than being placed at it, the pile re-settles when one expires instead of
+// snapping. A hairline bar drains with the toast's remaining life, so a message
+// visibly has a lifetime rather than just vanishing.
 void Application::drawToasts() {
     const float dt = ImGui::GetIO().DeltaTime;
-    for (Toast& t : toasts_)
+    for (Toast& t : toasts_) {
         t.ttl -= dt;
+        t.age += dt;
+    }
     toasts_.erase(std::remove_if(toasts_.begin(), toasts_.end(),
                                  [](const Toast& t) { return t.ttl <= 0.0f; }),
                   toasts_.end());
@@ -2852,27 +3219,118 @@ void Application::drawToasts() {
         return;
 
     const ImGuiViewport* vp = ImGui::GetMainViewport();
-    const ImVec2 anchor(vp->WorkPos.x + vp->WorkSize.x - 16.0f,
-                        vp->WorkPos.y + vp->WorkSize.y - 16.0f);
-    ImGui::SetNextWindowPos(anchor, ImGuiCond_Always, ImVec2(1.0f, 1.0f));
-    ImGui::SetNextWindowBgAlpha(0.85f);
+    const float scale = Gui::UiKit::Scale();
+    const float margin = 16.0f * scale;
+    const float width = 340.0f * scale;
+    const float gap = Gui::UiKit::Space(3);
+    const bool reduce = Gui::UiKit::ReduceMotion();
+
     const ImGuiWindowFlags flags =
         ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
         ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing |
-        ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove;
-    if (ImGui::Begin("##toasts", nullptr, flags)) {
-        for (const Toast& t : toasts_) {
-            ImVec4 col;
-            switch (t.level) {
-            case Plugins::ToastLevel::Success: col = ImVec4(0.40f, 0.90f, 0.45f, 1.0f); break;
-            case Plugins::ToastLevel::Warning: col = ImVec4(0.95f, 0.75f, 0.20f, 1.0f); break;
-            case Plugins::ToastLevel::Error:   col = ImVec4(0.95f, 0.40f, 0.40f, 1.0f); break;
-            default:                           col = ImVec4(0.80f, 0.82f, 0.88f, 1.0f); break;
-            }
-            ImGui::TextColored(col, "%s", t.text.c_str());
+        ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking;
+
+    // Newest at the bottom: walk backwards, stacking upward.
+    float slotY = 0.0f;
+    for (size_t i = toasts_.size(); i-- > 0;) {
+        const Toast& t = toasts_[i];
+
+        ImVec4 col;
+        const char* icon = ICON_FA_INFO_CIRCLE;
+        switch (t.level) {
+        case Plugins::ToastLevel::Success:
+            col = Gui::UiKit::Color(Gui::UiKit::Semantic::Success);
+            icon = ICON_FA_CHECK_CIRCLE;
+            break;
+        case Plugins::ToastLevel::Warning:
+            col = Gui::UiKit::Color(Gui::UiKit::Semantic::Warning);
+            icon = ICON_FA_EXCLAMATION_TRIANGLE;
+            break;
+        case Plugins::ToastLevel::Error:
+            col = Gui::UiKit::Color(Gui::UiKit::Semantic::Danger);
+            icon = ICON_FA_TIMES_CIRCLE;
+            break;
+        default:
+            col = Gui::UiKit::Color(Gui::UiKit::Semantic::Info);
+            break;
         }
+
+        char name[40];
+        std::snprintf(name, sizeof(name), "##toast%llu", t.id);
+        const ImGuiID key = ImGui::GetID(name);
+
+        // Entrance overshoots (it arrives with weight), exit is a plain fade.
+        const float in =
+            reduce ? 1.0f : Gui::UiKit::EaseOutBack(std::min(t.age / 0.34f, 1.0f));
+        const float fadeIn = std::min(t.age / 0.16f, 1.0f);
+        const float fadeOut = std::min(t.ttl / 0.45f, 1.0f);
+        const float alpha = reduce ? 1.0f : std::min(fadeIn, fadeOut);
+        const float slideX = (1.0f - in) * (width + margin * 2.0f);
+        // Its slot in the stack springs, so the others slide up to close the gap
+        // left by an expiring toast rather than jumping.
+        const float y = Gui::UiKit::Spring(key, slotY, 5.0f, 0.65f);
+
+        ImGui::SetNextWindowPos(
+            ImVec2(vp->WorkPos.x + vp->WorkSize.x - margin + slideX,
+                   vp->WorkPos.y + vp->WorkSize.y - margin - y),
+            ImGuiCond_Always, ImVec2(1.0f, 1.0f));
+        // Fixed width, height auto-sizes to the (wrapped) message. A fixed width
+        // keeps the stack a clean column instead of a ragged pile of differently
+        // sized bubbles — the earlier "bubble too big" was the icon inflating the
+        // HEIGHT (fixed below), not the width.
+        ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0.0f),
+                                            ImVec2(width, FLT_MAX));
+        ImGui::SetNextWindowBgAlpha(0.94f * alpha);
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, Gui::UiKit::RadiusCard());
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+                            ImVec2(Gui::UiKit::Space(5), Gui::UiKit::Space(4)));
+        if (ImGui::Begin(name, nullptr, flags)) {
+            const ImVec2 wp = ImGui::GetWindowPos();
+            const ImVec2 ws = ImGui::GetWindowSize();
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+
+            // Level stripe down the left edge.
+            ImVec4 stripe = col;
+            stripe.w = alpha;
+            dl->AddRectFilled(wp, ImVec2(wp.x + 3.0f * scale, wp.y + ws.y),
+                              ImGui::GetColorU32(stripe),
+                              Gui::UiKit::RadiusCard(),
+                              ImDrawFlags_RoundCornersLeft);
+
+            // The icon is drawn straight to the draw list at TEXT size on the
+            // text's own baseline — NOT via InlineIcon, whose
+            // AlignTextToFramePadding inflates the line to a full frame height
+            // and leaves the message floating off-centre in an oversized bubble.
+            const float fontSize = ImGui::GetFontSize();
+            const ImVec2 iconPos = ImGui::GetCursorScreenPos();
+            if (ImFont* iconFont = Gui::UiKit::IconFont()) {
+                ImVec4 ic = col;
+                ic.w = alpha;
+                dl->AddText(iconFont, fontSize, iconPos, ImGui::GetColorU32(ic),
+                            icon);
+            }
+            const float textIndent = fontSize + Gui::UiKit::Space(3);
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + textIndent);
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextUnformatted(t.text.c_str());
+            ImGui::PopTextWrapPos();
+
+            // Life bar: drains along the bottom edge.
+            const float life = std::min(t.ttl / 3.5f, 1.0f);
+            ImVec4 bar = col;
+            bar.w = 0.55f * alpha;
+            dl->AddRectFilled(
+                ImVec2(wp.x, wp.y + ws.y - 2.0f * scale),
+                ImVec2(wp.x + ws.x * std::max(life, 0.0f), wp.y + ws.y),
+                ImGui::GetColorU32(bar), 0.0f);
+
+            slotY += ws.y + gap;
+        }
+        ImGui::End();
+        ImGui::PopStyleVar(3);
     }
-    ImGui::End();
 }
 
 // ---- Commands, shortcuts (UI redesign Pass 0) ----
@@ -3459,16 +3917,20 @@ void Application::centerViewOnCursor() {
     if (cam.IsAnimating)
         return;
     if (!xrRunning() && cursorManager_.isCursorPositionValid()) {
-        cam.StartCenteringAnimation(cursorManager_.getCursorPosition());
+        centeringTarget_ = cursorManager_.getCursorPosition();
+        cursorSyncHold_ = 0;
+        cam.StartCenteringAnimation(centeringTarget_);
         return;
     }
     if (!selection_.empty()) {
         frameItems(selection_.items());
         return;
     }
-    if (scene_.worldBoundsMax.x >= scene_.worldBoundsMin.x)
-        cam.StartCenteringAnimation(
-            (scene_.worldBoundsMin + scene_.worldBoundsMax) * 0.5f);
+    if (scene_.worldBoundsMax.x >= scene_.worldBoundsMin.x) {
+        centeringTarget_ = (scene_.worldBoundsMin + scene_.worldBoundsMax) * 0.5f;
+        cursorSyncHold_ = 0;
+        cam.StartCenteringAnimation(centeringTarget_);
+    }
 }
 
 Plugins::PickRay Application::mouseRayCurrent() const {
@@ -3727,6 +4189,137 @@ void Application::finishGizmoUndo() {
     undo_.record(
         label, [apply, deltas]() { apply(deltas, true); },
         [apply, deltas]() { apply(deltas, false); });
+}
+
+// ---- Ctrl+drag grab-to-move (GL parity, rebuilt on the Vulkan ray path) ----
+//
+// The GL build projected the grab point to screen, added the mouse delta, kept
+// its NDC z, and unprojected — with a hidden OS cursor that it warped back onto
+// the model every frame. That is the same thing as intersecting the cursor ray
+// with the view-parallel plane through the grab point, so we do that directly:
+// one ray (rayThroughPixel already honours reverse-Z + the baked-in Y-flip), one
+// plane solve, no matrix inversion per axis and no cursor warping — the OS
+// cursor stays visible and the object simply tracks it.
+//
+// Two GL bugs are fixed rather than ported:
+//   * GL's wheel moved the object along camera-front, so at a screen position
+//     off-centre the object slid out from under the cursor as it changed depth.
+//     Here the wheel moves the drag PLANE and the object is re-solved against
+//     the cursor ray, so it stays pinned under the mouse at any depth.
+//   * GL clamped nothing, so scrolling backward could drag the object through
+//     the eye and invert it behind the camera. The depth is clamped in front.
+//
+// Undo/multi-select come free by reusing the gizmo's snapshot machinery: the
+// whole drag is ONE undo entry, mirrored onto every selected transformable.
+
+bool Application::beginModelDrag() {
+    if (!clickCursorValid_)
+        return false;
+
+    // The grab point must lie on the object we are about to move. Re-resolving
+    // the pick (rather than trusting the selection) is what keeps a press that
+    // did NOT change the selection from hijacking it: performSelectionClick
+    // leaves the previous selection intact when the clicked model is locked, and
+    // grabbing then would have teleported that unrelated object to this point.
+    scene::RayHit hit;
+    if (!scene::pickModelAtPoint(scene_, clickCursorWorld_, hit))
+        return false; // empty space / a point cloud / an I3S node: orbit instead
+    const scene::SceneItemRef primary = selection_.primary();
+    const bool primaryIsPicked =
+        (primary.kind == scene::SceneItemRef::Kind::Model ||
+         primary.kind == scene::SceneItemRef::Kind::Mesh) &&
+        primary.id == scene_.models[hit.modelIndex].id;
+    if (!primaryIsPicked)
+        return false;
+
+    // transformPtrsFor also rejects locked objects (and locked group chains).
+    const TransformPtrs t = transformPtrsFor(scene_, primary);
+    if (!t.valid())
+        return false;
+
+    const Camera& cam = activeCamera();
+    const glm::vec3 grab = clickCursorWorld_; // depth-picked point on the object
+    const float depth = glm::dot(grab - cam.Position, cam.Front);
+    if (!(depth > kMinDragDepth)) // degenerate/behind the eye — let it orbit
+        return false;
+
+    // Hold the grab->pivot offset constant so the object keeps the exact spot
+    // the user grabbed pinned under the cursor (instead of snapping its origin
+    // to the mouse).
+    dragGrabOffset_ = *t.pos - grab;
+    dragGrabWorld_ = grab; // the 3D cursor rides this point for the whole drag
+    dragViewDepth_ = depth;
+    dragDepthVel_ = 0.0f;
+    beginGizmoUndo(); // snapshot the whole selection: one undo for the drag
+    draggingModel_ = true;
+    return true;
+}
+
+void Application::updateModelDrag(float dt) {
+    // The selection can be pulled out from under a live drag (undo, a panel
+    // delete, a lock toggle) — drop the grab instead of writing through a stale
+    // pointer.
+    const TransformPtrs t = transformPtrsFor(scene_, selection_.primary());
+    if (!t.valid()) {
+        endModelDrag();
+        return;
+    }
+
+    const Camera& cam = activeCamera();
+    const glm::vec3 front = cam.Front;
+
+    // Wheel push/pull: slide the drag plane in depth with a little momentum.
+    // Scaling by the current depth keeps the feel the same up close and far out
+    // (GL scaled by distance-to-model); the velocity coasts to a stop. Driven by
+    // frame dt — the GL build read the wall clock inside the scroll callback.
+    if (dragDepthVel_ != 0.0f) {
+        dragViewDepth_ += dragDepthVel_ * dt * glm::max(dragViewDepth_, kMinDragDepth);
+        dragViewDepth_ = glm::max(dragViewDepth_, kMinDragDepth); // never cross the eye
+        const float decel = kModelDragDepthDecel * dt;
+        dragDepthVel_ = std::abs(dragDepthVel_) <= decel
+                            ? 0.0f
+                            : dragDepthVel_ - glm::sign(dragDepthVel_) * decel;
+    }
+
+    // Re-solve the grab point against the cursor ray on the view-parallel plane
+    // at dragViewDepth_ — this is what keeps the grabbed spot exactly under the
+    // mouse, for both mouse motion and wheel depth changes.
+    const Plugins::PickRay ray = mouseRayCurrent();
+    const float denom = glm::dot(ray.direction, front);
+    if (std::abs(denom) < 1e-5f) // ray parallel to the plane: hold still
+        return;
+    const glm::vec3 planePoint = cam.Position + front * dragViewDepth_;
+    const float tRay = glm::dot(planePoint - ray.origin, front) / denom;
+    if (tRay <= 0.0f) // plane behind the cursor: hold still
+        return;
+
+    // The grabbed spot on the mesh — under the mouse by construction, and it
+    // rides the object through wheel depth changes too (the plane moved, so this
+    // re-solve lands deeper/nearer along the SAME cursor ray). updateCursorAndOverlay
+    // pins the 3D cursor here, which is why the Windows cursor can stay hidden.
+    dragGrabWorld_ = ray.origin + ray.direction * tRay;
+
+    *t.pos = dragGrabWorld_ + dragGrabOffset_; // move primary
+    applyGizmoDeltaToSelection();              // ...and mirror the delta onto the rest
+}
+
+void Application::endModelDrag() {
+    const bool wasDragging = draggingModel_;
+    draggingModel_ = false;
+    dragDepthVel_ = 0.0f;
+    // One undo entry for the whole drag; a no-op when nothing actually moved
+    // (a plain Ctrl+click that selected without dragging records nothing).
+    finishGizmoUndo();
+    scene_.computeWorldBounds(); // bounds were left stale during the drag
+
+    // Leave the cursor exactly where the user dropped the object: pin the 3D
+    // cursor to the final grab point and hold it there while the async depth
+    // readback catches up, so the pick resuming can't yank it elsewhere for a
+    // frame. The mouse warp inside is a no-op here (the grab point already
+    // projects to the mouse pixel) — it exists for the gizmo, whose constrained
+    // handle point drifts away from the mouse. Either way: no jump.
+    if (wasDragging)
+        syncCursorToWorld(dragGrabWorld_);
 }
 
 } // namespace app

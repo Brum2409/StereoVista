@@ -87,6 +87,11 @@ public:
   float OrbitDistance;
   bool IsOrbiting;
   bool IsPanning;
+  // World units the camera travels per PIXEL of mouse motion while panning —
+  // frozen for the whole drag by StartPanning from the distance to the point
+  // under the cursor (see there). Panning translates in the view plane, which
+  // leaves that distance unchanged, so one factor stays exact for the drag.
+  float PanWorldPerPixel = 0.01f;
 
   // Animation parameters
   bool IsAnimating;
@@ -117,6 +122,14 @@ public:
   float distanceToNearestObject = 0.0f;
   bool distanceUpdated = false;
   bool orbitAroundCursor = false;
+  // Last scene distance sampled at the viewport centre that actually HIT
+  // geometry. When the centre feed misses (skimming a hole in a sparse point
+  // cloud, or pointing at open sky) the app holds this value instead of
+  // snapping the reference to the far plane, so the adaptive fly/zoom speed no
+  // longer spikes. Per-viewport (each viewport owns its Camera). See
+  // Application::updateCameraDepth.
+  float lastValidSceneDistance = 0.0f;
+  bool hasLastValidSceneDistance = false;
 
   std::function<void()> centeringCompletedCallback;
 
@@ -269,47 +282,49 @@ public:
     OrbitPoint = Position + Front * OrbitDistance;
   }
 
-  // Adjusts camera movement speed based on distance to the nearest object,
-  // with logarithmic scaling for natural acceleration/deceleration.
-  // Rewritten from the GL version: acceleration is dt-corrected (the GL ramp
-  // compounded +2% per FRAME, so the speed curve depended on fps) and the
-  // empty-space test no longer relies on exact float equality with farPlane.
-  void AdjustMovementSpeed(float distanceToNearest, float farPlane, float dt) {
+  // Distance-proportional adaptive fly speed — the SAME scale-free idea as the
+  // scroll zoom, which is why both now behave across wildly different scales.
+  // Speed tracks the distance to whatever the view centre rests on, so you
+  // cover that gap in ~1/kSpeedFraction seconds REGARDLESS of scene size: a
+  // hair's-crawl beside a flower pot and a fast glide over a city — correct for
+  // BOTH in one scene, because it keys off the LOCAL distance, not the global
+  // scene bounds.
+  //
+  // The old curve keyed min/max speed AND the distance band off `sceneSize`, so
+  // a huge city set a huge speed FLOOR (minSpeed = sceneSize*0.1) that a nearby
+  // small object could never escape — WASD "broke" (ran away) in large / mixed
+  // scenes. Here sceneSize is only a far-away SANITY ceiling; the local
+  // distance drives everything. The caller HOLDS the last valid distance when
+  // the centre sees nothing (Application::updateCameraDepth), so staring into
+  // open sky keeps the last local speed instead of accelerating into the void.
+  void AdjustMovementSpeed(float distanceToNearest, float nearPlane,
+                           float farPlane, float dt) {
     if (!isMoving)
       return;
 
-    maxSpeed = sceneSize * 1.5f * speedFactor;
-    minSpeed = sceneSize * 0.1f * speedFactor;
+    const float kSpeedFraction = 1.0f; // gap covered per second at speedFactor 1
 
-    float minDistance = glm::max(sceneSize * 0.1f, 0.01f);
-    float maxDistance = glm::max(sceneSize * 10.0f, minDistance * 10.0f);
-
-    // Normalize distance into 0-1 range
-    float normalizedDistance =
-        glm::clamp((distanceToNearest - minDistance) /
-                       (maxDistance - minDistance),
-                   0.0f, 1.0f);
-
-    // Apply logarithmic scaling for smooth speed transitions
-    const float logFactor = 4.0f;
-    const float t =
-        glm::log(1.0f + normalizedDistance * (std::exp(logFactor) - 1.0f)) /
-        logFactor;
-
-    const float targetSpeed =
-        glm::clamp(minSpeed + t * (maxSpeed - minSpeed), minSpeed, maxSpeed);
+    // Reference distance, clamped so speed never crawls to nothing when hugging
+    // a surface (floor at the near plane — scale-independent, user-set) nor runs
+    // away if the centre genuinely sees far geometry (scene-scale ceiling; with
+    // the last-distance hold this rarely bites). NOT keyed to sceneSize on the
+    // low end — that was the mixed-scene bug.
+    const float lo = glm::max(nearPlane, 1e-4f);
+    const float hi = glm::max(sceneSize * 2.0f, lo);
+    const float ref = glm::clamp(distanceToNearest, lo, hi);
 
     isLookingAtEmptySpace = distanceToNearest >= farPlane * 0.999f;
-    const float target = isLookingAtEmptySpace ? maxSpeed : targetSpeed;
 
-    // Constant-TIME acceleration (~63% of the gap every 1/6 s): reacting on a
-    // fixed time constant instead of a fixed ratio keeps large scenes / large
-    // speed gaps from taking seconds to spin up (the GL ramp multiplied per
-    // frame, so closing a 15x gap lagged badly — and each viewport camera
-    // resumes from stale speed when it becomes active). Deceleration stays
-    // immediate: flying toward geometry brakes without lag.
+    const float target = ref * kSpeedFraction * speedFactor;
+    // Bookkeeping (nothing reads these today, kept meaningful for future UI).
+    minSpeed = lo * kSpeedFraction * speedFactor;
+    maxSpeed = hi * kSpeedFraction * speedFactor;
+
+    // Gentle exponential spin-up (~63% of the gap every 1/3 s) so pulling away
+    // from geometry ramps smoothly; immediate braking so diving toward geometry
+    // sheds speed without lag (no overshoot into surfaces).
     if (target > MovementSpeed)
-      MovementSpeed = glm::mix(MovementSpeed, target, 1.0f - std::exp(-6.0f * dt));
+      MovementSpeed = glm::mix(MovementSpeed, target, 1.0f - std::exp(-3.0f * dt));
     else
       MovementSpeed = target;
   }
@@ -335,6 +350,12 @@ public:
                             bool constrainPitch = true) {
     if (IsAnimating)
       return;
+
+    // Rotation/orbit are angular, so they scale with MouseSensitivity. Panning
+    // is NOT: it is locked to the pixels the mouse actually travelled (the grab
+    // point must stay under the pointer), so it keeps the raw offsets.
+    const float rawX = xoffset;
+    const float rawY = yoffset;
 
     xoffset *= MouseSensitivity;
     yoffset *= MouseSensitivity;
@@ -387,13 +408,14 @@ public:
         updateCameraVectorsFromQuaternion();
       }
     } else if (IsPanning) {
-      // Pan camera in view plane using quaternion-derived vectors
-      float panFactor = OrbitDistance * 0.01f;
-      panFactor = glm::max(panFactor, 0.001f);
-
-      // Use Right and Up vectors directly from quaternion
-      Position -= Right * xoffset * panFactor;
-      Position -= Up * yoffset * panFactor;
+      // Screen-space-locked pan: the world point the drag grabbed stays glued to
+      // the pointer, so dragging feels identical whether you are inches from a
+      // surface or a kilometre out. PanWorldPerPixel carries the distance to
+      // that point (StartPanning); the old OrbitDistance*0.01 factor ignored
+      // both what you were looking at and the FOV/viewport, so panning crawled
+      // up close and flew far away.
+      Position -= Right * rawX * PanWorldPerPixel;
+      Position -= Up * rawY * PanWorldPerPixel;
 
       OrbitPoint = Position + Front * OrbitDistance;
     } else {
@@ -656,7 +678,22 @@ public:
   }
 
   void StopOrbiting() { IsOrbiting = false; }
-  void StartPanning() { IsPanning = true; }
+
+  // Begin a pan. grabDistance is the distance from the eye to the point the
+  // drag grabbed (the 3D cursor's, so it is what you SEE under the pointer);
+  // viewportHeightPx is the height of the 3D view ON SCREEN, in the same pixels
+  // the mouse deltas come in. Together with the vertical FOV they give the world
+  // extent of one pixel at that depth — pan by exactly that per pixel and the
+  // grabbed point tracks the mouse 1:1 at any distance, FOV or window size.
+  void StartPanning(float grabDistance, float viewportHeightPx) {
+    IsPanning = true;
+    const float h = glm::max(viewportHeightPx, 1.0f);
+    // The clamp is the same band the zoom reference uses: a grab point on a
+    // hair-thin near surface must not freeze the pan, and one on the far
+    // background must not launch the camera across the scene.
+    const float d = glm::clamp(grabDistance, sceneSize * 0.01f, sceneSize * 2.0f);
+    PanWorldPerPixel = 2.0f * d * glm::tan(glm::radians(Zoom) * 0.5f) / h;
+  }
   void StopPanning() { IsPanning = false; }
 
   // Calculates the Front, Right and Up vectors from the Yaw and Pitch angles

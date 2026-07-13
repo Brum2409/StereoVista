@@ -57,19 +57,12 @@
         "file.import_files": [
             {
                 "alt": false,
-                "ctrl": true,
-                "keyCode": 73,
-                "shift": false
-            }
-        ],
-        "file.import_pointcloud": [
-            {
-                "alt": false,
                 "ctrl": false,
                 "keyCode": 73,
                 "shift": false
             }
         ],
+        "file.import_pointcloud": [],
         "file.new_scene": [
             {
                 "alt": false,

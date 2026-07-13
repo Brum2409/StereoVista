@@ -304,11 +304,10 @@ void layerEditor(EditContext& ctx) {
 
     // Statistics HUD (collapsed state persisted)
     Settings::Ui::Inspector& s = services.settings().ui.inspector;
-    ImGui::SetNextItemOpen(s.layer, ImGuiCond_Once);
-    const bool open = ImGui::CollapsingHeader("Statistics");
-    s.layer = open;
-    if (open)
+    if (UiKit::BeginSection("Statistics", &s.layer)) {
         drawStatsHud(layer);
+        UiKit::EndSection();
+    }
 }
 
 } // namespace

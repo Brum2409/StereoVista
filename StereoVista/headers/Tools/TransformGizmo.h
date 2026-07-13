@@ -65,13 +65,22 @@ namespace Tools {
         Mode effectiveMode() const;
 
         // ── Interaction ─────────────────────────────────────────────────────
-        // Update the hovered handle for highlighting (call when not dragging).
+        // Resolve the hovered handle (call every frame when not dragging). This
+        // is where the MAGNETIC HELP ZONE lives: handles are thin on screen, so
+        // a ray that lands merely NEAR one still hovers it and the interaction
+        // point snaps onto the handle itself. Directional hysteresis keeps that
+        // from being sticky-annoying — see the snap-state members below.
+        //
+        // The returned handle is what the user sees highlighted, so it is also
+        // exactly what a press must grab: callers should press on THIS, not on a
+        // fresh hitTest (which is strict and would miss inside the help zone).
         Handle updateHover(const glm::vec3& rayOrigin, const glm::vec3& rayDir,
                            const glm::vec3& cameraPos);
+        Handle hoveredHandle() const { return m_hover; }
 
-        // Return the handle under the ray, or Handle::None. Pure query; when
-        // outHitPoint is given it receives the world-space point on the ray at
-        // the picked handle's depth.
+        // Return the handle STRICTLY under the ray, or Handle::None (no help
+        // zone, no snap state touched). Pure query; when outHitPoint is given it
+        // receives the world-space point ON the picked handle.
         Handle hitTest(const glm::vec3& rayOrigin, const glm::vec3& rayDir,
                        const glm::vec3& cameraPos,
                        glm::vec3* outHitPoint = nullptr) const;
@@ -114,6 +123,39 @@ namespace Tools {
         glm::vec3 m_interactionPoint = glm::vec3(0.0f);
         bool      m_hasInteractionPoint = false;
         bool      m_interactionLatched = false;
+
+        // One candidate handle resolved from a ray. `dist` is the perpendicular
+        // distance from the ray to the handle's geometry, normalised by the
+        // gizmo's world scale — so it is effectively a SCREEN-space distance
+        // (the gizmo holds a constant apparent size), which is what makes one
+        // set of tolerances behave the same at any zoom.
+        struct Pick {
+            Handle    handle = Handle::None;
+            float     depth = 0.0f;              // ray parameter (for occlusion order)
+            float     dist = 0.0f;               // scale-normalised distance to the handle
+            glm::vec3 point = glm::vec3(0.0f);   // closest point ON the handle
+            bool      exact = false;             // inside the true (unwidened) tolerance
+        };
+        // Widen every handle's tolerance by `tolScale` and return the best
+        // candidate: a strict hit wins on depth (front-most, preserving the
+        // original behaviour), and only when nothing is strictly hit does the
+        // nearest help-zone candidate win on distance.
+        bool pickHandle(const glm::vec3& o, const glm::vec3& d,
+                        const glm::vec3& cameraPos, float tolScale,
+                        Pick& out) const;
+
+        // ── Magnetic snap state (see updateHover) ───────────────────────────
+        // The rule: snap when the cursor moves TOWARD a handle, release when it
+        // deliberately pulls AWAY, and re-arm the moment it turns back toward it
+        // (or leaves the help zone entirely). Distances are tracked against the
+        // REAL cursor ray, never the snapped point, or the magnet would latch
+        // onto itself and never let go.
+        Handle m_snapHandle = Handle::None;  // handle we are magnetically holding
+        Handle m_snapTracked = Handle::None; // handle whose distance we're watching
+        bool   m_snapBlocked = false;        // pulled away: don't re-snap until re-approach
+        float  m_snapMinDist = 0.0f;         // closest approach while snapped
+        float  m_snapMaxDist = 0.0f;         // furthest retreat while blocked
+        void   resetSnap();
 
         float gizmoScale(const glm::vec3& cameraPos) const;
         void computeAxes(glm::vec3 outAxes[3], Mode forMode) const;

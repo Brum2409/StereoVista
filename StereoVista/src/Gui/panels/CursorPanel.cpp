@@ -142,6 +142,9 @@ void drawCursorSettings(Services& services) {
 
     // ── Orbit-centre marker (C3) ────────────────────────────────────────────
     ImGui::SeparatorText("Orbit centre marker");
+    ImGui::Checkbox("Show while orbiting", &cursor.showOrbitCenterWhileOrbiting);
+    helpMarker("Draws the pivot marker for the duration of an orbit drag. Off by "
+               "default — the orbit reads cleaner without it.");
     bool alwaysShow = cm.isAlwaysShowOrbitCenter();
     if (ImGui::Checkbox("Always show", &alwaysShow))
         cm.setAlwaysShowOrbitCenter(alwaysShow);

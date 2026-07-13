@@ -119,6 +119,7 @@ json toJson(const Settings& s) {
     json& cursor = doc["cursor"];
     cursor["show"] = s.cursor.show;
     cursor["type"] = s.cursor.type;
+    cursor["showOrbitCenterWhileOrbiting"] = s.cursor.showOrbitCenterWhileOrbiting;
 
     json& render = doc["render"];
     render["wireframe"] = s.render.wireframe;
@@ -138,6 +139,8 @@ json toJson(const Settings& s) {
     ui["guiScale"] = s.ui.guiScale;
     ui["showStatusBar"] = s.ui.showStatusBar;
     ui["reduceMotion"] = s.ui.reduceMotion;
+    ui["motionSpeed"] = s.ui.motionSpeed;
+    ui["motionBounce"] = s.ui.motionBounce;
     json& hints = ui["hints"];
     hints["enabled"] = s.ui.hints.enabled;
     hints["dismissed"] = s.ui.hints.dismissed;
@@ -239,6 +242,8 @@ void fromJson(const json& doc, Settings& s) {
         get(*cursor, "show", s.cursor.show);
         get(*cursor, "type", s.cursor.type);
         s.cursor.type = std::clamp(s.cursor.type, 0, 2);
+        get(*cursor, "showOrbitCenterWhileOrbiting",
+            s.cursor.showOrbitCenterWhileOrbiting);
     }
     if (const json* render = section(doc, "render")) {
         get(*render, "wireframe", s.render.wireframe);
@@ -267,6 +272,10 @@ void fromJson(const json& doc, Settings& s) {
         s.ui.guiScale = std::clamp(s.ui.guiScale, 0.5f, 2.0f);
         get(*ui, "showStatusBar", s.ui.showStatusBar);
         get(*ui, "reduceMotion", s.ui.reduceMotion);
+        get(*ui, "motionSpeed", s.ui.motionSpeed);
+        s.ui.motionSpeed = std::clamp(s.ui.motionSpeed, 0.25f, 3.0f);
+        get(*ui, "motionBounce", s.ui.motionBounce);
+        s.ui.motionBounce = std::clamp(s.ui.motionBounce, 0.0f, 2.0f);
         if (const json* hints = section(*ui, "hints")) {
             get(*hints, "enabled", s.ui.hints.enabled);
             get(*hints, "dismissed", s.ui.hints.dismissed);
